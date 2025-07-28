@@ -12,6 +12,38 @@ use soroban_sdk::{
     String, Symbol, Vec,
 };
 
+
+// --- Integration Modules ---
+pub mod integration;
+pub mod external_api;
+pub mod bridge;
+pub mod monitoring;
+
+pub use integration::*;
+pub use external_api::*;
+pub use bridge::*;
+pub use monitoring::*;
+
+// --- Integration Types and Results ---
+/// Supported integration types for extensibility
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum IntegrationType {
+    CrossProtocol,
+    ExternalApi,
+    Bridge,
+    Monitoring,
+}
+
+/// Generic result type for integration operations
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum IntegrationResult {
+    Success,
+    Failure(String),
+}
+{{ ... }}
+
 // Module placeholders for future expansion
 // mod deposit;
 // mod borrow;
@@ -521,7 +553,7 @@ impl AssetStorage {
     fn registry_key() -> Symbol {
         Symbol::short("asset_reg")
     }
-    fn asset_info_key(asset: &String) -> Symbol {
+    fn asset_info_key(env: &Env, asset: &String) -> Symbol {
         if asset == &String::from_str(&Env::default(), "XLM") {
             Symbol::short("asset_xlm")
         } else if asset == &String::from_str(&Env::default(), "USDC") {
@@ -558,12 +590,12 @@ impl AssetStorage {
     }
 
     pub fn save_asset_info(env: &Env, asset: &String, info: &AssetInfo) {
-        let key = Self::asset_info_key(asset);
+        let key = Self::asset_info_key(env, asset);
         env.storage().instance().set(&key, info);
     }
 
     pub fn get_asset_info(env: &Env, asset: &String) -> Option<AssetInfo> {
-        let key = Self::asset_info_key(asset);
+        let key = Self::asset_info_key(env, asset);
         env.storage().instance().get(&key)
     }
 
@@ -3237,5 +3269,28 @@ impl BlacklistStorage {
             .instance()
             .get::<Symbol, bool>(&Self::key(user))
             .unwrap_or(false)
+    }
+}
+
+// --- KYC Status Enum ---
+#[soroban_sdk::contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KYCStatus {
+    Verified,
+    Unverified,
+}
+
+// --- KYC Storage Helper ---
+pub struct KYCStorage;
+
+impl KYCStorage {
+    fn key(user: &Address) -> (Symbol, Address) {
+        (Symbol::short("KYC"), user.clone())
+    }
+    pub fn set(env: &Env, user: &Address, status: KYCStatus) {
+        env.storage().instance().set(&Self::key(user), &status);
+    }
+    pub fn get(env: &Env, user: &Address) -> KYCStatus {
+        env.storage().instance().get(&Self::key(user)).unwrap_or(KYCStatus::Unverified)
     }
 }
