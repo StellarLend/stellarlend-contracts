@@ -11,6 +11,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, storage, vec, Address, Env, IntoVal,
     String, Symbol, Vec,
 };
+use soroban_sdk::{BytesN, Symbol, Bytes, Vec};
 
 
 // --- Integration Modules ---
@@ -35,6 +36,16 @@ pub enum IntegrationType {
     Monitoring,
 }
 
+pub fn cross_protocol_call(env: Env, protocol: Symbol, contract_id: BytesN<32>, function: Symbol, args: Vec<Bytes> ) -> Result<Bytes, String> {
+    // Create the registry and get the adapter
+    let registry = integration::ProtocolAdapterRegistry::new();
+    let adapter = registry.get_adapter(&protocol)
+        .ok_or_else(|| format!("Protocol adapter not found: {:?}", protocol))?;
+
+    // Invoke the cross-protocol call
+    adapter.interact(&env, &contract_id, &function, args)
+}
+
 /// Generic result type for integration operations
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -42,7 +53,6 @@ pub enum IntegrationResult {
     Success,
     Failure(String),
 }
-{{ ... }}
 
 // Module placeholders for future expansion
 // mod deposit;
@@ -241,7 +251,7 @@ impl ReserveData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct RevenueMetrics {
-    /// Daily fees collected
+    /// Daily fees collectedcollected
     pub daily_fees: i128,
     /// Weekly fees collected
     pub weekly_fees: i128,
