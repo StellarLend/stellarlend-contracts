@@ -8,7 +8,7 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::ToString;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, storage, vec, Address, Env, IntoVal,
+    contract, contracterror, contractimpl, contracttype, vec, Address, Env,
     String, Symbol, Vec,
 };
 
@@ -42,8 +42,9 @@ impl ReentrancyGuard {
 pub struct SecurityMonitor;
 
 impl SecurityMonitor {
-    fn suspicious_key(user: &Address) -> Symbol {
-        Symbol::new(&Env::default(), &format!("suspicious_{}", user.to_string()))
+    fn suspicious_key(_user: &Address) -> Symbol {
+        // Use a fixed key for simplicity - in production you'd want a more sophisticated approach
+        Symbol::new(&Env::default(), "suspicious_user")
     }
     pub fn record_suspicious(env: &Env, user: &Address, reason: &str) {
         let key = Self::suspicious_key(user);
@@ -411,7 +412,7 @@ pub struct ActivityStorage;
 impl ActivityStorage {
     fn user_activity_key(env: &Env, user: &Address) -> Symbol {
         // Use a simple approach: create a unique key based on user address
-        let user_str = user.to_string();
+        let _user_str = user.to_string();
         // Use a fixed key for simplicity - in production you'd want a more sophisticated approach
         Symbol::new(env, "user_activity")
     }
@@ -574,7 +575,7 @@ impl AssetStorage {
             Symbol::short("asset_def")
         }
     }
-    fn position_key(user: &Address, asset: &str) -> Symbol {
+    fn position_key(_user: &Address, asset: &str) -> Symbol {
         match asset {
             "XLM" => Symbol::short("pos_xlm"),
             "USDC" => Symbol::short("pos_usdc"),
@@ -926,7 +927,7 @@ impl ProtocolEvent {
     pub fn emit(&self, env: &Env) {
         match self {
             ProtocolEvent::Deposit {
-                user,
+                user: _,
                 amount,
                 asset,
             } => {
@@ -941,7 +942,7 @@ impl ProtocolEvent {
                 );
             }
             ProtocolEvent::Borrow {
-                user,
+                user: _,
                 amount,
                 asset,
             } => {
@@ -1480,6 +1481,38 @@ impl ProtocolConfig {
             .instance()
             .get::<Symbol, i128>(&Self::min_collateral_ratio_key())
             .unwrap_or(150)
+    }
+}
+
+/// KYC status enum
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum KYCStatus {
+    Pending,
+    Verified,
+    Rejected,
+}
+
+
+
+/// KYC storage helper
+pub struct KYCStorage;
+
+impl KYCStorage {
+    fn key(_user: &Address) -> Symbol {
+        // Use a fixed key for simplicity - in production you'd want a more sophisticated approach
+        Symbol::new(&Env::default(), "kyc_user")
+    }
+
+    pub fn set(env: &Env, user: &Address, status: KYCStatus) {
+        env.storage().instance().set(&Self::key(user), &status);
+    }
+
+    pub fn get(env: &Env, user: &Address) -> KYCStatus {
+        env.storage()
+            .instance()
+            .get::<Symbol, KYCStatus>(&Self::key(user))
+            .unwrap_or(KYCStatus::Pending)
     }
 }
 
@@ -2068,7 +2101,7 @@ pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolErro
 
         // Update total borrowed amount
         let mut ir_state = InterestRateStorage::get_state(&env);
-        ir_state.total_borrowed -= (old_debt - position.debt);
+        ir_state.total_borrowed -= old_debt - position.debt;
         InterestRateStorage::save_state(&env, &ir_state);
 
         ProtocolEvent::Repay {
@@ -2916,6 +2949,506 @@ pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolErro
         FrozenAccounts::is_frozen(&env, &user_addr)
     }
 
+
+
+    // --- Advanced Configuration Management ---
+
+    /// Create a new configuration version
+    pub fn create_configuration(
+        env: Env,
+        admin: String,
+        description: String,
+        interest_config: (i128, i128, i128, i128, i128, i128),
+        risk_config: (i128, i128, bool, bool, bool, bool),
+        oracle_config: (String, i128, u64, i128, bool),
+        protocol_params: (i128, String, u64, bool, u32),
+        asset_configs: Vec<(String, u32, String, i128, (i128, i128, i128, i128, i128, i128), (i128, i128, bool, bool, bool, bool), bool, bool)>,
+    ) -> Result<u32, ProtocolError> {
+        let admin_addr = Address::from_string(&admin);
+        ProtocolConfig::require_admin(&env, &admin_addr)?;
+
+        // Convert tuple parameters to structs
+        let interest_cfg = InterestRateConfig {
+            base_rate: interest_config.0,
+            kink_utilization: interest_config.1,
+            multiplier: interest_config.2,
+            reserve_factor: interest_config.3,
+            rate_ceiling: interest_config.4,
+            rate_floor: interest_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let risk_cfg = RiskConfig {
+            close_factor: risk_config.0,
+            liquidation_incentive: risk_config.1,
+            pause_borrow: risk_config.2,
+            pause_deposit: risk_config.3,
+            pause_withdraw: risk_config.4,
+            pause_liquidate: risk_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let oracle_addr = Address::from_string(&oracle_config.0);
+        let oracle_cfg = OracleConfiguration {
+            oracle_address: oracle_addr,
+            max_deviation: oracle_config.1,
+            heartbeat: oracle_config.2,
+            fallback_price: oracle_config.3,
+            enabled: oracle_config.4,
+        };
+
+        let treasury_addr = Address::from_string(&protocol_params.1);
+        let protocol_params_struct = ProtocolParameters {
+            min_collateral_ratio: protocol_params.0,
+            treasury_address: treasury_addr,
+            distribution_frequency: protocol_params.2,
+            emergency_pause_enabled: protocol_params.3,
+            max_assets: protocol_params.4,
+        };
+
+        let mut asset_configs_struct = Vec::new(&env);
+        for asset_config in asset_configs.iter() {
+            let asset_oracle = Address::from_string(&asset_config.2);
+            let asset_interest = InterestRateConfig {
+                base_rate: asset_config.4 .0,
+                kink_utilization: asset_config.4 .1,
+                multiplier: asset_config.4 .2,
+                reserve_factor: asset_config.4 .3,
+                rate_ceiling: asset_config.4 .4,
+                rate_floor: asset_config.4 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_risk = RiskConfig {
+                close_factor: asset_config.5 .0,
+                liquidation_incentive: asset_config.5 .1,
+                pause_borrow: asset_config.5 .2,
+                pause_deposit: asset_config.5 .3,
+                pause_withdraw: asset_config.5 .4,
+                pause_liquidate: asset_config.5 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_cfg = AssetConfiguration {
+                symbol: asset_config.0.clone(),
+                decimals: asset_config.1,
+                oracle_address: asset_oracle,
+                min_collateral_ratio: asset_config.3,
+                interest_config: asset_interest,
+                risk_config: asset_risk,
+                deposit_enabled: asset_config.6,
+                borrow_enabled: asset_config.7,
+            };
+            asset_configs_struct.push_back(asset_cfg);
+        }
+
+        let config = ConfigurationManager::create_configuration(
+            &env,
+            &admin_addr,
+            &description,
+            interest_cfg,
+            risk_cfg,
+            oracle_cfg,
+            protocol_params_struct,
+            asset_configs_struct,
+        )?;
+
+        Ok(config.version.version)
+    }
+
+    /// Update current configuration
+    pub fn update_configuration(
+        env: Env,
+        admin: String,
+        description: String,
+        interest_config: (i128, i128, i128, i128, i128, i128),
+        risk_config: (i128, i128, bool, bool, bool, bool),
+        oracle_config: (String, i128, u64, i128, bool),
+        protocol_params: (i128, String, u64, bool, u32),
+        asset_configs: Vec<(String, u32, String, i128, (i128, i128, i128, i128, i128, i128), (i128, i128, bool, bool, bool, bool), bool, bool)>,
+    ) -> Result<u32, ProtocolError> {
+        let admin_addr = Address::from_string(&admin);
+        ProtocolConfig::require_admin(&env, &admin_addr)?;
+
+        // Convert tuple parameters to structs (same as create_configuration)
+        let interest_cfg = InterestRateConfig {
+            base_rate: interest_config.0,
+            kink_utilization: interest_config.1,
+            multiplier: interest_config.2,
+            reserve_factor: interest_config.3,
+            rate_ceiling: interest_config.4,
+            rate_floor: interest_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let risk_cfg = RiskConfig {
+            close_factor: risk_config.0,
+            liquidation_incentive: risk_config.1,
+            pause_borrow: risk_config.2,
+            pause_deposit: risk_config.3,
+            pause_withdraw: risk_config.4,
+            pause_liquidate: risk_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let oracle_addr = Address::from_string(&oracle_config.0);
+        let oracle_cfg = OracleConfiguration {
+            oracle_address: oracle_addr,
+            max_deviation: oracle_config.1,
+            heartbeat: oracle_config.2,
+            fallback_price: oracle_config.3,
+            enabled: oracle_config.4,
+        };
+
+        let treasury_addr = Address::from_string(&protocol_params.1);
+        let protocol_params_struct = ProtocolParameters {
+            min_collateral_ratio: protocol_params.0,
+            treasury_address: treasury_addr,
+            distribution_frequency: protocol_params.2,
+            emergency_pause_enabled: protocol_params.3,
+            max_assets: protocol_params.4,
+        };
+
+        let mut asset_configs_struct = Vec::new(&env);
+        for asset_config in asset_configs.iter() {
+            let asset_oracle = Address::from_string(&asset_config.2);
+            let asset_interest = InterestRateConfig {
+                base_rate: asset_config.4 .0,
+                kink_utilization: asset_config.4 .1,
+                multiplier: asset_config.4 .2,
+                reserve_factor: asset_config.4 .3,
+                rate_ceiling: asset_config.4 .4,
+                rate_floor: asset_config.4 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_risk = RiskConfig {
+                close_factor: asset_config.5 .0,
+                liquidation_incentive: asset_config.5 .1,
+                pause_borrow: asset_config.5 .2,
+                pause_deposit: asset_config.5 .3,
+                pause_withdraw: asset_config.5 .4,
+                pause_liquidate: asset_config.5 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_cfg = AssetConfiguration {
+                symbol: asset_config.0.clone(),
+                decimals: asset_config.1,
+                oracle_address: asset_oracle,
+                min_collateral_ratio: asset_config.3,
+                interest_config: asset_interest,
+                risk_config: asset_risk,
+                deposit_enabled: asset_config.6,
+                borrow_enabled: asset_config.7,
+            };
+            asset_configs_struct.push_back(asset_cfg);
+        }
+
+        let updated_config = ProtocolConfiguration {
+            version: ConfigurationVersion {
+                version: 0, // Will be set by ConfigurationManager
+                created_at: 0,
+                created_by: admin_addr.clone(),
+                description: String::from_str(&env, ""),
+                is_active: false,
+            },
+            interest_config: interest_cfg,
+            risk_config: risk_cfg,
+            oracle_config: oracle_cfg,
+            protocol_params: protocol_params_struct,
+            asset_configs: asset_configs_struct,
+        };
+
+        let config = ConfigurationManager::update_configuration(
+            &env,
+            &admin_addr,
+            &description,
+            &updated_config,
+        )?;
+
+        Ok(config.version.version)
+    }
+
+    /// Create configuration backup
+    pub fn create_config_backup(
+        env: Env,
+        admin: String,
+        description: String,
+    ) -> Result<u32, ProtocolError> {
+        let admin_addr = Address::from_string(&admin);
+        ProtocolConfig::require_admin(&env, &admin_addr)?;
+
+        let backup = ConfigurationManager::create_backup(&env, &admin_addr, &description)?;
+        Ok(backup.backup_id)
+    }
+
+    /// Restore configuration from backup
+    pub fn restore_config_backup(
+        env: Env,
+        admin: String,
+        backup_id: u32,
+    ) -> Result<u32, ProtocolError> {
+        let admin_addr = Address::from_string(&admin);
+        ProtocolConfig::require_admin(&env, &admin_addr)?;
+
+        let config = ConfigurationManager::restore_from_backup(&env, &admin_addr, backup_id)?;
+        Ok(config.version.version)
+    }
+
+    /// Create configuration proposal
+    pub fn create_config_proposal(
+        env: Env,
+        admin: String,
+        description: String,
+        expires_in_seconds: u64,
+        interest_config: (i128, i128, i128, i128, i128, i128),
+        risk_config: (i128, i128, bool, bool, bool, bool),
+        oracle_config: (String, i128, u64, i128, bool),
+        protocol_params: (i128, String, u64, bool, u32),
+        asset_configs: Vec<(String, u32, String, i128, (i128, i128, i128, i128, i128, i128), (i128, i128, bool, bool, bool, bool), bool, bool)>,
+    ) -> Result<u32, ProtocolError> {
+        let admin_addr = Address::from_string(&admin);
+        ProtocolConfig::require_admin(&env, &admin_addr)?;
+
+        // Convert tuple parameters to structs (same as create_configuration)
+        let interest_cfg = InterestRateConfig {
+            base_rate: interest_config.0,
+            kink_utilization: interest_config.1,
+            multiplier: interest_config.2,
+            reserve_factor: interest_config.3,
+            rate_ceiling: interest_config.4,
+            rate_floor: interest_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let risk_cfg = RiskConfig {
+            close_factor: risk_config.0,
+            liquidation_incentive: risk_config.1,
+            pause_borrow: risk_config.2,
+            pause_deposit: risk_config.3,
+            pause_withdraw: risk_config.4,
+            pause_liquidate: risk_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let oracle_addr = Address::from_string(&oracle_config.0);
+        let oracle_cfg = OracleConfiguration {
+            oracle_address: oracle_addr,
+            max_deviation: oracle_config.1,
+            heartbeat: oracle_config.2,
+            fallback_price: oracle_config.3,
+            enabled: oracle_config.4,
+        };
+
+        let treasury_addr = Address::from_string(&protocol_params.1);
+        let protocol_params_struct = ProtocolParameters {
+            min_collateral_ratio: protocol_params.0,
+            treasury_address: treasury_addr,
+            distribution_frequency: protocol_params.2,
+            emergency_pause_enabled: protocol_params.3,
+            max_assets: protocol_params.4,
+        };
+
+        let mut asset_configs_struct = Vec::new(&env);
+        for asset_config in asset_configs.iter() {
+            let asset_oracle = Address::from_string(&asset_config.2);
+            let asset_interest = InterestRateConfig {
+                base_rate: asset_config.4 .0,
+                kink_utilization: asset_config.4 .1,
+                multiplier: asset_config.4 .2,
+                reserve_factor: asset_config.4 .3,
+                rate_ceiling: asset_config.4 .4,
+                rate_floor: asset_config.4 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_risk = RiskConfig {
+                close_factor: asset_config.5 .0,
+                liquidation_incentive: asset_config.5 .1,
+                pause_borrow: asset_config.5 .2,
+                pause_deposit: asset_config.5 .3,
+                pause_withdraw: asset_config.5 .4,
+                pause_liquidate: asset_config.5 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_cfg = AssetConfiguration {
+                symbol: asset_config.0.clone(),
+                decimals: asset_config.1,
+                oracle_address: asset_oracle,
+                min_collateral_ratio: asset_config.3,
+                interest_config: asset_interest,
+                risk_config: asset_risk,
+                deposit_enabled: asset_config.6,
+                borrow_enabled: asset_config.7,
+            };
+            asset_configs_struct.push_back(asset_cfg);
+        }
+
+        let proposed_config = ProtocolConfiguration {
+            version: ConfigurationVersion {
+                version: 0,
+                created_at: 0,
+                created_by: admin_addr.clone(),
+                description: String::from_str(&env, ""),
+                is_active: false,
+            },
+            interest_config: interest_cfg,
+            risk_config: risk_cfg,
+            oracle_config: oracle_cfg,
+            protocol_params: protocol_params_struct,
+            asset_configs: asset_configs_struct,
+        };
+
+        let proposal = ConfigurationManager::create_proposal(
+            &env,
+            &admin_addr,
+            &description,
+            proposed_config,
+            expires_in_seconds,
+        )?;
+
+        Ok(proposal.proposal_id)
+    }
+
+    /// Approve configuration proposal
+    pub fn approve_config_proposal(
+        env: Env,
+        admin: String,
+        proposal_id: u32,
+    ) -> Result<u32, ProtocolError> {
+        let admin_addr = Address::from_string(&admin);
+        ProtocolConfig::require_admin(&env, &admin_addr)?;
+
+        let config = ConfigurationManager::approve_proposal(&env, &admin_addr, proposal_id)?;
+        Ok(config.version.version)
+    }
+
+    /// Reject configuration proposal
+    pub fn reject_config_proposal(
+        env: Env,
+        admin: String,
+        proposal_id: u32,
+    ) -> Result<(), ProtocolError> {
+        let admin_addr = Address::from_string(&admin);
+        ProtocolConfig::require_admin(&env, &admin_addr)?;
+
+        ConfigurationManager::reject_proposal(&env, &admin_addr, proposal_id)
+    }
+
+    /// Get current configuration version
+    pub fn get_current_config_version(env: Env) -> Result<u32, ProtocolError> {
+        let config = ConfigurationStorage::get_current_config(&env)
+            .ok_or(ProtocolError::NotFound)?;
+        Ok(config.version.version)
+    }
+
+    /// Get configuration history
+    pub fn get_config_history(env: Env) -> Vec<u32> {
+        let history = ConfigurationStorage::get_config_history(&env);
+        let mut versions = Vec::new(&env);
+        for config in history.iter() {
+            versions.push_back(config.version.version);
+        }
+        versions
+    }
+
+    /// Validate configuration parameters
+    pub fn validate_config_params(
+        env: Env,
+        interest_config: (i128, i128, i128, i128, i128, i128),
+        risk_config: (i128, i128, bool, bool, bool, bool),
+        oracle_config: (String, i128, u64, i128, bool),
+        protocol_params: (i128, String, u64, bool, u32),
+        asset_configs: Vec<(String, u32, String, i128, (i128, i128, i128, i128, i128, i128), (i128, i128, bool, bool, bool, bool), bool, bool)>,
+    ) -> Result<(bool, Vec<String>, Vec<String>), ProtocolError> {
+        // Convert tuple parameters to structs for validation
+        let interest_cfg = InterestRateConfig {
+            base_rate: interest_config.0,
+            kink_utilization: interest_config.1,
+            multiplier: interest_config.2,
+            reserve_factor: interest_config.3,
+            rate_ceiling: interest_config.4,
+            rate_floor: interest_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let risk_cfg = RiskConfig {
+            close_factor: risk_config.0,
+            liquidation_incentive: risk_config.1,
+            pause_borrow: risk_config.2,
+            pause_deposit: risk_config.3,
+            pause_withdraw: risk_config.4,
+            pause_liquidate: risk_config.5,
+            last_update: env.ledger().timestamp(),
+        };
+
+        let oracle_addr = Address::from_string(&oracle_config.0);
+        let oracle_cfg = OracleConfiguration {
+            oracle_address: oracle_addr,
+            max_deviation: oracle_config.1,
+            heartbeat: oracle_config.2,
+            fallback_price: oracle_config.3,
+            enabled: oracle_config.4,
+        };
+
+        let treasury_addr = Address::from_string(&protocol_params.1);
+        let protocol_params_struct = ProtocolParameters {
+            min_collateral_ratio: protocol_params.0,
+            treasury_address: treasury_addr,
+            distribution_frequency: protocol_params.2,
+            emergency_pause_enabled: protocol_params.3,
+            max_assets: protocol_params.4,
+        };
+
+        let mut asset_configs_struct = Vec::new(&env);
+        for asset_config in asset_configs.iter() {
+            let asset_oracle = Address::from_string(&asset_config.2);
+            let asset_interest = InterestRateConfig {
+                base_rate: asset_config.4 .0,
+                kink_utilization: asset_config.4 .1,
+                multiplier: asset_config.4 .2,
+                reserve_factor: asset_config.4 .3,
+                rate_ceiling: asset_config.4 .4,
+                rate_floor: asset_config.4 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_risk = RiskConfig {
+                close_factor: asset_config.5 .0,
+                liquidation_incentive: asset_config.5 .1,
+                pause_borrow: asset_config.5 .2,
+                pause_deposit: asset_config.5 .3,
+                pause_withdraw: asset_config.5 .4,
+                pause_liquidate: asset_config.5 .5,
+                last_update: env.ledger().timestamp(),
+            };
+            let asset_cfg = AssetConfiguration {
+                symbol: asset_config.0.clone(),
+                decimals: asset_config.1,
+                oracle_address: asset_oracle,
+                min_collateral_ratio: asset_config.3,
+                interest_config: asset_interest,
+                risk_config: asset_risk,
+                deposit_enabled: asset_config.6,
+                borrow_enabled: asset_config.7,
+            };
+            asset_configs_struct.push_back(asset_cfg);
+        }
+
+        let test_config = ProtocolConfiguration {
+            version: ConfigurationVersion {
+                version: 0,
+                created_at: 0,
+                created_by: Address::from_string(&String::from_str(&env, "")),
+                description: String::from_str(&env, ""),
+                is_active: false,
+            },
+            interest_config: interest_cfg,
+            risk_config: risk_cfg,
+            oracle_config: oracle_cfg,
+            protocol_params: protocol_params_struct,
+            asset_configs: asset_configs_struct,
+        };
+
+        let validation = ConfigurationValidator::validate_configuration(&env, &test_config);
+        Ok((validation.is_valid, validation.errors, validation.warnings))
+    }
+
     // --- Compliance Reporting ---
     // Query: Get all suspicious activity events (stub for off-chain indexer)
     pub fn get_suspicious_activity_report(_env: Env) -> Vec<(String, Address, i128, u64)> {
@@ -3354,5 +3887,673 @@ impl BlacklistStorage {
             .instance()
             .get::<Symbol, bool>(&Self::key(user))
             .unwrap_or(false)
+    }
+}
+
+/// Configuration versioning and management
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ConfigurationVersion {
+    /// Version number (incremental)
+    pub version: u32,
+    /// Timestamp when this version was created
+    pub created_at: u64,
+    /// Admin who created this version
+    pub created_by: Address,
+    /// Description of changes
+    pub description: String,
+    /// Whether this version is active
+    pub is_active: bool,
+}
+
+/// Complete protocol configuration
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ProtocolConfiguration {
+    /// Version information
+    pub version: ConfigurationVersion,
+    /// Interest rate configuration
+    pub interest_config: InterestRateConfig,
+    /// Risk management configuration
+    pub risk_config: RiskConfig,
+    /// Oracle configuration
+    pub oracle_config: OracleConfiguration,
+    /// Protocol parameters
+    pub protocol_params: ProtocolParameters,
+    /// Asset-specific configurations
+    pub asset_configs: Vec<AssetConfiguration>,
+}
+
+/// Oracle configuration parameters
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct OracleConfiguration {
+    /// Oracle address
+    pub oracle_address: Address,
+    /// Maximum price deviation (scaled by 1e8)
+    pub max_deviation: i128,
+    /// Heartbeat interval in seconds
+    pub heartbeat: u64,
+    /// Fallback price (scaled by 1e8)
+    pub fallback_price: i128,
+    /// Whether oracle is enabled
+    pub enabled: bool,
+}
+
+/// Protocol-level parameters
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ProtocolParameters {
+    /// Minimum collateral ratio (scaled by 100)
+    pub min_collateral_ratio: i128,
+    /// Treasury address
+    pub treasury_address: Address,
+    /// Distribution frequency in seconds
+    pub distribution_frequency: u64,
+    /// Emergency pause enabled
+    pub emergency_pause_enabled: bool,
+    /// Maximum number of assets supported
+    pub max_assets: u32,
+}
+
+/// Asset-specific configuration
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct AssetConfiguration {
+    /// Asset symbol
+    pub symbol: String,
+    /// Asset decimals
+    pub decimals: u32,
+    /// Oracle address for this asset
+    pub oracle_address: Address,
+    /// Minimum collateral ratio for this asset
+    pub min_collateral_ratio: i128,
+    /// Asset-specific interest rate config
+    pub interest_config: InterestRateConfig,
+    /// Asset-specific risk config
+    pub risk_config: RiskConfig,
+    /// Whether asset is enabled for deposits
+    pub deposit_enabled: bool,
+    /// Whether asset is enabled for borrowing
+    pub borrow_enabled: bool,
+}
+
+/// Configuration validation result
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ValidationResult {
+    /// Whether configuration is valid
+    pub is_valid: bool,
+    /// List of validation errors
+    pub errors: Vec<String>,
+    /// List of validation warnings
+    pub warnings: Vec<String>,
+}
+
+/// Configuration backup entry
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ConfigurationBackup {
+    /// Backup ID
+    pub backup_id: u32,
+    /// Configuration that was backed up
+    pub configuration: ProtocolConfiguration,
+    /// Timestamp when backup was created
+    pub created_at: u64,
+    /// Admin who created the backup
+    pub created_by: Address,
+    /// Description of the backup
+    pub description: String,
+}
+
+/// Configuration change proposal
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ConfigurationProposal {
+    /// Proposal ID
+    pub proposal_id: u32,
+    /// Proposed configuration
+    pub proposed_config: ProtocolConfiguration,
+    /// Current configuration version
+    pub current_version: u32,
+    /// Timestamp when proposal was created
+    pub created_at: u64,
+    /// Admin who created the proposal
+    pub created_by: Address,
+    /// Proposal status
+    pub status: ProposalStatus,
+    /// Description of changes
+    pub description: String,
+    /// Timestamp when proposal expires
+    pub expires_at: u64,
+}
+
+/// Configuration management storage helper
+pub struct ConfigurationStorage;
+
+impl ConfigurationStorage {
+    // Current active configuration
+    fn current_config_key() -> Symbol {
+        Symbol::short("curr_cfg")
+    }
+    
+    // Configuration history
+    fn config_history_key() -> Symbol {
+        Symbol::short("cfg_hist")
+    }
+    
+    // Configuration backups
+    fn backup_key(backup_id: u32) -> Symbol {
+        Symbol::new(&Env::default(), &format!("backup_{}", backup_id))
+    }
+    
+    // Next backup ID
+    fn next_backup_id_key() -> Symbol {
+        Symbol::short("next_bid")
+    }
+    
+    // Configuration proposals
+    fn proposal_key(proposal_id: u32) -> Symbol {
+        Symbol::new(&Env::default(), &format!("proposal_{}", proposal_id))
+    }
+    
+    // Next proposal ID
+    fn next_proposal_id_key() -> Symbol {
+        Symbol::short("next_pid")
+    }
+    
+    // Configuration version counter
+    fn version_counter_key() -> Symbol {
+        Symbol::short("ver_cnt")
+    }
+    
+    pub fn save_current_config(env: &Env, config: &ProtocolConfiguration) {
+        env.storage().instance().set(&Self::current_config_key(), config);
+    }
+    
+    pub fn get_current_config(env: &Env) -> Option<ProtocolConfiguration> {
+        env.storage().instance().get(&Self::current_config_key())
+    }
+    
+    pub fn save_config_to_history(env: &Env, config: &ProtocolConfiguration) {
+        let mut history = Self::get_config_history(env);
+        history.push_back(config.clone());
+        
+        // Keep only last 10 configurations in history
+        if history.len() > 10 {
+            let mut new_history = Vec::new(env);
+            for i in 1..history.len() {
+                new_history.push_back(history.get(i).unwrap());
+            }
+            history = new_history;
+        }
+        
+        env.storage().instance().set(&Self::config_history_key(), &history);
+    }
+    
+    pub fn get_config_history(env: &Env) -> Vec<ProtocolConfiguration> {
+        env.storage()
+            .instance()
+            .get(&Self::config_history_key())
+            .unwrap_or_else(|| Vec::new(env))
+    }
+    
+    pub fn save_backup(env: &Env, backup: &ConfigurationBackup) {
+        let key = Self::backup_key(backup.backup_id);
+        env.storage().instance().set(&key, backup);
+    }
+    
+    pub fn get_backup(env: &Env, backup_id: u32) -> Option<ConfigurationBackup> {
+        let key = Self::backup_key(backup_id);
+        env.storage().instance().get(&key)
+    }
+    
+    pub fn get_next_backup_id(env: &Env) -> u32 {
+        let current_id = env.storage()
+            .instance()
+            .get::<Symbol, u32>(&Self::next_backup_id_key())
+            .unwrap_or(0);
+        let next_id = current_id + 1;
+        env.storage().instance().set(&Self::next_backup_id_key(), &next_id);
+        next_id
+    }
+    
+    pub fn save_proposal(env: &Env, proposal: &ConfigurationProposal) {
+        let key = Self::proposal_key(proposal.proposal_id);
+        env.storage().instance().set(&key, proposal);
+    }
+    
+    pub fn get_proposal(env: &Env, proposal_id: u32) -> Option<ConfigurationProposal> {
+        let key = Self::proposal_key(proposal_id);
+        env.storage().instance().get(&key)
+    }
+    
+    pub fn get_next_proposal_id(env: &Env) -> u32 {
+        let current_id = env.storage()
+            .instance()
+            .get::<Symbol, u32>(&Self::next_proposal_id_key())
+            .unwrap_or(0);
+        let next_id = current_id + 1;
+        env.storage().instance().set(&Self::next_proposal_id_key(), &next_id);
+        next_id
+    }
+    
+    pub fn get_next_version(env: &Env) -> u32 {
+        let current_version = env.storage()
+            .instance()
+            .get::<Symbol, u32>(&Self::version_counter_key())
+            .unwrap_or(0);
+        let next_version = current_version + 1;
+        env.storage().instance().set(&Self::version_counter_key(), &next_version);
+        next_version
+    }
+}
+
+/// Configuration validation helper
+pub struct ConfigurationValidator;
+
+impl ConfigurationValidator {
+    /// Validate a complete protocol configuration
+    pub fn validate_configuration(env: &Env, config: &ProtocolConfiguration) -> ValidationResult {
+        let mut errors = Vec::new(env);
+        let mut warnings = Vec::new(env);
+        
+        // Validate interest rate configuration
+        Self::validate_interest_config(env, &config.interest_config, &mut errors, &mut warnings);
+        
+        // Validate risk configuration
+        Self::validate_risk_config(env, &config.risk_config, &mut errors, &mut warnings);
+        
+        // Validate oracle configuration
+        Self::validate_oracle_config(env, &config.oracle_config, &mut errors, &mut warnings);
+        
+        // Validate protocol parameters
+        Self::validate_protocol_params(env, &config.protocol_params, &mut errors, &mut warnings);
+        
+        // Validate asset configurations
+        for asset_config in config.asset_configs.iter() {
+            Self::validate_asset_config(env, &asset_config, &mut errors, &mut warnings);
+        }
+        
+        ValidationResult {
+            is_valid: errors.is_empty(),
+            errors,
+            warnings,
+        }
+    }
+    
+    fn validate_interest_config(
+        env: &Env,
+        config: &InterestRateConfig,
+        errors: &mut Vec<String>,
+        warnings: &mut Vec<String>,
+    ) {
+        if config.base_rate < 0 {
+            errors.push_back(String::from_str(env, "Base rate cannot be negative"));
+        }
+        if config.base_rate > 100_000_000 {
+            errors.push_back(String::from_str(env, "Base rate cannot exceed 100%"));
+        }
+        if config.kink_utilization <= 0 || config.kink_utilization > 100_000_000 {
+            errors.push_back(String::from_str(env, "Kink utilization must be between 0% and 100%"));
+        }
+        if config.multiplier < 0 {
+            errors.push_back(String::from_str(env, "Multiplier cannot be negative"));
+        }
+        if config.reserve_factor < 0 || config.reserve_factor > 100_000_000 {
+            errors.push_back(String::from_str(env, "Reserve factor must be between 0% and 100%"));
+        }
+        if config.rate_floor > config.rate_ceiling {
+            errors.push_back(String::from_str(env, "Rate floor cannot exceed rate ceiling"));
+        }
+        if config.rate_ceiling > 100_000_000 {
+            errors.push_back(String::from_str(env, "Rate ceiling cannot exceed 100%"));
+        }
+    }
+    
+    fn validate_risk_config(
+        env: &Env,
+        config: &RiskConfig,
+        errors: &mut Vec<String>,
+        warnings: &mut Vec<String>,
+    ) {
+        if config.close_factor <= 0 || config.close_factor > 100_000_000 {
+            errors.push_back(String::from_str(env, "Close factor must be between 0% and 100%"));
+        }
+        if config.liquidation_incentive < 0 || config.liquidation_incentive > 50_000_000 {
+            errors.push_back(String::from_str(env, "Liquidation incentive must be between 0% and 50%"));
+        }
+    }
+    
+    fn validate_oracle_config(
+        env: &Env,
+        config: &OracleConfiguration,
+        errors: &mut Vec<String>,
+        warnings: &mut Vec<String>,
+    ) {
+        if config.max_deviation <= 0 || config.max_deviation > 100_000_000 {
+            errors.push_back(String::from_str(env, "Max deviation must be between 0% and 100%"));
+        }
+        if config.heartbeat == 0 {
+            errors.push_back(String::from_str(env, "Heartbeat cannot be zero"));
+        }
+        if config.fallback_price <= 0 {
+            errors.push_back(String::from_str(env, "Fallback price must be positive"));
+        }
+    }
+    
+    fn validate_protocol_params(
+        env: &Env,
+        params: &ProtocolParameters,
+        errors: &mut Vec<String>,
+        warnings: &mut Vec<String>,
+    ) {
+        if params.min_collateral_ratio < 100 {
+            errors.push_back(String::from_str(env, "Minimum collateral ratio cannot be less than 100%"));
+        }
+        if params.min_collateral_ratio > 1000 {
+            warnings.push_back(String::from_str(env, "Very high minimum collateral ratio may limit borrowing"));
+        }
+        if params.distribution_frequency == 0 {
+            errors.push_back(String::from_str(env, "Distribution frequency cannot be zero"));
+        }
+        if params.max_assets == 0 {
+            errors.push_back(String::from_str(env, "Maximum assets cannot be zero"));
+        }
+        if params.max_assets > 100 {
+            warnings.push_back(String::from_str(env, "Very high maximum assets may impact performance"));
+        }
+    }
+    
+    fn validate_asset_config(
+        env: &Env,
+        config: &AssetConfiguration,
+        errors: &mut Vec<String>,
+        warnings: &mut Vec<String>,
+    ) {
+        if config.symbol.is_empty() {
+            errors.push_back(String::from_str(env, "Asset symbol cannot be empty"));
+        }
+        if config.decimals > 18 {
+            errors.push_back(String::from_str(env, "Asset decimals cannot exceed 18"));
+        }
+        if config.min_collateral_ratio < 100 {
+            errors.push_back(String::from_str(env, "Asset minimum collateral ratio cannot be less than 100%"));
+        }
+    }
+}
+
+/// Configuration management helper
+pub struct ConfigurationManager;
+
+impl ConfigurationManager {
+    /// Create a new configuration version
+    pub fn create_configuration(
+        env: &Env,
+        admin: &Address,
+        description: &String,
+        interest_config: InterestRateConfig,
+        risk_config: RiskConfig,
+        oracle_config: OracleConfiguration,
+        protocol_params: ProtocolParameters,
+        asset_configs: Vec<AssetConfiguration>,
+    ) -> Result<ProtocolConfiguration, ProtocolError> {
+        // Validate admin permissions
+        ProtocolConfig::require_admin(env, admin)?;
+        
+        // Create new version
+        let version = ConfigurationVersion {
+            version: ConfigurationStorage::get_next_version(env),
+            created_at: env.ledger().timestamp(),
+            created_by: admin.clone(),
+            description: description.clone(),
+            is_active: true,
+        };
+        
+        // Create configuration
+        let config = ProtocolConfiguration {
+            version,
+            interest_config,
+            risk_config,
+            oracle_config,
+            protocol_params,
+            asset_configs,
+        };
+        
+        // Validate configuration
+        let validation = ConfigurationValidator::validate_configuration(env, &config);
+        if !validation.is_valid {
+            return Err(ProtocolError::InvalidInput);
+        }
+        
+        // Save to history
+        ConfigurationStorage::save_config_to_history(env, &config);
+        
+        // Set as current configuration
+        ConfigurationStorage::save_current_config(env, &config);
+        
+        Ok(config)
+    }
+    
+    /// Update current configuration
+    pub fn update_configuration(
+        env: &Env,
+        admin: &Address,
+        description: &String,
+        updates: &ProtocolConfiguration,
+    ) -> Result<ProtocolConfiguration, ProtocolError> {
+        // Validate admin permissions
+        ProtocolConfig::require_admin(env, admin)?;
+        
+        // Get current configuration
+        let current_config = ConfigurationStorage::get_current_config(env)
+            .ok_or(ProtocolError::NotFound)?;
+        
+        // Create new version
+        let version = ConfigurationVersion {
+            version: ConfigurationStorage::get_next_version(env),
+            created_at: env.ledger().timestamp(),
+            created_by: admin.clone(),
+            description: description.clone(),
+            is_active: true,
+        };
+        
+        // Create updated configuration
+        let updated_config = ProtocolConfiguration {
+            version,
+            interest_config: updates.interest_config.clone(),
+            risk_config: updates.risk_config.clone(),
+            oracle_config: updates.oracle_config.clone(),
+            protocol_params: updates.protocol_params.clone(),
+            asset_configs: updates.asset_configs.clone(),
+        };
+        
+        // Validate configuration
+        let validation = ConfigurationValidator::validate_configuration(env, &updated_config);
+        if !validation.is_valid {
+            return Err(ProtocolError::InvalidInput);
+        }
+        
+        // Deactivate old version
+        let mut old_version = current_config.version;
+        old_version.is_active = false;
+        
+        // Save to history
+        ConfigurationStorage::save_config_to_history(env, &updated_config);
+        
+        // Set as current configuration
+        ConfigurationStorage::save_current_config(env, &updated_config);
+        
+        Ok(updated_config)
+    }
+    
+    /// Create configuration backup
+    pub fn create_backup(
+        env: &Env,
+        admin: &Address,
+        description: &String,
+    ) -> Result<ConfigurationBackup, ProtocolError> {
+        // Validate admin permissions
+        ProtocolConfig::require_admin(env, admin)?;
+        
+        // Get current configuration
+        let current_config = ConfigurationStorage::get_current_config(env)
+            .ok_or(ProtocolError::NotFound)?;
+        
+        // Create backup
+        let backup = ConfigurationBackup {
+            backup_id: ConfigurationStorage::get_next_backup_id(env),
+            configuration: current_config,
+            created_at: env.ledger().timestamp(),
+            created_by: admin.clone(),
+            description: description.clone(),
+        };
+        
+        // Save backup
+        ConfigurationStorage::save_backup(env, &backup);
+        
+        Ok(backup)
+    }
+    
+    /// Restore configuration from backup
+    pub fn restore_from_backup(
+        env: &Env,
+        admin: &Address,
+        backup_id: u32,
+    ) -> Result<ProtocolConfiguration, ProtocolError> {
+        // Validate admin permissions
+        ProtocolConfig::require_admin(env, admin)?;
+        
+        // Get backup
+        let backup = ConfigurationStorage::get_backup(env, backup_id)
+            .ok_or(ProtocolError::NotFound)?;
+        
+        // Create new version for restored configuration
+        let version = ConfigurationVersion {
+            version: ConfigurationStorage::get_next_version(env),
+            created_at: env.ledger().timestamp(),
+            created_by: admin.clone(),
+            description: String::from_str(env, "Restored from backup"),
+            is_active: true,
+        };
+        
+        let restored_config = ProtocolConfiguration {
+            version,
+            interest_config: backup.configuration.interest_config,
+            risk_config: backup.configuration.risk_config,
+            oracle_config: backup.configuration.oracle_config,
+            protocol_params: backup.configuration.protocol_params,
+            asset_configs: backup.configuration.asset_configs,
+        };
+        
+        // Save to history
+        ConfigurationStorage::save_config_to_history(env, &restored_config);
+        
+        // Set as current configuration
+        ConfigurationStorage::save_current_config(env, &restored_config);
+        
+        Ok(restored_config)
+    }
+    
+    /// Create configuration proposal
+    pub fn create_proposal(
+        env: &Env,
+        admin: &Address,
+        description: &String,
+        proposed_config: ProtocolConfiguration,
+        expires_in_seconds: u64,
+    ) -> Result<ConfigurationProposal, ProtocolError> {
+        // Validate admin permissions
+        ProtocolConfig::require_admin(env, admin)?;
+        
+        // Get current configuration
+        let current_config = ConfigurationStorage::get_current_config(env)
+            .ok_or(ProtocolError::NotFound)?;
+        
+        // Validate proposed configuration
+        let validation = ConfigurationValidator::validate_configuration(env, &proposed_config);
+        if !validation.is_valid {
+            return Err(ProtocolError::InvalidInput);
+        }
+        
+        // Create proposal
+        let proposal = ConfigurationProposal {
+            proposal_id: ConfigurationStorage::get_next_proposal_id(env),
+            proposed_config,
+            current_version: current_config.version.version,
+            created_at: env.ledger().timestamp(),
+            created_by: admin.clone(),
+            status: ProposalStatus::Pending,
+            description: description.clone(),
+            expires_at: env.ledger().timestamp() + expires_in_seconds,
+        };
+        
+        // Save proposal
+        ConfigurationStorage::save_proposal(env, &proposal);
+        
+        Ok(proposal)
+    }
+    
+    /// Approve configuration proposal
+    pub fn approve_proposal(
+        env: &Env,
+        admin: &Address,
+        proposal_id: u32,
+    ) -> Result<ProtocolConfiguration, ProtocolError> {
+        // Validate admin permissions
+        ProtocolConfig::require_admin(env, admin)?;
+        
+        // Get proposal
+        let mut proposal = ConfigurationStorage::get_proposal(env, proposal_id)
+            .ok_or(ProtocolError::NotFound)?;
+        
+        // Check if proposal is still pending
+        if proposal.status != ProposalStatus::Pending {
+            return Err(ProtocolError::InvalidOperation);
+        }
+        
+        // Check if proposal has expired
+        if env.ledger().timestamp() > proposal.expires_at {
+            proposal.status = ProposalStatus::Cancelled;
+            ConfigurationStorage::save_proposal(env, &proposal);
+            return Err(ProtocolError::InvalidOperation);
+        }
+        
+        // Update proposal status
+        proposal.status = ProposalStatus::Approved;
+        ConfigurationStorage::save_proposal(env, &proposal);
+        
+        // Apply the proposed configuration
+        Self::update_configuration(
+            env,
+            admin,
+            &String::from_str(env, &format!("Applied proposal {}", proposal_id)),
+            &proposal.proposed_config,
+        )
+    }
+    
+    /// Reject configuration proposal
+    pub fn reject_proposal(
+        env: &Env,
+        admin: &Address,
+        proposal_id: u32,
+    ) -> Result<(), ProtocolError> {
+        // Validate admin permissions
+        ProtocolConfig::require_admin(env, admin)?;
+        
+        // Get proposal
+        let mut proposal = ConfigurationStorage::get_proposal(env, proposal_id)
+            .ok_or(ProtocolError::NotFound)?;
+        
+        // Check if proposal is still pending
+        if proposal.status != ProposalStatus::Pending {
+            return Err(ProtocolError::InvalidOperation);
+        }
+        
+        // Update proposal status
+        proposal.status = ProposalStatus::Rejected;
+        ConfigurationStorage::save_proposal(env, &proposal);
+        
+        Ok(())
     }
 }
