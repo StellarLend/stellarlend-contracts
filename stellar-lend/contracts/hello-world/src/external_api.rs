@@ -11,13 +11,13 @@ pub trait ProtocolAdapter {
 /// Example struct for a generic protocol adapter
 pub struct GenericProtocolAdapter;
 
-impl ProtocolAdapter for GenericProtocolAdapter {
-    fn protocol_name(&self) -> &'static str {
+impl GenericProtocolAdapter {
+    pub fn protocol_name() -> &'static str {
         "GenericProtocol"
     }
-    fn interact(&self, _env: &Env, _payload: &Bytes) -> Result<Bytes, String> {
-        // Stub: implement cross-protocol logic here
-        Ok(Bytes::new(_env))
+    pub fn interact(env: &Env, payload: &Bytes) -> Result<Bytes, String> {
+        // Your logic here
+        Ok(Bytes::new(env))
     }
 }
 
