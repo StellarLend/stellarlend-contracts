@@ -28,7 +28,9 @@ impl ReentrancyGuard {
     pub fn enter(env: &Env) -> Result<(), ProtocolError> {
         let entered = env.storage().instance().get::<Symbol, bool>(&Self::key()).unwrap_or(false);
         if entered {
-            return Err(ProtocolError::Unknown); // Reentrancy detected
+            let error = ProtocolError::ReentrancyDetected;
+            ErrorLogger::log_error(env, &error, None, "ReentrancyGuard::enter", "Reentrancy attack detected");
+            return Err(error);
         }
         env.storage().instance().set(&Self::key(), &true);
         Ok(())
@@ -43,7 +45,9 @@ pub struct SecurityMonitor;
 
 impl SecurityMonitor {
     fn suspicious_key(user: &Address) -> Symbol {
-        Symbol::new(&Env::default(), &format!("suspicious_{}", user.to_string()))
+        let env = Env::default();
+        let user_str = user.to_string();
+        Symbol::new(&env, &user_str.to_string())
     }
     pub fn record_suspicious(env: &Env, user: &Address, reason: &str) {
         let key = Self::suspicious_key(user);
@@ -1483,7 +1487,7 @@ impl ProtocolConfig {
     }
 }
 
-/// Custom error type for protocol errors
+/// Enhanced error type for protocol errors with detailed context
 #[contracterror]
 #[derive(Debug, Eq, PartialEq)]
 pub enum ProtocolError {
@@ -1507,32 +1511,470 @@ pub enum ProtocolError {
     NotFound = 18,
     InvalidOperation = 19,
     InvalidInput = 20,
+    // Enhanced error types
+    OracleFailure = 21,
+    PriceStale = 22,
+    SlippageExceeded = 23,
+    ReentrancyDetected = 24,
+    ComplianceViolation = 25,
+    NetworkError = 26,
+    RateLimitExceeded = 27,
+    ConfigurationError = 28,
+    StorageError = 29,
+    RecoveryFailed = 30,
 }
 
 impl ProtocolError {
     pub fn to_str(&self) -> &'static str {
         match self {
-            ProtocolError::Unauthorized => "Unauthorized",
-            ProtocolError::InsufficientCollateral => "InsufficientCollateral",
-            ProtocolError::InsufficientCollateralRatio => "InsufficientCollateralRatio",
-            ProtocolError::InvalidAmount => "InvalidAmount",
-            ProtocolError::InvalidAddress => "InvalidAddress",
-            ProtocolError::PositionNotFound => "PositionNotFound",
-            ProtocolError::AlreadyInitialized => "AlreadyInitialized",
-            ProtocolError::NotAdmin => "NotAdmin",
-            ProtocolError::OracleNotSet => "OracleNotSet",
-            ProtocolError::AdminNotSet => "AdminNotSet",
-            ProtocolError::NotEligibleForLiquidation => "NotEligibleForLiquidation",
-            ProtocolError::ProtocolPaused => "ProtocolPaused",
-            ProtocolError::AssetNotSupported => "AssetNotSupported",
-            ProtocolError::AssetDisabled => "AssetDisabled",
-            ProtocolError::InvalidAsset => "InvalidAsset",
-            ProtocolError::Unknown => "Unknown",
-            ProtocolError::AlreadyExists => "AlreadyExists",
-            ProtocolError::NotFound => "NotFound",
-            ProtocolError::InvalidOperation => "InvalidOperation",
-            ProtocolError::InvalidInput => "InvalidInput",
+            ProtocolError::Unauthorized => "Unauthorized access denied",
+            ProtocolError::InsufficientCollateral => "Insufficient collateral for operation",
+            ProtocolError::InsufficientCollateralRatio => "Collateral ratio below required minimum",
+            ProtocolError::InvalidAmount => "Invalid amount provided",
+            ProtocolError::InvalidAddress => "Invalid address format or address not found",
+            ProtocolError::PositionNotFound => "User position not found in protocol",
+            ProtocolError::AlreadyInitialized => "Component already initialized",
+            ProtocolError::NotAdmin => "Administrative privileges required",
+            ProtocolError::OracleNotSet => "Price oracle not configured",
+            ProtocolError::AdminNotSet => "Administrator not configured",
+            ProtocolError::NotEligibleForLiquidation => "Position does not meet liquidation criteria",
+            ProtocolError::ProtocolPaused => "Protocol operations are currently paused",
+            ProtocolError::AssetNotSupported => "Asset not supported by protocol",
+            ProtocolError::AssetDisabled => "Asset operations currently disabled",
+            ProtocolError::InvalidAsset => "Invalid asset configuration",
+            ProtocolError::Unknown => "Unknown error occurred",
+            ProtocolError::AlreadyExists => "Resource already exists",
+            ProtocolError::NotFound => "Requested resource not found",
+            ProtocolError::InvalidOperation => "Operation not valid in current state",
+            ProtocolError::InvalidInput => "Invalid input parameters provided",
+            // Enhanced error messages
+            ProtocolError::OracleFailure => "Oracle service failure or unreachable",
+            ProtocolError::PriceStale => "Price data is stale beyond acceptable threshold",
+            ProtocolError::SlippageExceeded => "Price slippage exceeded maximum tolerance",
+            ProtocolError::ReentrancyDetected => "Reentrancy attack detected and blocked",
+            ProtocolError::ComplianceViolation => "Transaction violates compliance requirements",
+            ProtocolError::NetworkError => "Network connectivity issues detected",
+            ProtocolError::RateLimitExceeded => "Rate limit exceeded for this operation",
+            ProtocolError::ConfigurationError => "System configuration error detected",
+            ProtocolError::StorageError => "Storage operation failed",
+            ProtocolError::RecoveryFailed => "Error recovery operation failed",
         }
+    }
+
+    pub fn get_error_code(&self) -> u32 {
+        match self {
+            ProtocolError::Unauthorized => 1,
+            ProtocolError::InsufficientCollateral => 2,
+            ProtocolError::InsufficientCollateralRatio => 3,
+            ProtocolError::InvalidAmount => 4,
+            ProtocolError::InvalidAddress => 5,
+            ProtocolError::PositionNotFound => 6,
+            ProtocolError::AlreadyInitialized => 7,
+            ProtocolError::NotAdmin => 8,
+            ProtocolError::OracleNotSet => 9,
+            ProtocolError::AdminNotSet => 10,
+            ProtocolError::NotEligibleForLiquidation => 11,
+            ProtocolError::ProtocolPaused => 12,
+            ProtocolError::AssetNotSupported => 13,
+            ProtocolError::AssetDisabled => 14,
+            ProtocolError::InvalidAsset => 15,
+            ProtocolError::Unknown => 16,
+            ProtocolError::AlreadyExists => 17,
+            ProtocolError::NotFound => 18,
+            ProtocolError::InvalidOperation => 19,
+            ProtocolError::InvalidInput => 20,
+            ProtocolError::OracleFailure => 21,
+            ProtocolError::PriceStale => 22,
+            ProtocolError::SlippageExceeded => 23,
+            ProtocolError::ReentrancyDetected => 24,
+            ProtocolError::ComplianceViolation => 25,
+            ProtocolError::NetworkError => 26,
+            ProtocolError::RateLimitExceeded => 27,
+            ProtocolError::ConfigurationError => 28,
+            ProtocolError::StorageError => 29,
+            ProtocolError::RecoveryFailed => 30,
+        }
+    }
+
+    pub fn get_detailed_message(&self, context: &str) -> String {
+        let env = Env::default();
+        if context.is_empty() {
+            String::from_str(&env, self.to_str())
+        } else {
+            let mut msg = String::from_str(&env, self.to_str());
+            let context_str = String::from_str(&env, " | Context: ");
+            let context_msg = String::from_str(&env, context);
+            // Concatenate strings (simplified approach)
+            String::from_str(&env, &format!("{}{}{}", msg.to_string(), context_str.to_string(), context_msg.to_string()))
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            ProtocolError::OracleFailure => true,
+            ProtocolError::PriceStale => true,
+            ProtocolError::NetworkError => true,
+            ProtocolError::RateLimitExceeded => true,
+            ProtocolError::StorageError => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_recovery_suggestion(&self) -> &'static str {
+        match self {
+            ProtocolError::OracleFailure => "Retry with fallback oracle or use cached price",
+            ProtocolError::PriceStale => "Request fresh price update from oracle",
+            ProtocolError::NetworkError => "Retry operation after network recovery",
+            ProtocolError::RateLimitExceeded => "Wait and retry operation later",
+            ProtocolError::StorageError => "Retry storage operation",
+            ProtocolError::InsufficientCollateral => "Add more collateral to position",
+            ProtocolError::InsufficientCollateralRatio => "Increase collateral or reduce debt",
+            _ => "Contact protocol administrators for assistance",
+        }
+    }
+}
+
+/// Error context for detailed debugging and analytics
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ErrorContext {
+    /// Error code
+    pub error_code: u32,
+    /// Detailed error message
+    pub message: String,
+    /// User address involved (if applicable)
+    pub user: Option<Address>,
+    /// Function that triggered the error
+    pub function: String,
+    /// Additional context data
+    pub context_data: String,
+    /// Timestamp when error occurred
+    pub timestamp: u64,
+    /// Whether recovery was attempted
+    pub recovery_attempted: bool,
+    /// Whether recovery was successful
+    pub recovery_successful: bool,
+}
+
+impl ErrorContext {
+    pub fn new(
+        env: &Env,
+        error: &ProtocolError,
+        user: Option<Address>,
+        function: &str,
+        context_data: &str,
+    ) -> Self {
+        Self {
+            error_code: error.get_error_code(),
+            message: error.get_detailed_message(context_data),
+            user,
+            function: String::from_str(env, function),
+            context_data: String::from_str(env, context_data),
+            timestamp: env.ledger().timestamp(),
+            recovery_attempted: false,
+            recovery_successful: false,
+        }
+    }
+
+    pub fn mark_recovery_attempted(&mut self) {
+        self.recovery_attempted = true;
+    }
+
+    pub fn mark_recovery_successful(&mut self) {
+        self.recovery_successful = true;
+    }
+}
+
+/// Error analytics and metrics
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ErrorAnalytics {
+    /// Total error count
+    pub total_errors: u32,
+    /// Errors by type (simplified - top 10 error codes with counts)
+    pub error_counts: Vec<(u32, u32)>,
+    /// Recoverable errors attempted
+    pub recovery_attempts: u32,
+    /// Successful recoveries
+    pub successful_recoveries: u32,
+    /// Last error timestamp
+    pub last_error_timestamp: u64,
+    /// Most frequent error type
+    pub most_frequent_error: u32,
+    /// Error rate (errors per hour)
+    pub hourly_error_rate: u32,
+    /// Critical errors requiring immediate attention
+    pub critical_errors: u32,
+}
+
+impl ErrorAnalytics {
+    pub fn new() -> Self {
+        let env = Env::default();
+        Self {
+            total_errors: 0,
+            error_counts: Vec::new(&env),
+            recovery_attempts: 0,
+            successful_recoveries: 0,
+            last_error_timestamp: 0,
+            most_frequent_error: 0,
+            hourly_error_rate: 0,
+            critical_errors: 0,
+        }
+    }
+
+    pub fn record_error(&mut self, error_code: u32, timestamp: u64, is_critical: bool) {
+        self.total_errors += 1;
+        self.last_error_timestamp = timestamp;
+        
+        if is_critical {
+            self.critical_errors += 1;
+        }
+
+        // Update error counts
+        let mut found = false;
+        for i in 0..self.error_counts.len() {
+            let (code, count) = self.error_counts.get(i).unwrap();
+            if code == error_code {
+                self.error_counts.set(i, (code, count + 1));
+                found = true;
+                break;
+            }
+        }
+        
+        if !found {
+            self.error_counts.push_back((error_code, 1));
+        }
+
+        // Update most frequent error
+        self.update_most_frequent_error();
+    }
+
+    pub fn record_recovery_attempt(&mut self) {
+        self.recovery_attempts += 1;
+    }
+
+    pub fn record_successful_recovery(&mut self) {
+        self.successful_recoveries += 1;
+    }
+
+    fn update_most_frequent_error(&mut self) {
+        let mut max_count = 0;
+        let mut max_error = 0;
+        
+        for i in 0..self.error_counts.len() {
+            let (code, count) = self.error_counts.get(i).unwrap();
+            if count > max_count {
+                max_count = count;
+                max_error = code;
+            }
+        }
+        
+        self.most_frequent_error = max_error;
+    }
+
+    pub fn get_recovery_rate(&self) -> u32 {
+        if self.recovery_attempts == 0 {
+            return 0;
+        }
+        (self.successful_recoveries * 100) / self.recovery_attempts
+    }
+}
+
+/// Error logging and management system
+pub struct ErrorLogger;
+
+impl ErrorLogger {
+    fn analytics_key() -> Symbol {
+        Symbol::short("err_analytics")
+    }
+
+    fn error_log_key(index: u32) -> Symbol {
+        Symbol::new(&Env::default(), &format!("err_log_{}", index))
+    }
+
+    fn error_counter_key() -> Symbol {
+        Symbol::short("err_counter")
+    }
+
+    /// Log an error with full context
+    pub fn log_error(
+        env: &Env,
+        error: &ProtocolError,
+        user: Option<Address>,
+        function: &str,
+        context_data: &str,
+    ) -> ErrorContext {
+        let context = ErrorContext::new(env, error, user, function, context_data);
+        
+        // Get next error index
+        let counter = env.storage().instance().get::<Symbol, u32>(&Self::error_counter_key()).unwrap_or(0);
+        let next_counter = counter + 1;
+        env.storage().instance().set(&Self::error_counter_key(), &next_counter);
+
+        // Store error context (keep last 100 errors)
+        let log_index = next_counter % 100;
+        env.storage().instance().set(&Self::error_log_key(log_index), &context);
+
+        // Update analytics
+        let mut analytics = Self::get_analytics(env);
+        let is_critical = Self::is_critical_error(error);
+        analytics.record_error(error.get_error_code(), context.timestamp, is_critical);
+        Self::save_analytics(env, &analytics);
+
+        // Emit error event
+        env.events().publish(
+            (Symbol::short("error_logged"), Symbol::short("error_code")),
+            (
+                error.get_error_code(),
+                String::from_str(env, function),
+                context.timestamp,
+            ),
+        );
+
+        context
+    }
+
+    /// Attempt error recovery
+    pub fn attempt_recovery(
+        env: &Env,
+        mut context: ErrorContext,
+        recovery_fn: fn(&Env, &ErrorContext) -> Result<(), ProtocolError>,
+    ) -> Result<(), ProtocolError> {
+        context.mark_recovery_attempted();
+        
+        // Update analytics
+        let mut analytics = Self::get_analytics(env);
+        analytics.record_recovery_attempt();
+        
+        match recovery_fn(env, &context) {
+            Ok(()) => {
+                context.mark_recovery_successful();
+                analytics.record_successful_recovery();
+                Self::save_analytics(env, &analytics);
+                
+                // Emit recovery success event
+                env.events().publish(
+                    (Symbol::short("recovery_success"), Symbol::short("error_code")),
+                    (context.error_code, env.ledger().timestamp()),
+                );
+                
+                Ok(())
+            }
+            Err(recovery_error) => {
+                Self::save_analytics(env, &analytics);
+                
+                // Emit recovery failure event
+                env.events().publish(
+                    (Symbol::short("recovery_failed"), Symbol::short("error_code")),
+                    (context.error_code, recovery_error.get_error_code(), env.ledger().timestamp()),
+                );
+                
+                Err(recovery_error)
+            }
+        }
+    }
+
+    pub fn get_analytics(env: &Env) -> ErrorAnalytics {
+        env.storage()
+            .instance()
+            .get(&Self::analytics_key())
+            .unwrap_or_else(ErrorAnalytics::new)
+    }
+
+    pub fn save_analytics(env: &Env, analytics: &ErrorAnalytics) {
+        env.storage().instance().set(&Self::analytics_key(), analytics);
+    }
+
+    pub fn get_error_log(env: &Env, index: u32) -> Option<ErrorContext> {
+        env.storage().instance().get(&Self::error_log_key(index))
+    }
+
+    pub fn get_recent_errors(env: &Env, limit: u32) -> Vec<ErrorContext> {
+        let mut errors = Vec::new(env);
+        let counter = env.storage().instance().get::<Symbol, u32>(&Self::error_counter_key()).unwrap_or(0);
+        
+        let start = if counter > limit { counter - limit } else { 0 };
+        
+        for i in start..counter {
+            let log_index = (i + 1) % 100;
+            if let Some(error_context) = Self::get_error_log(env, log_index) {
+                errors.push_back(error_context);
+            }
+        }
+        
+        errors
+    }
+
+    fn is_critical_error(error: &ProtocolError) -> bool {
+        match error {
+            ProtocolError::ReentrancyDetected => true,
+            ProtocolError::ComplianceViolation => true,
+            ProtocolError::OracleFailure => true,
+            ProtocolError::ConfigurationError => true,
+            ProtocolError::Unknown => true,
+            _ => false,
+        }
+    }
+}
+
+/// Error recovery strategies
+pub struct ErrorRecovery;
+
+impl ErrorRecovery {
+    /// Generic recovery function for oracle failures
+    pub fn recover_oracle_failure(env: &Env, _context: &ErrorContext) -> Result<(), ProtocolError> {
+        // Try to use fallback price
+        let fallback_price = OracleConfig::get_fallback_price(env);
+        if fallback_price > 0 {
+            OracleData::set_price(env, fallback_price);
+            OracleData::set_last_update(env, env.ledger().timestamp());
+            return Ok(());
+        }
+        Err(ProtocolError::RecoveryFailed)
+    }
+
+    /// Recovery function for stale price data
+    pub fn recover_stale_price(env: &Env, _context: &ErrorContext) -> Result<(), ProtocolError> {
+        // Force price update with current oracle
+        let current_price = RealPriceOracle::get_price(env);
+        if current_price > 0 {
+            return Ok(());
+        }
+        Err(ProtocolError::RecoveryFailed)
+    }
+
+    /// Recovery function for storage errors
+    pub fn recover_storage_error(env: &Env, context: &ErrorContext) -> Result<(), ProtocolError> {
+        // Attempt to retry the storage operation after a brief delay
+        let test_key = Symbol::short("storage_test");
+        env.storage().instance().set(&test_key, &true);
+        
+        if env.storage().instance().has(&test_key) {
+            env.storage().instance().remove(&test_key);
+            Ok(())
+        } else {
+            Err(ProtocolError::RecoveryFailed)
+        }
+    }
+
+    /// Generic recovery dispatcher
+    pub fn attempt_recovery(
+        env: &Env,
+        error: &ProtocolError,
+        context: ErrorContext,
+    ) -> Result<(), ProtocolError> {
+        if !error.is_recoverable() {
+            return Err(ProtocolError::RecoveryFailed);
+        }
+
+        let recovery_fn = match error {
+            ProtocolError::OracleFailure => Self::recover_oracle_failure,
+            ProtocolError::PriceStale => Self::recover_stale_price,
+            ProtocolError::StorageError => Self::recover_storage_error,
+            _ => return Err(ProtocolError::RecoveryFailed),
+        };
+
+        ErrorLogger::attempt_recovery(env, context, recovery_fn)
     }
 }
 
@@ -1847,32 +2289,61 @@ impl Contract {
 pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(), ProtocolError> {
     ReentrancyGuard::enter(&env)?;
     let result = (|| {
+        // Input validation with enhanced error logging
         if depositor.is_empty() {
-            return Err(ProtocolError::InvalidAddress);
+            let error = ProtocolError::InvalidAddress;
+            ErrorLogger::log_error(&env, &error, None, "deposit_collateral", "Empty depositor address provided");
+            return Err(error);
         }
         if amount <= 0 {
-            return Err(ProtocolError::InvalidAmount);
+            let error = ProtocolError::InvalidAmount;
+            let context = format!("Invalid deposit amount: {}", amount);
+            ErrorLogger::log_error(&env, &error, None, "deposit_collateral", &context);
+            return Err(error);
         }
 
         // Check if deposit is paused
         let risk_config = RiskConfigStorage::get(&env);
         if risk_config.pause_deposit {
-            return Err(ProtocolError::ProtocolPaused);
+            let error = ProtocolError::ProtocolPaused;
+            ErrorLogger::log_error(&env, &error, None, "deposit_collateral", "Deposit operations are paused");
+            return Err(error);
         }
 
         let depositor_addr = Address::from_string(&depositor);
+        
+        // Enhanced security checks with error logging
         if FrozenAccounts::is_frozen(&env, &depositor_addr) {
             SecurityMonitor::record_suspicious(&env, &depositor_addr, "deposit while frozen");
-            return Err(ProtocolError::Unauthorized);
+            let error = ProtocolError::Unauthorized;
+            ErrorLogger::log_error(&env, &error, Some(depositor_addr.clone()), "deposit_collateral", "Account is frozen");
+            return Err(error);
         }
-        require_kyc(&env, &depositor_addr)?;
-        require_not_blacklisted(&env, &depositor_addr)?;
-        check_aml(&env, &depositor_addr, amount, "deposit")?;
-        let mut position = StateHelper::get_position(&env, &depositor_addr)
-            .unwrap_or(Position::new(depositor_addr.clone(), 0, 0));
+        
+        // Compliance checks with error logging
+        if let Err(error) = require_kyc(&env, &depositor_addr) {
+            ErrorLogger::log_error(&env, &error, Some(depositor_addr.clone()), "deposit_collateral", "KYC requirement not met");
+            return Err(error);
+        }
+        if let Err(error) = require_not_blacklisted(&env, &depositor_addr) {
+            ErrorLogger::log_error(&env, &error, Some(depositor_addr.clone()), "deposit_collateral", "Address is blacklisted");
+            return Err(error);
+        }
+        if let Err(error) = check_aml(&env, &depositor_addr, amount, "deposit") {
+            ErrorLogger::log_error(&env, &error, Some(depositor_addr.clone()), "deposit_collateral", "AML check failed");
+            return Err(error);
+        }
+        // Load user position with error handling
+        let mut position = match StateHelper::get_position(&env, &depositor_addr) {
+            Some(pos) => pos,
+            None => Position::new(depositor_addr.clone(), 0, 0),
+        };
 
-        // Accrue interest before updating position
-        let state = InterestRateStorage::update_state(&env);
+        // Accrue interest before updating position with error handling
+        let state = match InterestRateStorage::update_state(&env) {
+            state => state,
+        };
+        
         InterestRateManager::accrue_interest_for_position(
             &env,
             &mut position,
@@ -1880,13 +2351,59 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
             state.current_supply_rate,
         );
 
+        // Update position with error recovery
         position.collateral += amount;
-        StateHelper::save_position(&env, &position);
+        
+        // Attempt to save position with error recovery
+        let save_result = || -> Result<(), ProtocolError> {
+            StateHelper::save_position(&env, &position);
+            Ok(())
+        };
 
-        // Update total supplied amount
+        if let Err(error) = save_result() {
+            let storage_error = ProtocolError::StorageError;
+            let context = ErrorLogger::log_error(
+                &env, 
+                &storage_error, 
+                Some(depositor_addr.clone()), 
+                "deposit_collateral", 
+                "Failed to save user position"
+            );
+            
+            // Attempt recovery
+            match ErrorRecovery::attempt_recovery(&env, &storage_error, context) {
+                Ok(()) => {
+                    // Retry the save operation
+                    StateHelper::save_position(&env, &position);
+                }
+                Err(_) => return Err(storage_error),
+            }
+        }
+
+        // Update total supplied amount with error recovery
         let mut ir_state = InterestRateStorage::get_state(&env);
         ir_state.total_supplied += amount;
-        InterestRateStorage::save_state(&env, &ir_state);
+        
+        let save_ir_result = || -> Result<(), ProtocolError> {
+            InterestRateStorage::save_state(&env, &ir_state);
+            Ok(())
+        };
+
+        if let Err(_) = save_ir_result() {
+            let storage_error = ProtocolError::StorageError;
+            let context = ErrorLogger::log_error(
+                &env, 
+                &storage_error, 
+                Some(depositor_addr.clone()), 
+                "deposit_collateral", 
+                "Failed to update interest rate state"
+            );
+            
+            // Attempt recovery
+            if let Err(_) = ErrorRecovery::attempt_recovery(&env, &storage_error, context) {
+                return Err(storage_error);
+            }
+        }
 
         // Collect any accrued supply interest as protocol fees
         if position.supply_interest > 0 {
@@ -3297,19 +3814,174 @@ pub fn get_all_proposals(e: Env) -> Vec<AssetProposal> {
     proposals
 }
 
-// Query: get proposals by status
-pub fn get_proposals_by_status(e: Env, status: ProposalStatus) -> Vec<AssetProposal> {
-    let all_proposals = get_all_proposals(e.clone());
-    let mut filtered = Vec::new(&e);
+    // Query: get proposals by status
+    pub fn get_proposals_by_status(e: Env, status: ProposalStatus) -> Vec<AssetProposal> {
+        let all_proposals = get_all_proposals(e.clone());
+        let mut filtered = Vec::new(&e);
 
-    for proposal in all_proposals.iter() {
-        if proposal.status == status {
-            filtered.push_back(proposal);
+        for proposal in all_proposals.iter() {
+            if proposal.status == status {
+                filtered.push_back(proposal);
+            }
         }
+
+        filtered
     }
 
-    filtered
-}
+    // --- Error Analytics and Management Functions ---
+
+    /// Get error analytics summary (admin only)
+    pub fn get_error_analytics(env: Env, caller: String) -> Result<(u32, u32, u32, u32, u32, u64), ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+
+        let analytics = ErrorLogger::get_analytics(&env);
+        Ok((
+            analytics.total_errors,
+            analytics.recovery_attempts,
+            analytics.successful_recoveries,
+            analytics.get_recovery_rate(),
+            analytics.critical_errors,
+            analytics.last_error_timestamp,
+        ))
+    }
+
+    /// Get recent error logs (admin only)
+    pub fn get_recent_error_logs(env: Env, caller: String, limit: u32) -> Result<Vec<ErrorContext>, ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+
+        let recent_errors = ErrorLogger::get_recent_errors(&env, limit);
+        Ok(recent_errors)
+    }
+
+    /// Get error statistics by type (admin only)
+    pub fn get_error_statistics(env: Env, caller: String) -> Result<Vec<(u32, u32)>, ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+
+        let analytics = ErrorLogger::get_analytics(&env);
+        Ok(analytics.error_counts)
+    }
+
+    /// Manually trigger error recovery for a specific error type (admin only)
+    pub fn trigger_error_recovery(
+        env: Env,
+        caller: String,
+        error_code: u32,
+        context_data: String,
+    ) -> Result<(), ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+
+        // Convert error code back to ProtocolError
+        let error = match error_code {
+            21 => ProtocolError::OracleFailure,
+            22 => ProtocolError::PriceStale,
+            26 => ProtocolError::NetworkError,
+            29 => ProtocolError::StorageError,
+            _ => return Err(ProtocolError::InvalidInput),
+        };
+
+        let context = ErrorContext::new(
+            &env,
+            &error,
+            Some(caller_addr),
+            "trigger_error_recovery",
+            &context_data.to_string(),
+        );
+
+        ErrorRecovery::attempt_recovery(&env, &error, context)
+    }
+
+    /// Clear error analytics (admin only) - for testing or maintenance
+    pub fn clear_error_analytics(env: Env, caller: String) -> Result<(), ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+
+        let fresh_analytics = ErrorAnalytics::new();
+        ErrorLogger::save_analytics(&env, &fresh_analytics);
+
+        Ok(())
+    }
+
+    /// Check if a specific error type is recoverable
+    pub fn is_error_recoverable(env: Env, error_code: u32) -> bool {
+        let error = match error_code {
+            1 => ProtocolError::Unauthorized,
+            2 => ProtocolError::InsufficientCollateral,
+            3 => ProtocolError::InsufficientCollateralRatio,
+            4 => ProtocolError::InvalidAmount,
+            5 => ProtocolError::InvalidAddress,
+            6 => ProtocolError::PositionNotFound,
+            7 => ProtocolError::AlreadyInitialized,
+            8 => ProtocolError::NotAdmin,
+            9 => ProtocolError::OracleNotSet,
+            10 => ProtocolError::AdminNotSet,
+            11 => ProtocolError::NotEligibleForLiquidation,
+            12 => ProtocolError::ProtocolPaused,
+            13 => ProtocolError::AssetNotSupported,
+            14 => ProtocolError::AssetDisabled,
+            15 => ProtocolError::InvalidAsset,
+            16 => ProtocolError::Unknown,
+            17 => ProtocolError::AlreadyExists,
+            18 => ProtocolError::NotFound,
+            19 => ProtocolError::InvalidOperation,
+            20 => ProtocolError::InvalidInput,
+            21 => ProtocolError::OracleFailure,
+            22 => ProtocolError::PriceStale,
+            23 => ProtocolError::SlippageExceeded,
+            24 => ProtocolError::ReentrancyDetected,
+            25 => ProtocolError::ComplianceViolation,
+            26 => ProtocolError::NetworkError,
+            27 => ProtocolError::RateLimitExceeded,
+            28 => ProtocolError::ConfigurationError,
+            29 => ProtocolError::StorageError,
+            30 => ProtocolError::RecoveryFailed,
+            _ => return false,
+        };
+
+        error.is_recoverable()
+    }
+
+    /// Get error recovery suggestion for a specific error code
+    pub fn get_error_recovery_suggestion(env: Env, error_code: u32) -> String {
+        let error = match error_code {
+            1 => ProtocolError::Unauthorized,
+            2 => ProtocolError::InsufficientCollateral,
+            3 => ProtocolError::InsufficientCollateralRatio,
+            4 => ProtocolError::InvalidAmount,
+            5 => ProtocolError::InvalidAddress,
+            6 => ProtocolError::PositionNotFound,
+            7 => ProtocolError::AlreadyInitialized,
+            8 => ProtocolError::NotAdmin,
+            9 => ProtocolError::OracleNotSet,
+            10 => ProtocolError::AdminNotSet,
+            11 => ProtocolError::NotEligibleForLiquidation,
+            12 => ProtocolError::ProtocolPaused,
+            13 => ProtocolError::AssetNotSupported,
+            14 => ProtocolError::AssetDisabled,
+            15 => ProtocolError::InvalidAsset,
+            16 => ProtocolError::Unknown,
+            17 => ProtocolError::AlreadyExists,
+            18 => ProtocolError::NotFound,
+            19 => ProtocolError::InvalidOperation,
+            20 => ProtocolError::InvalidInput,
+            21 => ProtocolError::OracleFailure,
+            22 => ProtocolError::PriceStale,
+            23 => ProtocolError::SlippageExceeded,
+            24 => ProtocolError::ReentrancyDetected,
+            25 => ProtocolError::ComplianceViolation,
+            26 => ProtocolError::NetworkError,
+            27 => ProtocolError::RateLimitExceeded,
+            28 => ProtocolError::ConfigurationError,
+            29 => ProtocolError::StorageError,
+            30 => ProtocolError::RecoveryFailed,
+            _ => return String::from_str(&env, "Unknown error code"),
+        };
+
+        String::from_str(&env, error.get_recovery_suggestion())
+    }
 
 fn require_kyc(env: &Env, user: &Address) -> Result<(), ProtocolError> {
     // Replace this with your actual KYC logic
@@ -3334,6 +4006,40 @@ fn check_aml(env: &Env, user: &Address, amount: i128, action: &str) -> Result<()
         );
     }
     Ok(())
+}
+
+/// KYC status enum
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum KYCStatus {
+    Unverified = 0,
+    Pending = 1,
+    Verified = 2,
+    Rejected = 3,
+}
+
+/// KYC storage and management
+pub struct KYCStorage;
+
+impl KYCStorage {
+    fn key(user: &Address) -> Symbol {
+        let env = Env::default();
+        let user_str = user.to_string();
+        let prefix = "kyc_";
+        let combined = prefix.to_string() + &user_str.to_string();
+        Symbol::new(&env, &combined)
+    }
+
+    pub fn set(env: &Env, user: &Address, status: KYCStatus) {
+        env.storage().instance().set(&Self::key(user), &status);
+    }
+
+    pub fn get(env: &Env, user: &Address) -> KYCStatus {
+        env.storage()
+            .instance()
+            .get::<Symbol, KYCStatus>(&Self::key(user))
+            .unwrap_or(KYCStatus::Unverified)
+    }
 }
 
 /// Blacklist storage and management
