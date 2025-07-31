@@ -153,6 +153,7 @@ impl ApiRegistry {
 
 /// API call tracking for monitoring and analytics
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
 pub struct ApiCallRecord {
     pub api_name: String,
     pub endpoint: String,

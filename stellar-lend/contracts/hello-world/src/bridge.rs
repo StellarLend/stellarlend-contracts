@@ -1,7 +1,7 @@
 //! Bridge functionality scaffolding
 use alloc::string::{String, ToString };
 use alloc::format;
-use soroban_sdk::{Env, Address, Symbol, Bytes, Vec};
+use soroban_sdk::{Env, Address, Symbol, Bytes, Vec, contracttype};
 
 /// Trait for bridge adapters
 pub trait BridgeAdapter {
@@ -137,6 +137,7 @@ impl BridgeRegistry {
 
 /// Bridge transfer record for tracking
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
 pub struct BridgeTransferRecord {
     pub bridge_name: String,
     pub from: Address,
@@ -147,6 +148,7 @@ pub struct BridgeTransferRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
 pub enum BridgeTransferStatus {
     Pending,
     Completed,

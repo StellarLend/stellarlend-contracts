@@ -2850,11 +2850,11 @@ impl Contract {
         function: String,
         args: Vec<Bytes>
     ) -> Result<Bytes, ProtocolError> {
-        let protocol_symbol = Symbol::from_str(&env, &protocol);
+        let protocol_symbol = Symbol::new(&env, &protocol);
         // Simple hex decoding for contract_id (assuming 32-byte hex string)
         let contract_bytes = if contract_id.len() == 64 {
             let mut bytes = [0u8; 32];
-            for (i, chunk) in contract_id.as_bytes().chunks(2).enumerate() {
+            for (i, chunk) in contract_id.as_str().as_bytes().chunks(2).enumerate() {
                 if i < 32 && chunk.len() == 2 {
                     let hex_str = String::from_utf8(chunk.to_vec()).unwrap_or_default();
                     bytes[i] = u8::from_str_radix(&hex_str, 16).unwrap_or(0);
@@ -2864,7 +2864,7 @@ impl Contract {
         } else {
             BytesN::from_array(&env, &[0u8; 32])
         };
-        let function_symbol = Symbol::from_str(&env, &function);
+        let function_symbol = Symbol::new(&env, &function);
 
         let result = cross_protocol_call(env, protocol_symbol, contract_bytes, function_symbol, args);
         match result {
@@ -2881,12 +2881,12 @@ impl Contract {
         payload: Bytes
     ) -> Result<Bytes, ProtocolError> {
         let registry = external_api::ApiRegistry::new();
-        let result = registry.call_external_api(&env, &api_name, &endpoint, &payload);
+        let result = registry.call_external_api(&env, &api_name.as_str(), &endpoint.as_str(), &payload);
         
         // Record the API call
         let record = external_api::ApiCallRecord::new(
-            api_name.clone(),
-            endpoint.clone(),
+            api_name.to_string(),
+            endpoint.to_string(),
             env.ledger().timestamp(),
             result.is_ok(),
             if result.is_ok() { result.as_ref().unwrap().len() as u32 } else { 0 }
@@ -2915,7 +2915,7 @@ impl Contract {
 
         // Record the bridge transfer
         let record = bridge::BridgeTransferRecord::new(
-            bridge_name.clone(),
+            bridge_name.to_string(),
             from_addr.clone(),
             to_addr.clone(),
             amount,
@@ -2937,12 +2937,12 @@ impl Contract {
 
     /// Get bridge transfer stats
     pub fn get_bridge_stats(env: Env, bridge_name: String) -> (u32, u32, u32) {
-        bridge::BridgeMonitor::get_bridge_stats(&env, &bridge_name)
+        bridge::BridgeMonitor::get_bridge_stats(&env, &bridge_name.as_str())
     }
 
     /// Get API call stats
     pub fn get_api_stats(env: Env, api_name: String) -> (u32, u32) {
-        external_api::ApiMonitor::get_api_stats(&env, &api_name)
+        external_api::ApiMonitor::get_api_stats(&env, &api_name.as_str())
     }
 
     /// Get bridge transfer history
@@ -2962,8 +2962,8 @@ impl Contract {
 
     /// Get performance metrics for an operation
     pub fn get_performance_metrics(env: Env, operation: String) -> (Option<u64>, i128) {
-        let avg_response_time = monitoring::PerformanceMonitor::get_avg_response_time(&env, &operation);
-        let success_rate = monitoring::PerformanceMonitor::get_success_rate(&env, &operation);
+        let avg_response_time = monitoring::PerformanceMonitor::get_avg_response_time(&env, &operation.as_str());
+        let success_rate = monitoring::PerformanceMonitor::get_success_rate(&env, &operation.as_str());
         // Convert f64 to i128 (multiply by 1000000 for precision)
         let success_rate_scaled = (success_rate * 1000000.0) as i128;
         (avg_response_time, success_rate_scaled)
@@ -2986,7 +2986,7 @@ impl Contract {
         duration_ms: u64,
         success: bool
     ) -> Result<(), ProtocolError> {
-        monitoring::PerformanceMonitor::record_metrics(&env, &operation, duration_ms, success);
+        monitoring::PerformanceMonitor::record_metrics(&env, &operation.as_str(), duration_ms, success);
         Ok(())
     }
 
@@ -3047,7 +3047,7 @@ impl Contract {
     }
 }
 
-mod test;
+
 
 // Additional documentation and module expansion will be added as features are implemented.
 
