@@ -9,9 +9,8 @@ use alloc::format;
 use alloc::string::ToString;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, storage, vec, Address, Env, IntoVal,
-    String, Symbol, Vec,
+    String, Symbol, Vec, BytesN, Bytes,
 };
-use soroban_sdk::{BytesN, Symbol, Bytes, Vec};
 
 
 // --- Integration Modules ---
@@ -2841,6 +2840,183 @@ impl Contract {
         FrozenAccounts::is_frozen(&env, &user_addr)
     }
 
+    // --- Integration Functions ---
+
+    /// Execute a cross-protocol call
+    pub fn execute_cross_protocol_call(
+        env: Env,
+        protocol: String,
+        contract_id: String,
+        function: String,
+        args: Vec<Bytes>
+    ) -> Result<Bytes, ProtocolError> {
+        let protocol_symbol = Symbol::from_str(&env, &protocol);
+        // Simple hex decoding for contract_id (assuming 32-byte hex string)
+        let contract_bytes = if contract_id.len() == 64 {
+            let mut bytes = [0u8; 32];
+            for (i, chunk) in contract_id.as_bytes().chunks(2).enumerate() {
+                if i < 32 && chunk.len() == 2 {
+                    let hex_str = String::from_utf8(chunk.to_vec()).unwrap_or_default();
+                    bytes[i] = u8::from_str_radix(&hex_str, 16).unwrap_or(0);
+                }
+            }
+            BytesN::from_array(&env, &bytes)
+        } else {
+            BytesN::from_array(&env, &[0u8; 32])
+        };
+        let function_symbol = Symbol::from_str(&env, &function);
+
+        let result = cross_protocol_call(env, protocol_symbol, contract_bytes, function_symbol, args);
+        match result {
+            Ok(data) => Ok(data),
+            Err(_) => Err(ProtocolError::Unknown),
+        }
+    }
+
+    /// Call external API
+    pub fn call_external_api(
+        env: Env,
+        api_name: String,
+        endpoint: String,
+        payload: Bytes
+    ) -> Result<Bytes, ProtocolError> {
+        let registry = external_api::ApiRegistry::new();
+        let result = registry.call_external_api(&env, &api_name, &endpoint, &payload);
+        
+        // Record the API call
+        let record = external_api::ApiCallRecord::new(
+            api_name.clone(),
+            endpoint.clone(),
+            env.ledger().timestamp(),
+            result.is_ok(),
+            if result.is_ok() { result.as_ref().unwrap().len() as u32 } else { 0 }
+        );
+        external_api::ApiMonitor::record_call(&env, &record);
+
+        match result {
+            Ok(data) => Ok(data),
+            Err(_) => Err(ProtocolError::Unknown),
+        }
+    }
+
+    /// Execute bridge transfer
+    pub fn execute_bridge_transfer(
+        env: Env,
+        bridge_name: String,
+        from: String,
+        to: String,
+        amount: i128
+    ) -> Result<(), ProtocolError> {
+        let from_addr = Address::from_string(&from);
+        let to_addr = Address::from_string(&to);
+        
+        let registry = bridge::BridgeRegistry::new();
+        let result = registry.execute_bridge_transfer(&env, &bridge_name, &from_addr, &to_addr, amount);
+
+        // Record the bridge transfer
+        let record = bridge::BridgeTransferRecord::new(
+            bridge_name.clone(),
+            from_addr.clone(),
+            to_addr.clone(),
+            amount,
+            env.ledger().timestamp(),
+            if result.is_ok() { bridge::BridgeTransferStatus::Completed } else { bridge::BridgeTransferStatus::Failed }
+        );
+        bridge::BridgeMonitor::record_transfer(&env, &record);
+
+        match result {
+            Ok(()) => Ok(()),
+            Err(_) => Err(ProtocolError::Unknown),
+        }
+    }
+
+    /// Get integration monitoring stats
+    pub fn get_integration_stats(env: Env) -> (u32, u32) {
+        monitoring::IntegrationMonitoring::get_event_stats(&env)
+    }
+
+    /// Get bridge transfer stats
+    pub fn get_bridge_stats(env: Env, bridge_name: String) -> (u32, u32, u32) {
+        bridge::BridgeMonitor::get_bridge_stats(&env, &bridge_name)
+    }
+
+    /// Get API call stats
+    pub fn get_api_stats(env: Env, api_name: String) -> (u32, u32) {
+        external_api::ApiMonitor::get_api_stats(&env, &api_name)
+    }
+
+    /// Get bridge transfer history
+    pub fn get_bridge_transfer_history(env: Env) -> Vec<bridge::BridgeTransferRecord> {
+        bridge::BridgeMonitor::get_transfer_history(&env)
+    }
+
+    /// Get API call history
+    pub fn get_api_call_history(env: Env) -> Vec<external_api::ApiCallRecord> {
+        external_api::ApiMonitor::get_call_history(&env)
+    }
+
+    /// Get integration events
+    pub fn get_integration_events(env: Env) -> Vec<monitoring::IntegrationEvent> {
+        monitoring::IntegrationMonitoring::get_events(&env)
+    }
+
+    /// Get performance metrics for an operation
+    pub fn get_performance_metrics(env: Env, operation: String) -> (Option<u64>, i128) {
+        let avg_response_time = monitoring::PerformanceMonitor::get_avg_response_time(&env, &operation);
+        let success_rate = monitoring::PerformanceMonitor::get_success_rate(&env, &operation);
+        // Convert f64 to i128 (multiply by 1000000 for precision)
+        let success_rate_scaled = (success_rate * 1000000.0) as i128;
+        (avg_response_time, success_rate_scaled)
+    }
+
+    /// Check for integration alerts
+    pub fn check_integration_alerts(env: Env) -> Vec<String> {
+        monitoring::AlertSystem::check_alerts(&env)
+    }
+
+    /// Get all recorded alerts
+    pub fn get_integration_alerts(env: Env) -> Vec<(String, u64)> {
+        monitoring::AlertSystem::get_alerts(&env)
+    }
+
+    /// Record performance metrics (for testing)
+    pub fn record_performance_metrics(
+        env: Env,
+        operation: String,
+        duration_ms: u64,
+        success: bool
+    ) -> Result<(), ProtocolError> {
+        monitoring::PerformanceMonitor::record_metrics(&env, &operation, duration_ms, success);
+        Ok(())
+    }
+
+    /// Record integration event (for testing)
+    pub fn record_integration_event(
+        env: Env,
+        event_type: String,
+        details: String,
+        success: bool
+    ) -> Result<(), ProtocolError> {
+        let event = if success {
+            monitoring::IntegrationEvent::new(
+                event_type,
+                details,
+                env.ledger().timestamp(),
+                true
+            )
+        } else {
+            monitoring::IntegrationEvent::with_error(
+                event_type,
+                details,
+                env.ledger().timestamp(),
+                "Test error".to_string()
+            )
+        };
+        
+        monitoring::IntegrationMonitoring::record_event(&env, &event);
+        Ok(())
+    }
+
     // --- Compliance Reporting ---
     // Query: Get all suspicious activity events (stub for off-chain indexer)
     pub fn get_suspicious_activity_report(_env: Env) -> Vec<(String, Address, i128, u64)> {
@@ -2862,14 +3038,6 @@ impl Contract {
         // NOTE: Soroban contracts cannot query historical events on-chain.
         // In production, an off-chain service would index events and provide this data.
         Vec::new(&_env)
-    }
-
-    // --- Regulatory Monitoring ---
-    // Query: Check if an address is blacklisted or KYC-verified
-    pub fn get_compliance_status(env: Env, user: Address) -> (bool, bool) {
-        let kyc_verified = KYCStorage::get(&env, &user) == KYCStatus::Verified;
-        let blacklisted = BlacklistStorage::is_blacklisted(&env, &user);
-        (kyc_verified, blacklisted)
     }
 
     // Query: Get protocol-wide compliance summary (stub)
