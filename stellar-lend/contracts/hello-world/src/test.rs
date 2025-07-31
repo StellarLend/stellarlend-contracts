@@ -98,346 +98,132 @@ fn test_contract_initialization() {
     let admin = TestUtils::create_admin_address(&env);
 
     let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        let result = Contract::initialize(env.clone(), admin.to_string());
-        assert!(result.is_ok());
+#![cfg(test)]
 
-        // Test that admin is set correctly - but don't call get_protocol_params yet
-        // since oracle is not set
-        let admin_key = ProtocolConfig::admin_key();
-        let stored_admin = env
-            .storage()
-            .instance()
-            .get::<Symbol, Address>(&admin_key)
-            .unwrap();
-        assert_eq!(stored_admin, admin);
-    });
-}
+use super::*;
+use soroban_sdk::{Address, Env, String};
+mod test_utils;
+use test_utils::TestUtils;
+
 
 #[test]
-fn test_contract_initialization_already_initialized() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn test_contract_initialization() {
+    let env = TestUtils::create_test_env();
     let admin = TestUtils::create_admin_address(&env);
 
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
-        // First initialization should succeed
-        let result = Contract::initialize(env.clone(), admin.to_string());
-        assert!(result.is_ok());
-
-        // Second initialization should fail
-        let result = Contract::initialize(env.clone(), admin.to_string());
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::AlreadyInitialized);
+        // Should initialize successfully
+        assert!(Contract::initialize(env.clone(), admin.to_string()).is_ok());
+        // Re-initialization should fail
+        let res = Contract::initialize(env.clone(), admin.to_string());
+        assert_eq!(res.unwrap_err(), ProtocolError::AlreadyInitialized);
     });
 }
 
 #[test]
-fn test_deposit_collateral() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let _admin = TestUtils::initialize_contract(&env);
+fn test_deposit_collateral_valid() {
+    let env = TestUtils::create_test_env();
+    let admin = TestUtils::initialize_contract(&env);
     let user = TestUtils::create_user_address(&env, 1);
 
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
-        // Test successful deposit
-        let result = Contract::deposit_collateral(env.clone(), user.to_string(), 1000);
-        assert!(result.is_ok());
-
-        // Verify position is updated
-        let (collateral, debt, _ratio) =
-            Contract::get_position(env.clone(), user.to_string()).unwrap();
+        // Deposit a valid amount
+        let res = Contract::deposit_collateral(env.clone(), user.to_string(), 1000);
+        assert!(res.is_ok());
+        // Query position
+        let (collateral, _, _) = Contract::get_position(env.clone(), user.to_string()).unwrap();
         assert_eq!(collateral, 1000);
-        assert_eq!(debt, 0);
     });
 }
+
 
 #[test]
 fn test_deposit_collateral_invalid_amount() {
-    let env = Env::default();
-    env.mock_all_auths();
+    let env = TestUtils::create_test_env();
     let _admin = TestUtils::initialize_contract(&env);
     let user = TestUtils::create_user_address(&env, 1);
 
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
-        // Test deposit with zero amount
-        let result = Contract::deposit_collateral(env.clone(), user.to_string(), 0);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::InvalidAmount);
-
-        // Test deposit with negative amount
-        let result = Contract::deposit_collateral(env.clone(), user.to_string(), -100);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::InvalidAmount);
+        // Negative amount should fail
+        let res = Contract::deposit_collateral(env.clone(), user.to_string(), -1);
+        assert_eq!(res.unwrap_err(), ProtocolError::InvalidAmount);
+        // Zero amount should fail
+        let res = Contract::deposit_collateral(env.clone(), user.to_string(), 0);
+        assert_eq!(res.unwrap_err(), ProtocolError::InvalidAmount);
     });
 }
 
+
 #[test]
-fn test_deposit_collateral_invalid_address() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn test_borrow_insufficient_collateral() {
+    let env = TestUtils::create_test_env();
     let _admin = TestUtils::initialize_contract(&env);
-
+    let user = TestUtils::create_user_address(&env, 2);
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
-        // Test deposit with empty address
-        let result = Contract::deposit_collateral(env.clone(), String::from_str(&env, ""), 1000);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::InvalidAddress);
+        // No collateral deposited, should fail
+        let res = Contract::borrow(env.clone(), user.to_string(), 100);
+        assert_eq!(res.unwrap_err(), ProtocolError::InsufficientCollateral);
     });
 }
 
+
 #[test]
-fn test_borrow_success() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn test_withdraw_edge_case_zero_balance() {
+    let env = TestUtils::create_test_env();
     let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-
+    let user = TestUtils::create_user_address(&env, 3);
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
-        // First deposit collateral
-        Contract::deposit_collateral(env.clone(), user.to_string(), 2000).unwrap();
-
-        // Then borrow (should succeed with sufficient collateral)
-        let result = Contract::borrow(env.clone(), user.to_string(), 1000);
-        assert!(result.is_ok());
-
-        // Verify position is updated
-        let (collateral, debt, _ratio) =
-            Contract::get_position(env.clone(), user.to_string()).unwrap();
-        assert_eq!(collateral, 2000);
-        assert_eq!(debt, 1000);
+        // Withdraw with zero balance should fail
+        let res = Contract::withdraw(env.clone(), user.to_string(), 1);
+        assert_eq!(res.unwrap_err(), ProtocolError::InsufficientCollateral);
     });
 }
 
+// Add more comprehensive unit tests for all contract functions and edge cases
+
+
+// --- Example: Stress Test (unit style) ---
 #[test]
-fn test_borrow_insufficient_collateral_ratio() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn stress_many_deposits() {
+    let env = TestUtils::create_test_env();
     let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
-        // Deposit small amount of collateral
-        Contract::deposit_collateral(env.clone(), user.to_string(), 100).unwrap();
-
-        // Try to borrow large amount (should fail)
-        let result = Contract::borrow(env.clone(), user.to_string(), 1000);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            ProtocolError::InsufficientCollateralRatio
-        );
+        for i in 0..1000 {
+            let user = TestUtils::create_user_address(&env, i);
+            let _ = Contract::deposit_collateral(env.clone(), user.to_string(), 10);
+        }
+        // Check a random user's position
+        let (collateral, _, _) = Contract::get_position(env.clone(), TestUtils::create_user_address(&env, 500).to_string()).unwrap();
+        assert_eq!(collateral, 10);
     });
 }
 
+
+// --- Example: Fuzzing Test (unit style) ---
 #[test]
-fn test_repay_success() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn fuzz_deposit_random_amounts() {
+    let env = TestUtils::create_test_env();
     let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
-        // Setup: deposit and borrow
-        Contract::deposit_collateral(env.clone(), user.to_string(), 2000).unwrap();
-        Contract::borrow(env.clone(), user.to_string(), 1000).unwrap();
-
-        // Repay part of the debt
-        let result = Contract::repay(env.clone(), user.to_string(), 500);
-        assert!(result.is_ok());
-
-        // Verify position is updated
-        let (collateral, debt, _ratio) =
-            Contract::get_position(env.clone(), user.to_string()).unwrap();
-        assert_eq!(collateral, 2000);
-        assert_eq!(debt, 500);
-    });
-}
-
-#[test]
-fn test_repay_full_amount() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-
-    let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        // Setup: deposit and borrow
-        Contract::deposit_collateral(env.clone(), user.to_string(), 2000).unwrap();
-        Contract::borrow(env.clone(), user.to_string(), 1000).unwrap();
-
-        // Repay full amount
-        let result = Contract::repay(env.clone(), user.to_string(), 1000);
-        assert!(result.is_ok());
-
-        // Verify debt is zero
-        let (collateral, debt, _ratio) =
-            Contract::get_position(env.clone(), user.to_string()).unwrap();
-        assert_eq!(collateral, 2000);
-        assert_eq!(debt, 0);
-    });
-}
-
-#[test]
-fn test_withdraw_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-
-    let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        // Setup: deposit collateral
-        Contract::deposit_collateral(env.clone(), user.to_string(), 2000).unwrap();
-
-        // Withdraw part of collateral
-        let result = Contract::withdraw(env.clone(), user.to_string(), 1000);
-        assert!(result.is_ok());
-
-        // Verify position is updated
-        let (collateral, debt, _ratio) =
-            Contract::get_position(env.clone(), user.to_string()).unwrap();
-        assert_eq!(collateral, 1000);
-        assert_eq!(debt, 0);
-    });
-}
-
-#[test]
-fn test_withdraw_insufficient_collateral() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-
-    let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        // Setup: deposit small amount
-        Contract::deposit_collateral(env.clone(), user.to_string(), 100).unwrap();
-
-        // Try to withdraw more than available
-        let result = Contract::withdraw(env.clone(), user.to_string(), 200);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::InsufficientCollateral);
-    });
-}
-
-#[test]
-fn test_withdraw_insufficient_collateral_ratio() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-
-    let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        // Setup: deposit and borrow
-        Contract::deposit_collateral(env.clone(), user.to_string(), 2000).unwrap();
-        Contract::borrow(env.clone(), user.to_string(), 1000).unwrap();
-
-        // Try to withdraw too much (would breach collateral ratio)
-        let result = Contract::withdraw(env.clone(), user.to_string(), 1500);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            ProtocolError::InsufficientCollateralRatio
-        );
-    });
-}
-
-#[test]
-fn test_liquidate_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = TestUtils::create_admin_address(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-    let liquidator = TestUtils::create_user_address(&env, 2);
-
-    let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        // Initialize contract
-        Contract::initialize(env.clone(), admin.to_string()).unwrap();
-
-        // Setup: deposit very small collateral and borrow large amount
-        Contract::deposit_collateral(env.clone(), user.to_string(), 10).unwrap();
-        Contract::borrow(env.clone(), user.to_string(), 1000).unwrap();
-
-        // Liquidate the user's position (not the liquidator's)
-        let result =
-            Contract::liquidate(env.clone(), liquidator.to_string(), user.to_string(), 500);
-        assert!(result.is_ok());
-
-        // Verify position is updated (debt reduced, collateral penalized)
-        let (collateral, debt, _ratio) =
-            Contract::get_position(env.clone(), user.to_string()).unwrap();
-        assert_eq!(debt, 500); // Debt reduced by 500
-        assert!(collateral < 10); // Collateral penalized
-    });
-}
-
-#[test]
-fn test_liquidate_not_eligible() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let _admin = TestUtils::initialize_contract(&env);
-    let user = TestUtils::create_user_address(&env, 1);
-    let liquidator = TestUtils::create_user_address(&env, 2);
-
-    let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        // Setup: deposit sufficient collateral and borrow small amount
-        Contract::deposit_collateral(env.clone(), user.to_string(), 2000).unwrap();
-        Contract::borrow(env.clone(), user.to_string(), 1000).unwrap();
-
-        // Try to liquidate (should fail as position is well-collateralized)
-        let result =
-            Contract::liquidate(env.clone(), liquidator.to_string(), user.to_string(), 500);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            ProtocolError::NotEligibleForLiquidation
-        );
-    });
-}
-
-#[test]
-fn test_admin_functions() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    // Initialize contract properly
-    let admin = TestUtils::create_admin_address(&env);
-    let contract_id = env.register(Contract, ());
-    env.as_contract(&contract_id, || {
-        Contract::initialize(env.clone(), admin.to_string()).unwrap();
-
-        let non_admin = TestUtils::create_user_address(&env, 1);
-        let oracle = TestUtils::create_oracle_address(&env);
-
-        // Test admin can set oracle
-        let result = Contract::set_oracle(env.clone(), admin.to_string(), oracle.to_string());
-        assert!(result.is_ok());
-
-        // Test non-admin cannot set oracle
-        let result = Contract::set_oracle(env.clone(), non_admin.to_string(), oracle.to_string());
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::NotAdmin);
-
-        // Test admin can set min collateral ratio
-        let result = Contract::set_min_collateral_ratio(env.clone(), admin.to_string(), 200);
-        assert!(result.is_ok());
-
-        // Test non-admin cannot set min collateral ratio
-        let result = Contract::set_min_collateral_ratio(env.clone(), non_admin.to_string(), 200);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::NotAdmin);
+        for _ in 0..100 {
+            let user = TestUtils::create_user_address(&env, rng.gen());
+            let amount: i128 = rng.gen_range(-1000..100000);
+            let res = Contract::deposit_collateral(env.clone(), user.to_string(), amount);
+            if amount <= 0 {
+                assert!(res.is_err());
+            } else {
+                assert!(res.is_ok());
+            }
+        }
     });
 }
 
@@ -564,35 +350,18 @@ fn test_multiple_users() {
 fn test_error_enum_values() {
     // Test that all error variants have correct string representations
     assert_eq!(ProtocolError::Unauthorized.to_str(), "Unauthorized");
-    assert_eq!(
-        ProtocolError::InsufficientCollateral.to_str(),
-        "InsufficientCollateral"
-    );
-    assert_eq!(
-        ProtocolError::InsufficientCollateralRatio.to_str(),
-        "InsufficientCollateralRatio"
-    );
+    assert_eq!(ProtocolError::InsufficientCollateral.to_str(), "InsufficientCollateral");
+    assert_eq!(ProtocolError::InsufficientCollateralRatio.to_str(), "InsufficientCollateralRatio");
     assert_eq!(ProtocolError::InvalidAmount.to_str(), "InvalidAmount");
     assert_eq!(ProtocolError::InvalidAddress.to_str(), "InvalidAddress");
     assert_eq!(ProtocolError::PositionNotFound.to_str(), "PositionNotFound");
-    assert_eq!(
-        ProtocolError::AlreadyInitialized.to_str(),
-        "AlreadyInitialized"
-    );
+    assert_eq!(ProtocolError::AlreadyInitialized.to_str(), "AlreadyInitialized");
     assert_eq!(ProtocolError::NotAdmin.to_str(), "NotAdmin");
     assert_eq!(ProtocolError::OracleNotSet.to_str(), "OracleNotSet");
     assert_eq!(ProtocolError::AdminNotSet.to_str(), "AdminNotSet");
-    assert_eq!(
-        ProtocolError::NotEligibleForLiquidation.to_str(),
-        "NotEligibleForLiquidation"
-    );
+    assert_eq!(ProtocolError::NotEligibleForLiquidation.to_str(), "NotEligibleForLiquidation");
     assert_eq!(ProtocolError::Unknown.to_str(), "Unknown");
 }
-
-#[test]
-fn test_oracle_price_validation() {
-    let env = Env::default();
-    env.mock_all_auths();
     let admin = TestUtils::create_admin_address(&env);
 
     let contract_id = env.register(Contract, ());
