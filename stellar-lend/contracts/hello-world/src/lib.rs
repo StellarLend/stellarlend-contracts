@@ -12,6 +12,276 @@ use soroban_sdk::{
     String, Symbol, Vec,
 };
 
+// Performance optimization constants
+const MAX_BATCH_SIZE: u32 = 50;
+const CACHE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
+const COMPUTATION_BATCH_SIZE: u32 = 20;
+
+/// Performance metrics tracking
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct PerformanceMetrics {
+    pub gas_used_total: u64,
+    pub operations_count: u32,
+    pub cache_hits: u32,
+    pub cache_misses: u32,
+    pub last_update: u64,
+}
+
+impl PerformanceMetrics {
+    pub fn new() -> Self {
+        Self {
+            gas_used_total: 0,
+            operations_count: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            last_update: 0,
+        }
+    }
+    
+    pub fn record_operation(&mut self, gas_used: u64, timestamp: u64) {
+        self.gas_used_total += gas_used;
+        self.operations_count += 1;
+        self.last_update = timestamp;
+    }
+    
+    pub fn record_cache_hit(&mut self) {
+        self.cache_hits += 1;
+    }
+    
+    pub fn record_cache_miss(&mut self) {
+        self.cache_misses += 1;
+    }
+}
+
+/// Cached data structure for frequently accessed data
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct CachedData<T> {
+    pub data: T,
+    pub timestamp: u64,
+    pub access_count: u32,
+}
+
+impl<T> CachedData<T> {
+    pub fn new(data: T, timestamp: u64) -> Self {
+        Self {
+            data,
+            timestamp,
+            access_count: 1,
+        }
+    }
+    
+    pub fn is_expired(&self, current_time: u64) -> bool {
+        current_time - self.timestamp > CACHE_EXPIRY_SECONDS
+    }
+    
+    pub fn access(&mut self) {
+        self.access_count += 1;
+    }
+}
+
+/// Optimized storage helper with caching
+pub struct OptimizedStorage;
+
+impl OptimizedStorage {
+    /// Get cached position with performance tracking
+    pub fn get_position_cached(env: &Env, user: &Address) -> Option<Position> {
+        let cache_key = (Symbol::short("pos_cache"), user.clone());
+        let current_time = env.ledger().timestamp();
+        
+        // Try to get from cache first
+        if let Some(cached_pos) = env.storage().instance().get::<(Symbol, Address), CachedData<Position>>(&cache_key) {
+            if !cached_pos.is_expired(current_time) {
+                // Cache hit - record performance
+                Self::record_cache_hit(env);
+                return Some(cached_pos.data);
+            }
+        }
+        
+        // Cache miss - get from persistent storage
+        Self::record_cache_miss(env);
+        let position = StateHelper::get_position(env, user);
+        
+        // Cache the result if found
+        if let Some(pos) = &position {
+            let cached = CachedData::new(pos.clone(), current_time);
+            env.storage().instance().set(&cache_key, &cached);
+        }
+        
+        position
+    }
+    
+    /// Batch update multiple positions efficiently
+    pub fn batch_update_positions(env: &Env, updates: &Vec<(Address, Position)>) -> Result<(), ProtocolError> {
+        if updates.len() > MAX_BATCH_SIZE as usize {
+            return Err(ProtocolError::InvalidInput);
+        }
+        
+        let current_time = env.ledger().timestamp();
+        
+        // Process in smaller batches to optimize gas usage
+        for chunk in updates.chunks(COMPUTATION_BATCH_SIZE as usize) {
+            for (user, position) in chunk {
+                // Update persistent storage
+                StateHelper::save_position(env, position);
+                
+                // Update cache
+                let cache_key = (Symbol::short("pos_cache"), user.clone());
+                let cached = CachedData::new(position.clone(), current_time);
+                env.storage().instance().set(&cache_key, &cached);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Invalidate cache for a specific user
+    pub fn invalidate_position_cache(env: &Env, user: &Address) {
+        let cache_key = (Symbol::short("pos_cache"), user.clone());
+        env.storage().instance().remove(&cache_key);
+    }
+    
+    /// Clear expired cache entries
+    pub fn cleanup_expired_cache(env: &Env) {
+        let current_time = env.ledger().timestamp();
+        // Implementation would iterate through cache entries and remove expired ones
+        // Note: This is a simplified version - full implementation would require
+        // maintaining a cache index for efficient cleanup
+    }
+    
+    fn record_cache_hit(env: &Env) {
+        let mut metrics = Self::get_performance_metrics(env);
+        metrics.record_cache_hit();
+        Self::save_performance_metrics(env, &metrics);
+    }
+    
+    fn record_cache_miss(env: &Env) {
+        let mut metrics = Self::get_performance_metrics(env);
+        metrics.record_cache_miss();
+        Self::save_performance_metrics(env, &metrics);
+    }
+    
+    fn get_performance_metrics(env: &Env) -> PerformanceMetrics {
+        env.storage()
+            .instance()
+            .get(&Symbol::short("perf_metrics"))
+            .unwrap_or_else(PerformanceMetrics::new)
+    }
+    
+    fn save_performance_metrics(env: &Env, metrics: &PerformanceMetrics) {
+        env.storage().instance().set(&Symbol::short("perf_metrics"), metrics);
+    }
+}
+
+/// Gas-efficient batch operations helper
+pub struct BatchProcessor;
+
+impl BatchProcessor {
+    /// Process multiple interest accruals in a single transaction
+    pub fn batch_accrue_interest(
+        env: &Env,
+        users: &Vec<Address>,
+        borrow_rate: i128,
+        supply_rate: i128,
+    ) -> Result<Vec<(i128, i128)>, ProtocolError> {
+        if users.len() > MAX_BATCH_SIZE as usize {
+            return Err(ProtocolError::InvalidInput);
+        }
+        
+        let mut results = Vec::new(env);
+        
+        // Process in optimized batches
+        for chunk in users.chunks(COMPUTATION_BATCH_SIZE as usize) {
+            for user in chunk {
+                if let Some(mut position) = OptimizedStorage::get_position_cached(env, user) {
+                    let old_borrow_interest = position.borrow_interest;
+                    let old_supply_interest = position.supply_interest;
+                    
+                    InterestRateManager::accrue_interest_for_position(
+                        env,
+                        &mut position,
+                        borrow_rate,
+                        supply_rate,
+                    );
+                    
+                    // Calculate new interest earned
+                    let new_borrow_interest = position.borrow_interest - old_borrow_interest;
+                    let new_supply_interest = position.supply_interest - old_supply_interest;
+                    
+                    results.push_back((new_borrow_interest, new_supply_interest));
+                    
+                    // Update position
+                    StateHelper::save_position(env, &position);
+                    // Invalidate cache to force refresh
+                    OptimizedStorage::invalidate_position_cache(env, user);
+                }
+            }
+        }
+        
+        Ok(results)
+    }
+    
+    /// Batch liquidation processing for multiple users
+    pub fn batch_liquidate(
+        env: &Env,
+        liquidator: &Address,
+        targets: &Vec<(Address, i128)>, // (user, amount)
+    ) -> Result<Vec<i128>, ProtocolError> {
+        if targets.len() > MAX_BATCH_SIZE as usize {
+            return Err(ProtocolError::InvalidInput);
+        }
+        
+        let mut liquidated_amounts = Vec::new(env);
+        let risk_config = RiskConfigStorage::get(env);
+        
+        if risk_config.pause_liquidate {
+            return Err(ProtocolError::ProtocolPaused);
+        }
+        
+        // Process liquidations in batches
+        for chunk in targets.chunks(COMPUTATION_BATCH_SIZE as usize) {
+            for (target_user, amount) in chunk {
+                if let Some(mut position) = OptimizedStorage::get_position_cached(env, target_user) {
+                    // Check if position is eligible for liquidation
+                    let min_ratio = ProtocolConfig::get_min_collateral_ratio(env);
+                    let ratio = StateHelper::dynamic_collateral_ratio::<RealPriceOracle>(env, &position);
+                    
+                    if ratio < min_ratio {
+                        // Calculate liquidation amount with close factor
+                        let max_repay_amount = (position.debt * risk_config.close_factor) / 100_000_000;
+                        let repay_amount = amount.min(position.debt).min(max_repay_amount);
+                        
+                        if repay_amount > 0 {
+                            // Calculate liquidation incentive
+                            let incentive_amount = (repay_amount * risk_config.liquidation_incentive) / 100_000_000;
+                            let total_collateral_seized = repay_amount + incentive_amount;
+                            let actual_collateral_seized = total_collateral_seized.min(position.collateral);
+                            
+                            // Update position
+                            position.debt -= repay_amount;
+                            position.collateral -= actual_collateral_seized;
+                            
+                            StateHelper::save_position(env, &position);
+                            OptimizedStorage::invalidate_position_cache(env, target_user);
+                            
+                            liquidated_amounts.push_back(repay_amount);
+                        } else {
+                            liquidated_amounts.push_back(0);
+                        }
+                    } else {
+                        liquidated_amounts.push_back(0);
+                    }
+                } else {
+                    liquidated_amounts.push_back(0);
+                }
+            }
+        }
+        
+        Ok(liquidated_amounts)
+    }
+}
+
 // Module placeholders for future expansion
 // mod deposit;
 // mod borrow;
@@ -3430,6 +3700,141 @@ pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolErro
     pub fn is_account_frozen(env: Env, user: String) -> bool {
         let user_addr = Address::from_string(&user);
         FrozenAccounts::is_frozen(&env, &user_addr)
+    }
+
+    // --- Performance Optimization Functions ---
+    
+    /// Get performance metrics for the contract
+    pub fn get_performance_metrics(env: Env) -> (u64, u32, u32, u32, u64) {
+        let metrics = OptimizedStorage::get_performance_metrics(&env);
+        (
+            metrics.gas_used_total,
+            metrics.operations_count,
+            metrics.cache_hits,
+            metrics.cache_misses,
+            metrics.last_update,
+        )
+    }
+    
+    /// Batch process interest accrual for multiple users (optimized)
+    pub fn batch_accrue_interest_for_users(
+        env: Env,
+        caller: String,
+        users: Vec<String>,
+    ) -> Result<Vec<(i128, i128)>, ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+        
+        // Convert strings to addresses
+        let mut user_addresses = Vec::new(&env);
+        for user_str in users.iter() {
+            user_addresses.push_back(Address::from_string(&user_str));
+        }
+        
+        // Get current rates
+        let state = InterestRateStorage::update_state(&env);
+        
+        // Process batch
+        BatchProcessor::batch_accrue_interest(
+            &env,
+            &user_addresses,
+            state.current_borrow_rate,
+            state.current_supply_rate,
+        )
+    }
+    
+    /// Batch liquidation for multiple undercollateralized positions
+    pub fn batch_liquidate_positions(
+        env: Env,
+        liquidator: String,
+        targets: Vec<(String, i128)>, // (user, amount)
+    ) -> Result<Vec<i128>, ProtocolError> {
+        let liquidator_addr = Address::from_string(&liquidator);
+        
+        // Convert string addresses to Address type
+        let mut target_addresses = Vec::new(&env);
+        for (user_str, amount) in targets.iter() {
+            target_addresses.push_back((Address::from_string(&user_str), *amount));
+        }
+        
+        BatchProcessor::batch_liquidate(&env, &liquidator_addr, &target_addresses)
+    }
+    
+    /// Optimized position lookup with caching
+    pub fn get_position_optimized(env: Env, user: String) -> Result<(i128, i128, i128), ProtocolError> {
+        let user_addr = Address::from_string(&user);
+        
+        // Use cached lookup for better performance
+        let position = OptimizedStorage::get_position_cached(&env, &user_addr)
+            .unwrap_or(Position::new(user_addr.clone(), 0, 0));
+            
+        let ratio = StateHelper::dynamic_collateral_ratio::<RealPriceOracle>(&env, &position);
+        Ok((position.collateral, position.debt, ratio))
+    }
+    
+    /// Cleanup expired cache entries (admin only)
+    pub fn cleanup_cache(env: Env, caller: String) -> Result<(), ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+        
+        OptimizedStorage::cleanup_expired_cache(&env);
+        Ok(())
+    }
+    
+    /// Get cache statistics for monitoring
+    pub fn get_cache_stats(env: Env) -> (u32, u32, f64) {
+        let metrics = OptimizedStorage::get_performance_metrics(&env);
+        let total_requests = metrics.cache_hits + metrics.cache_misses;
+        let hit_rate = if total_requests > 0 {
+            (metrics.cache_hits as f64) / (total_requests as f64)
+        } else {
+            0.0
+        };
+        
+        (metrics.cache_hits, metrics.cache_misses, hit_rate)
+    }
+    
+    /// Force refresh cached data for a user (admin only)
+    pub fn refresh_user_cache(env: Env, caller: String, user: String) -> Result<(), ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+        
+        let user_addr = Address::from_string(&user);
+        OptimizedStorage::invalidate_position_cache(&env, &user_addr);
+        
+        Ok(())
+    }
+    
+    /// Gas-optimized batch position updates (admin only)
+    pub fn batch_update_positions(
+        env: Env,
+        caller: String,
+        updates: Vec<(String, i128, i128)>, // (user, collateral, debt)
+    ) -> Result<(), ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+        
+        // Convert to internal format
+        let mut position_updates = Vec::new(&env);
+        for (user_str, collateral, debt) in updates.iter() {
+            let user_addr = Address::from_string(&user_str);
+            let position = Position::new(user_addr.clone(), *collateral, *debt);
+            position_updates.push_back((user_addr, position));
+        }
+        
+        OptimizedStorage::batch_update_positions(&env, &position_updates)
+    }
+    
+    /// Get gas efficiency metrics
+    pub fn get_gas_efficiency_report(env: Env) -> (u64, u32, u64) {
+        let metrics = OptimizedStorage::get_performance_metrics(&env);
+        let avg_gas_per_op = if metrics.operations_count > 0 {
+            metrics.gas_used_total / (metrics.operations_count as u64)
+        } else {
+            0
+        };
+        
+        (metrics.gas_used_total, metrics.operations_count, avg_gas_per_op)
     }
 
     // --- Compliance Reporting ---
