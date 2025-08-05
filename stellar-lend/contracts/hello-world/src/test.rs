@@ -563,7 +563,7 @@ fn test_multiple_users() {
 #[test]
 fn test_error_enum_values() {
     // Test that all error variants have correct string representations
-    assert_eq!(ProtocolError::Unauthorized.to_str(), "Unauthorized");
+    assert_eq!(ProtocolError::Unauthorized.to_str(), "Unauthorized access denied");
     assert_eq!(
         ProtocolError::InsufficientCollateral.to_str(),
         "InsufficientCollateral"
