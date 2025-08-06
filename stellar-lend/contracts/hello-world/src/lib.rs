@@ -1724,7 +1724,7 @@ impl ErrorAnalytics {
     pub fn record_error(&mut self, error_code: u32, timestamp: u64, is_critical: bool) {
         self.total_errors += 1;
         self.last_error_timestamp = timestamp;
-        
+
         if is_critical {
             self.critical_errors += 1;
         }
@@ -1739,7 +1739,7 @@ impl ErrorAnalytics {
                 break;
             }
         }
-        
+
         if !found {
             self.error_counts.push_back((error_code, 1));
         }
@@ -1759,7 +1759,7 @@ impl ErrorAnalytics {
     fn update_most_frequent_error(&mut self) {
         let mut max_count = 0;
         let mut max_error = 0;
-        
+
         for i in 0..self.error_counts.len() {
             let (code, count) = self.error_counts.get(i).unwrap();
             if count > max_count {
@@ -1767,7 +1767,7 @@ impl ErrorAnalytics {
                 max_error = code;
             }
         }
-        
+
         self.most_frequent_error = max_error;
     }
 
@@ -1804,7 +1804,7 @@ impl ErrorLogger {
         context_data: &str,
     ) -> ErrorContext {
         let context = ErrorContext::new(env, error, user, function, context_data);
-        
+
         // Get next error index
         let counter = env.storage().instance().get::<Symbol, u32>(&Self::error_counter_key()).unwrap_or(0);
         let next_counter = counter + 1;
@@ -1840,34 +1840,34 @@ impl ErrorLogger {
         recovery_fn: fn(&Env, &ErrorContext) -> Result<(), ProtocolError>,
     ) -> Result<(), ProtocolError> {
         context.mark_recovery_attempted();
-        
+
         // Update analytics
         let mut analytics = Self::get_analytics(env);
         analytics.record_recovery_attempt();
-        
+
         match recovery_fn(env, &context) {
             Ok(()) => {
                 context.mark_recovery_successful();
                 analytics.record_successful_recovery();
                 Self::save_analytics(env, &analytics);
-                
+
                 // Emit recovery success event
                 env.events().publish(
                     (Symbol::short("recovery_success"), Symbol::short("error_code")),
                     (context.error_code, env.ledger().timestamp()),
                 );
-                
+
                 Ok(())
             }
             Err(recovery_error) => {
                 Self::save_analytics(env, &analytics);
-                
+
                 // Emit recovery failure event
                 env.events().publish(
                     (Symbol::short("recovery_failed"), Symbol::short("error_code")),
                     (context.error_code, recovery_error.get_error_code(), env.ledger().timestamp()),
                 );
-                
+
                 Err(recovery_error)
             }
         }
@@ -1891,16 +1891,16 @@ impl ErrorLogger {
     pub fn get_recent_errors(env: &Env, limit: u32) -> Vec<ErrorContext> {
         let mut errors = Vec::new(env);
         let counter = env.storage().instance().get::<Symbol, u32>(&Self::error_counter_key()).unwrap_or(0);
-        
+
         let start = if counter > limit { counter - limit } else { 0 };
-        
+
         for i in start..counter {
             let log_index = (i + 1) % 100;
             if let Some(error_context) = Self::get_error_log(env, log_index) {
                 errors.push_back(error_context);
             }
         }
-        
+
         errors
     }
 
@@ -1947,7 +1947,7 @@ impl ErrorRecovery {
         // Attempt to retry the storage operation after a brief delay
         let test_key = Symbol::short("storage_test");
         env.storage().instance().set(&test_key, &true);
-        
+
         if env.storage().instance().has(&test_key) {
             env.storage().instance().remove(&test_key);
             Ok(())
@@ -2310,7 +2310,7 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
         }
 
         let depositor_addr = Address::from_string(&depositor);
-        
+
         // Enhanced security checks with error logging
         if FrozenAccounts::is_frozen(&env, &depositor_addr) {
             SecurityMonitor::record_suspicious(&env, &depositor_addr, "deposit while frozen");
@@ -2318,7 +2318,7 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
             ErrorLogger::log_error(&env, &error, Some(depositor_addr.clone()), "deposit_collateral", "Account is frozen");
             return Err(error);
         }
-        
+
         // Compliance checks with error logging
         if let Err(error) = require_kyc(&env, &depositor_addr) {
             ErrorLogger::log_error(&env, &error, Some(depositor_addr.clone()), "deposit_collateral", "KYC requirement not met");
@@ -2342,7 +2342,7 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
         let state = match InterestRateStorage::update_state(&env) {
             state => state,
         };
-        
+
         InterestRateManager::accrue_interest_for_position(
             &env,
             &mut position,
@@ -2352,7 +2352,7 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
 
         // Update position with error recovery
         position.collateral += amount;
-        
+
         // Attempt to save position with error recovery
         let save_result = || -> Result<(), ProtocolError> {
             StateHelper::save_position(&env, &position);
@@ -2362,13 +2362,13 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
         if let Err(error) = save_result() {
             let storage_error = ProtocolError::StorageError;
             let context = ErrorLogger::log_error(
-                &env, 
-                &storage_error, 
-                Some(depositor_addr.clone()), 
-                "deposit_collateral", 
+                &env,
+                &storage_error,
+                Some(depositor_addr.clone()),
+                "deposit_collateral",
                 "Failed to save user position"
             );
-            
+
             // Attempt recovery
             match ErrorRecovery::attempt_recovery(&env, &storage_error, context) {
                 Ok(()) => {
@@ -2382,7 +2382,7 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
         // Update total supplied amount with error recovery
         let mut ir_state = InterestRateStorage::get_state(&env);
         ir_state.total_supplied += amount;
-        
+
         let save_ir_result = || -> Result<(), ProtocolError> {
             InterestRateStorage::save_state(&env, &ir_state);
             Ok(())
@@ -2391,13 +2391,13 @@ pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(
         if let Err(_) = save_ir_result() {
             let storage_error = ProtocolError::StorageError;
             let context = ErrorLogger::log_error(
-                &env, 
-                &storage_error, 
-                Some(depositor_addr.clone()), 
-                "deposit_collateral", 
+                &env,
+                &storage_error,
+                Some(depositor_addr.clone()),
+                "deposit_collateral",
                 "Failed to update interest rate state"
             );
-            
+
             // Attempt recovery
             if let Err(_) = ErrorRecovery::attempt_recovery(&env, &storage_error, context) {
                 return Err(storage_error);
@@ -3468,6 +3468,89 @@ pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolErro
         // NOTE: In production, this would aggregate KYC-verified, blacklisted, and flagged users from indexed events.
         (0, 0, 0) // (kyc_verified_count, blacklisted_count, suspicious_count)
     }
+}
+
+/// Defines user categories for tiered fee logic.
+///
+/// - `Basic`: Default tier for new or non-premium users.
+/// - `Premium`: Mid-level users with improved access/benefits.
+/// - `VIP`: High-tier users with the lowest fees.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UserTier {
+    Basic,
+    Premium,
+    VIP,
+}
+
+/// Tracks user performance metrics (e.g. repayment history).
+#[derive(Clone, Debug)]
+pub struct UserPerformance {
+    pub on_time_repayments: u32,
+    pub late_repayments: u32,
+}
+
+impl UserPerformance {
+    pub fn score(&self) -> u32 {
+        self.on_time_repayments.saturating_sub(self.late_repayments)
+    }
+
+    pub fn discount(&self) -> u32 {
+        let score = self.score();
+        if score >= 20 {
+            30
+        } else if score >= 10 {
+            20
+        } else if score >= 5 {
+            10
+        } else {
+            0
+        }
+    }
+}
+
+/// Simulates current network or protocol usage for dynamic fee scaling.
+pub fn get_usage_factor(env: &Env) -> u32 {
+    let timestamp = env.ledger().timestamp() % 86400; // seconds since midnight
+    if timestamp >= 18 * 3600 && timestamp <= 22 * 3600 {
+        30 // Peak hours (6pm–10pm)
+    } else {
+        10 // Off-peak
+    }
+}
+
+/// Calculates the base fee based on user tier.
+pub fn get_tier_fee(tier: &UserTier) -> u32 {
+    match tier {
+        UserTier::Basic => 100,
+        UserTier::Premium => 75,
+        UserTier::VIP => 50,
+    }
+}
+
+/// Adds dynamic fee component based on usage patterns.
+pub fn get_dynamic_fee(base_fee: u32, usage_factor: u32) -> u32 {
+    base_fee + (base_fee * usage_factor / 100)
+}
+
+/// Calculates final optimized fee.
+pub fn calculate_final_fee(base: u32, dynamic: u32, performance_discount: u32) -> u32 {
+    base + dynamic - performance_discount
+}
+
+/// Main public function to calculate optimized fee for a user
+pub fn get_optimized_fee(
+    env: Env,
+    user: Address,
+    tier: UserTier,
+    performance: UserPerformance,
+) -> u32 {
+    let base_fee = get_tier_fee(&tier);
+    let usage_factor = get_usage_factor(&env);
+    let dynamic_fee = get_dynamic_fee(base_fee, usage_factor);
+    let discount = performance.discount();
+
+    calculate_final_fee(base_fee, dynamic_fee, discount)
 }
 
 mod test;
