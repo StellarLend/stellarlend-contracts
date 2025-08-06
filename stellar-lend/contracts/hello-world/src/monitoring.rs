@@ -1,6 +1,6 @@
 //! Integration monitoring scaffolding
 use alloc::string:: { String, ToString};
-use soroban_sdk:: { Env, Vec, Symbol };
+use soroban_sdk:: { Env, Vec, Symbol, contracttype };
 
 /// Trait for monitoring hooks
 pub trait IntegrationMonitor {
@@ -37,31 +37,31 @@ impl IntegrationMonitor for StorageEventLogger {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct IntegrationEvent {
-    pub event_type: String,
-    pub details: String,
+    pub event_type: soroban_sdk::String,
+    pub details: soroban_sdk::String,
     pub timestamp: u64,
     pub success: bool,
-    pub error_message: Option<String>,
+    pub error_message: Option<soroban_sdk::String>,
 }
 
 impl IntegrationEvent {
-    pub fn new(event_type: String, details: String, timestamp: u64, success: bool) -> Self {
+    pub fn new(env: &Env, event_type: String, details: String, timestamp: u64, success: bool) -> Self {
         Self {
-            event_type,
-            details,
+            event_type: soroban_sdk::String::from_str(env, &event_type),
+            details: soroban_sdk::String::from_str(env, &details),
             timestamp,
             success,
             error_message: None,
         }
     }
 
-    pub fn with_error(event_type: String, details: String, timestamp: u64, error_message: String) -> Self {
+    pub fn with_error(env: &Env, event_type: String, details: String, timestamp: u64, error_message: String) -> Self {
         Self {
-            event_type,
-            details,
+            event_type: soroban_sdk::String::from_str(env, &event_type),
+            details: soroban_sdk::String::from_str(env, &details),
             timestamp,
             success: false,
-            error_message: Some(error_message),
+            error_message: Some(soroban_sdk::String::from_str(env, &error_message)),
         }
     }
 }
@@ -81,8 +81,9 @@ impl IntegrationMonitoring {
         env.storage().instance().set(&Symbol::short("integration_events"), &events);
 
         // Emit monitoring event
+        let event_type_str = event.event_type.to_string();
         env.events().publish(
-            (Symbol::short("IntegrationEvent"), Symbol::short(&event.event_type)),
+            (Symbol::short("IntegrationEvent"), Symbol::short(&event_type_str)),
             event.details.clone(),
         );
     }
@@ -99,9 +100,10 @@ impl IntegrationMonitoring {
     pub fn get_events_by_type(env: &Env, event_type: &str) -> Vec<IntegrationEvent> {
         let all_events = Self::get_events(env);
         let mut filtered_events = Vec::new(env);
+        let event_type_str = soroban_sdk::String::from_str(env, event_type);
 
         for event in all_events.iter() {
-            if event.event_type == event_type {
+            if event.event_type == event_type_str {
                 filtered_events.push_back(event.clone());
             }
         }

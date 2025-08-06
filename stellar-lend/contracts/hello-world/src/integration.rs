@@ -1,16 +1,12 @@
+//! Cross-protocol integration scaffolding
 use alloc::string::{String, ToString };
-use soroban_sdk::{Env, Address, Symbol, BytesN, Bytes, IntoVal, Vec, symbol_short};
+use alloc::format;
+use soroban_sdk::{Env, Address, Symbol, BytesN, Bytes, Vec, contracttype};
 
 /// Trait for cross-protocol adapters
 pub trait ProtocolAdapter {
     fn protocol_name(&self) -> &'static str;
-    fn interact(
-        &self,
-        env: &Env,
-        contract_id: &BytesN<32>,
-        function: &Symbol,
-        args: Vec<Bytes>
-    ) -> Result<Bytes, String>;
+    fn simulate_interaction(&self, env: &Env, function_name: &str, args: &[u8]) -> Result<Bytes, String>;
 }
 
 /// Generic struct for a protocol adapter
@@ -20,46 +16,23 @@ impl ProtocolAdapter for GenericProtocolAdapter {
     fn protocol_name(&self) -> &'static str {
         "GenericProtocol"
     }
-    fn interact(&self, env: &Env, contract_id: &BytesN<32>, function: &Symbol, args: Vec<Bytes> ) -> Result<Bytes, String> {
-        // Convert contract_id to Address
-        let contract_address = Address::from_string_bytes(contract_id.clone().into());
-        // Convert Vec<Bytes> to Vec<Val>
-        let mut vals = Vec::new(env);
-        for b in args.iter() {
-            vals.push_back(b.into_val(env));
+    
+    fn simulate_interaction(&self, env: &Env, function_name: &str, args: &[u8]) -> Result<Bytes, String> {
+        // Store interaction for audit
+        let mut interactions: Vec<(String, Bytes)> = env
+            .storage()
+            .instance()
+            .get(&Symbol::short("generic_interactions"))
+            .unwrap_or(Vec::new(env));
+        interactions.push_back((function_name.to_string(), Bytes::from_slice(env, args)));
+        env.storage().instance().set(&Symbol::short("generic_interactions"), &interactions);
+
+        // Simulate response
+        if function_name == "fail" {
+            Err("Generic protocol interaction failed".to_string())
+        } else {
+            Ok(Bytes::from_slice(env, b"generic_response"))
         }
-
-        // Call invoke_contract with correct types
-        let res = env.invoke_contract::<Bytes> ( &contract_address, &function.clone(), vals );
-        match res {
-            Ok(val) => Ok(val),
-            Err(e) => Err(format!("Cross-protocol call failed: {:?}", e)),
-        }
-    }
-}
-
-/// Protocol adapter registry for managing different protocol integrations
-pub struct ProtocolAdapterRegistry;
-
-impl ProtocolAdapterRegistry {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn get_adapter(&self, protocol: &Symbol) -> Option<Box<dyn ProtocolAdapter>> {
-        match protocol.to_string().as_str() {
-            "generic" => Some(Box::new(GenericProtocolAdapter)),
-            "uniswap" => Some(Box::new(UniswapAdapter)),
-            "aave" => Some(Box::new(AaveAdapter)),
-            "compound" => Some(Box::new(CompoundAdapter)),
-            _ => None,
-        }
-    }
-
-    pub fn register_adapter(&self, _protocol: &Symbol, _adapter: Box<dyn ProtocolAdapter>) -> Result<(), String> {
-        // In a real implementation, this would store adapters in contract storage
-        // For now, we'll use static dispatch
-        Ok(())
     }
 }
 
@@ -71,18 +44,22 @@ impl ProtocolAdapter for UniswapAdapter {
         "Uniswap"
     }
     
-    fn interact(&self, env: &Env, contract_id: &BytesN<32>, function: &Symbol, args: Vec<Bytes>) -> Result<Bytes, String> {
-        // Uniswap-specific interaction logic
-        let contract_address = Address::from_string_bytes(contract_id.clone().into());
-        let mut vals = Vec::new(env);
-        for b in args.iter() {
-            vals.push_back(b.into_val(env));
-        }
+    fn simulate_interaction(&self, env: &Env, function_name: &str, args: &[u8]) -> Result<Bytes, String> {
+        // Store interaction for audit
+        let mut interactions: Vec<(String, Bytes)> = env
+            .storage()
+            .instance()
+            .get(&Symbol::short("uniswap_interactions"))
+            .unwrap_or(Vec::new(env));
+        interactions.push_back((function_name.to_string(), Bytes::from_slice(env, args)));
+        env.storage().instance().set(&Symbol::short("uniswap_interactions"), &interactions);
 
-        let res = env.invoke_contract::<Bytes>(&contract_address, &function.clone(), vals);
-        match res {
-            Ok(val) => Ok(val),
-            Err(e) => Err(format!("Uniswap call failed: {:?}", e)),
+        // Simulate Uniswap-specific responses
+        match function_name {
+            "swap" => Ok(Bytes::from_slice(env, b"{\"amount_out\": 1000000}")),
+            "add_liquidity" => Ok(Bytes::from_slice(env, b"{\"liquidity_tokens\": 500000}")),
+            "remove_liquidity" => Ok(Bytes::from_slice(env, b"{\"tokens_returned\": [100000, 200000]}")),
+            _ => Err("Unknown Uniswap function".to_string())
         }
     }
 }
@@ -95,18 +72,23 @@ impl ProtocolAdapter for AaveAdapter {
         "Aave"
     }
     
-    fn interact(&self, env: &Env, contract_id: &BytesN<32>, function: &Symbol, args: Vec<Bytes>) -> Result<Bytes, String> {
-        // Aave-specific interaction logic
-        let contract_address = Address::from_string_bytes(contract_id.clone().into());
-        let mut vals = Vec::new(env);
-        for b in args.iter() {
-            vals.push_back(b.into_val(env));
-        }
+    fn simulate_interaction(&self, env: &Env, function_name: &str, args: &[u8]) -> Result<Bytes, String> {
+        // Store interaction for audit
+        let mut interactions: Vec<(String, Bytes)> = env
+            .storage()
+            .instance()
+            .get(&Symbol::short("aave_interactions"))
+            .unwrap_or(Vec::new(env));
+        interactions.push_back((function_name.to_string(), Bytes::from_slice(env, args)));
+        env.storage().instance().set(&Symbol::short("aave_interactions"), &interactions);
 
-        let res = env.invoke_contract::<Bytes>(&contract_address, &function.clone(), vals);
-        match res {
-            Ok(val) => Ok(val),
-            Err(e) => Err(format!("Aave call failed: {:?}", e)),
+        // Simulate Aave-specific responses
+        match function_name {
+            "deposit" => Ok(Bytes::from_slice(env, b"{\"aTokens_minted\": 1000000}")),
+            "withdraw" => Ok(Bytes::from_slice(env, b"{\"tokens_withdrawn\": 950000}")),
+            "borrow" => Ok(Bytes::from_slice(env, b"{\"borrowed_amount\": 500000}")),
+            "repay" => Ok(Bytes::from_slice(env, b"{\"repaid_amount\": 500000}")),
+            _ => Err("Unknown Aave function".to_string())
         }
     }
 }
@@ -119,59 +101,67 @@ impl ProtocolAdapter for CompoundAdapter {
         "Compound"
     }
     
-    fn interact(&self, env: &Env, contract_id: &BytesN<32>, function: &Symbol, args: Vec<Bytes>) -> Result<Bytes, String> {
-        // Compound-specific interaction logic
-        let contract_address = Address::from_string_bytes(contract_id.clone().into());
-        let mut vals = Vec::new(env);
-        for b in args.iter() {
-            vals.push_back(b.into_val(env));
-        }
+    fn simulate_interaction(&self, env: &Env, function_name: &str, args: &[u8]) -> Result<Bytes, String> {
+        // Store interaction for audit
+        let mut interactions: Vec<(String, Bytes)> = env
+            .storage()
+            .instance()
+            .get(&Symbol::short("compound_interactions"))
+            .unwrap_or(Vec::new(env));
+        interactions.push_back((function_name.to_string(), Bytes::from_slice(env, args)));
+        env.storage().instance().set(&Symbol::short("compound_interactions"), &interactions);
 
-        let res = env.invoke_contract::<Bytes>(&contract_address, &function.clone(), vals);
-        match res {
-            Ok(val) => Ok(val),
-            Err(e) => Err(format!("Compound call failed: {:?}", e)),
+        // Simulate Compound-specific responses
+        match function_name {
+            "mint" => Ok(Bytes::from_slice(env, b"{\"cTokens_minted\": 1000000}")),
+            "redeem" => Ok(Bytes::from_slice(env, b"{\"tokens_redeemed\": 950000}")),
+            "borrow" => Ok(Bytes::from_slice(env, b"{\"borrowed_amount\": 500000}")),
+            "repay_borrow" => Ok(Bytes::from_slice(env, b"{\"repaid_amount\": 500000}")),
+            _ => Err("Unknown Compound function".to_string())
         }
     }
 }
 
-/// Enum-based registry for known adapters (static dispatch, Soroban-friendly)
-pub enum KnownAdapters {
-    Generic(GenericProtocolAdapter),
-    Uniswap(UniswapAdapter),
-    Aave(AaveAdapter),
-    Compound(CompoundAdapter),
-}
+/// Protocol adapter registry for managing different protocol integrations
+pub struct ProtocolAdapterRegistry;
 
-impl KnownAdapters {
-    pub fn get(protocol: &Symbol) -> Option<Self> {
-        match protocol.to_string().as_str() {
-            "generic" => Some(KnownAdapters::Generic(GenericProtocolAdapter)),
-            "uniswap" => Some(KnownAdapters::Uniswap(UniswapAdapter)),
-            "aave" => Some(KnownAdapters::Aave(AaveAdapter)),
-            "compound" => Some(KnownAdapters::Compound(CompoundAdapter)),
-            _ => None,
-        }
+impl ProtocolAdapterRegistry {
+    pub fn new() -> Self {
+        Self
     }
-    
-    pub fn interact(
+
+    pub fn call_protocol(
         &self,
         env: &Env,
-        contract_id: &BytesN<32>,
-        function: &Symbol,
-        args: Vec<Bytes>,
+        protocol_name: &str,
+        function_name: &str,
+        args: &[u8]
     ) -> Result<Bytes, String> {
-        match self {
-            KnownAdapters::Generic(adapter) => adapter.interact(env, contract_id, function, args),
-            KnownAdapters::Uniswap(adapter) => adapter.interact(env, contract_id, function, args),
-            KnownAdapters::Aave(adapter) => adapter.interact(env, contract_id, function, args),
-            KnownAdapters::Compound(adapter) => adapter.interact(env, contract_id, function, args),
+        match protocol_name {
+            "generic" => {
+                let adapter = GenericProtocolAdapter;
+                adapter.simulate_interaction(env, function_name, args)
+            }
+            "uniswap" => {
+                let adapter = UniswapAdapter;
+                adapter.simulate_interaction(env, function_name, args)
+            }
+            "aave" => {
+                let adapter = AaveAdapter;
+                adapter.simulate_interaction(env, function_name, args)
+            }
+            "compound" => {
+                let adapter = CompoundAdapter;
+                adapter.simulate_interaction(env, function_name, args)
+            }
+            _ => Err(format!("Unknown protocol: {}", protocol_name))
         }
     }
 }
 
 /// Integration status tracking
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
 pub struct IntegrationStatus {
     pub protocol: String,
     pub is_active: bool,
@@ -189,5 +179,115 @@ impl IntegrationStatus {
             success_count: 0,
             failure_count: 0,
         }
+    }
+
+    pub fn record_success(&mut self, env: &Env) {
+        self.success_count += 1;
+        self.last_interaction = env.ledger().timestamp();
+    }
+
+    pub fn record_failure(&mut self, env: &Env) {
+        self.failure_count += 1;
+        self.last_interaction = env.ledger().timestamp();
+    }
+}
+
+/// Integration monitoring
+pub struct IntegrationMonitor;
+
+impl IntegrationMonitor {
+    pub fn record_status(env: &Env, status: &IntegrationStatus) {
+        let mut statuses: Vec<IntegrationStatus> = env
+            .storage()
+            .instance()
+            .get(&Symbol::short("integration_statuses"))
+            .unwrap_or(Vec::new(env));
+        statuses.push_back(status.clone());
+        env.storage().instance().set(&Symbol::short("integration_statuses"), &statuses);
+    }
+
+    pub fn get_status(env: &Env, protocol: &str) -> Option<IntegrationStatus> {
+        let statuses: Vec<IntegrationStatus> = env
+            .storage()
+            .instance()
+            .get(&Symbol::short("integration_statuses"))
+            .unwrap_or(Vec::new(env));
+
+        for status in statuses.iter() {
+            if status.protocol == protocol {
+                return Some(status.clone());
+            }
+        }
+        None
+    }
+
+    pub fn get_all_statuses(env: &Env) -> Vec<IntegrationStatus> {
+        env.storage()
+            .instance()
+            .get(&Symbol::short("integration_statuses"))
+            .unwrap_or(Vec::new(env))
+    }
+}
+
+/// Cross-protocol interaction record
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct CrossProtocolInteraction {
+    pub protocol: String,
+    pub function_name: String,
+    pub timestamp: u64,
+    pub success: bool,
+    pub response_size: u32,
+}
+
+impl CrossProtocolInteraction {
+    pub fn new(protocol: String, function_name: String, timestamp: u64, success: bool, response_size: u32) -> Self {
+        Self {
+            protocol,
+            function_name,
+            timestamp,
+            success,
+            response_size,
+        }
+    }
+}
+
+/// Integration analytics
+pub struct IntegrationAnalytics;
+
+impl IntegrationAnalytics {
+    pub fn record_interaction(env: &Env, interaction: &CrossProtocolInteraction) {
+        let mut interactions: Vec<CrossProtocolInteraction> = env
+            .storage()
+            .instance()
+            .get(&Symbol::short("cross_protocol_interactions"))
+            .unwrap_or(Vec::new(env));
+        interactions.push_back(interaction.clone());
+        env.storage().instance().set(&Symbol::short("cross_protocol_interactions"), &interactions);
+    }
+
+    pub fn get_interaction_history(env: &Env) -> Vec<CrossProtocolInteraction> {
+        env.storage()
+            .instance()
+            .get(&Symbol::short("cross_protocol_interactions"))
+            .unwrap_or(Vec::new(env))
+    }
+
+    pub fn get_protocol_stats(env: &Env, protocol: &str) -> (u32, u32) {
+        let interactions = Self::get_interaction_history(env);
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        for interaction in interactions.iter() {
+            if interaction.protocol == protocol {
+                if interaction.success {
+                    success_count += 1;
+                } else {
+                    failure_count += 1;
+                }
+            }
+        }
+
+        (success_count, failure_count)
     }
 }

@@ -7,8 +7,9 @@
 extern crate alloc;
 use alloc::format;
 use alloc::string::ToString;
+use alloc::boxed::Box;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, storage, vec, Address, Env, IntoVal,
+    contract, contracterror, contractimpl, contracttype, vec, Address, Env,
     String, Symbol, Vec, BytesN, Bytes,
 };
 
@@ -3632,6 +3633,7 @@ pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolErro
     ) -> Result<(), ProtocolError> {
         let event = if success {
             monitoring::IntegrationEvent::new(
+                &env,
                 event_type,
                 details,
                 env.ledger().timestamp(),
@@ -3639,6 +3641,7 @@ pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolErro
             )
         } else {
             monitoring::IntegrationEvent::with_error(
+                &env,
                 event_type,
                 details,
                 env.ledger().timestamp(),
@@ -4269,28 +4272,5 @@ impl BlacklistStorage {
             .instance()
             .get::<Symbol, bool>(&Self::key(user))
             .unwrap_or(false)
-    }
-}
-
-// --- KYC Status Enum ---
-#[soroban_sdk::contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum KYCStatus {
-    Verified,
-    Unverified,
-}
-
-// --- KYC Storage Helper ---
-pub struct KYCStorage;
-
-impl KYCStorage {
-    fn key(user: &Address) -> (Symbol, Address) {
-        (Symbol::short("KYC"), user.clone())
-    }
-    pub fn set(env: &Env, user: &Address, status: KYCStatus) {
-        env.storage().instance().set(&Self::key(user), &status);
-    }
-    pub fn get(env: &Env, user: &Address) -> KYCStatus {
-        env.storage().instance().get(&Self::key(user)).unwrap_or(KYCStatus::Unverified)
     }
 }

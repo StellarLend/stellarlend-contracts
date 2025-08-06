@@ -130,7 +130,7 @@ impl BridgeRegistry {
                 let bridge = EthereumBridgeAdapter;
                 bridge.transfer(env, from, to, amount)
             }
-            _ => Err(format!("Unknown bridge: {}", bridge_name))
+            _ => Err(format!("Unknown bridge: {}", bridge_name).to_string())
         }
     }
 }
@@ -139,7 +139,7 @@ impl BridgeRegistry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct BridgeTransferRecord {
-    pub bridge_name: String,
+    pub bridge_name: soroban_sdk::String,
     pub from: Address,
     pub to: Address,
     pub amount: i128,
@@ -164,8 +164,9 @@ impl BridgeTransferRecord {
         timestamp: u64,
         status: BridgeTransferStatus,
     ) -> Self {
+        let env = Env::default();
         Self {
-            bridge_name,
+            bridge_name: soroban_sdk::String::from_str(&env, &bridge_name),
             from,
             to,
             amount,
@@ -201,9 +202,10 @@ impl BridgeMonitor {
         let mut pending_count = 0;
         let mut completed_count = 0;
         let mut failed_count = 0;
+        let bridge_name_str = soroban_sdk::String::from_str(env, bridge_name);
 
         for transfer in transfers.iter() {
-            if transfer.bridge_name == bridge_name {
+            if transfer.bridge_name == bridge_name_str {
                 match transfer.status {
                     BridgeTransferStatus::Pending => pending_count += 1,
                     BridgeTransferStatus::Completed => completed_count += 1,
@@ -218,9 +220,10 @@ impl BridgeMonitor {
     pub fn get_total_bridge_volume(env: &Env, bridge_name: &str) -> i128 {
         let transfers = Self::get_transfer_history(env);
         let mut total_volume = 0;
+        let bridge_name_str = soroban_sdk::String::from_str(env, bridge_name);
 
         for transfer in transfers.iter() {
-            if transfer.bridge_name == bridge_name && transfer.status == BridgeTransferStatus::Completed {
+            if transfer.bridge_name == bridge_name_str && transfer.status == BridgeTransferStatus::Completed {
                 total_volume += transfer.amount;
             }
         }

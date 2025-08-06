@@ -1,7 +1,7 @@
 //! Cross-protocol integration scaffolding
 use alloc::string:: {String, ToString };
 use alloc::format;
-use soroban_sdk::{Env, Address, Vec, Symbol, Bytes, Map};
+use soroban_sdk::{Env, Address, Vec, Symbol, Bytes, Map, contracttype};
 
 /// Trait for cross-protocol adapters
 pub trait ProtocolAdapter {
