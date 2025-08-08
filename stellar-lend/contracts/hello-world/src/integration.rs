@@ -130,6 +130,12 @@ impl ProtocolAdapterRegistry {
         Self
     }
 
+    pub fn get_adapter(&self, protocol: &Symbol) -> Option<GenericProtocolAdapter> {
+        // For simplicity, return a generic adapter for any protocol
+        // In a real implementation, this would return the specific adapter
+        Some(GenericProtocolAdapter)
+    }
+
     pub fn call_protocol(
         &self,
         env: &Env,
@@ -163,7 +169,7 @@ impl ProtocolAdapterRegistry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct IntegrationStatus {
-    pub protocol: String,
+    pub protocol: soroban_sdk::String,
     pub is_active: bool,
     pub last_interaction: u64,
     pub success_count: u32,
@@ -171,7 +177,7 @@ pub struct IntegrationStatus {
 }
 
 impl IntegrationStatus {
-    pub fn new(protocol: String) -> Self {
+    pub fn new(protocol: soroban_sdk::String) -> Self {
         Self {
             protocol,
             is_active: true,
@@ -214,7 +220,7 @@ impl IntegrationMonitor {
             .unwrap_or(Vec::new(env));
 
         for status in statuses.iter() {
-            if status.protocol == protocol {
+            if status.protocol.to_string() == protocol {
                 return Some(status.clone());
             }
         }
@@ -233,15 +239,15 @@ impl IntegrationMonitor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct CrossProtocolInteraction {
-    pub protocol: String,
-    pub function_name: String,
+    pub protocol: soroban_sdk::String,
+    pub function_name: soroban_sdk::String,
     pub timestamp: u64,
     pub success: bool,
     pub response_size: u32,
 }
 
 impl CrossProtocolInteraction {
-    pub fn new(protocol: String, function_name: String, timestamp: u64, success: bool, response_size: u32) -> Self {
+    pub fn new(protocol: soroban_sdk::String, function_name: soroban_sdk::String, timestamp: u64, success: bool, response_size: u32) -> Self {
         Self {
             protocol,
             function_name,
@@ -279,7 +285,7 @@ impl IntegrationAnalytics {
         let mut failure_count = 0;
 
         for interaction in interactions.iter() {
-            if interaction.protocol == protocol {
+            if interaction.protocol.to_string() == protocol {
                 if interaction.success {
                     success_count += 1;
                 } else {
