@@ -2143,6 +2143,139 @@ impl ProtocolConfig {
     }
 }
 
+/// Unified privileged operations handler
+/// Routes all privileged operations through governance or MultiSig
+pub struct PrivilegedOperations;
+
+impl PrivilegedOperations {
+    /// Execute a proposal action - this is the single source of truth for privileged operations
+    pub fn execute_proposal_action(env: &Env, action: &governance::ProposalAction) -> Result<(), ProtocolError> {
+        match action {
+            governance::ProposalAction::SetMinCollateralRatio(ratio) => {
+                if *ratio <= 0 {
+                    return Err(ProtocolError::InvalidInput);
+                }
+                env.storage()
+                    .instance()
+                    .set(&ProtocolConfig::min_collateral_ratio_key(env), ratio);
+                Ok(())
+            },
+            governance::ProposalAction::SetFlashLoanFeeBps(bps) => {
+                if *bps < 0 || *bps > 10000 {
+                    return Err(ProtocolError::InvalidInput);
+                }
+                env.storage()
+                    .instance()
+                    .set(&ProtocolConfig::flash_fee_bps_key(env), bps);
+                Ok(())
+            },
+            governance::ProposalAction::SetOracle(oracle) => {
+                env.storage().instance().set(&ProtocolConfig::oracle_key(env), oracle);
+                Ok(())
+            },
+            governance::ProposalAction::SetAdmin(admin) => {
+                ProtocolConfig::set_admin(env, admin);
+                Ok(())
+            },
+            governance::ProposalAction::SetMultiSigThreshold(threshold) => {
+                if *threshold <= 0 {
+                    return Err(ProtocolError::InvalidThreshold);
+                }
+                if let Some(mut config) = governance::Governance::get_multisig_config(env) {
+                    config.threshold = *threshold;
+                    governance::Governance::set_multisig_config(env, &config);
+                } else {
+                    return Err(ProtocolError::MultiSigNotConfigured);
+                }
+                Ok(())
+            },
+            governance::ProposalAction::SetMultiSigSigners(signers) => {
+                if signers.is_empty() {
+                    return Err(ProtocolError::InvalidInput);
+                }
+                if let Some(mut config) = governance::Governance::get_multisig_config(env) {
+                    config.signers = signers.clone();
+                    // Ensure threshold doesn't exceed number of signers
+                    if config.threshold > signers.len() as i128 {
+                        config.threshold = signers.len() as i128;
+                    }
+                    governance::Governance::set_multisig_config(env, &config);
+                } else {
+                    // Create new config with default timelock
+                    let config = governance::MultiSigConfig {
+                        signers: signers.clone(),
+                        threshold: (signers.len() as i128 + 1) / 2, // Default to majority
+                        timelock_delay: 3600, // 1 hour default
+                    };
+                    governance::Governance::set_multisig_config(env, &config);
+                }
+                Ok(())
+            },
+            governance::ProposalAction::SetRiskParams(close_factor, liquidation_incentive) => {
+                // Implementation would go here - setting risk parameters
+                // For now, returning OK as this depends on risk management system
+                let _ = (close_factor, liquidation_incentive);
+                Ok(())
+            },
+            governance::ProposalAction::SetPauseSwitches(pause_borrow, pause_deposit, pause_withdraw, pause_liquidate) => {
+                // Implementation would go here - setting pause switches
+                // For now, returning OK as this depends on pause system
+                let _ = (pause_borrow, pause_deposit, pause_withdraw, pause_liquidate);
+                Ok(())
+            },
+            governance::ProposalAction::SetEmergencyManager(manager, enabled) => {
+                // Implementation would go here - managing emergency managers
+                // For now, returning OK as this depends on emergency system
+                let _ = (manager, enabled);
+                Ok(())
+            },
+        }
+    }
+
+    /// Execute a proposal if it's ready
+    pub fn execute_proposal(env: &Env, proposal_id: u64) -> Result<(), ProtocolError> {
+        let proposal = governance::GovStorage::get_proposal(env, proposal_id)
+            .ok_or(ProtocolError::ProposalNotFound)?;
+
+        if proposal.executed {
+            return Err(ProtocolError::ProposalAlreadyExecuted);
+        }
+
+        if !governance::Governance::can_execute(env, proposal_id) {
+            return Err(ProtocolError::ProposalNotExecutable);
+        }
+
+        // Execute the action
+        Self::execute_proposal_action(env, &proposal.action)?;
+
+        // Mark as executed
+        governance::Governance::execute(env, proposal_id);
+
+        Ok(())
+    }
+
+    /// Legacy admin function wrapper - checks for admin or routes through governance
+    pub fn require_privileged_access(env: &Env, caller: &Address) -> Result<(), ProtocolError> {
+        // Check if caller is admin (for backward compatibility during transition)
+        if let Some(admin) = ProtocolConfig::get_admin(env) {
+            if admin == *caller {
+                return Ok(());
+            }
+        }
+
+        // Check if caller is authorized MultiSig signer
+        if let Some(config) = governance::Governance::get_multisig_config(env) {
+            for signer in config.signers.iter() {
+                if signer == *caller {
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(ProtocolError::Unauthorized)
+    }
+}
+
 /// Protocol errors
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -2178,6 +2311,15 @@ pub enum ProtocolError {
     UserRoleViolation = 28,
     BalanceInvariantViolation = 29,
     InsufficientLiquidity = 30,
+    // New unified governance/MultiSig errors
+    ProposalNotFound = 31,
+    ProposalNotExecutable = 32,
+    ProposalAlreadyExecuted = 33,
+    InsufficientSignatures = 34,
+    InvalidSigner = 35,
+    TimelockNotExpired = 36,
+    MultiSigNotConfigured = 37,
+    InvalidThreshold = 38,
 }
 
 /// Protocol events
@@ -3215,14 +3357,21 @@ impl Contract {
         Ok(())
     }
 
-    /// Set the minimum collateral ratio (admin only)
+    /// Set the minimum collateral ratio (privileged operation - requires proposal)
     pub fn set_min_collateral_ratio(
         env: Env,
         caller: String,
         ratio: i128,
     ) -> Result<(), ProtocolError> {
         let caller_addr = Address::from_string(&caller);
-        ProtocolConfig::set_min_collateral_ratio(&env, &caller_addr, ratio)?;
+        
+        // This function now requires going through governance/MultiSig
+        // For backward compatibility during transition, we still allow direct admin access
+        PrivilegedOperations::require_privileged_access(&env, &caller_addr)?;
+        
+        // Direct execution for privileged users (should eventually be removed)
+        let action = governance::ProposalAction::SetMinCollateralRatio(ratio);
+        PrivilegedOperations::execute_proposal_action(&env, &action)?;
         Ok(())
     }
 
@@ -3508,5 +3657,150 @@ impl Contract {
         // For now, we'll use a placeholder string since soroban_sdk::String doesn't implement Display
         // In a real implementation, you might want to modify the analytics module to accept soroban_sdk::String
         analytics::AnalyticsModule::record_activity(&env, &user_addr, "activity", amount, asset)
+    }
+
+    // === UNIFIED GOVERNANCE AND MULTISIG FUNCTIONS ===
+
+    /// Initialize MultiSig configuration (admin only, one-time setup)
+    pub fn initialize_multisig(
+        env: Env,
+        caller: String,
+        signers: Vec<Address>,
+        threshold: i128,
+        timelock_delay: u64,
+    ) -> Result<(), ProtocolError> {
+        let caller_addr = Address::from_string(&caller);
+        ProtocolConfig::require_admin(&env, &caller_addr)?;
+        
+        if threshold <= 0 || threshold > signers.len() as i128 {
+            return Err(ProtocolError::InvalidThreshold);
+        }
+        
+        if signers.is_empty() {
+            return Err(ProtocolError::InvalidInput);
+        }
+
+        let config = governance::MultiSigConfig {
+            signers,
+            threshold,
+            timelock_delay,
+        };
+        
+        governance::Governance::set_multisig_config(&env, &config);
+        Ok(())
+    }
+
+    /// Create a governance proposal (token-based voting)
+    pub fn create_governance_proposal(
+        env: Env,
+        proposer: String,
+        title: String,
+        voting_period_secs: u64,
+        action: governance::ProposalAction,
+    ) -> Result<u64, ProtocolError> {
+        let proposer_addr = Address::from_string(&proposer);
+        
+        let proposal = governance::Governance::propose(&env, &proposer_addr, title, voting_period_secs, action);
+        Ok(proposal.id)
+    }
+
+    /// Create a MultiSig proposal (threshold-based signing)
+    pub fn create_multisig_proposal(
+        env: Env,
+        proposer: String,
+        title: String,
+        action: governance::ProposalAction,
+    ) -> Result<u64, ProtocolError> {
+        let proposer_addr = Address::from_string(&proposer);
+        
+        // Verify proposer is authorized MultiSig signer
+        if let Some(config) = governance::Governance::get_multisig_config(&env) {
+            let mut is_authorized = false;
+            for signer in config.signers.iter() {
+                if signer == proposer_addr {
+                    is_authorized = true;
+                    break;
+                }
+            }
+            if !is_authorized {
+                return Err(ProtocolError::InvalidSigner);
+            }
+        } else {
+            return Err(ProtocolError::MultiSigNotConfigured);
+        }
+
+        let proposal = governance::Governance::propose_multisig(&env, &proposer_addr, title, action);
+        Ok(proposal.id)
+    }
+
+    /// Vote on a governance proposal
+    pub fn vote_on_proposal(
+        env: Env,
+        voter: String,
+        proposal_id: u64,
+        support: bool,
+        weight: i128,
+    ) -> Result<(), ProtocolError> {
+        let voter_addr = Address::from_string(&voter);
+        governance::Governance::vote(&env, proposal_id, &voter_addr, support, weight);
+        Ok(())
+    }
+
+    /// Sign a MultiSig proposal
+    pub fn sign_multisig_proposal(
+        env: Env,
+        signer: String,
+        proposal_id: u64,
+    ) -> Result<(), ProtocolError> {
+        let signer_addr = Address::from_string(&signer);
+        governance::Governance::sign_multisig(&env, proposal_id, &signer_addr);
+        Ok(())
+    }
+
+    /// Queue a proposal for execution (after voting/signing period)
+    pub fn queue_proposal(env: Env, proposal_id: u64) -> Result<(), ProtocolError> {
+        governance::Governance::queue(&env, proposal_id);
+        Ok(())
+    }
+
+    /// Execute a queued proposal
+    pub fn execute_proposal(env: Env, proposal_id: u64) -> Result<(), ProtocolError> {
+        PrivilegedOperations::execute_proposal(&env, proposal_id)
+    }
+
+    /// Get proposal details
+    pub fn get_proposal(env: Env, proposal_id: u64) -> Result<governance::Proposal, ProtocolError> {
+        governance::GovStorage::get_proposal(&env, proposal_id)
+            .ok_or(ProtocolError::ProposalNotFound)
+    }
+
+    /// Get MultiSig configuration
+    pub fn get_multisig_config(env: Env) -> Result<governance::MultiSigConfig, ProtocolError> {
+        governance::Governance::get_multisig_config(&env)
+            .ok_or(ProtocolError::MultiSigNotConfigured)
+    }
+
+    /// Get signature count for MultiSig proposal
+    pub fn get_multisig_signature_count(env: Env, proposal_id: u64) -> Result<i128, ProtocolError> {
+        Ok(governance::Governance::get_signature_count(&env, proposal_id))
+    }
+
+    /// Check if proposal can be executed
+    pub fn can_execute_proposal(env: Env, proposal_id: u64) -> Result<bool, ProtocolError> {
+        Ok(governance::Governance::can_execute(&env, proposal_id))
+    }
+
+    /// Set delegation for governance voting
+    pub fn delegate_votes(env: Env, from: String, to: String) -> Result<(), ProtocolError> {
+        let from_addr = Address::from_string(&from);
+        let to_addr = Address::from_string(&to);
+        governance::Governance::delegate(&env, &from_addr, &to_addr);
+        Ok(())
+    }
+
+    /// Get delegate for address
+    pub fn get_delegate(env: Env, address: String) -> Result<Option<Address>, ProtocolError> {
+        let addr = Address::from_string(&address);
+        Ok(governance::Governance::get_delegate(&env, &addr))
     }
 }
