@@ -24,6 +24,120 @@ use flash_loan::FlashLoan;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
+// ================================================================================================
+// SCALING CONSTANTS AND MATH UTILITIES
+// ================================================================================================
+//
+// This protocol uses three scaling factors across different domains:
+//
+// 1. SCALE_1E8 (100,000,000): High-precision financial calculations
+//    - Interest rates (borrow_rate, supply_rate, utilization_rate)
+//    - Collateral factors and collateral ratios
+//    - Liquidation parameters (close_factor, liquidation_incentive)
+//    - Price values from oracles
+//    - Example: 75% = 75_000_000
+//
+// 2. SCALE_BPS (10,000): Basis points for fees and small percentages
+//    - Flash loan fees
+//    - Protocol fees < 1%
+//    - Smoothing factors
+//    - Governance quorum thresholds
+//    - Example: 0.05% = 5 bps
+//
+// 3. SCALE_PCT (100): Simple percentages (DEPRECATED - migrating to SCALE_1E8)
+//    - Legacy collateral ratio calculations (being migrated)
+//    - Example: 150% = 150
+//
+// ROUNDING POLICY:
+// - Interest accrual: Round UP for borrowers, DOWN for suppliers (favors protocol solvency)
+// - Liquidations: Round UP for collateral seized (favors protocol safety)
+// - Fees: Round UP (favors protocol)
+// - Collateral ratio checks: Use exact division, err on side of caution
+//
+// ================================================================================================
+
+/// 1e8 scaling factor for high-precision financial calculations
+pub const SCALE_1E8: i128 = 100_000_000;
+
+/// Basis points scaling factor (10,000 = 100%)
+pub const SCALE_BPS: i128 = 10_000;
+
+/// Percentage scaling factor (100 = 100%) - DEPRECATED, use SCALE_1E8
+pub const SCALE_PCT: i128 = 100;
+
+// ================================================================================================
+// CONVERSION UTILITIES
+// ================================================================================================
+
+/// Convert basis points to 1e8 scale
+/// Example: 500 bps (5%) -> 5_000_000 (1e8 scale)
+pub fn bps_to_1e8(bps: i128) -> i128 {
+    (bps * SCALE_1E8) / SCALE_BPS
+}
+
+/// Convert 1e8 scale to basis points
+/// Example: 5_000_000 (1e8 scale) -> 500 bps (5%)
+pub fn e8_to_bps(e8_value: i128) -> i128 {
+    (e8_value * SCALE_BPS) / SCALE_1E8
+}
+
+/// Convert simple percentage to 1e8 scale
+/// Example: 150 (150%) -> 150_000_000 (1e8 scale)
+pub fn pct_to_1e8(pct: i128) -> i128 {
+    pct * (SCALE_1E8 / SCALE_PCT)
+}
+
+/// Convert 1e8 scale to simple percentage
+/// Example: 150_000_000 (1e8 scale) -> 150 (150%)
+pub fn e8_to_pct(e8_value: i128) -> i128 {
+    e8_value / (SCALE_1E8 / SCALE_PCT)
+}
+
+// ================================================================================================
+// ROUNDING UTILITIES
+// ================================================================================================
+
+/// Division that rounds up (ceiling division)
+/// Used when rounding should favor protocol safety
+pub fn div_round_up(numerator: i128, denominator: i128) -> i128 {
+    if denominator == 0 {
+        return 0;
+    }
+    (numerator + denominator - 1) / denominator
+}
+
+/// Division that rounds down (floor division) - Rust default behavior
+/// Used when rounding should favor users
+#[inline]
+pub fn div_round_down(numerator: i128, denominator: i128) -> i128 {
+    if denominator == 0 {
+        return 0;
+    }
+    numerator / denominator
+}
+
+/// Multiply two values and divide by a third, rounding up
+/// Prevents overflow and maintains precision
+/// Formula: (a * b + c - 1) / c
+pub fn mul_div_round_up(a: i128, b: i128, c: i128) -> i128 {
+    if c == 0 {
+        return 0;
+    }
+    let product = a.saturating_mul(b);
+    (product + c - 1) / c
+}
+
+/// Multiply two values and divide by a third, rounding down
+/// Prevents overflow and maintains precision
+/// Formula: (a * b) / c
+pub fn mul_div_round_down(a: i128, b: i128, c: i128) -> i128 {
+    if c == 0 {
+        return 0;
+    }
+    let product = a.saturating_mul(b);
+    product / c
+}
+
 #[cfg(test)]
 mod test;
 
@@ -2117,7 +2231,7 @@ impl ProtocolConfig {
         env.storage()
             .instance()
             .get::<Symbol, i128>(&Self::min_collateral_ratio_key(env))
-            .unwrap_or(150)
+            .unwrap_or(150_000_000) // 150% in 1e8 scale (migrated from legacy 150)
     }
 
     pub fn set_flash_loan_fee_bps(

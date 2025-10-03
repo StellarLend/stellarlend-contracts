@@ -5,7 +5,7 @@ use crate::analytics::AnalyticsModule;
 use crate::{
     EmergencyManager, InterestRateManager, InterestRateStorage, OperationKind, ProtocolConfig,
     ProtocolError, ProtocolEvent, ReentrancyGuard, RiskConfigStorage, StateHelper,
-    TransferEnforcer, UserManager,
+    TransferEnforcer, UserManager, SCALE_1E8,
 };
 use soroban_sdk::{contracterror, contracttype, Address, Env, String, Symbol};
 
@@ -106,7 +106,7 @@ impl BorrowModule {
             let min_ratio = ProtocolConfig::get_min_collateral_ratio(env);
             let new_debt = position.debt + amount;
             let collateral_ratio = if new_debt > 0 {
-                (position.collateral * 100) / new_debt
+                (position.collateral * SCALE_1E8) / new_debt
             } else {
                 0
             };
@@ -171,7 +171,7 @@ impl BorrowModule {
             let min_ratio = ProtocolConfig::get_min_collateral_ratio(env);
             let new_debt = position.debt + amount;
             let collateral_ratio = if new_debt > 0 {
-                (position.collateral * 100) / new_debt
+                (position.collateral * SCALE_1E8) / new_debt
             } else {
                 0
             };
@@ -212,7 +212,7 @@ impl BorrowModule {
             return 0;
         }
 
-        let max_debt = (collateral * 100) / min_collateral_ratio;
+        let max_debt = (collateral * SCALE_1E8) / min_collateral_ratio;
         if max_debt > current_debt {
             max_debt - current_debt
         } else {
@@ -232,7 +232,7 @@ impl BorrowModule {
             return true;
         }
 
-        let collateral_ratio = (collateral * 100) / new_debt;
+        let collateral_ratio = (collateral * SCALE_1E8) / new_debt;
         collateral_ratio >= min_collateral_ratio
     }
 }

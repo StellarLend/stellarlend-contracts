@@ -13,7 +13,7 @@ use soroban_sdk::{
 };
 use alloc::string::ToString;
 
-use crate::{ProtocolError, ProtocolEvent};
+use crate::{ProtocolError, ProtocolEvent, SCALE_1E8};
 
 /// Analytics-specific error types
 #[contracterror]
@@ -536,14 +536,17 @@ impl AnalyticsModule {
         metrics.last_update = timestamp;
 
         // Calculate health score (simplified)
+        // Utilization now in 1e8 scale for consistency
         let utilization = if metrics.total_deposits > 0 {
-            (metrics.total_borrows * 100) / metrics.total_deposits
+            (metrics.total_borrows * SCALE_1E8) / metrics.total_deposits
         } else {
             0
         };
-        
+
         // Health score based on utilization (lower utilization = higher health)
-        metrics.health_score = (100 - utilization).max(0);
+        // Convert to percentage for health score calculation
+        let utilization_pct = utilization / (SCALE_1E8 / 100);
+        metrics.health_score = (100 - utilization_pct).max(0);
 
         AnalyticsStorage::put_protocol_metrics(env, &metrics);
 
@@ -665,11 +668,13 @@ impl AnalyticsModule {
         risk_analytics.last_assessment = env.ledger().timestamp();
 
         // Calculate overall risk score (0-100, higher = riskier)
-        let utilization_risk = if protocol_metrics.total_deposits > 0 {
-            (protocol_metrics.total_borrows * 100) / protocol_metrics.total_deposits
+        // Utilization now in 1e8 scale for consistency
+        let utilization = if protocol_metrics.total_deposits > 0 {
+            (protocol_metrics.total_borrows * SCALE_1E8) / protocol_metrics.total_deposits
         } else {
             0
         };
+        let utilization_risk = utilization / (SCALE_1E8 / 100);
 
         let concentration_risk = if protocol_metrics.total_users > 0 {
             (undercollateralized * 100) / protocol_metrics.total_users

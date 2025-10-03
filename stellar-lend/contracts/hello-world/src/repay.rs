@@ -4,7 +4,7 @@
 use crate::analytics::AnalyticsModule;
 use crate::{
     EmergencyManager, InterestRateManager, InterestRateStorage, OperationKind, ProtocolError,
-    ProtocolEvent, ReentrancyGuard, StateHelper, TransferEnforcer, UserManager,
+    ProtocolEvent, ReentrancyGuard, StateHelper, TransferEnforcer, UserManager, SCALE_1E8,
 };
 use soroban_sdk::{contracterror, contracttype, Address, Env, String, Symbol};
 
@@ -117,7 +117,7 @@ impl RepayModule {
 
             // Emit event
             let collateral_ratio = if position.debt > 0 {
-                (position.collateral * 100) / position.debt
+                (position.collateral * SCALE_1E8) / position.debt
             } else {
                 0
             };

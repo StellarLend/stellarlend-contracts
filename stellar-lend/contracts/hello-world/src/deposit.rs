@@ -5,7 +5,7 @@ use crate::analytics::AnalyticsModule;
 use crate::{
     EmergencyManager, InterestRateManager, InterestRateStorage, OperationKind, Position,
     ProtocolError, ProtocolEvent, ReentrancyGuard, RiskConfigStorage, StateHelper,
-    TransferEnforcer, UserManager,
+    TransferEnforcer, UserManager, SCALE_1E8,
 };
 use soroban_sdk::{contracterror, contracttype, Address, Env, String, Symbol};
 
@@ -109,7 +109,7 @@ impl DepositModule {
 
             // Emit event
             let collateral_ratio = if position.debt > 0 {
-                (position.collateral * 100) / position.debt
+                (position.collateral * SCALE_1E8) / position.debt
             } else {
                 0
             };
@@ -190,7 +190,7 @@ impl DepositModule {
     ) -> i128 {
         let new_collateral = current_collateral + deposit_amount;
         if current_debt > 0 {
-            (new_collateral * 100) / current_debt
+            (new_collateral * SCALE_1E8) / current_debt
         } else {
             0
         }

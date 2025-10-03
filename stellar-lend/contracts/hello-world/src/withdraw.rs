@@ -5,7 +5,7 @@ use crate::analytics::AnalyticsModule;
 use crate::{
     EmergencyManager, InterestRateManager, InterestRateStorage, OperationKind, ProtocolConfig,
     ProtocolError, ProtocolEvent, ReentrancyGuard, RiskConfigStorage, StateHelper,
-    TransferEnforcer, UserManager,
+    TransferEnforcer, UserManager, SCALE_1E8,
 };
 use soroban_sdk::{contracterror, contracttype, Address, Env, String, Symbol};
 
@@ -118,7 +118,7 @@ impl WithdrawModule {
             let new_collateral = position.collateral - amount;
             let collateral_ratio = if position.debt > 0 {
                 let min_ratio = ProtocolConfig::get_min_collateral_ratio(env);
-                let ratio = (new_collateral * 100) / position.debt;
+                let ratio = (new_collateral * SCALE_1E8) / position.debt;
                 if ratio < min_ratio {
                     return Err(WithdrawError::InsufficientCollateralRatio.into());
                 }
@@ -222,7 +222,7 @@ impl WithdrawModule {
         }
 
         let min_ratio = ProtocolConfig::get_min_collateral_ratio(env);
-        let required_collateral = (position.debt * min_ratio) / 100;
+        let required_collateral = (position.debt * min_ratio) / SCALE_1E8;
 
         if position.collateral > required_collateral {
             Ok(position.collateral - required_collateral)
@@ -255,7 +255,7 @@ impl WithdrawModule {
             return false;
         }
 
-        let collateral_ratio = (new_collateral * 100) / current_debt;
+        let collateral_ratio = (new_collateral * SCALE_1E8) / current_debt;
         collateral_ratio >= min_collateral_ratio
     }
 
@@ -267,7 +267,7 @@ impl WithdrawModule {
     ) -> i128 {
         let new_collateral = current_collateral - withdraw_amount;
         if current_debt > 0 && new_collateral >= 0 {
-            (new_collateral * 100) / current_debt
+            (new_collateral * SCALE_1E8) / current_debt
         } else {
             0
         }

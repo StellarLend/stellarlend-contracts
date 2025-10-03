@@ -4,7 +4,7 @@
 use crate::analytics::AnalyticsModule;
 use crate::{
     EmergencyManager, InterestRateManager, InterestRateStorage, OperationKind, ProtocolConfig,
-    ProtocolError, ProtocolEvent, ReentrancyGuard, RiskConfigStorage, StateHelper,
+    ProtocolError, ProtocolEvent, ReentrancyGuard, RiskConfigStorage, StateHelper, SCALE_1E8,
 };
 use soroban_sdk::{contracterror, contracttype, Address, Env, String};
 
@@ -124,7 +124,7 @@ impl LiquidationModule {
             // Check if position is eligible for liquidation
             let min_ratio = ProtocolConfig::get_min_collateral_ratio(env);
             let collateral_ratio = if position.debt > 0 {
-                (position.collateral * 100) / position.debt
+                (position.collateral * SCALE_1E8) / position.debt
             } else {
                 0
             };
@@ -133,8 +133,8 @@ impl LiquidationModule {
                 return Err(LiquidationError::NotEligibleForLiquidation.into());
             }
 
-            // Calculate liquidation amount
-            let max_liquidation = (position.debt * risk_config.close_factor) / 100000000;
+            // Calculate liquidation amount (close_factor is in 1e8 scale)
+            let max_liquidation = (position.debt * risk_config.close_factor) / SCALE_1E8;
             let liquidation_amount = if amount > max_liquidation {
                 max_liquidation
             } else {
@@ -143,7 +143,7 @@ impl LiquidationModule {
 
             // Calculate collateral to seize
             let collateral_seized =
-                (liquidation_amount * (100000000 + risk_config.liquidation_incentive)) / 100000000;
+                (liquidation_amount * (SCALE_1E8 + risk_config.liquidation_incentive)) / SCALE_1E8;
 
             // Update position
             position.debt -= liquidation_amount;
@@ -209,7 +209,7 @@ impl LiquidationModule {
         };
 
         let risk_config = RiskConfigStorage::get(env);
-        let max_liquidation = (position.debt * risk_config.close_factor) / 100000000;
+        let max_liquidation = (position.debt * risk_config.close_factor) / SCALE_1E8;
 
         Ok(max_liquidation)
     }
@@ -221,7 +221,7 @@ impl LiquidationModule {
     ) -> Result<i128, ProtocolError> {
         let risk_config = RiskConfigStorage::get(env);
         let collateral_seized =
-            (liquidation_amount * (100000000 + risk_config.liquidation_incentive)) / 100000000;
+            (liquidation_amount * (SCALE_1E8 + risk_config.liquidation_incentive)) / SCALE_1E8;
 
         Ok(collateral_seized)
     }
@@ -237,7 +237,7 @@ impl LiquidationModule {
     /// Calculate liquidation incentive
     pub fn calculate_liquidation_incentive(env: &Env, liquidation_amount: i128) -> i128 {
         let risk_config = RiskConfigStorage::get(env);
-        (liquidation_amount * risk_config.liquidation_incentive) / 100000000
+        (liquidation_amount * risk_config.liquidation_incentive) / SCALE_1E8
     }
 
     /// Get liquidation health factor
@@ -255,8 +255,9 @@ impl LiquidationModule {
         };
 
         // Health factor = collateral_ratio / min_ratio
+        // Both are in 1e8 scale, so result is in 1e8 scale too
         if min_ratio > 0 {
-            Ok((collateral_ratio * 100) / min_ratio)
+            Ok((collateral_ratio * SCALE_1E8) / min_ratio)
         } else {
             Ok(0)
         }
