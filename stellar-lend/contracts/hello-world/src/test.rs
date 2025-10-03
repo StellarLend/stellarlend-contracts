@@ -965,8 +965,6 @@ fn test_multisig_proposal_creation_and_signing() {
     });
 }
 
-// Temporarily disabled - timelock test has complex timing logic that needs refinement  
-/*
 #[test]
 fn test_multisig_proposal_execution_with_timelock() {
     let env = TestUtils::create_test_env();
@@ -1013,7 +1011,6 @@ fn test_multisig_proposal_execution_with_timelock() {
         assert_eq!(ProtocolConfig::get_min_collateral_ratio(&env), 180);
     });
 }
-*/
 
 #[test]
 fn test_multisig_insufficient_signatures() {
@@ -1165,8 +1162,6 @@ fn test_proposal_action_execution() {
     });
 }
 
-// Temporarily disabled - timelock test has complex timing logic that needs refinement
-/*
 #[test]
 fn test_timelock_enforcement() {
     let env = TestUtils::create_test_env();
@@ -1179,11 +1174,14 @@ fn test_timelock_enforcement() {
         // Initialize with longer timelock
         Contract::initialize(env.clone(), admin.to_string()).unwrap();
         let signers = vec![&env, signer1.clone(), signer2.clone()];
-        Contract::initialize_multisig(env.clone(), admin.to_string(), signers, 2, 7200).unwrap(); // 2 hour timelock
+        let result = Contract::initialize_multisig(env.clone(), admin.to_string(), signers, 2, 7200);
+        assert!(result.is_ok());
 
-        // Debug: Check MultiSig config was saved
+        // Check MultiSig config was saved
         let config = governance::GovStorage::get_multisig_config(&env);
-        assert!(config.is_some());
+        if config.is_none() {
+            panic!("MultiSig config is None!");
+        }
         let config = config.unwrap();
         assert_eq!(config.threshold, 2);
         assert_eq!(config.timelock_delay, 7200);
@@ -1256,4 +1254,3 @@ fn test_timelock_enforcement() {
         assert!(result.is_ok());
     });
 }
-*/

@@ -230,7 +230,11 @@ impl Governance {
         let mut p = GovStorage::get_proposal(env, id).unwrap();
         let now = env.ledger().timestamp();
         
-        if now < p.voting_ends { return p; }
+        // For governance proposals, wait for voting period to end
+        // For MultiSig proposals, allow immediate queueing once threshold is met
+        if p.proposal_type == ProposalType::Governance && now < p.voting_ends { 
+            return p; 
+        }
 
         let can_queue = match p.proposal_type {
             ProposalType::Governance => {

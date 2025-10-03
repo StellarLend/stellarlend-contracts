@@ -157,7 +157,7 @@
                                       "symbol": "queued_until"
                                     },
                                     "val": {
-                                      "u64": 0
+                                      "u64": 3600
                                     }
                                   },
                                   {
