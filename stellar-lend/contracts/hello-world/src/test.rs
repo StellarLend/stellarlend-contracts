@@ -643,15 +643,15 @@ fn test_liquidate_success() {
         TestUtils::verify_user(&env, &admin, &user);
         TestUtils::verify_user(&env, &admin, &liquidator);
 
-        // Set a very low minimum collateral ratio for testing
-        Contract::set_min_collateral_ratio(env.clone(), admin.to_string(), 50).unwrap();
+        // Set a very low minimum collateral ratio for testing (50% in 1e8 scale)
+        Contract::set_min_collateral_ratio(env.clone(), admin.to_string(), 50_000_000).unwrap();
 
         // Deposit collateral and borrow to create undercollateralized position
         Contract::deposit_collateral(env.clone(), user.to_string(), 1000).unwrap();
         Contract::borrow(env.clone(), user.to_string(), 1000).unwrap();
 
-        // Now set the minimum ratio back to a higher value to make the position undercollateralized
-        Contract::set_min_collateral_ratio(env.clone(), admin.to_string(), 150).unwrap();
+        // Now set the minimum ratio back to a higher value to make the position undercollateralized (150% in 1e8 scale)
+        Contract::set_min_collateral_ratio(env.clone(), admin.to_string(), 150_000_000).unwrap();
 
         // Test successful liquidation
         let result =
@@ -913,7 +913,7 @@ fn test_conversion_roundtrip_bps() {
     use crate::{bps_to_1e8, e8_to_bps};
 
     // Test roundtrip conversions
-    let values = vec![0, 500, 1000, 2500, 5000, 7500, 10000];
+    let values = [0, 500, 1000, 2500, 5000, 7500, 10000];
     for val in values {
         assert_eq!(e8_to_bps(bps_to_1e8(val)), val);
     }
@@ -924,7 +924,7 @@ fn test_conversion_roundtrip_pct() {
     use crate::{pct_to_1e8, e8_to_pct};
 
     // Test roundtrip conversions
-    let values = vec![0, 10, 25, 50, 75, 100, 150, 200];
+    let values = [0, 10, 25, 50, 75, 100, 150, 200];
     for val in values {
         assert_eq!(e8_to_pct(pct_to_1e8(val)), val);
     }
@@ -985,9 +985,9 @@ fn test_collateral_ratio_scaling() {
     let debt = 666;
 
     // Old way (percentage): (1000 * 100) / 666 = 150
-    // New way (1e8): (1000 * 100_000_000) / 666 = 150_225_225
+    // New way (1e8): (1000 * 100_000_000) / 666 = 150_150_150
     let ratio_1e8 = (collateral * SCALE_1E8) / debt;
-    assert_eq!(ratio_1e8, 150_225_225);
+    assert_eq!(ratio_1e8, 150_150_150);
 
     // This represents ~150.22% collateral ratio
     // Verify min_collateral_ratio of 150_000_000 (150%) would allow this
