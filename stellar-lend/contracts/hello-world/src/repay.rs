@@ -159,7 +159,7 @@ impl RepayModule {
 
             EmergencyManager::ensure_operation_allowed(env, OperationKind::Repay)?;
 
-            let user_addr = Address::from_string(user);
+            let user_addr = crate::AddressHelper::require_valid_address(env, user)?;
 
             // For cross-asset repayment, we would need to implement cross-asset position handling
             // This is a simplified version for the modular structure
@@ -198,7 +198,7 @@ impl RepayModule {
                 return Err(RepayError::InvalidAddress.into());
             }
 
-            let repayer_addr = Address::from_string(repayer);
+            let repayer_addr = crate::AddressHelper::require_valid_address(env, repayer)?;
 
             // Load user position
             let mut position = match StateHelper::get_position(env, &repayer_addr) {

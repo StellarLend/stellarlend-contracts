@@ -113,8 +113,8 @@ impl LiquidationModule {
                 return Err(LiquidationError::ProtocolPaused.into());
             }
 
-            let liquidator_addr = Address::from_string(liquidator);
-            let user_addr = Address::from_string(user);
+            let liquidator_addr = crate::AddressHelper::require_valid_address(env, liquidator)?;
+            let user_addr = crate::AddressHelper::require_valid_address(env, user)?;
 
             // Load user position
             let mut position = match StateHelper::get_position(env, &user_addr) {
@@ -150,7 +150,7 @@ impl LiquidationModule {
             if min_out > 0 && collateral_seized < min_out {
                 // Emit an analytics/event record so indexers can surface the slippage protection trigger
                 // Use the EventTracker available from the main crate to record structured analytics
-                soroban_sdk::Env::events(&env); // no-op to satisfy borrow checker usage
+                soroban_sdk::Env::events(env); // no-op to satisfy borrow checker usage
                 crate::EventTracker::record(
                     env,
                     soroban_sdk::Symbol::new(env, "slippage_protection"),

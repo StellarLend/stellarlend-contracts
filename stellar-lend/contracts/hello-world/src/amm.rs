@@ -7,6 +7,11 @@
 //! - Integration with liquidation mechanisms
 
 use crate::{Position, ProtocolError, ProtocolEvent, ReentrancyGuard, StateHelper};
+
+#[cfg(not(test))]
+use crate::ProtocolEvent;
+#[allow(unused_imports)]
+use crate::{Position, ProtocolError, ReentrancyGuard, StateHelper};
 use soroban_sdk::{contracterror, contracttype, Address, Env, Map, Symbol, Vec};
 
 /// AMM-specific error types
@@ -382,8 +387,8 @@ impl AMMRegistry {
         asset_a: &Address,
         asset_b: &Address,
     ) -> Result<(), ProtocolError> {
-        let mut pair = AMMStorage::get_pair(env, asset_a, asset_b)
-            .ok_or_else(|| AMMError::PairNotRegistered)?;
+        let mut pair =
+            AMMStorage::get_pair(env, asset_a, asset_b).ok_or(AMMError::PairNotRegistered)?;
 
         pair.is_active = false;
         pair.last_updated = env.ledger().timestamp();
@@ -398,8 +403,8 @@ impl AMMRegistry {
         asset_a: &Address,
         asset_b: &Address,
     ) -> Result<(), ProtocolError> {
-        let mut pair = AMMStorage::get_pair(env, asset_a, asset_b)
-            .ok_or_else(|| AMMError::PairNotRegistered)?;
+        let mut pair =
+            AMMStorage::get_pair(env, asset_a, asset_b).ok_or(AMMError::PairNotRegistered)?;
 
         pair.is_active = true;
         pair.last_updated = env.ledger().timestamp();
@@ -433,7 +438,7 @@ impl AMMRegistry {
 
             // Get the pair
             let pair = AMMStorage::get_pair(env, &params.asset_in, &params.asset_out)
-                .ok_or_else(|| AMMError::PairNotRegistered)?;
+                .ok_or(AMMError::PairNotRegistered)?;
 
             if !pair.is_active {
                 return Err(AMMError::PairNotRegistered.into());

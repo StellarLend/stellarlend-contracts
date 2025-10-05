@@ -158,7 +158,7 @@ impl BorrowModule {
 
             EmergencyManager::ensure_operation_allowed(env, OperationKind::Borrow)?;
 
-            let user_addr = Address::from_string(user);
+            let user_addr = crate::AddressHelper::require_valid_address(env, user)?;
 
             // For cross-asset borrowing, we would need to implement cross-asset position handling
             // This is a simplified version for the modular structure
