@@ -6,8 +6,8 @@
 //! - Event emissions for AMM usage tracking
 //! - Integration with liquidation mechanisms
 
+use crate::{Position, ProtocolError, ProtocolEvent, ReentrancyGuard, StateHelper};
 use soroban_sdk::{contracterror, contracttype, Address, Env, Map, Symbol, Vec};
-use crate::{ProtocolError, ProtocolEvent, ReentrancyGuard, StateHelper, Position};
 
 /// AMM-specific error types
 #[contracterror]
@@ -68,12 +68,7 @@ pub struct AssetPair {
 }
 
 impl AssetPair {
-    pub fn new(
-        asset_a: Address,
-        asset_b: Address,
-        amm_address: Address,
-        timestamp: u64,
-    ) -> Self {
+    pub fn new(asset_a: Address, asset_b: Address, amm_address: Address, timestamp: u64) -> Self {
         Self {
             asset_a,
             asset_b,
@@ -139,7 +134,7 @@ impl SwapParams {
             amount_in,
             min_amount_out,
             max_slippage_bps: 100, // Default 1% slippage
-            deadline: 0, // No deadline by default
+            deadline: 0,           // No deadline by default
         }
     }
 
@@ -173,12 +168,7 @@ pub struct SwapResult {
 }
 
 impl SwapResult {
-    pub fn new(
-        amount_in: i128,
-        amount_out: i128,
-        fee_paid: i128,
-        timestamp: u64,
-    ) -> Self {
+    pub fn new(amount_in: i128, amount_out: i128, fee_paid: i128, timestamp: u64) -> Self {
         // Calculate exchange rate (amount_out / amount_in * 1e8)
         let exchange_rate = if amount_in > 0 {
             (amount_out * 100_000_000) / amount_in
@@ -216,7 +206,10 @@ impl PairKey {
         if asset_a < asset_b {
             Self { asset_a, asset_b }
         } else {
-            Self { asset_a: asset_b, asset_b: asset_a }
+            Self {
+                asset_a: asset_b,
+                asset_b: asset_a,
+            }
         }
     }
 }
@@ -327,9 +320,20 @@ impl AMMRegistry {
 
         // Create the pair
         let pair = if let Some(pool) = pool_address {
-            AssetPair::with_pool(asset_a.clone(), asset_b.clone(), amm_address.clone(), pool, timestamp)
+            AssetPair::with_pool(
+                asset_a.clone(),
+                asset_b.clone(),
+                amm_address.clone(),
+                pool,
+                timestamp,
+            )
         } else {
-            AssetPair::new(asset_a.clone(), asset_b.clone(), amm_address.clone(), timestamp)
+            AssetPair::new(
+                asset_a.clone(),
+                asset_b.clone(),
+                amm_address.clone(),
+                timestamp,
+            )
         };
 
         // Save the pair
@@ -410,10 +414,7 @@ impl AMMRegistry {
     }
 
     /// Execute a swap through registered AMM
-    pub fn execute_swap(
-        env: &Env,
-        params: SwapParams,
-    ) -> Result<SwapResult, ProtocolError> {
+    pub fn execute_swap(env: &Env, params: SwapParams) -> Result<SwapResult, ProtocolError> {
         ReentrancyGuard::enter(env)?;
         let result = (|| -> Result<SwapResult, ProtocolError> {
             // Validate parameters
@@ -564,8 +565,8 @@ impl AMMRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
     use crate::Contract;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
     fn create_test_env() -> (Env, Address) {
         let env = Env::default();
@@ -584,7 +585,13 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             // Register pair
-            let result = AMMRegistry::register_pair(&env, asset_a.clone(), asset_b.clone(), amm_address.clone(), None);
+            let result = AMMRegistry::register_pair(
+                &env,
+                asset_a.clone(),
+                asset_b.clone(),
+                amm_address.clone(),
+                None,
+            );
             assert!(result.is_ok());
 
             // Verify pair is registered
@@ -605,11 +612,23 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             // Register pair first time
-            let result = AMMRegistry::register_pair(&env, asset_a.clone(), asset_b.clone(), amm_address.clone(), None);
+            let result = AMMRegistry::register_pair(
+                &env,
+                asset_a.clone(),
+                asset_b.clone(),
+                amm_address.clone(),
+                None,
+            );
             assert!(result.is_ok());
 
             // Try to register again - should fail
-            let result = AMMRegistry::register_pair(&env, asset_a.clone(), asset_b.clone(), amm_address.clone(), None);
+            let result = AMMRegistry::register_pair(
+                &env,
+                asset_a.clone(),
+                asset_b.clone(),
+                amm_address.clone(),
+                None,
+            );
             assert!(result.is_err());
         });
     }
@@ -624,7 +643,13 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             // Register in one order
-            let result = AMMRegistry::register_pair(&env, asset_a.clone(), asset_b.clone(), amm_address.clone(), None);
+            let result = AMMRegistry::register_pair(
+                &env,
+                asset_a.clone(),
+                asset_b.clone(),
+                amm_address.clone(),
+                None,
+            );
             assert!(result.is_ok());
 
             // Check in reverse order - should find the same pair
@@ -647,7 +672,14 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             // Register pair
-            AMMRegistry::register_pair(&env, asset_in.clone(), asset_out.clone(), amm_address, None).unwrap();
+            AMMRegistry::register_pair(
+                &env,
+                asset_in.clone(),
+                asset_out.clone(),
+                amm_address,
+                None,
+            )
+            .unwrap();
 
             // Create swap params
             let params = SwapParams::new(
@@ -686,7 +718,8 @@ mod tests {
                 debt_asset.clone(),
                 amm_address,
                 None,
-            ).unwrap();
+            )
+            .unwrap();
 
             // Create a position for the liquidator
             let position = Position::new(liquidator.clone(), 2_000_000, 1_000_000);
@@ -725,7 +758,14 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             // Register pair
-            AMMRegistry::register_pair(&env, asset_in.clone(), asset_out.clone(), amm_address, None).unwrap();
+            AMMRegistry::register_pair(
+                &env,
+                asset_in.clone(),
+                asset_out.clone(),
+                amm_address,
+                None,
+            )
+            .unwrap();
 
             // Execute multiple swaps
             for _ in 0..3 {

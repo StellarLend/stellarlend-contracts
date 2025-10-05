@@ -744,7 +744,10 @@ fn test_liquidate_slippage_protection_triggers() {
             1_000_000, // very high min_out
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ProtocolError::SlippageProtectionTriggered);
+        assert_eq!(
+            result.unwrap_err(),
+            ProtocolError::SlippageProtectionTriggered
+        );
     });
 }
 

@@ -2817,376 +2817,11 @@ impl ProtocolEvent {
     }
 }
 
-/// Analytics helper function
-pub fn analytics_record_action(env: &Env, user: &Address, _action: &str, amount: i128) {
-    // Simple analytics recording - can be enhanced later
-    let timestamp = env.ledger().timestamp();
-    // For now, just emit a simple event
-    ProtocolEvent::InterestAccrued(user.clone(), amount, timestamp as i128).emit(env);
-}
-
-/// Helper function to ensure amount is positive
-fn _ensure_amount_positive(amount: i128) -> Result<(), ProtocolError> {
-    if amount <= 0 {
-        return Err(ProtocolError::InvalidAmount);
-    }
-    Ok(())
-}
-
-/// Core protocol functions
-pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(), ProtocolError> {
-    if depositor.is_empty() {
-        return Err(ProtocolError::InvalidAddress);
-    }
-    let depositor_addr = Address::from_string(&depositor);
-    deposit::DepositModule::deposit_collateral(&env, &depositor_addr, amount)
-}
-
-pub fn borrow(env: Env, borrower: String, amount: i128) -> Result<(), ProtocolError> {
-    if borrower.is_empty() {
-        return Err(ProtocolError::InvalidAddress);
-    }
-    let borrower_addr = Address::from_string(&borrower);
-    borrow::BorrowModule::borrow(&env, &borrower_addr, amount)
-}
-
-pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolError> {
-    if repayer.is_empty() {
-        return Err(ProtocolError::InvalidAddress);
-    }
-    let repayer_addr = Address::from_string(&repayer);
-    repay::RepayModule::repay(&env, &repayer_addr, amount)
-}
-
-pub fn withdraw(env: Env, withdrawer: String, amount: i128) -> Result<(), ProtocolError> {
-    if withdrawer.is_empty() {
-        return Err(ProtocolError::InvalidAddress);
-    }
-    let withdrawer_addr = Address::from_string(&withdrawer);
-    withdraw::WithdrawModule::withdraw(&env, &withdrawer_addr, amount)
-}
-
-pub fn liquidate(
-    env: Env,
-    liquidator: String,
-    user: String,
-    amount: i128,
-    min_out: i128,
-) -> Result<(), ProtocolError> {
-    if liquidator.is_empty() {
-        return Err(ProtocolError::InvalidAddress);
-    }
-    let liquidator_addr = Address::from_string(&liquidator);
-    UserManager::ensure_operation_allowed(
-        &env,
-        &liquidator_addr,
-        OperationKind::Liquidate,
-        amount,
-    )?;
-    liquidate::LiquidationModule::liquidate(&env, &liquidator, &user, amount, min_out)?;
-    UserManager::record_activity(&env, &liquidator_addr, OperationKind::Liquidate, amount)?;
-    Ok(())
-}
-
-pub fn get_position(env: Env, user: String) -> Result<(i128, i128, i128), ProtocolError> {
-    if user.is_empty() {
-        return Err(ProtocolError::InvalidAddress);
-    }
-    let user_addr = Address::from_string(&user);
-    match StateHelper::get_position(&env, &user_addr) {
-        Some(position) => {
-            let collateral_ratio = if position.debt > 0 {
-                (position.collateral * 100) / position.debt
-            } else {
-                0
-            };
-            Ok((position.collateral, position.debt, collateral_ratio))
-        }
-        None => Err(ProtocolError::PositionNotFound),
-    }
-}
-
-pub fn set_risk_params(
-    env: Env,
-    caller: String,
-    close_factor: i128,
-    liquidation_incentive: i128,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    ProtocolConfig::require_admin(&env, &caller_addr)?;
-
-    let mut config = RiskConfigStorage::get(&env);
-    config.close_factor = close_factor;
-    config.liquidation_incentive = liquidation_incentive;
-    config.last_update = env.ledger().timestamp();
-    RiskConfigStorage::save(&env, &config);
-
-    ProtocolEvent::RiskParamsUpdated(close_factor, liquidation_incentive).emit(&env);
-    Ok(())
-}
-
-pub fn set_pause_switches(
-    env: Env,
-    caller: String,
-    pause_borrow: bool,
-    pause_deposit: bool,
-    pause_withdraw: bool,
-    pause_liquidate: bool,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    ProtocolConfig::require_admin(&env, &caller_addr)?;
-
-    let mut config = RiskConfigStorage::get(&env);
-    config.pause_borrow = pause_borrow;
-    config.pause_deposit = pause_deposit;
-    config.pause_withdraw = pause_withdraw;
-    config.pause_liquidate = pause_liquidate;
-    config.last_update = env.ledger().timestamp();
-    RiskConfigStorage::save(&env, &config);
-
-    ProtocolEvent::PauseSwitchesUpdated(
-        pause_borrow,
-        pause_deposit,
-        pause_withdraw,
-        pause_liquidate,
-    )
-    .emit(&env);
-    Ok(())
-}
-
-pub fn get_protocol_params(
-    env: Env,
-) -> Result<(i128, i128, i128, i128, i128, i128), ProtocolError> {
-    let config = InterestRateStorage::get_config(&env);
-    let risk_config = RiskConfigStorage::get(&env);
-
-    Ok((
-        config.base_rate,                  // 2000000 (2%)
-        config.kink_utilization,           // 80000000 (80%)
-        config.multiplier,                 // 10000000 (10x)
-        config.reserve_factor,             // 10000000 (10%)
-        risk_config.close_factor,          // 50000000 (50%)
-        risk_config.liquidation_incentive, // 10000000 (10%)
-    ))
-}
-
-pub fn get_risk_config(env: Env) -> Result<(i128, i128, bool, bool, bool, bool), ProtocolError> {
-    let config = RiskConfigStorage::get(&env);
-    Ok((
-        config.close_factor,
-        config.liquidation_incentive,
-        config.pause_borrow,
-        config.pause_deposit,
-        config.pause_withdraw,
-        config.pause_liquidate,
-    ))
-}
-
-pub fn get_system_stats(env: Env) -> Result<(i128, i128, i128, i128), ProtocolError> {
-    let state = InterestRateStorage::get_state(&env);
-
-    Ok((
-        state.total_supplied,
-        state.total_borrowed,
-        state.utilization_rate,
-        0, // active_users - simplified for now
-    ))
-}
-
-pub fn set_emergency_manager(
-    env: Env,
-    caller: String,
-    manager: String,
-    enabled: bool,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    let manager_addr = Address::from_string(&manager);
-    EmergencyManager::set_manager(&env, &caller_addr, &manager_addr, enabled)
-}
-
-pub fn trigger_emergency_pause(
-    env: Env,
-    caller: String,
-    reason: Option<String>,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    EmergencyManager::pause(&env, &caller_addr, reason)
-}
-
-pub fn enter_recovery_mode(
-    env: Env,
-    caller: String,
-    plan: Option<String>,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    EmergencyManager::enter_recovery(&env, &caller_addr, plan)
-}
-
-pub fn resume_operations(env: Env, caller: String) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    EmergencyManager::resume(&env, &caller_addr)
-}
-
-pub fn record_recovery_step(env: Env, caller: String, step: String) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    EmergencyManager::record_recovery_step(&env, &caller_addr, step)
-}
-
-pub fn queue_emergency_param_update(
-    env: Env,
-    caller: String,
-    parameter: Symbol,
-    value: i128,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    EmergencyManager::queue_param_update(&env, &caller_addr, parameter, value)
-}
-
-pub fn apply_emergency_param_updates(env: Env, caller: String) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    EmergencyManager::apply_param_updates(&env, &caller_addr)
-}
-
-pub fn adjust_emergency_fund(
-    env: Env,
-    caller: String,
-    token: Option<Address>,
-    delta: i128,
-    reserve_delta: i128,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    EmergencyManager::adjust_fund(&env, &caller_addr, token, delta, reserve_delta)
-}
-
-pub fn get_emergency_state(env: Env) -> Result<EmergencyState, ProtocolError> {
-    Ok(EmergencyStorage::get(&env))
-}
-
-pub fn get_event_summary(env: Env) -> Result<EventSummary, ProtocolError> {
-    Ok(EventStorage::get_summary(&env))
-}
-
-pub fn get_event_aggregates(env: Env) -> Result<Map<Symbol, EventAggregate>, ProtocolError> {
-    Ok(EventStorage::get_aggregates(&env))
-}
-
-pub fn get_events_for_type(
-    env: Env,
-    event_type: Symbol,
-    limit: u32,
-) -> Result<Vec<EventRecord>, ProtocolError> {
-    let logs = EventStorage::get_logs(&env);
-    let mut events = logs
-        .get(event_type.clone())
-        .unwrap_or_else(|| Vec::new(&env));
-    if limit > 0 && events.len() > limit {
-        let start = events.len() - limit;
-        events = events.slice(start..);
-    }
-    Ok(events)
-}
-
-pub fn get_recent_event_types(env: Env) -> Result<Vec<Symbol>, ProtocolError> {
-    Ok(EventStorage::get_summary(&env).recent_types)
-}
-
-pub fn register_token_asset(
-    env: Env,
-    caller: String,
-    key: Symbol,
-    token: Address,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    TokenRegistry::set_asset(&env, &caller_addr, key, token)
-}
-
-pub fn set_primary_asset(env: Env, caller: String, token: Address) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    TokenRegistry::set_primary_asset(&env, &caller_addr, token)
-}
-
-pub fn get_registered_asset(env: Env, key: Symbol) -> Result<Option<Address>, ProtocolError> {
-    Ok(TokenRegistry::get_asset(&env, key))
-}
-
-pub fn set_user_role(
-    env: Env,
-    caller: String,
-    user: Address,
-    role: UserRole,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    UserManager::set_role(&env, &caller_addr, &user, role)
-}
-
-pub fn set_user_verification(
-    env: Env,
-    caller: String,
-    user: Address,
-    status: VerificationStatus,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    UserManager::set_verification_status(&env, &caller_addr, &user, status)
-}
-
-pub fn set_user_limits(
-    env: Env,
-    caller: String,
-    user: Address,
-    max_deposit: i128,
-    max_borrow: i128,
-    max_withdraw: i128,
-    daily_limit: i128,
-) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    UserManager::set_limits(
-        &env,
-        &caller_addr,
-        &user,
-        max_deposit,
-        max_borrow,
-        max_withdraw,
-        daily_limit,
-    )
-}
-
-pub fn freeze_user(env: Env, caller: String, user: Address) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    UserManager::freeze_user(&env, &caller_addr, &user)
-}
-
-pub fn unfreeze_user(env: Env, caller: String, user: Address) -> Result<(), ProtocolError> {
-    let _guard = ReentrancyScope::enter(&env)?;
-    let caller_addr = Address::from_string(&caller);
-    UserManager::unfreeze_user(&env, &caller_addr, &user)
-}
-
-pub fn get_user_profile(env: Env, user: Address) -> Result<UserProfile, ProtocolError> {
-    Ok(UserManager::get_profile(&env, &user))
-}
-
 #[contractimpl]
 impl Contract {
     /// Initializes the contract and sets the admin address
-    pub fn initialize(env: Env, admin: String) -> Result<(), ProtocolError> {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), ProtocolError> {
         let _guard = ReentrancyScope::enter(&env)?;
-        let admin_addr = Address::from_string(&admin);
         if env
             .storage()
             .instance()
@@ -3194,8 +2829,8 @@ impl Contract {
         {
             return Err(ProtocolError::AlreadyInitialized);
         }
-        ProtocolConfig::set_admin(&env, &admin_addr);
-        UserManager::bootstrap_admin(&env, &admin_addr);
+        ProtocolConfig::set_admin(&env, &admin);
+        UserManager::bootstrap_admin(&env, &admin);
 
         // Initialize interest rate system with default configuration
         let config = InterestRateConfig::default();
@@ -3214,265 +2849,36 @@ impl Contract {
     /// Set the minimum collateral ratio (admin only)
     pub fn set_min_collateral_ratio(
         env: Env,
-        caller: String,
+        caller: Address,
         ratio: i128,
     ) -> Result<(), ProtocolError> {
-        let caller_addr = Address::from_string(&caller);
-        ProtocolConfig::set_min_collateral_ratio(&env, &caller_addr, ratio)?;
+        ProtocolConfig::set_min_collateral_ratio(&env, &caller, ratio)?;
         Ok(())
     }
 
-    /// Deposit collateral into the protocol
     pub fn deposit_collateral(
         env: Env,
-        depositor: String,
+        depositor: Address,
         amount: i128,
     ) -> Result<(), ProtocolError> {
-        deposit_collateral(env, depositor, amount)
+        deposit::DepositModule::deposit_collateral(&env, &depositor, amount)
     }
 
-    /// Borrow assets from the protocol
-    pub fn borrow(env: Env, borrower: String, amount: i128) -> Result<(), ProtocolError> {
-        borrow(env, borrower, amount)
+    pub fn borrow(env: Env, borrower: Address, amount: i128) -> Result<(), ProtocolError> {
+        borrow::BorrowModule::borrow(&env, &borrower, amount)
     }
 
-    /// Repay borrowed assets
-    pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolError> {
-        repay(env, repayer, amount)
+    pub fn repay(env: Env, repayer: Address, amount: i128) -> Result<(), ProtocolError> {
+        repay::RepayModule::repay(&env, &repayer, amount)
     }
 
-    /// Withdraw collateral from the protocol
-    pub fn withdraw(env: Env, withdrawer: String, amount: i128) -> Result<(), ProtocolError> {
-        withdraw(env, withdrawer, amount)
-    }
-
-    /// Liquidate an undercollateralized position
-    pub fn liquidate(
-        env: Env,
-        liquidator: String,
-        user: String,
-        amount: i128,
-        min_out: i128,
-    ) -> Result<(), ProtocolError> {
-        liquidate(env, liquidator, user, amount, min_out)
-    }
-
-    /// Get user position
-    pub fn get_position(env: Env, user: String) -> Result<(i128, i128, i128), ProtocolError> {
-        get_position(env, user)
-    }
-
-    /// Set risk parameters (admin only)
-    pub fn set_risk_params(
-        env: Env,
-        caller: String,
-        close_factor: i128,
-        liquidation_incentive: i128,
-    ) -> Result<(), ProtocolError> {
-        set_risk_params(env, caller, close_factor, liquidation_incentive)
-    }
-
-    /// Set pause switches (admin only)
-    pub fn set_pause_switches(
-        env: Env,
-        caller: String,
-        pause_borrow: bool,
-        pause_deposit: bool,
-        pause_withdraw: bool,
-        pause_liquidate: bool,
-    ) -> Result<(), ProtocolError> {
-        set_pause_switches(
-            env,
-            caller,
-            pause_borrow,
-            pause_deposit,
-            pause_withdraw,
-            pause_liquidate,
-        )
-    }
-
-    /// Get protocol parameters
-    pub fn get_protocol_params(
-        env: Env,
-    ) -> Result<(i128, i128, i128, i128, i128, i128), ProtocolError> {
-        get_protocol_params(env)
-    }
-
-    /// Get risk configuration
-    pub fn get_risk_config(
-        env: Env,
-    ) -> Result<(i128, i128, bool, bool, bool, bool), ProtocolError> {
-        get_risk_config(env)
-    }
-
-    /// Get system stats
-    pub fn get_system_stats(env: Env) -> Result<(i128, i128, i128, i128), ProtocolError> {
-        get_system_stats(env)
-    }
-
-    pub fn set_emergency_manager(
-        env: Env,
-        caller: String,
-        manager: String,
-        enabled: bool,
-    ) -> Result<(), ProtocolError> {
-        set_emergency_manager(env, caller, manager, enabled)
-    }
-
-    pub fn trigger_emergency_pause(
-        env: Env,
-        caller: String,
-        reason: Option<String>,
-    ) -> Result<(), ProtocolError> {
-        trigger_emergency_pause(env, caller, reason)
-    }
-
-    pub fn enter_recovery_mode(
-        env: Env,
-        caller: String,
-        plan: Option<String>,
-    ) -> Result<(), ProtocolError> {
-        enter_recovery_mode(env, caller, plan)
-    }
-
-    pub fn resume_operations(env: Env, caller: String) -> Result<(), ProtocolError> {
-        resume_operations(env, caller)
-    }
-
-    pub fn record_recovery_step(
-        env: Env,
-        caller: String,
-        step: String,
-    ) -> Result<(), ProtocolError> {
-        record_recovery_step(env, caller, step)
-    }
-
-    pub fn queue_emergency_param_update(
-        env: Env,
-        caller: String,
-        parameter: Symbol,
-        value: i128,
-    ) -> Result<(), ProtocolError> {
-        queue_emergency_param_update(env, caller, parameter, value)
-    }
-
-    pub fn apply_emergency_param_updates(env: Env, caller: String) -> Result<(), ProtocolError> {
-        apply_emergency_param_updates(env, caller)
-    }
-
-    pub fn adjust_emergency_fund(
-        env: Env,
-        caller: String,
-        token: Option<Address>,
-        delta: i128,
-        reserve_delta: i128,
-    ) -> Result<(), ProtocolError> {
-        adjust_emergency_fund(env, caller, token, delta, reserve_delta)
-    }
-
-    pub fn get_emergency_state(env: Env) -> Result<EmergencyState, ProtocolError> {
-        get_emergency_state(env)
-    }
-
-    pub fn get_event_summary(env: Env) -> Result<EventSummary, ProtocolError> {
-        get_event_summary(env)
-    }
-
-    pub fn get_event_aggregates(env: Env) -> Result<Map<Symbol, EventAggregate>, ProtocolError> {
-        get_event_aggregates(env)
-    }
-
-    pub fn get_events_for_type(
-        env: Env,
-        event_type: Symbol,
-        limit: u32,
-    ) -> Result<Vec<EventRecord>, ProtocolError> {
-        get_events_for_type(env, event_type, limit)
-    }
-
-    pub fn get_recent_event_types(env: Env) -> Result<Vec<Symbol>, ProtocolError> {
-        get_recent_event_types(env)
-    }
-
-    pub fn register_token_asset(
-        env: Env,
-        caller: String,
-        key: Symbol,
-        token: Address,
-    ) -> Result<(), ProtocolError> {
-        register_token_asset(env, caller, key, token)
-    }
-
-    pub fn set_primary_asset(
-        env: Env,
-        caller: String,
-        token: Address,
-    ) -> Result<(), ProtocolError> {
-        set_primary_asset(env, caller, token)
-    }
-
-    pub fn get_registered_asset(env: Env, key: Symbol) -> Result<Option<Address>, ProtocolError> {
-        get_registered_asset(env, key)
-    }
-
-    pub fn set_user_role(
-        env: Env,
-        caller: String,
-        user: Address,
-        role: UserRole,
-    ) -> Result<(), ProtocolError> {
-        set_user_role(env, caller, user, role)
-    }
-
-    pub fn set_user_verification(
-        env: Env,
-        caller: String,
-        user: Address,
-        status: VerificationStatus,
-    ) -> Result<(), ProtocolError> {
-        set_user_verification(env, caller, user, status)
-    }
-
-    pub fn set_user_limits(
-        env: Env,
-        caller: String,
-        user: Address,
-        max_deposit: i128,
-        max_borrow: i128,
-        max_withdraw: i128,
-        daily_limit: i128,
-    ) -> Result<(), ProtocolError> {
-        set_user_limits(
-            env,
-            caller,
-            user,
-            max_deposit,
-            max_borrow,
-            max_withdraw,
-            daily_limit,
-        )
-    }
-
-    pub fn freeze_user(env: Env, caller: String, user: Address) -> Result<(), ProtocolError> {
-        freeze_user(env, caller, user)
-    }
-
-    pub fn unfreeze_user(env: Env, caller: String, user: Address) -> Result<(), ProtocolError> {
-        unfreeze_user(env, caller, user)
-    }
-
-    pub fn get_user_profile(env: Env, user: Address) -> Result<UserProfile, ProtocolError> {
-        get_user_profile(env, user)
+    pub fn withdraw(env: Env, withdrawer: Address, amount: i128) -> Result<(), ProtocolError> {
+        withdraw::WithdrawModule::withdraw(&env, &withdrawer, amount)
     }
 
     // Analytics and Reporting Functions
     pub fn get_protocol_report(env: Env) -> Result<analytics::ProtocolReport, ProtocolError> {
         analytics::AnalyticsModule::get_protocol_report(&env)
-    }
-
-    pub fn get_user_report(env: Env, user: String) -> Result<analytics::UserReport, ProtocolError> {
-        let user_addr = Address::from_string(&user);
-        analytics::AnalyticsModule::get_user_report(&env, &user_addr)
     }
 
     pub fn get_asset_report(
@@ -3492,19 +2898,6 @@ impl Contract {
         success: bool,
     ) -> Result<(), ProtocolError> {
         analytics::AnalyticsModule::update_performance_metrics(&env, processing_time, success)
-    }
-
-    pub fn record_activity(
-        env: Env,
-        user: String,
-        _activity_type: String,
-        amount: i128,
-        asset: Option<Address>,
-    ) -> Result<(), ProtocolError> {
-        let user_addr = Address::from_string(&user);
-        // For now, we'll use a placeholder string since soroban_sdk::String doesn't implement Display
-        // In a real implementation, you might want to modify the analytics module to accept soroban_sdk::String
-        analytics::AnalyticsModule::record_activity(&env, &user_addr, "activity", amount, asset)
     }
 
     // ==================== AMM Registry and Swap Hooks ====================
@@ -3545,11 +2938,7 @@ impl Contract {
     ///
     /// # Returns
     /// * `true` if pair is registered and active, `false` otherwise
-    pub fn is_amm_pair_registered(
-        env: Env,
-        asset_a: Address,
-        asset_b: Address,
-    ) -> bool {
+    pub fn is_amm_pair_registered(env: Env, asset_a: Address, asset_b: Address) -> bool {
         amm::AMMRegistry::is_pair_registered(&env, &asset_a, &asset_b)
     }
 
