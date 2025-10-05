@@ -3238,7 +3238,7 @@ pub fn get_user_profile(env: Env, user: Address) -> Result<UserProfile, Protocol
 #[contractimpl]
 impl Contract {
     /// Initializes the contract and sets the admin address
-    pub fn initialize(env: Env, admin: String) -> Result<(), ProtocolError> {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), ProtocolError> {
         let _guard = ReentrancyScope::enter(&env)?;
         let admin_addr = AddressHelper::require_valid_address(&env, &admin)?;
         if env
@@ -3248,8 +3248,8 @@ impl Contract {
         {
             return Err(ProtocolError::AlreadyInitialized);
         }
-        ProtocolConfig::set_admin(&env, &admin_addr);
-        UserManager::bootstrap_admin(&env, &admin_addr);
+        ProtocolConfig::set_admin(&env, &admin);
+        UserManager::bootstrap_admin(&env, &admin);
 
         // Initialize interest rate system with default configuration
         let config = InterestRateConfig::default();
@@ -3268,255 +3268,33 @@ impl Contract {
     /// Set the minimum collateral ratio (admin only)
     pub fn set_min_collateral_ratio(
         env: Env,
-        caller: String,
+        caller: Address,
         ratio: i128,
     ) -> Result<(), ProtocolError> {
+        ProtocolConfig::set_min_collateral_ratio(&env, &caller, ratio)?;
         let caller_addr = AddressHelper::require_valid_address(&env, &caller)?;
         ProtocolConfig::set_min_collateral_ratio(&env, &caller_addr, ratio)?;
         Ok(())
     }
 
-    /// Deposit collateral into the protocol
     pub fn deposit_collateral(
         env: Env,
-        depositor: String,
+        depositor: Address,
         amount: i128,
     ) -> Result<(), ProtocolError> {
-        deposit_collateral(env, depositor, amount)
+        deposit::DepositModule::deposit_collateral(&env, &depositor, amount)
     }
 
-    /// Borrow assets from the protocol
-    pub fn borrow(env: Env, borrower: String, amount: i128) -> Result<(), ProtocolError> {
-        borrow(env, borrower, amount)
+    pub fn borrow(env: Env, borrower: Address, amount: i128) -> Result<(), ProtocolError> {
+        borrow::BorrowModule::borrow(&env, &borrower, amount)
     }
 
-    /// Repay borrowed assets
-    pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolError> {
-        repay(env, repayer, amount)
+    pub fn repay(env: Env, repayer: Address, amount: i128) -> Result<(), ProtocolError> {
+        repay::RepayModule::repay(&env, &repayer, amount)
     }
 
-    /// Withdraw collateral from the protocol
-    pub fn withdraw(env: Env, withdrawer: String, amount: i128) -> Result<(), ProtocolError> {
-        withdraw(env, withdrawer, amount)
-    }
-
-    /// Liquidate an undercollateralized position
-    pub fn liquidate(
-        env: Env,
-        liquidator: String,
-        user: String,
-        amount: i128,
-        min_out: i128,
-    ) -> Result<(), ProtocolError> {
-        liquidate(env, liquidator, user, amount, min_out)
-    }
-
-    /// Get user position
-    pub fn get_position(env: Env, user: String) -> Result<(i128, i128, i128), ProtocolError> {
-        get_position(env, user)
-    }
-
-    /// Set risk parameters (admin only)
-    pub fn set_risk_params(
-        env: Env,
-        caller: String,
-        close_factor: i128,
-        liquidation_incentive: i128,
-    ) -> Result<(), ProtocolError> {
-        set_risk_params(env, caller, close_factor, liquidation_incentive)
-    }
-
-    /// Set pause switches (admin only)
-    pub fn set_pause_switches(
-        env: Env,
-        caller: String,
-        pause_borrow: bool,
-        pause_deposit: bool,
-        pause_withdraw: bool,
-        pause_liquidate: bool,
-    ) -> Result<(), ProtocolError> {
-        set_pause_switches(
-            env,
-            caller,
-            pause_borrow,
-            pause_deposit,
-            pause_withdraw,
-            pause_liquidate,
-        )
-    }
-
-    /// Get protocol parameters
-    pub fn get_protocol_params(
-        env: Env,
-    ) -> Result<(i128, i128, i128, i128, i128, i128), ProtocolError> {
-        get_protocol_params(env)
-    }
-
-    /// Get risk configuration
-    pub fn get_risk_config(
-        env: Env,
-    ) -> Result<(i128, i128, bool, bool, bool, bool), ProtocolError> {
-        get_risk_config(env)
-    }
-
-    /// Get system stats
-    pub fn get_system_stats(env: Env) -> Result<(i128, i128, i128, i128), ProtocolError> {
-        get_system_stats(env)
-    }
-
-    pub fn set_emergency_manager(
-        env: Env,
-        caller: String,
-        manager: String,
-        enabled: bool,
-    ) -> Result<(), ProtocolError> {
-        set_emergency_manager(env, caller, manager, enabled)
-    }
-
-    pub fn trigger_emergency_pause(
-        env: Env,
-        caller: String,
-        reason: Option<String>,
-    ) -> Result<(), ProtocolError> {
-        trigger_emergency_pause(env, caller, reason)
-    }
-
-    pub fn enter_recovery_mode(
-        env: Env,
-        caller: String,
-        plan: Option<String>,
-    ) -> Result<(), ProtocolError> {
-        enter_recovery_mode(env, caller, plan)
-    }
-
-    pub fn resume_operations(env: Env, caller: String) -> Result<(), ProtocolError> {
-        resume_operations(env, caller)
-    }
-
-    pub fn record_recovery_step(
-        env: Env,
-        caller: String,
-        step: String,
-    ) -> Result<(), ProtocolError> {
-        record_recovery_step(env, caller, step)
-    }
-
-    pub fn queue_emergency_param_update(
-        env: Env,
-        caller: String,
-        parameter: Symbol,
-        value: i128,
-    ) -> Result<(), ProtocolError> {
-        queue_emergency_param_update(env, caller, parameter, value)
-    }
-
-    pub fn apply_emergency_param_updates(env: Env, caller: String) -> Result<(), ProtocolError> {
-        apply_emergency_param_updates(env, caller)
-    }
-
-    pub fn adjust_emergency_fund(
-        env: Env,
-        caller: String,
-        token: Option<Address>,
-        delta: i128,
-        reserve_delta: i128,
-    ) -> Result<(), ProtocolError> {
-        adjust_emergency_fund(env, caller, token, delta, reserve_delta)
-    }
-
-    pub fn get_emergency_state(env: Env) -> Result<EmergencyState, ProtocolError> {
-        get_emergency_state(env)
-    }
-
-    pub fn get_event_summary(env: Env) -> Result<EventSummary, ProtocolError> {
-        get_event_summary(env)
-    }
-
-    pub fn get_event_aggregates(env: Env) -> Result<Map<Symbol, EventAggregate>, ProtocolError> {
-        get_event_aggregates(env)
-    }
-
-    pub fn get_events_for_type(
-        env: Env,
-        event_type: Symbol,
-        limit: u32,
-    ) -> Result<Vec<EventRecord>, ProtocolError> {
-        get_events_for_type(env, event_type, limit)
-    }
-
-    pub fn get_recent_event_types(env: Env) -> Result<Vec<Symbol>, ProtocolError> {
-        get_recent_event_types(env)
-    }
-
-    pub fn register_token_asset(
-        env: Env,
-        caller: String,
-        key: Symbol,
-        token: Address,
-    ) -> Result<(), ProtocolError> {
-        register_token_asset(env, caller, key, token)
-    }
-
-    pub fn set_primary_asset(
-        env: Env,
-        caller: String,
-        token: Address,
-    ) -> Result<(), ProtocolError> {
-        set_primary_asset(env, caller, token)
-    }
-
-    pub fn get_registered_asset(env: Env, key: Symbol) -> Result<Option<Address>, ProtocolError> {
-        get_registered_asset(env, key)
-    }
-
-    pub fn set_user_role(
-        env: Env,
-        caller: String,
-        user: Address,
-        role: UserRole,
-    ) -> Result<(), ProtocolError> {
-        set_user_role(env, caller, user, role)
-    }
-
-    pub fn set_user_verification(
-        env: Env,
-        caller: String,
-        user: Address,
-        status: VerificationStatus,
-    ) -> Result<(), ProtocolError> {
-        set_user_verification(env, caller, user, status)
-    }
-
-    pub fn set_user_limits(
-        env: Env,
-        caller: String,
-        user: Address,
-        max_deposit: i128,
-        max_borrow: i128,
-        max_withdraw: i128,
-        daily_limit: i128,
-    ) -> Result<(), ProtocolError> {
-        set_user_limits(
-            env,
-            caller,
-            user,
-            max_deposit,
-            max_borrow,
-            max_withdraw,
-            daily_limit,
-        )
-    }
-
-    pub fn freeze_user(env: Env, caller: String, user: Address) -> Result<(), ProtocolError> {
-        freeze_user(env, caller, user)
-    }
-
-    pub fn unfreeze_user(env: Env, caller: String, user: Address) -> Result<(), ProtocolError> {
-        unfreeze_user(env, caller, user)
-    }
-
-    pub fn get_user_profile(env: Env, user: Address) -> Result<UserProfile, ProtocolError> {
-        get_user_profile(env, user)
+    pub fn withdraw(env: Env, withdrawer: Address, amount: i128) -> Result<(), ProtocolError> {
+        withdraw::WithdrawModule::withdraw(&env, &withdrawer, amount)
     }
 
     // Analytics and Reporting Functions

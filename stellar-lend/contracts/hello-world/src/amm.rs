@@ -5,6 +5,9 @@
 //! - Swap hooks for deleveraging and liquidation flows
 //! - Event emissions for AMM usage tracking
 //! - Integration with liquidation mechanisms
+
+use crate::{Position, ProtocolError, ProtocolEvent, ReentrancyGuard, StateHelper};
+
 #[cfg(not(test))]
 use crate::ProtocolEvent;
 #[allow(unused_imports)]
