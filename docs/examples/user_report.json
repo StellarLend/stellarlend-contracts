@@ -1,0 +1,45 @@
+{
+  "user": "GCAZYE3EB54VKP3UQBX3H73VQO3SIWTZNR7NJQKJFZZ6XLADWA4C3SOC",
+  "analytics": {
+    "total_deposits": 1000000,
+    "total_borrows": 400000,
+    "total_withdrawals": 100000,
+    "total_repayments": 250000,
+    "collateral_value": 950000,
+    "debt_value": 380000,
+    "collateralization_ratio": 2500000,
+    "activity_score": 620,
+    "transaction_count": 12,
+    "first_interaction": 1000,
+    "last_activity": 1200,
+    "risk_level": 350000,
+    "loyalty_tier": 3
+  },
+  "recent_activities": [
+    {
+      "timestamp": 1200,
+      "user": "GCAZYE3EB54VKP3UQBX3H73VQO3SIWTZNR7NJQKJFZZ6XLADWA4C3SOC",
+      "activity_type": "repay",
+      "amount": 50000,
+      "asset": null,
+      "metadata": {}
+    },
+    {
+      "timestamp": 1100,
+      "user": "GCAZYE3EB54VKP3UQBX3H73VQO3SIWTZNR7NJQKJFZZ6XLADWA4C3SOC",
+      "activity_type": "borrow",
+      "amount": 200000,
+      "asset": "CCONTRACTADDRTEST000000000000000000000000000000000000",
+      "metadata": {}
+    },
+    {
+      "timestamp": 1000,
+      "user": "GCAZYE3EB54VKP3UQBX3H73VQO3SIWTZNR7NJQKJFZZ6XLADWA4C3SOC",
+      "activity_type": "deposit",
+      "amount": 1000000,
+      "asset": null,
+      "metadata": {}
+    }
+  ],
+  "generated_at": 1200
+}

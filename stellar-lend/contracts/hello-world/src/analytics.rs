@@ -8,7 +8,7 @@
 //! - Risk analytics
 //! - Activity tracking
 
-use alloc::string::ToString;
+use core::cmp::min;
 use soroban_sdk::{contracterror, contracttype, vec, Address, Env, Map, String, Symbol, Vec};
 
 use crate::{ProtocolError, ProtocolEvent};
@@ -451,6 +451,18 @@ pub struct ActivityLogEntry {
     pub metadata: Map<String, String>,
 }
 
+/// Paginated activity response suited for off-chain consumption
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ActivityFeed {
+    /// Ordered activity entries (newest first)
+    pub entries: Vec<ActivityLogEntry>,
+    /// Total entries currently stored in the log (bounded to 1000)
+    pub total_available: u32,
+    /// Timestamp when the feed was generated
+    pub generated_at: u64,
+}
+
 /// Main analytics module
 pub struct AnalyticsModule;
 
@@ -466,19 +478,13 @@ impl AnalyticsModule {
         let timestamp = env.ledger().timestamp();
 
         // Create activity log entry
-        let mut metadata = Map::new(env);
-        metadata.set(
-            String::from_str(env, "timestamp"),
-            String::from_str(env, &timestamp.to_string()),
-        );
-
         let entry = ActivityLogEntry {
             timestamp,
             user: user.clone(),
             activity_type: String::from_str(env, activity_type),
             amount,
             asset,
-            metadata,
+            metadata: Map::new(env),
         };
 
         // Add to activity log
@@ -643,7 +649,7 @@ impl AnalyticsModule {
         let active_users = user_analytics
             .iter()
             .filter(|(_, analytics)| {
-                let cutoff = env.ledger().timestamp() - 86400; // 24 hours
+                let cutoff = env.ledger().timestamp().saturating_sub(86400); // 24 hours
                 analytics.last_activity > cutoff
             })
             .count() as i128;
@@ -767,6 +773,39 @@ impl AnalyticsModule {
         AnalyticsStorage::put_performance_metrics(env, &metrics);
 
         Ok(())
+    }
+
+    /// Retrieve recent activity entries in newest-first order with an upper bound
+    pub fn get_recent_activity(env: &Env, limit: u32) -> ActivityFeed {
+        let log = AnalyticsStorage::get_activity_log(env);
+        let len = log.len();
+        let total_entries = len;
+        let max_window = min(limit, 1000);
+        let take = min(max_window, len);
+
+        let mut entries = Vec::new(env);
+        let generated_at = env.ledger().timestamp();
+
+        if take == 0 {
+            return ActivityFeed {
+                entries,
+                total_available: total_entries,
+                generated_at,
+            };
+        }
+
+        for offset in 0..take {
+            let idx = len - 1 - offset;
+            if let Some(entry) = log.get(idx) {
+                entries.push_back(entry);
+            }
+        }
+
+        ActivityFeed {
+            entries,
+            total_available: total_entries,
+            generated_at,
+        }
     }
 }
 

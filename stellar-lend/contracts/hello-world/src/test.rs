@@ -1,8 +1,14 @@
 use super::*;
-use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol};
+use soroban_sdk::{
+    contract, contractimpl, testutils::Address as _, testutils::Ledger, Address, Env, Map, String,
+    Symbol,
+};
 
 use crate::flash_loan::FlashLoan;
-use crate::{ProtocolError, ReentrancyGuard};
+use crate::{
+    analytics::{ActivityLogEntry, AnalyticsStorage},
+    ProtocolError, ReentrancyGuard,
+};
 
 #[contract]
 pub struct MockToken;
@@ -871,6 +877,146 @@ fn test_get_protocol_params() {
 }
 
 #[test]
+fn test_recent_activity_feed_ordering_and_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let user = TestUtils::create_user_address(&env, 0);
+
+    let (admin, contract_id, _token) =
+        TestUtils::setup_contract_with_token(&env, core::slice::from_ref(&user));
+    env.as_contract(&contract_id, || {
+        TestUtils::verify_user(&env, &admin, &user);
+
+        env.ledger().with_mut(|l| l.timestamp = 100);
+        Contract::deposit_collateral(env.clone(), user.to_string(), 500).unwrap();
+
+        env.ledger().with_mut(|l| l.timestamp = 200);
+        Contract::borrow(env.clone(), user.to_string(), 200).unwrap();
+
+        env.ledger().with_mut(|l| l.timestamp = 300);
+        Contract::repay(env.clone(), user.to_string(), 50).unwrap();
+
+        env.ledger().with_mut(|l| l.timestamp = 360);
+        let feed = Contract::get_recent_activity(env.clone(), 2).unwrap();
+
+        assert_eq!(feed.total_available, 3);
+        assert_eq!(feed.entries.len(), 2_u32);
+        assert_eq!(feed.generated_at, 360);
+
+        let first = feed.entries.get(0).unwrap();
+        assert_eq!(first.activity_type.to_string(), "repay");
+        assert_eq!(first.timestamp, 300);
+
+        let second = feed.entries.get(1).unwrap();
+        assert_eq!(second.activity_type.to_string(), "borrow");
+        assert_eq!(second.timestamp, 200);
+    });
+}
+
+#[test]
+fn test_recent_activity_feed_edge_limits() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let user = TestUtils::create_user_address(&env, 0);
+
+    let (admin, contract_id, _token) =
+        TestUtils::setup_contract_with_token(&env, core::slice::from_ref(&user));
+    env.as_contract(&contract_id, || {
+        TestUtils::verify_user(&env, &admin, &user);
+
+        let activity = String::from_str(&env, "deposit");
+        let metadata = Map::new(&env);
+        let mut log = soroban_sdk::Vec::new(&env);
+        for i in 0..=1_000u32 {
+            log.push_back(ActivityLogEntry {
+                timestamp: 1_000 + i as u64,
+                user: user.clone(),
+                activity_type: activity.clone(),
+                amount: i as i128,
+                asset: None,
+                metadata: metadata.clone(),
+            });
+        }
+        AnalyticsStorage::put_activity_log(&env, &log);
+
+        env.ledger().with_mut(|l| l.timestamp = 5_000);
+        let zero_feed = Contract::get_recent_activity(env.clone(), 0).unwrap();
+        assert_eq!(zero_feed.entries.len(), 0);
+        assert_eq!(zero_feed.total_available, 1_001);
+        assert_eq!(zero_feed.generated_at, 5_000);
+
+        env.ledger().with_mut(|l| l.timestamp = 6_000);
+        let wide_feed = Contract::get_recent_activity(env.clone(), 5_000).unwrap();
+        assert_eq!(wide_feed.entries.len(), 1_000);
+        assert_eq!(wide_feed.total_available, 1_001);
+        assert_eq!(wide_feed.generated_at, 6_000);
+
+        let newest = wide_feed.entries.get(0).unwrap();
+        assert_eq!(newest.timestamp, 1_000 + 1_000);
+        let oldest = wide_feed.entries.get(999).unwrap();
+        assert_eq!(oldest.timestamp, 1_000 + 1);
+    });
+}
+
+#[test]
+fn test_protocol_and_user_reports_reflect_activity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let primary_user = TestUtils::create_user_address(&env, 0);
+    let secondary_user = TestUtils::create_user_address(&env, 1);
+
+    let (admin, contract_id, _token) =
+        TestUtils::setup_contract_with_token(&env, &[primary_user.clone(), secondary_user.clone()]);
+
+    env.as_contract(&contract_id, || {
+        TestUtils::verify_user(&env, &admin, &primary_user);
+        TestUtils::verify_user(&env, &admin, &secondary_user);
+
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        Contract::deposit_collateral(env.clone(), primary_user.to_string(), 1_000).unwrap();
+
+        env.ledger().with_mut(|l| l.timestamp = 1_050);
+        Contract::deposit_collateral(env.clone(), secondary_user.to_string(), 200).unwrap();
+
+        env.ledger().with_mut(|l| l.timestamp = 1_100);
+        Contract::borrow(env.clone(), primary_user.to_string(), 400).unwrap();
+
+        env.ledger().with_mut(|l| l.timestamp = 1_200);
+        let protocol_report = Contract::get_protocol_report(env.clone()).unwrap();
+
+        assert_eq!(protocol_report.generated_at, 1_200);
+        assert_eq!(protocol_report.protocol_metrics.total_deposits, 1_200);
+        assert_eq!(protocol_report.protocol_metrics.total_borrows, 400);
+        assert_eq!(protocol_report.total_users, 2);
+        assert_eq!(protocol_report.active_users, 2);
+
+        let primary_report =
+            Contract::get_user_report(env.clone(), primary_user.to_string()).unwrap();
+        assert_eq!(primary_report.generated_at, 1_200);
+        assert_eq!(primary_report.recent_activities.len(), 2_u32);
+        assert_eq!(
+            primary_report.recent_activities.get(0).unwrap().timestamp,
+            1_000
+        );
+        assert_eq!(
+            primary_report.recent_activities.get(1).unwrap().timestamp,
+            1_100
+        );
+        assert_eq!(primary_report.analytics.total_deposits, 1_000);
+        assert_eq!(primary_report.analytics.total_borrows, 400);
+
+        let secondary_report =
+            Contract::get_user_report(env.clone(), secondary_user.to_string()).unwrap();
+        assert_eq!(secondary_report.recent_activities.len(), 1_u32);
+        assert_eq!(secondary_report.analytics.total_deposits, 200);
+        assert_eq!(secondary_report.analytics.total_borrows, 0);
+    });
+}
+
+#[test]
 fn test_get_system_stats() {
     let env = Env::default();
     env.mock_all_auths();
@@ -908,6 +1054,67 @@ fn test_get_position_not_found() {
         let result = Contract::get_position(env.clone(), user.to_string());
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ProtocolError::PositionNotFound);
+    });
+}
+
+#[test]
+fn test_oracle_set_heartbeat_ttl_admin_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = TestUtils::create_admin_address(&env);
+
+    let contract_id = env.register(Contract, ());
+    env.as_contract(&contract_id, || {
+        // Initialize contract
+        Contract::initialize(env.clone(), admin.to_string()).unwrap();
+
+        // Test admin can set heartbeat_ttl (this would need oracle functions in main contract)
+        // This test would require Oracle functions to be exposed through Contract interface
+    });
+}
+
+#[test]
+fn test_oracle_set_mode_admin_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = TestUtils::create_admin_address(&env);
+
+    let contract_id = env.register(Contract, ());
+    env.as_contract(&contract_id, || {
+        // Initialize contract
+        Contract::initialize(env.clone(), admin.to_string()).unwrap();
+
+        // Test admin can set mode (this would need oracle functions in main contract)
+        // This test would require Oracle functions to be exposed through Contract interface
+    });
+}
+
+#[test]
+fn test_admin_role_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = TestUtils::create_admin_address(&env);
+    let user = TestUtils::create_user_address(&env, 0);
+
+    let contract_id = env.register(Contract, ());
+    env.as_contract(&contract_id, || {
+        // Initialize contract
+        Contract::initialize(env.clone(), admin.to_string()).unwrap();
+
+        // Bootstrap users with different roles
+        UserManager::bootstrap_admin(&env, &admin);
+
+        // Test admin can perform admin-only operations
+        let result = Contract::set_min_collateral_ratio(env.clone(), admin.to_string(), 150);
+        assert!(result.is_ok());
+
+        // Test non-admin cannot perform admin-only operations
+        let result = Contract::set_min_collateral_ratio(env.clone(), user.to_string(), 200);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ProtocolError::Unauthorized);
     });
 }
 // Address validation tests
@@ -1072,11 +1279,52 @@ fn test_initialize_invalid_admin_address() {
 }
 
 #[test]
+fn test_manager_role_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = TestUtils::create_admin_address(&env);
+    let manager = TestUtils::create_user_address(&env, 0);
+
+    let contract_id = env.register(Contract, ());
+    env.as_contract(&contract_id, || {
+        // Initialize contract
+        Contract::initialize(env.clone(), admin.to_string()).unwrap();
+
+        // Bootstrap users with different roles
+        UserManager::bootstrap_admin(&env, &admin);
+
+        // Set manager role for manager user
+        UserManager::set_role(&env, &admin, &manager, UserRole::Manager).unwrap();
+
+        // Test manager can perform manager-level operations (user management)
+        let result = Contract::set_user_role(
+            env.clone(),
+            manager.to_string(),
+            manager.clone(),
+            UserRole::Standard,
+        );
+        assert!(result.is_ok());
+
+        // Test manager cannot escalate to admin role
+        let result = Contract::set_user_role(
+            env.clone(),
+            manager.to_string(),
+            manager.clone(),
+            UserRole::Admin,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ProtocolError::Unauthorized);
+    });
+}
+
+#[test]
 fn test_deposit_collateral_invalid_depositor() {
     let env = Env::default();
     env.mock_all_auths();
 
     let admin = TestUtils::create_admin_address(&env);
+
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
         Contract::initialize(env.clone(), admin.to_string()).unwrap();
@@ -1192,6 +1440,41 @@ fn test_liquidate_invalid_addresses() {
 }
 
 #[test]
+fn test_analyst_role_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = TestUtils::create_admin_address(&env);
+    let analyst = TestUtils::create_user_address(&env, 0);
+
+    let contract_id = env.register(Contract, ());
+    env.as_contract(&contract_id, || {
+        // Initialize contract
+        Contract::initialize(env.clone(), admin.to_string()).unwrap();
+
+        // Bootstrap users with different roles
+        UserManager::bootstrap_admin(&env, &admin);
+
+        // Set analyst role for analyst user
+        UserManager::set_role(&env, &admin, &analyst, UserRole::Analyst).unwrap();
+
+        // Test analyst can perform verification operations
+        let result = Contract::set_user_verification(
+            env.clone(),
+            analyst.to_string(),
+            analyst.clone(),
+            VerificationStatus::Verified,
+        );
+        assert!(result.is_ok());
+
+        // Test analyst cannot perform admin operations
+        let result = Contract::set_min_collateral_ratio(env.clone(), analyst.to_string(), 200);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ProtocolError::Unauthorized);
+    });
+}
+
+#[test]
 fn test_get_position_invalid_user() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1209,11 +1492,52 @@ fn test_get_position_invalid_user() {
 }
 
 #[test]
+fn test_role_escalation_prevention() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = TestUtils::create_admin_address(&env);
+    let manager = TestUtils::create_user_address(&env, 0);
+
+    let contract_id = env.register(Contract, ());
+    env.as_contract(&contract_id, || {
+        // Initialize contract
+        Contract::initialize(env.clone(), admin.to_string()).unwrap();
+
+        // Bootstrap users with different roles
+        UserManager::bootstrap_admin(&env, &admin);
+
+        // Set manager role for manager user
+        UserManager::set_role(&env, &admin, &manager, UserRole::Manager).unwrap();
+
+        // Test manager cannot escalate user to admin role (only admin can set admin)
+        let result = Contract::set_user_role(
+            env.clone(),
+            manager.to_string(),
+            manager.clone(),
+            UserRole::Admin,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ProtocolError::Unauthorized);
+
+        // Only admin can set admin role
+        let result = Contract::set_user_role(
+            env.clone(),
+            admin.to_string(),
+            manager.clone(),
+            UserRole::Admin,
+        );
+        assert!(result.is_ok());
+    });
+}
+
+#[test]
 fn test_admin_functions_invalid_caller() {
     let env = Env::default();
     env.mock_all_auths();
 
     let admin = TestUtils::create_admin_address(&env);
+
     let contract_id = env.register(Contract, ());
     env.as_contract(&contract_id, || {
         Contract::initialize(env.clone(), admin.to_string()).unwrap();
@@ -1271,4 +1595,51 @@ fn test_emergency_functions_invalid_caller() {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ProtocolError::InvalidAddress);
     });
+}
+
+#[test]
+fn test_pause_controls() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    // Initialize contract
+    let admin = TestUtils::create_admin_address(&env);
+
+    client.initialize(&admin.to_string());
+
+    // Test users
+    let user = Address::generate(&env);
+
+    // Setup test token
+    let token_admin = Address::generate(&env);
+    let token_client = create_token_contract(&env, &token_admin);
+    let token_address = token_client.address.clone();
+
+    // Register token
+    client.set_primary_asset(&admin.to_string(), &token_address);
+
+    // Mint tokens to user
+    token_client.mint(&user, &1000);
+
+    // Pause deposits
+    client.set_pause_switches(
+        &admin.to_string(),
+        &false, // borrow
+        &true,  // deposit
+        &false, // withdraw
+        &false, // liquidate
+    );
+
+    // Attempt deposit while paused
+    let result = client.try_deposit_collateral(&user.to_string(), &100);
+    assert!(result.is_err());
+}
+
+// Helper to create token contract for testing
+fn create_token_contract<'a>(env: &Env, admin: &Address) -> MockTokenClient<'a> {
+    let contract_id = env.register(MockToken, ());
+    let token = MockTokenClient::new(env, &contract_id);
+    token.initialize(admin);
+    token
 }

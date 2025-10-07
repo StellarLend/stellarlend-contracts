@@ -83,16 +83,7 @@
                                     "symbol": "metadata"
                                   },
                                   "val": {
-                                    "map": [
-                                      {
-                                        "key": {
-                                          "string": "timestamp"
-                                        },
-                                        "val": {
-                                          "string": "0"
-                                        }
-                                      }
-                                    ]
+                                    "map": []
                                   }
                                 },
                                 {

@@ -7,6 +7,7 @@
 extern crate alloc;
 
 use alloc::format;
+use alloc::string::ToString;
 use soroban_sdk::token::TokenClient;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Env, Map, String, Symbol, Vec,
@@ -434,6 +435,45 @@ impl UserManager {
         Ok(())
     }
 
+    /// Shared helper for admin-only operations - validates that caller is admin
+    pub fn require_admin(env: &Env, caller: &Address) -> Result<(), ProtocolError> {
+        ProtocolConfig::require_admin(env, caller)
+    }
+
+    /// Shared helper for manager-level operations - validates manager role or admin
+    pub fn require_manager(env: &Env, caller: &Address) -> Result<(), ProtocolError> {
+        Self::ensure_can_manage(env, caller, UserRole::Manager)
+    }
+
+    /// Shared helper for analyst-level operations - validates analyst role or higher
+    pub fn require_analyst(env: &Env, caller: &Address) -> Result<(), ProtocolError> {
+        Self::ensure_can_manage(env, caller, UserRole::Analyst)
+    }
+
+    /// Shared helper for admin-only sensitive operations - double-checks admin status
+    pub fn require_admin_strict(env: &Env, caller: &Address) -> Result<(), ProtocolError> {
+        let profile = Self::ensure_profile(env, caller);
+
+        // Must be verified admin user
+        if !profile.verification.is_verified() {
+            return Err(ProtocolError::UserNotVerified);
+        }
+
+        // Must have admin role level
+        if profile.role.level() < UserRole::Admin.level() {
+            return Err(ProtocolError::UserRoleViolation);
+        }
+
+        // Must also be registered admin in ProtocolConfig (double-check)
+        if let Some(admin) = ProtocolConfig::get_admin(env) {
+            if admin == *caller {
+                return Ok(());
+            }
+        }
+
+        Err(ProtocolError::Unauthorized)
+    }
+
     pub fn bootstrap_admin(env: &Env, admin: &Address) {
         let mut profile = Self::ensure_profile(env, admin);
         profile.role = UserRole::Admin;
@@ -461,7 +501,13 @@ impl UserManager {
         user: &Address,
         role: UserRole,
     ) -> Result<(), ProtocolError> {
-        Self::ensure_can_manage(env, caller, UserRole::Manager)?;
+        // Only admin can set admin roles
+        if matches!(role, UserRole::Admin) {
+            Self::require_admin(env, caller)?;
+        } else {
+            Self::ensure_can_manage(env, caller, UserRole::Manager)?;
+        }
+
         let mut profile = Self::ensure_profile(env, user);
         profile.role = role.clone();
         #[allow(clippy::needless_bool_assign)]
@@ -1948,6 +1994,21 @@ pub struct RiskConfig {
     /// Last time config was updated
     pub last_update: u64,
 }
+
+// Methods for risk config
+impl RiskConfig {
+    /// Ensure the operation is not paused
+    pub fn ensure_not_paused(&self, operation: OperationKind) -> Result<(), ProtocolError> {
+        match operation {
+            OperationKind::Deposit if self.pause_deposit => Err(ProtocolError::ProtocolPaused),
+            OperationKind::Borrow if self.pause_borrow => Err(ProtocolError::ProtocolPaused),
+            OperationKind::Withdraw if self.pause_withdraw => Err(ProtocolError::ProtocolPaused),
+            OperationKind::Liquidate if self.pause_liquidate => Err(ProtocolError::ProtocolPaused),
+            _ => Ok(()),
+        }
+    }
+}
+
 impl Default for RiskConfig {
     fn default() -> Self {
         Self {
@@ -2019,23 +2080,39 @@ impl InterestRateStorage {
         let mut state = Self::get_state(env);
         let config = Self::get_config(env);
 
+        // Units and scales:
+        // - Rates are scaled by 1e8 (100000000) representing 1.0 = 1e8
+        // - Utilization is scaled by 1e8
+        // - Time is measured in seconds; per-year normalization uses 365*24*60*60
+        // - All arithmetic uses saturating operations to avoid overflows
+
         // Simple interest rate calculation based on utilization
         if state.total_supplied > 0 {
-            state.utilization_rate = (state.total_borrowed * 100000000) / state.total_supplied;
+            // utilization = borrowed / supplied scaled to 1e8
+            state.utilization_rate = (state.total_borrowed.saturating_mul(100000000))
+                .saturating_div(state.total_supplied);
         } else {
             state.utilization_rate = 0;
         }
 
         // Calculate borrow rate based on utilization
-        if state.utilization_rate <= config.kink_utilization {
-            state.current_borrow_rate =
-                config.base_rate + (state.utilization_rate * config.multiplier) / 100000000;
+        let u = state.utilization_rate.clamp(0, 100000000);
+        if u <= config.kink_utilization {
+            state.current_borrow_rate = config
+                .base_rate
+                .saturating_add((u.saturating_mul(config.multiplier)).saturating_div(100000000));
         } else {
-            let kink_rate =
-                config.base_rate + (config.kink_utilization * config.multiplier) / 100000000;
-            let excess_utilization = state.utilization_rate - config.kink_utilization;
-            state.current_borrow_rate =
-                kink_rate + (excess_utilization * config.multiplier * 2) / 100000000;
+            let kink_rate = config.base_rate.saturating_add(
+                (config.kink_utilization.saturating_mul(config.multiplier))
+                    .saturating_div(100000000),
+            );
+            let excess_utilization = u.saturating_sub(config.kink_utilization);
+            state.current_borrow_rate = kink_rate.saturating_add(
+                (excess_utilization
+                    .saturating_mul(config.multiplier)
+                    .saturating_mul(2))
+                .saturating_div(100000000),
+            );
         }
 
         // Apply rate limits
@@ -2047,14 +2124,19 @@ impl InterestRateStorage {
         }
 
         // Smoothing for borrow rate: new = old*(s) + current*(1-s)
-        let s_bps = config.smoothing_bps;
+        let s_bps = config.smoothing_bps; // 0..=10000
         let old = state.smoothed_borrow_rate;
         let cur = state.current_borrow_rate;
-        state.smoothed_borrow_rate = (old * s_bps + cur * (10000 - s_bps)) / 10000;
+        state.smoothed_borrow_rate = old
+            .saturating_mul(s_bps)
+            .saturating_add(cur.saturating_mul(10000 - s_bps))
+            .saturating_div(10000);
 
         // Calculate supply rate from smoothed borrow rate
-        state.current_supply_rate =
-            state.smoothed_borrow_rate * (100000000 - config.reserve_factor) / 100000000;
+        state.current_supply_rate = state
+            .smoothed_borrow_rate
+            .saturating_mul(100000000 - config.reserve_factor)
+            .saturating_div(100000000);
 
         state.last_accrual_time = env.ledger().timestamp();
         Self::save_state(env, &state);
@@ -2072,29 +2154,56 @@ impl InterestRateManager {
         borrow_rate: i128,
         supply_rate: i128,
     ) {
+        // Units and scales:
+        // - borrow_rate and supply_rate are annualized rates scaled by 1e8
+        // - interest accrued = principal * rate * time_seconds / (SECONDS_PER_YEAR * 1e8)
+        // - All arithmetic is saturating to avoid overflow
+        const SECONDS_PER_YEAR: i128 = 365 * 24 * 60 * 60;
+        const SCALE: i128 = 100000000; // 1e8
+
         let current_time = env.ledger().timestamp();
         if position.last_accrual_time == 0 {
             position.last_accrual_time = current_time;
             return;
         }
 
-        let time_delta = current_time - position.last_accrual_time;
+        let time_delta = current_time.saturating_sub(position.last_accrual_time);
         if time_delta == 0 {
             return;
         }
 
+        // Clamp rates to sensible bounds [0, 1e8]
+        let br = borrow_rate.clamp(0, SCALE);
+        let sr = supply_rate.clamp(0, SCALE);
+
         // Accrue borrow interest
         if position.debt > 0 {
-            let interest = (position.debt * borrow_rate * time_delta as i128)
-                / (365 * 24 * 60 * 60 * 100000000);
-            position.borrow_interest += interest;
+            let numerator = position
+                .debt
+                .saturating_mul(br)
+                .saturating_mul(time_delta as i128);
+            let denom = SECONDS_PER_YEAR.saturating_mul(SCALE);
+            let interest = if denom == 0 {
+                0
+            } else {
+                numerator.saturating_div(denom)
+            };
+            position.borrow_interest = position.borrow_interest.saturating_add(interest);
         }
 
         // Accrue supply interest
         if position.collateral > 0 {
-            let interest = (position.collateral * supply_rate * time_delta as i128)
-                / (365 * 24 * 60 * 60 * 100000000);
-            position.supply_interest += interest;
+            let numerator = position
+                .collateral
+                .saturating_mul(sr)
+                .saturating_mul(time_delta as i128);
+            let denom = SECONDS_PER_YEAR.saturating_mul(SCALE);
+            let interest = if denom == 0 {
+                0
+            } else {
+                numerator.saturating_div(denom)
+            };
+            position.supply_interest = position.supply_interest.saturating_add(interest);
         }
 
         position.last_accrual_time = current_time;
@@ -2958,14 +3067,28 @@ pub fn deposit(env: Env, user: Address, asset_id: AssetId, amount: i128, bridge_
         // ... existing deposit logic without bridge context ...
     }
     Ok(())
+pub fn deposit_collateral(env: Env, depositor: String, amount: i128) -> Result<(), ProtocolError> {
+    // Check pause state first
+    let risk_config = RiskConfigStorage::get(&env);
+    risk_config.ensure_not_paused(OperationKind::Deposit)?;
+
+    let depositor_addr = AddressHelper::require_valid_address(&env, &depositor)?;
+    deposit::DepositModule::deposit_collateral(&env, &depositor_addr, amount)
 }
 
 pub fn borrow(env: Env, borrower: String, amount: i128) -> Result<(), ProtocolError> {
+    // Check pause state first
+    let risk_config = RiskConfigStorage::get(&env);
+    risk_config.ensure_not_paused(OperationKind::Borrow)?;
+
     let borrower_addr = AddressHelper::require_valid_address(&env, &borrower)?;
     borrow::BorrowModule::borrow(&env, &borrower_addr, amount)
 }
 
 pub fn repay(env: Env, repayer: String, amount: i128) -> Result<(), ProtocolError> {
+    // Check pause state first
+    let risk_config = RiskConfigStorage::get(&env);
+    risk_config.ensure_not_paused(OperationKind::Repay)?;
     let repayer_addr = AddressHelper::require_valid_address(&env, &repayer)?;
     repay::RepayModule::repay(&env, &repayer_addr, amount)
 }
@@ -3004,6 +3127,12 @@ pub fn withdraw(env: Env, user: Address, asset_id: AssetId, amount: i128, bridge
         // ... existing withdrawal logic without bridge context ...
     }
     Ok(())
+pub fn withdraw(env: Env, withdrawer: String, amount: i128) -> Result<(), ProtocolError> {
+    // Check pause state first
+    let risk_config = RiskConfigStorage::get(&env);
+    risk_config.ensure_not_paused(OperationKind::Withdraw)?;
+    let withdrawer_addr = AddressHelper::require_valid_address(&env, &withdrawer)?;
+    withdraw::WithdrawModule::withdraw(&env, &withdrawer_addr, amount)
 }
 
 pub fn liquidate(
@@ -3013,6 +3142,9 @@ pub fn liquidate(
     amount: i128,
     min_out: i128,
 ) -> Result<(), ProtocolError> {
+    // Check pause state first
+    let risk_config = RiskConfigStorage::get(&env);
+    risk_config.ensure_not_paused(OperationKind::Liquidate)?;
     let liquidator_addr = AddressHelper::require_valid_address(&env, &liquidator)?;
     UserManager::ensure_operation_allowed(
         &env,
@@ -3620,6 +3752,13 @@ impl Contract {
         analytics::AnalyticsModule::calculate_risk_analytics(&env)
     }
 
+    pub fn get_recent_activity(
+        env: Env,
+        limit: u32,
+    ) -> Result<analytics::ActivityFeed, ProtocolError> {
+        Ok(analytics::AnalyticsModule::get_recent_activity(&env, limit))
+    }
+
     pub fn update_performance_metrics(
         env: Env,
         processing_time: i128,
@@ -3631,14 +3770,19 @@ impl Contract {
     pub fn record_activity(
         env: Env,
         user: String,
-        _activity_type: String,
+        activity_type: String,
         amount: i128,
         asset: Option<Address>,
     ) -> Result<(), ProtocolError> {
         let user_addr = AddressHelper::require_valid_address(&env, &user)?;
-        // For now, we'll use a placeholder string since soroban_sdk::String doesn't implement Display
-        // In a real implementation, you might want to modify the analytics module to accept soroban_sdk::String
-        analytics::AnalyticsModule::record_activity(&env, &user_addr, "activity", amount, asset)
+        let activity = activity_type.to_string();
+        analytics::AnalyticsModule::record_activity(
+            &env,
+            &user_addr,
+            activity.as_str(),
+            amount,
+            asset,
+        )
     }
 
     // ==================== AMM Registry and Swap Hooks ====================
@@ -3728,6 +3872,7 @@ impl Contract {
     ///
     /// # Returns
     /// * Swap result with actual amounts swapped
+    /// awdadaw
     /// * Updates position with adjusted collateral and debt
     pub fn liquidation_swap_hook(
         env: Env,
