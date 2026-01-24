@@ -7,7 +7,6 @@
     [],
     [],
     [],
-    [],
     []
   ],
   "ledger": {
@@ -68,60 +67,7 @@
                           "val": {
                             "i128": {
                               "hi": 0,
-                              "lo": 500
-                            }
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "asset"
-                          },
-                          "val": "void"
-                        },
-                        {
-                          "key": {
-                            "symbol": "metadata"
-                          },
-                          "val": {
-                            "map": []
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "timestamp"
-                          },
-                          "val": {
-                            "u64": 0
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "user"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "activity_type"
-                          },
-                          "val": {
-                            "symbol": "deposit"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "amount"
-                          },
-                          "val": {
-                            "i128": {
-                              "hi": 0,
-                              "lo": 300
+                              "lo": 1000
                             }
                           }
                         },
@@ -204,8 +150,56 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 800
+                    "lo": 1000
                   }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "PauseSwitches"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "PauseSwitches"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "pause_withdraw"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    }
+                  ]
                 }
               }
             },
@@ -269,7 +263,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1000
                         }
                       }
                     },
@@ -350,7 +344,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1000
                         }
                       }
                     },
@@ -361,7 +355,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1000
                         }
                       }
                     }
@@ -429,7 +423,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1000
                         }
                       }
                     },
@@ -508,7 +502,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1000
                         }
                       }
                     },
@@ -539,7 +533,7 @@
                         "symbol": "transaction_count"
                       },
                       "val": {
-                        "u64": 2
+                        "u64": 1
                       }
                     }
                   ]

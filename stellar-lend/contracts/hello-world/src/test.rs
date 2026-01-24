@@ -99,8 +99,8 @@ fn get_protocol_analytics(env: &Env, contract_id: &Address) -> Option<ProtocolAn
 #[test]
 fn test_deposit_collateral_success_native() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     // Setup
     let user = Address::generate(&env);
@@ -137,8 +137,8 @@ fn test_deposit_collateral_success_native() {
 #[should_panic(expected = "InvalidAmount")]
 fn test_deposit_collateral_zero_amount() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
     let admin = Address::generate(&env);
@@ -152,8 +152,8 @@ fn test_deposit_collateral_zero_amount() {
 #[should_panic(expected = "InvalidAmount")]
 fn test_deposit_collateral_negative_amount() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
     let admin = Address::generate(&env);
@@ -167,8 +167,8 @@ fn test_deposit_collateral_negative_amount() {
 #[should_panic(expected = "InsufficientBalance")]
 fn test_deposit_collateral_insufficient_balance() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
     let admin = Address::generate(&env);
@@ -193,8 +193,8 @@ fn test_deposit_collateral_insufficient_balance() {
 #[should_panic(expected = "AssetNotEnabled")]
 fn test_deposit_collateral_asset_not_enabled() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
     let admin = Address::generate(&env);
@@ -216,8 +216,8 @@ fn test_deposit_collateral_asset_not_enabled() {
 #[should_panic(expected = "InvalidAmount")]
 fn test_deposit_collateral_exceeds_max_deposit() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
     let admin = Address::generate(&env);
@@ -236,8 +236,8 @@ fn test_deposit_collateral_exceeds_max_deposit() {
 #[test]
 fn test_deposit_collateral_multiple_deposits() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -265,8 +265,8 @@ fn test_deposit_collateral_multiple_deposits() {
 #[test]
 fn test_deposit_collateral_multiple_assets() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
     let admin = Address::generate(&env);
@@ -303,8 +303,8 @@ fn test_deposit_collateral_multiple_assets() {
 #[test]
 fn test_deposit_collateral_events_emitted() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -323,8 +323,8 @@ fn test_deposit_collateral_events_emitted() {
 #[test]
 fn test_deposit_collateral_collateral_ratio_calculation() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -347,8 +347,8 @@ fn test_deposit_collateral_collateral_ratio_calculation() {
 #[test]
 fn test_deposit_collateral_activity_log() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -375,8 +375,8 @@ fn test_deposit_collateral_activity_log() {
 #[should_panic(expected = "DepositPaused")]
 fn test_deposit_collateral_pause_switch() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
     let admin = Address::generate(&env);
@@ -409,8 +409,8 @@ fn test_deposit_collateral_pause_switch() {
 #[should_panic(expected = "Deposit error")]
 fn test_deposit_collateral_overflow_protection() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -428,8 +428,8 @@ fn test_deposit_collateral_overflow_protection() {
 #[test]
 fn test_deposit_collateral_native_xlm() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -448,8 +448,8 @@ fn test_deposit_collateral_native_xlm() {
 #[test]
 fn test_deposit_collateral_protocol_analytics_accumulation() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
@@ -472,8 +472,8 @@ fn test_deposit_collateral_protocol_analytics_accumulation() {
 #[test]
 fn test_deposit_collateral_user_analytics_tracking() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -504,8 +504,8 @@ fn test_deposit_collateral_user_analytics_tracking() {
 #[test]
 fn test_withdraw_collateral_success() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -533,8 +533,8 @@ fn test_withdraw_collateral_success() {
 #[should_panic(expected = "InvalidAmount")]
 fn test_withdraw_collateral_zero_amount() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -549,8 +549,8 @@ fn test_withdraw_collateral_zero_amount() {
 #[should_panic(expected = "InvalidAmount")]
 fn test_withdraw_collateral_negative_amount() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -565,8 +565,8 @@ fn test_withdraw_collateral_negative_amount() {
 #[should_panic(expected = "InsufficientCollateral")]
 fn test_withdraw_collateral_insufficient_balance() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -580,8 +580,8 @@ fn test_withdraw_collateral_insufficient_balance() {
 #[test]
 fn test_withdraw_collateral_maximum_withdrawal() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -603,8 +603,8 @@ fn test_withdraw_collateral_maximum_withdrawal() {
 #[test]
 fn test_withdraw_collateral_multiple_withdrawals() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -631,8 +631,8 @@ fn test_withdraw_collateral_multiple_withdrawals() {
 #[should_panic(expected = "WithdrawPaused")]
 fn test_withdraw_collateral_pause_switch() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -654,8 +654,8 @@ fn test_withdraw_collateral_pause_switch() {
 #[test]
 fn test_withdraw_collateral_events_emitted() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -674,8 +674,8 @@ fn test_withdraw_collateral_events_emitted() {
 #[test]
 fn test_withdraw_collateral_analytics_updated() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -697,8 +697,8 @@ fn test_withdraw_collateral_analytics_updated() {
 #[test]
 fn test_withdraw_collateral_with_debt_collateral_ratio() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -731,8 +731,8 @@ fn test_withdraw_collateral_with_debt_collateral_ratio() {
 #[should_panic(expected = "InsufficientCollateralRatio")]
 fn test_withdraw_collateral_violates_collateral_ratio() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -763,8 +763,8 @@ fn test_withdraw_collateral_violates_collateral_ratio() {
 #[test]
 fn test_repay_debt_success_partial() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -800,8 +800,8 @@ fn test_repay_debt_success_partial() {
 #[test]
 fn test_repay_debt_success_full() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -837,8 +837,8 @@ fn test_repay_debt_success_full() {
 #[should_panic(expected = "InvalidAmount")]
 fn test_repay_debt_zero_amount() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -862,8 +862,8 @@ fn test_repay_debt_zero_amount() {
 #[should_panic(expected = "InvalidAmount")]
 fn test_repay_debt_negative_amount() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -887,8 +887,8 @@ fn test_repay_debt_negative_amount() {
 #[should_panic(expected = "NoDebt")]
 fn test_repay_debt_no_debt() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -902,8 +902,8 @@ fn test_repay_debt_no_debt() {
 #[should_panic(expected = "RepayPaused")]
 fn test_repay_debt_pause_switch() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -932,8 +932,8 @@ fn test_repay_debt_pause_switch() {
 #[test]
 fn test_repay_debt_interest_only() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -968,8 +968,8 @@ fn test_repay_debt_interest_only() {
 #[test]
 fn test_repay_debt_events_emitted() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -996,8 +996,8 @@ fn test_repay_debt_events_emitted() {
 #[test]
 fn test_repay_debt_analytics_updated() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -1046,8 +1046,8 @@ fn test_repay_debt_analytics_updated() {
 #[test]
 fn test_repay_debt_collateral_ratio_improves() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
@@ -1078,8 +1078,8 @@ fn test_repay_debt_collateral_ratio_improves() {
 #[test]
 fn test_repay_debt_multiple_repayments() {
     let env = create_test_env();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(StellarLendContract, ());
+    let client = StellarLendContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
 
