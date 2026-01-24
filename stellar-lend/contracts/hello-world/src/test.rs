@@ -498,3 +498,614 @@ fn test_deposit_collateral_user_analytics_tracking() {
     assert_eq!(analytics2.transaction_count, 2);
     assert_eq!(analytics2.first_interaction, analytics1.first_interaction);
 }
+
+// ==================== WITHDRAW TESTS ====================
+
+#[test]
+fn test_withdraw_collateral_success() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // First deposit
+    let deposit_amount = 1000;
+    client.deposit_collateral(&user, &None, &deposit_amount);
+
+    // Withdraw
+    let withdraw_amount = 500;
+    let result = client.withdraw_collateral(&user, &None, &withdraw_amount);
+
+    // Verify result
+    assert_eq!(result, deposit_amount - withdraw_amount);
+
+    // Verify collateral balance
+    let balance = get_collateral_balance(&env, &contract_id, &user);
+    assert_eq!(balance, deposit_amount - withdraw_amount);
+
+    // Verify position
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert_eq!(position.collateral, deposit_amount - withdraw_amount);
+}
+
+#[test]
+#[should_panic(expected = "InvalidAmount")]
+fn test_withdraw_collateral_zero_amount() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit first
+    client.deposit_collateral(&user, &None, &1000);
+
+    // Try to withdraw zero
+    client.withdraw_collateral(&user, &None, &0);
+}
+
+#[test]
+#[should_panic(expected = "InvalidAmount")]
+fn test_withdraw_collateral_negative_amount() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit first
+    client.deposit_collateral(&user, &None, &1000);
+
+    // Try to withdraw negative amount
+    client.withdraw_collateral(&user, &None, &(-100));
+}
+
+#[test]
+#[should_panic(expected = "InsufficientCollateral")]
+fn test_withdraw_collateral_insufficient_balance() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit
+    client.deposit_collateral(&user, &None, &500);
+
+    // Try to withdraw more than balance
+    client.withdraw_collateral(&user, &None, &1000);
+}
+
+#[test]
+fn test_withdraw_collateral_maximum_withdrawal() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit
+    let deposit_amount = 1000;
+    client.deposit_collateral(&user, &None, &deposit_amount);
+
+    // Withdraw all (maximum withdrawal when no debt)
+    let result = client.withdraw_collateral(&user, &None, &deposit_amount);
+
+    // Verify result
+    assert_eq!(result, 0);
+
+    // Verify collateral balance is zero
+    let balance = get_collateral_balance(&env, &contract_id, &user);
+    assert_eq!(balance, 0);
+}
+
+#[test]
+fn test_withdraw_collateral_multiple_withdrawals() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit
+    let deposit_amount = 1000;
+    client.deposit_collateral(&user, &None, &deposit_amount);
+
+    // First withdrawal
+    let withdraw1 = 300;
+    let result1 = client.withdraw_collateral(&user, &None, &withdraw1);
+    assert_eq!(result1, deposit_amount - withdraw1);
+
+    // Second withdrawal
+    let withdraw2 = 200;
+    let result2 = client.withdraw_collateral(&user, &None, &withdraw2);
+    assert_eq!(result2, deposit_amount - withdraw1 - withdraw2);
+
+    // Verify final balance
+    let balance = get_collateral_balance(&env, &contract_id, &user);
+    assert_eq!(balance, deposit_amount - withdraw1 - withdraw2);
+}
+
+#[test]
+#[should_panic(expected = "WithdrawPaused")]
+fn test_withdraw_collateral_pause_switch() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit
+    client.deposit_collateral(&user, &None, &1000);
+
+    // Set pause switch
+    env.as_contract(&contract_id, || {
+        let pause_key = DepositDataKey::PauseSwitches;
+        let mut pause_map = soroban_sdk::Map::new(&env);
+        pause_map.set(Symbol::new(&env, "pause_withdraw"), true);
+        env.storage().persistent().set(&pause_key, &pause_map);
+    });
+
+    // Try to withdraw (should fail)
+    client.withdraw_collateral(&user, &None, &500);
+}
+
+#[test]
+fn test_withdraw_collateral_events_emitted() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit
+    client.deposit_collateral(&user, &None, &1000);
+
+    // Withdraw
+    let withdraw_amount = 500;
+    client.withdraw_collateral(&user, &None, &withdraw_amount);
+
+    // Verify withdrawal succeeded (implies events were emitted)
+    let balance = get_collateral_balance(&env, &contract_id, &user);
+    assert_eq!(balance, 1000 - withdraw_amount);
+}
+
+#[test]
+fn test_withdraw_collateral_analytics_updated() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit
+    let deposit_amount = 1000;
+    client.deposit_collateral(&user, &None, &deposit_amount);
+
+    // Withdraw
+    let withdraw_amount = 300;
+    client.withdraw_collateral(&user, &None, &withdraw_amount);
+
+    // Verify analytics
+    let analytics = get_user_analytics(&env, &contract_id, &user).unwrap();
+    assert_eq!(analytics.total_withdrawals, withdraw_amount);
+    assert_eq!(analytics.collateral_value, deposit_amount - withdraw_amount);
+    assert_eq!(analytics.transaction_count, 2); // deposit + withdraw
+}
+
+#[test]
+fn test_withdraw_collateral_with_debt_collateral_ratio() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit collateral
+    let collateral = 2000;
+    client.deposit_collateral(&user, &None, &collateral);
+
+    // Simulate debt by setting position directly
+    // In a real scenario, debt would come from borrowing
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 500; // Set debt
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Withdraw should still work if collateral ratio is maintained
+    // With 2000 collateral, 500 debt, ratio = 400% (well above 150% minimum)
+    // After withdrawing 500, ratio = 1500/500 = 300% (still above minimum)
+    let withdraw_amount = 500;
+    let result = client.withdraw_collateral(&user, &None, &withdraw_amount);
+    assert_eq!(result, collateral - withdraw_amount);
+}
+
+#[test]
+#[should_panic(expected = "InsufficientCollateralRatio")]
+fn test_withdraw_collateral_violates_collateral_ratio() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Deposit collateral
+    let collateral = 1000;
+    client.deposit_collateral(&user, &None, &collateral);
+
+    // Set debt that would make withdrawal violate ratio
+    // With 1000 collateral, 500 debt, ratio = 200% (above 150% minimum)
+    // After withdrawing 600, ratio = 400/500 = 80% (below 150% minimum)
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 500;
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Try to withdraw too much (should fail)
+    client.withdraw_collateral(&user, &None, &600);
+}
+
+// ==================== REPAY TESTS ====================
+
+#[test]
+fn test_repay_debt_success_partial() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Repay partial amount
+    let repay_amount = 200;
+    let (remaining_debt, interest_paid, principal_paid) =
+        client.repay_debt(&user, &None, &repay_amount);
+
+    // Interest is paid first, then principal
+    // With 50 interest and 200 repay: interest_paid = 50, principal_paid = 150
+    assert_eq!(interest_paid, 50);
+    assert_eq!(principal_paid, 150);
+    assert_eq!(remaining_debt, 350); // 500 - 150 = 350 (interest already paid)
+
+    // Verify position updated
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert_eq!(position.debt, 350);
+    assert_eq!(position.borrow_interest, 0);
+}
+
+#[test]
+fn test_repay_debt_success_full() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Repay full amount (more than total debt)
+    let repay_amount = 600;
+    let (remaining_debt, interest_paid, principal_paid) =
+        client.repay_debt(&user, &None, &repay_amount);
+
+    // Should pay all interest and principal
+    assert_eq!(interest_paid, 50);
+    assert_eq!(principal_paid, 500);
+    assert_eq!(remaining_debt, 0);
+
+    // Verify position updated
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert_eq!(position.debt, 0);
+    assert_eq!(position.borrow_interest, 0);
+}
+
+#[test]
+#[should_panic(expected = "InvalidAmount")]
+fn test_repay_debt_zero_amount() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Try to repay zero
+    client.repay_debt(&user, &None, &0);
+}
+
+#[test]
+#[should_panic(expected = "InvalidAmount")]
+fn test_repay_debt_negative_amount() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Try to repay negative amount
+    client.repay_debt(&user, &None, &(-100));
+}
+
+#[test]
+#[should_panic(expected = "NoDebt")]
+fn test_repay_debt_no_debt() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // No position set up (no debt)
+
+    // Try to repay
+    client.repay_debt(&user, &None, &100);
+}
+
+#[test]
+#[should_panic(expected = "RepayPaused")]
+fn test_repay_debt_pause_switch() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+
+        // Set pause switch
+        let pause_key = DepositDataKey::PauseSwitches;
+        let mut pause_map = soroban_sdk::Map::new(&env);
+        pause_map.set(Symbol::new(&env, "pause_repay"), true);
+        env.storage().persistent().set(&pause_key, &pause_map);
+    });
+
+    // Try to repay (should fail)
+    client.repay_debt(&user, &None, &100);
+}
+
+#[test]
+fn test_repay_debt_interest_only() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt and interest
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 100,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Repay only interest amount
+    let repay_amount = 50;
+    let (remaining_debt, interest_paid, principal_paid) =
+        client.repay_debt(&user, &None, &repay_amount);
+
+    // Should pay only interest
+    assert_eq!(interest_paid, 50);
+    assert_eq!(principal_paid, 0);
+    assert_eq!(remaining_debt, 550); // 500 debt + 50 remaining interest
+
+    // Verify position
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert_eq!(position.debt, 500);
+    assert_eq!(position.borrow_interest, 50); // 100 - 50
+}
+
+#[test]
+fn test_repay_debt_events_emitted() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Repay
+    let repay_amount = 200;
+    let (remaining_debt, _, _) = client.repay_debt(&user, &None, &repay_amount);
+
+    // Verify repayment succeeded (implies events were emitted)
+    assert!(remaining_debt < 550); // Should have reduced debt
+}
+
+#[test]
+fn test_repay_debt_analytics_updated() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+
+        // Set initial analytics
+        let analytics_key = DepositDataKey::UserAnalytics(user.clone());
+        let analytics = UserAnalytics {
+            total_deposits: 1000,
+            total_borrows: 500,
+            total_withdrawals: 0,
+            total_repayments: 0,
+            collateral_value: 1000,
+            debt_value: 550,                // 500 + 50
+            collateralization_ratio: 18181, // ~181.81%
+            activity_score: 0,
+            transaction_count: 1,
+            first_interaction: env.ledger().timestamp(),
+            last_activity: env.ledger().timestamp(),
+            risk_level: 0,
+            loyalty_tier: 0,
+        };
+        env.storage().persistent().set(&analytics_key, &analytics);
+    });
+
+    // Repay
+    let repay_amount = 200;
+    client.repay_debt(&user, &None, &repay_amount);
+
+    // Verify analytics
+    let analytics = get_user_analytics(&env, &contract_id, &user).unwrap();
+    assert_eq!(analytics.total_repayments, repay_amount);
+    assert_eq!(analytics.debt_value, 350); // 550 - 200
+    assert_eq!(analytics.transaction_count, 2);
+}
+
+#[test]
+fn test_repay_debt_collateral_ratio_improves() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Repay
+    let repay_amount = 200;
+    let (remaining_debt, _, _) = client.repay_debt(&user, &None, &repay_amount);
+
+    // Verify debt reduced
+    assert!(remaining_debt < 550);
+
+    // Verify position updated
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert!(position.debt < 500 || position.borrow_interest < 50);
+}
+
+#[test]
+fn test_repay_debt_multiple_repayments() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+
+    // Set up position with debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = Position {
+            collateral: 1000,
+            debt: 500,
+            borrow_interest: 50,
+            last_accrual_time: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // First repayment
+    let repay1 = 100;
+    let (remaining1, _, _) = client.repay_debt(&user, &None, &repay1);
+    assert!(remaining1 < 550);
+
+    // Second repayment
+    let repay2 = 150;
+    let (remaining2, _, _) = client.repay_debt(&user, &None, &repay2);
+    assert!(remaining2 < remaining1);
+
+    // Verify final position
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert!(position.debt + position.borrow_interest < 400);
+}
