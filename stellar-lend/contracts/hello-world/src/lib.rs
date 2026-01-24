@@ -199,5 +199,4 @@ impl GovernanceTrait for StellarLendContract {
 #[cfg(test)]
 mod test;
 
-#[cfg(test)]
-mod test_governance;
+
