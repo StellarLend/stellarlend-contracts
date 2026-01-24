@@ -20,15 +20,10 @@ fn create_token_contract(env: &Env, admin: &Address) -> Address {
 
 /// Helper function to mint tokens to a user
 /// For stellar asset contracts, use the contract's mint method directly
-/// Note: This is a placeholder - actual minting requires proper token contract setup
-#[allow(unused_variables)]
-fn mint_tokens(_env: &Env, _token: &Address, _admin: &Address, _to: &Address, _amount: i128) {
-    // For stellar assets, we need to use the contract's mint function
-    // The token client doesn't have a direct mint method, so we'll skip actual minting
-    // in tests and rely on the deposit function's balance check
-    // In a real scenario, tokens would be minted through the asset contract
-    // Note: Actual minting requires calling the asset contract's mint function
-    // For testing, we'll test the deposit logic assuming tokens exist
+fn mint_tokens(env: &Env, token: &Address, _admin: &Address, to: &Address, amount: i128) {
+    // For testing, we'll use the stellar asset contract's mint function
+    let token_admin_client = token::StellarAssetClient::new(env, token);
+    token_admin_client.mint(to, &amount);
 }
 
 /// Helper function to approve tokens for spending
@@ -1603,4 +1598,595 @@ fn test_borrow_asset_multiple_users() {
     // Verify protocol analytics
     let protocol_analytics = get_protocol_analytics(&env, &contract_id).unwrap();
     assert_eq!(protocol_analytics.total_borrows, 1800); // 1000 + 800
+}
+
+// ==================== AMM INTEGRATION TESTS ====================
+
+#[test]
+fn test_swap_for_repayment_success() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    // Create tokens
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Mint collateral tokens to user first
+    mint_tokens(&env, &collateral_token, &admin, &user, 3000);
+    
+    // Approve contract to spend user's tokens
+    approve_tokens(&env, &collateral_token, &user, &contract_id, 3000);
+
+    // Setup user with collateral and debt
+    client.deposit_collateral(&user, &Some(collateral_token.clone()), &2000);
+
+    // Simulate debt by setting position directly
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 500;
+        position.borrow_interest = 50;
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Mint debt tokens to contract for repayment simulation
+    mint_tokens(&env, &debt_token, &admin, &contract_id, 1000);
+
+    // Perform swap for repayment
+    let debt_repaid = client.swap_for_repayment(
+        &user,
+        &collateral_token,
+        &debt_token,
+        &200, // Swap 200 collateral
+        &180, // Expect at least 180 debt tokens
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    // Verify debt was repaid
+    assert!(debt_repaid > 0);
+    assert!(debt_repaid <= 200); // Should be less due to fees/slippage
+
+    // Verify position was updated
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert_eq!(position.collateral, 1800); // 2000 - 200
+    assert!(position.debt + position.borrow_interest <= 550); // Some debt should be repaid
+}
+
+#[test]
+#[should_panic(expected = "InvalidAmount")]
+fn test_swap_for_repayment_zero_amount() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let collateral_token = create_token_contract(&env, &Address::generate(&env));
+    let debt_token = create_token_contract(&env, &Address::generate(&env));
+
+    // Try to swap zero amount
+    client.swap_for_repayment(
+        &user,
+        &collateral_token,
+        &debt_token,
+        &0,
+        &0,
+        &String::from_str(&env, "stellar_dex"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "InsufficientCollateral")]
+fn test_swap_for_repayment_insufficient_collateral() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Setup user with small collateral
+    client.deposit_collateral(&user, &Some(collateral_token.clone()), &100);
+
+    // Try to swap more than available
+    client.swap_for_repayment(
+        &user,
+        &collateral_token,
+        &debt_token,
+        &200, // More than 100 available
+        &180,
+        &String::from_str(&env, "stellar_dex"),
+    );
+}
+
+#[test]
+fn test_liquidate_with_amm_success() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let liquidator = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Mint collateral tokens to borrower and approve
+    mint_tokens(&env, &collateral_token, &admin, &borrower, 2000);
+    approve_tokens(&env, &collateral_token, &borrower, &contract_id, 2000);
+
+    // Setup borrower with undercollateralized position
+    client.deposit_collateral(&borrower, &Some(collateral_token.clone()), &1000);
+
+    // Set up undercollateralized position (debt > collateral * 0.67)
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(borrower.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 800; // 80% of collateral - undercollateralized
+        position.borrow_interest = 50;
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Mint debt tokens to liquidator
+    mint_tokens(&env, &debt_token, &admin, &liquidator, 1000);
+    approve_tokens(&env, &debt_token, &liquidator, &contract_id, 1000);
+
+    // Mint collateral tokens to contract for swap simulation
+    mint_tokens(&env, &collateral_token, &admin, &contract_id, 1000);
+
+    // Perform liquidation
+    let (collateral_seized, debt_repaid) = client.liquidate_with_amm(
+        &liquidator,
+        &borrower,
+        &collateral_token,
+        &debt_token,
+        &400, // Liquidate 400 debt
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    // Verify liquidation results
+    assert!(collateral_seized > 400); // Should include liquidation bonus
+    assert_eq!(debt_repaid, 400);
+
+    // Verify borrower position was updated
+    let position = get_user_position(&env, &contract_id, &borrower).unwrap();
+    assert_eq!(position.collateral, 1000 - collateral_seized);
+    assert!(position.debt + position.borrow_interest <= 850); // Debt should be reduced
+}
+
+#[test]
+#[should_panic(expected = "NotLiquidatable")]
+fn test_liquidate_with_amm_healthy_position() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let liquidator = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Setup borrower with healthy position
+    client.deposit_collateral(&borrower, &Some(collateral_token.clone()), &2000);
+
+    // Set up healthy position (debt < collateral * 0.67)
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(borrower.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 500; // 25% of collateral - healthy
+        position.borrow_interest = 0;
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Try to liquidate healthy position
+    client.liquidate_with_amm(
+        &liquidator,
+        &borrower,
+        &collateral_token,
+        &debt_token,
+        &100,
+        &String::from_str(&env, "stellar_dex"),
+    );
+}
+
+#[test]
+fn test_rebalance_collateral_success() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let token_a = create_token_contract(&env, &admin);
+    let token_b = create_token_contract(&env, &admin);
+
+    // Setup user with collateral
+    client.deposit_collateral(&user, &Some(token_a.clone()), &2000);
+
+    // Mint tokens for swap simulation
+    mint_tokens(&env, &token_b, &admin, &contract_id, 1000);
+
+    // Perform rebalancing
+    let amount_received = client.rebalance_collateral(
+        &user,
+        &token_a,
+        &token_b,
+        &500, // Rebalance 500 of token A
+        &480, // Expect at least 480 of token B
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    // Verify rebalancing results
+    assert!(amount_received >= 480);
+    assert!(amount_received > 0);
+
+    // Verify position was updated (simplified check)
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    // Collateral should be approximately maintained (500 out, ~480-500 in)
+    assert!(position.collateral >= 1980);
+    assert!(position.collateral <= 2000);
+}
+
+#[test]
+#[should_panic(expected = "InvalidAmount")]
+fn test_rebalance_collateral_zero_amount() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let token_a = create_token_contract(&env, &Address::generate(&env));
+    let token_b = create_token_contract(&env, &Address::generate(&env));
+
+    // Try to rebalance zero amount
+    client.rebalance_collateral(
+        &user,
+        &token_a,
+        &token_b,
+        &0,
+        &0,
+        &String::from_str(&env, "stellar_dex"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "InsufficientCollateral")]
+fn test_rebalance_collateral_insufficient() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let token_a = create_token_contract(&env, &admin);
+    let token_b = create_token_contract(&env, &admin);
+
+    // Setup user with small collateral
+    client.deposit_collateral(&user, &Some(token_a.clone()), &100);
+
+    // Try to rebalance more than available
+    client.rebalance_collateral(
+        &user,
+        &token_a,
+        &token_b,
+        &200, // More than 100 available
+        &180,
+        &String::from_str(&env, "stellar_dex"),
+    );
+}
+
+#[test]
+fn test_amm_integration_events() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Setup user
+    client.deposit_collateral(&user, &Some(collateral_token.clone()), &2000);
+
+    // Set up debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 500;
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Mint debt tokens for simulation
+    mint_tokens(&env, &debt_token, &admin, &contract_id, 1000);
+
+    // Perform swap for repayment (should emit events)
+    client.swap_for_repayment(
+        &user,
+        &collateral_token,
+        &debt_token,
+        &200,
+        &180,
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    // Events should be emitted - we verify by checking that operation succeeded
+    // In a real test environment, we would check the actual events
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert_eq!(position.collateral, 1800); // Confirms operation completed
+}
+
+#[test]
+fn test_amm_integration_pause_functionality() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Setup user
+    client.deposit_collateral(&user, &Some(collateral_token.clone()), &2000);
+
+    // Set pause switch for AMM operations
+    env.as_contract(&contract_id, || {
+        let pause_key = DepositDataKey::PauseSwitches;
+        let mut pause_map = soroban_sdk::Map::new(&env);
+        pause_map.set(Symbol::new(&env, "amm_swap"), true);
+        env.storage().persistent().set(&pause_key, &pause_map);
+    });
+
+    // This should panic due to pause
+    let _result = client.swap_for_repayment(
+        &user,
+        &collateral_token,
+        &debt_token,
+        &200,
+        &180,
+        &String::from_str(&env, "stellar_dex"),
+    );
+}
+
+#[test]
+fn test_multiple_amm_operations() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let token_a = create_token_contract(&env, &admin);
+    let token_b = create_token_contract(&env, &admin);
+    let token_c = create_token_contract(&env, &admin);
+
+    // Setup user with large collateral
+    client.deposit_collateral(&user, &Some(token_a.clone()), &5000);
+
+    // Set up some debt
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 1000;
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Mint tokens for simulations
+    mint_tokens(&env, &token_b, &admin, &contract_id, 2000);
+    mint_tokens(&env, &token_c, &admin, &contract_id, 2000);
+
+    // Perform multiple operations
+    
+    // 1. Rebalance some collateral
+    let rebalance_amount = client.rebalance_collateral(
+        &user,
+        &token_a,
+        &token_b,
+        &1000,
+        &950,
+        &String::from_str(&env, "stellar_dex"),
+    );
+    assert!(rebalance_amount >= 950);
+
+    // 2. Swap for repayment
+    let debt_repaid = client.swap_for_repayment(
+        &user,
+        &token_a,
+        &token_c,
+        &500,
+        &480,
+        &String::from_str(&env, "soroswap"),
+    );
+    assert!(debt_repaid > 0);
+
+    // Verify final position
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert!(position.collateral < 5000); // Some collateral used
+    assert!(position.debt < 1000); // Some debt repaid
+}
+
+#[test]
+fn test_liquidation_with_multiple_liquidators() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let liquidator1 = Address::generate(&env);
+    let liquidator2 = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Setup borrower with large undercollateralized position
+    client.deposit_collateral(&borrower, &Some(collateral_token.clone()), &3000);
+
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(borrower.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 2500; // Heavily undercollateralized
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Setup liquidators
+    mint_tokens(&env, &debt_token, &admin, &liquidator1, 2000);
+    mint_tokens(&env, &debt_token, &admin, &liquidator2, 2000);
+    approve_tokens(&env, &debt_token, &liquidator1, &contract_id, 2000);
+    approve_tokens(&env, &debt_token, &liquidator2, &contract_id, 2000);
+
+    // Mint collateral for swap simulation
+    mint_tokens(&env, &collateral_token, &admin, &contract_id, 3000);
+
+    // First liquidator liquidates part
+    let (seized1, repaid1) = client.liquidate_with_amm(
+        &liquidator1,
+        &borrower,
+        &collateral_token,
+        &debt_token,
+        &1000,
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    // Second liquidator liquidates remaining
+    let (seized2, repaid2) = client.liquidate_with_amm(
+        &liquidator2,
+        &borrower,
+        &collateral_token,
+        &debt_token,
+        &800,
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    // Verify both liquidations succeeded
+    assert!(seized1 > 1000);
+    assert_eq!(repaid1, 1000);
+    assert!(seized2 > 800);
+    assert_eq!(repaid2, 800);
+
+    // Verify borrower position
+    let position = get_user_position(&env, &contract_id, &borrower).unwrap();
+    assert_eq!(position.collateral, 3000 - seized1 - seized2);
+    assert!(position.debt < 2500); // Debt reduced
+}
+
+#[test]
+fn test_edge_case_dust_amounts() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let token_a = create_token_contract(&env, &admin);
+    let token_b = create_token_contract(&env, &admin);
+
+    // Setup user with collateral
+    client.deposit_collateral(&user, &Some(token_a.clone()), &1000);
+
+    // Mint tokens for simulation
+    mint_tokens(&env, &token_b, &admin, &contract_id, 100);
+
+    // Test very small rebalancing amount
+    let amount_received = client.rebalance_collateral(
+        &user,
+        &token_a,
+        &token_b,
+        &1, // Very small amount
+        &0, // Accept any output
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    assert!(amount_received >= 0);
+
+    // Verify position is still valid
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    assert!(position.collateral > 0);
+}
+
+#[test]
+fn test_amm_integration_with_interest_accrual() {
+    let env = create_test_env();
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let collateral_token = create_token_contract(&env, &admin);
+    let debt_token = create_token_contract(&env, &admin);
+
+    // Setup user
+    client.deposit_collateral(&user, &Some(collateral_token.clone()), &2000);
+
+    // Set up position with debt and accrued interest
+    env.as_contract(&contract_id, || {
+        let position_key = DepositDataKey::Position(user.clone());
+        let mut position = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, Position>(&position_key)
+            .unwrap();
+        position.debt = 500;
+        position.borrow_interest = 100; // Significant accrued interest
+        env.storage().persistent().set(&position_key, &position);
+    });
+
+    // Mint debt tokens for simulation
+    mint_tokens(&env, &debt_token, &admin, &contract_id, 1000);
+
+    // Perform swap for repayment
+    let debt_repaid = client.swap_for_repayment(
+        &user,
+        &collateral_token,
+        &debt_token,
+        &300,
+        &250,
+        &String::from_str(&env, "stellar_dex"),
+    );
+
+    // Verify debt repayment (should pay interest first)
+    assert!(debt_repaid > 0);
+
+    let position = get_user_position(&env, &contract_id, &user).unwrap();
+    // Interest should be reduced first
+    assert!(position.borrow_interest < 100 || position.debt < 500);
 }

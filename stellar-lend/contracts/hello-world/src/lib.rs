@@ -13,6 +13,9 @@ use repay::repay_debt;
 mod borrow;
 use borrow::borrow_asset;
 
+mod amm_integration;
+use amm_integration::{swap_for_repayment, liquidate_with_amm, rebalance_collateral};
+
 #[contract]
 pub struct HelloContract;
 
@@ -134,6 +137,114 @@ impl HelloContract {
     /// - `user_activity_tracked`: User activity tracking event
     pub fn borrow_asset(env: Env, user: Address, asset: Option<Address>, amount: i128) -> i128 {
         borrow_asset(&env, user, asset, amount).unwrap_or_else(|e| panic!("Borrow error: {:?}", e))
+    }
+
+    /// Swap tokens for debt repayment using AMM
+    ///
+    /// Allows users to swap collateral tokens directly for debt repayment through AMM.
+    /// This enables efficient debt management without manual token swaps.
+    ///
+    /// # Arguments
+    /// * `user` - The address of the user
+    /// * `collateral_asset` - The collateral asset to swap from
+    /// * `debt_asset` - The debt asset to swap to
+    /// * `collateral_amount` - Amount of collateral to swap
+    /// * `min_debt_amount` - Minimum debt amount to receive
+    /// * `amm_protocol` - AMM protocol to use for swap
+    ///
+    /// # Returns
+    /// Returns the amount of debt repaid
+    pub fn swap_for_repayment(
+        env: Env,
+        user: Address,
+        collateral_asset: Address,
+        debt_asset: Address,
+        collateral_amount: i128,
+        min_debt_amount: i128,
+        amm_protocol: String,
+    ) -> i128 {
+        swap_for_repayment(
+            &env,
+            user,
+            collateral_asset,
+            debt_asset,
+            collateral_amount,
+            min_debt_amount,
+            amm_protocol,
+        )
+        .unwrap_or_else(|e| panic!("Swap for repayment error: {:?}", e))
+    }
+
+    /// Liquidate undercollateralized position using AMM
+    ///
+    /// Automatically liquidates undercollateralized positions by swapping collateral
+    /// through AMM to repay debt. This provides efficient liquidation mechanism.
+    ///
+    /// # Arguments
+    /// * `liquidator` - The address of the liquidator
+    /// * `borrower` - The address of the borrower to liquidate
+    /// * `collateral_asset` - The collateral asset to liquidate
+    /// * `debt_asset` - The debt asset to repay
+    /// * `liquidation_amount` - Amount of debt to liquidate
+    /// * `amm_protocol` - AMM protocol to use
+    ///
+    /// # Returns
+    /// Returns tuple (collateral_seized, debt_repaid)
+    pub fn liquidate_with_amm(
+        env: Env,
+        liquidator: Address,
+        borrower: Address,
+        collateral_asset: Address,
+        debt_asset: Address,
+        liquidation_amount: i128,
+        amm_protocol: String,
+    ) -> (i128, i128) {
+        liquidate_with_amm(
+            &env,
+            liquidator,
+            borrower,
+            collateral_asset,
+            debt_asset,
+            liquidation_amount,
+            amm_protocol,
+        )
+        .unwrap_or_else(|e| panic!("AMM liquidation error: {:?}", e))
+    }
+
+    /// Rebalance collateral portfolio using AMM
+    ///
+    /// Automatically rebalances user's collateral portfolio by swapping between
+    /// different collateral assets to optimize risk and yield.
+    ///
+    /// # Arguments
+    /// * `user` - The address of the user
+    /// * `from_asset` - Asset to swap from
+    /// * `to_asset` - Asset to swap to
+    /// * `amount` - Amount to rebalance
+    /// * `min_amount_out` - Minimum amount to receive
+    /// * `amm_protocol` - AMM protocol to use
+    ///
+    /// # Returns
+    /// Returns the amount of new collateral received
+    pub fn rebalance_collateral(
+        env: Env,
+        user: Address,
+        from_asset: Address,
+        to_asset: Address,
+        amount: i128,
+        min_amount_out: i128,
+        amm_protocol: String,
+    ) -> i128 {
+        rebalance_collateral(
+            &env,
+            user,
+            from_asset,
+            to_asset,
+            amount,
+            min_amount_out,
+            amm_protocol,
+        )
+        .unwrap_or_else(|e| panic!("Collateral rebalancing error: {:?}", e))
     }
 }
 
