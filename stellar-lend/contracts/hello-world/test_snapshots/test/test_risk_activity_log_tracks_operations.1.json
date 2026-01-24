@@ -68,7 +68,7 @@
                           "val": {
                             "i128": {
                               "hi": 0,
-                              "lo": 500
+                              "lo": 1000
                             }
                           }
                         },
@@ -121,7 +121,60 @@
                           "val": {
                             "i128": {
                               "hi": 0,
-                              "lo": 300
+                              "lo": 500
+                            }
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": "void"
+                        },
+                        {
+                          "key": {
+                            "symbol": "metadata"
+                          },
+                          "val": {
+                            "map": []
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "user"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "activity_type"
+                          },
+                          "val": {
+                            "symbol": "withdraw"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 200
                             }
                           }
                         },
@@ -204,7 +257,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 800
+                    "lo": 1300
                   }
                 }
               }
@@ -269,7 +322,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1300
                         }
                       }
                     },
@@ -350,7 +403,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1500
                         }
                       }
                     },
@@ -361,7 +414,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1300
                         }
                       }
                     }
@@ -429,7 +482,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1300
                         }
                       }
                     },
@@ -508,7 +561,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 800
+                          "lo": 1500
                         }
                       }
                     },
@@ -530,7 +583,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 0
+                          "lo": 200
                         }
                       }
                     },
@@ -539,7 +592,7 @@
                         "symbol": "transaction_count"
                       },
                       "val": {
-                        "u64": 2
+                        "u64": 3
                       }
                     }
                   ]
