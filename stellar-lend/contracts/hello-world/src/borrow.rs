@@ -277,24 +277,15 @@ pub fn borrow_asset(
     // Get current timestamp
     let timestamp = env.ledger().timestamp();
 
-    // Validate asset if provided
-    if let Some(ref asset_addr) = asset {
-        // Validate asset address - ensure it's not the contract itself
-        if asset_addr == &env.current_contract_address() {
-            return Err(BorrowError::InvalidAsset);
-        }
+    // Resolve the effective asset address (for both token and native XLM)
+    let asset_addr = match asset {
+        Some(ref addr) => addr.clone(),
+        None => crate::storage::get_native_asset_address(env).ok_or(BorrowError::InvalidAsset)?,
+    };
 
-        // Check asset parameters
-        let asset_params_key = DepositDataKey::AssetParams(asset_addr.clone());
-        if let Some(params) = env
-            .storage()
-            .persistent()
-            .get::<DepositDataKey, AssetParams>(&asset_params_key)
-        {
-            if !params.deposit_enabled {
-                return Err(BorrowError::AssetNotEnabled);
-            }
-        }
+    // Validate asset address - ensure it's not the contract itself
+    if asset_addr == env.current_contract_address() {
+        return Err(BorrowError::InvalidAsset);
     }
 
     // Get user position
@@ -335,36 +326,20 @@ pub fn borrow_asset(
     };
     debug_assert!(fv_borrow_preconditions(amount, &position, current_collateral));
 
-    // Get asset parameters for collateral factor
-    let collateral_factor = if let Some(asset_addr) = asset.as_ref() {
-        let asset_params_key = DepositDataKey::AssetParams(asset_addr.clone());
-        if let Some(params) = env
-            .storage()
-            .persistent()
-            .get::<DepositDataKey, AssetParams>(&asset_params_key)
-        {
-            params.collateral_factor
-        } else {
-            10000
+    // Get asset parameters for collateral factor and fees
+    let asset_params_key = DepositDataKey::AssetParams(asset_addr.clone());
+    let (collateral_factor, borrow_fee_bps) = if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<DepositDataKey, AssetParams>(&asset_params_key)
+    {
+        if !params.deposit_enabled {
+            return Err(BorrowError::AssetNotEnabled);
         }
-    } else {
-        10000
-    };
-
-    // Get borrow fee bps if provided
-    let borrow_fee_bps = if let Some(asset_addr) = asset.as_ref() {
-        let asset_params_key = DepositDataKey::AssetParams(asset_addr.clone());
-        if let Some(params) = env
-            .storage()
-            .persistent()
-            .get::<DepositDataKey, AssetParams>(&asset_params_key)
-        {
-            params.borrow_fee_bps
-        } else {
-            0
         }
+        (params.collateral_factor, params.borrow_fee_bps)
     } else {
-        0
+        (10000, 0)
     };
 
     // Get minimum collateral ratio from risk params
@@ -415,36 +390,34 @@ pub fn borrow_asset(
     env.storage().persistent().set(&position_key, &position);
 
     // Handle asset transfer - contract sends tokens to user
-    if let Some(ref asset_addr) = asset {
-        // Skip actual token transfers in unit tests to avoid Storage error with non-existent contracts
-        #[cfg(not(test))]
-        {
-            let token_client = soroban_sdk::token::Client::new(env, asset_addr);
+    let token_client = soroban_sdk::token::Client::new(env, &asset_addr);
 
-            // Check contract balance
-            let contract_balance = token_client.balance(&env.current_contract_address());
-            if contract_balance < amount {
-                return Err(BorrowError::InsufficientCollateral);
-            }
-
-            token_client.transfer(&env.current_contract_address(), &user, &receive_amount);
+    // Skip actual token transfers in unit tests to avoid Storage error with non-existent contracts
+    #[cfg(not(test))]
+    {
+        // Check contract balance
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        if contract_balance < amount {
+            return Err(BorrowError::InsufficientCollateral);
         }
 
-        // Credit fee to protocol reserve
-        if fee_amount > 0 {
-            let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
-            let current_reserve = env
-                .storage()
-                .persistent()
-                .get::<DepositDataKey, i128>(&reserve_key)
-                .unwrap_or(0);
-            env.storage().persistent().set(
-                &reserve_key,
-                &(current_reserve
-                    .checked_add(fee_amount)
-                    .ok_or(BorrowError::Overflow)?),
-            );
-        }
+        token_client.transfer(&env.current_contract_address(), &user, &receive_amount);
+    }
+
+    // Credit fee to protocol reserve
+    if fee_amount > 0 {
+        let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
+        let current_reserve = env
+            .storage()
+            .persistent()
+            .get::<DepositDataKey, i128>(&reserve_key)
+            .unwrap_or(0);
+        env.storage().persistent().set(
+            &reserve_key,
+            &(current_reserve
+                .checked_add(fee_amount)
+                .ok_or(BorrowError::Overflow)?),
+        );
     }
 
     // Update user analytics

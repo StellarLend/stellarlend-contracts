@@ -188,7 +188,26 @@ pub fn liquidate(
     require_operation_not_paused(env, Symbol::new(env, "pause_liquidate"))
         .map_err(|_| LiquidationError::LiquidationPaused)?;
 
-    // 3. Load Borrower State
+    // 3. Resolve effective asset addresses (handling None for native XLM)
+    let debt_addr = match debt_asset {
+        Some(ref addr) => addr.clone(),
+        None => crate::storage::get_native_asset_address(env).ok_or(LiquidationError::InvalidDebtAsset)?,
+    };
+
+    let collateral_addr = match collateral_asset {
+        Some(ref addr) => addr.clone(),
+        None => crate::storage::get_native_asset_address(env).ok_or(LiquidationError::InvalidCollateralAsset)?,
+    };
+
+    // Validate asset addresses - ensure they are not the contract itself
+    if debt_addr == env.current_contract_address() {
+        return Err(LiquidationError::InvalidDebtAsset);
+    }
+    if collateral_addr == env.current_contract_address() {
+        return Err(LiquidationError::InvalidCollateralAsset);
+    }
+
+    // 4. Load Borrower State
     let position_key = DepositDataKey::Position(borrower.clone());
     let mut position = env
         .storage()
@@ -317,10 +336,6 @@ pub fn liquidate(
     // 9. EXTERNAL INTERACTIONS (TRANSFERS)
     // Transfers are performed LAST to follow CEI pattern
 
-    let debt_addr = match &debt_asset {
-        Some(ref addr) => addr.clone(),
-        None => get_native_asset_address(env)?,
-    };
     let debt_client = TokenClient::new(env, &debt_addr);
     debt_client.transfer_from(
         &env.current_contract_address(),
@@ -329,11 +344,7 @@ pub fn liquidate(
         &actual_debt_liquidated,
     );
 
-    let col_addr = match &collateral_asset {
-        Some(ref addr) => addr.clone(),
-        None => get_native_asset_address(env)?,
-    };
-    let col_client = TokenClient::new(env, &col_addr);
+    let col_client = TokenClient::new(env, &collateral_addr);
     col_client.transfer(
         &env.current_contract_address(),
         &liquidator,

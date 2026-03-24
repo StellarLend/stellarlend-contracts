@@ -298,10 +298,15 @@ pub fn withdraw_collateral(
     // -----------------------------------------------------------------------
     // 5. Asset validation — contract address is not a valid collateral asset
     // -----------------------------------------------------------------------
-    if let Some(ref asset_addr) = asset {
-        if asset_addr == &env.current_contract_address() {
-            return Err(WithdrawError::InvalidAsset);
-        }
+    // Resolve the effective asset address (handling None for native XLM)
+    let asset_addr = match asset {
+        Some(ref addr) => addr.clone(),
+        None => crate::storage::get_native_asset_address(env).ok_or(WithdrawError::InvalidAsset)?,
+    };
+
+    // Validate asset address - ensure it's not the contract itself
+    if asset_addr == env.current_contract_address() {
+        return Err(WithdrawError::InvalidAsset);
     }
 
     // -----------------------------------------------------------------------
@@ -322,7 +327,7 @@ pub fn withdraw_collateral(
     // 7. Post-withdrawal health check (uses latest risk params)
     //    ANY withdrawal that makes the position unsafe MUST fail.
     // -----------------------------------------------------------------------
-    validate_collateral_ratio_after_withdraw(env, &user, amount, asset.as_ref())?;
+    validate_collateral_ratio_after_withdraw(env, &user, amount, Some(&asset_addr))?;
 
     // -----------------------------------------------------------------------
     // 8. Compute new balance with overflow protection
@@ -359,16 +364,12 @@ pub fn withdraw_collateral(
     // -----------------------------------------------------------------------
     // 10. Token transfer — state already committed, so reentrancy is safe
     // -----------------------------------------------------------------------
-    if let Some(ref asset_addr) = asset {
-        let token_client = soroban_sdk::token::Client::new(env, asset_addr);
-        token_client.transfer(
-            &env.current_contract_address(), // from: this contract
-            &user,                           // to: the position owner
-            &amount,
-        );
-    }
-    // Native XLM: accounting tracked above; actual XLM handling depends on
-    // Soroban's native-asset support and is a known protocol placeholder.
+    let token_client = soroban_sdk::token::Client::new(env, &asset_addr);
+    token_client.transfer(
+        &env.current_contract_address(), // from: this contract
+        &user,                           // to: the position owner
+        &amount,
+    );
 
     // -----------------------------------------------------------------------
     // 11. Analytics and event emission

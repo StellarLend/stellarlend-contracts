@@ -2,6 +2,23 @@
 //!
 //! Implements a proposal → approve → execute governance flow
 //! for updating critical StellarLend protocol parameters via multisig approval.
+//!
+//! ## How It Works
+//! Sensitive changes (for example, updating the minimum collateral ratio)
+//! must go through a multisig approval process:
+//!
+//! 1. Configure the admin set and approval threshold via [`ms_set_admins`].
+//! 2. An admin creates a proposal with [`ms_propose_set_min_cr`]
+//!    (the proposer auto-approves).
+//! 3. Other admins approve using [`ms_approve`] until the threshold is met.
+//! 4. Any admin executes the proposal with [`ms_execute`].
+//!
+//! ## Safety Guarantees
+//! - Only registered admins can propose, approve, or update the admin set.
+//! - Each admin can approve a proposal only once.
+//! - Proposal IDs are strictly increasing and never reused.
+//! - Executed proposals cannot be run again.
+//! - Only one active proposal can exist at a time.
 
 use crate::errors::GovernanceError;
 use crate::governance::{
@@ -257,28 +274,3 @@ pub fn get_ms_approvals(env: &Env, proposal_id: u64) -> Option<Vec<Address>> {
     get_proposal_approvals(env, proposal_id)
 }
 
-/// Set the multisig approval threshold (admin only).
-pub fn set_ms_threshold(env: &Env, caller: Address, threshold: u32) -> Result<(), GovernanceError> {
-    caller.require_auth();
-
-    if threshold == 0 {
-        return Err(GovernanceError::InvalidThreshold);
-    }
-
-    let config = get_multisig_config(env).ok_or(GovernanceError::NotInitialized)?;
-    if !config.admins.contains(&caller) {
-        return Err(GovernanceError::Unauthorized);
-    }
-
-    if threshold > config.admins.len() as u32 {
-        return Err(GovernanceError::InvalidThreshold);
-    }
-
-    let mut new_config = config;
-    new_config.threshold = threshold;
-
-    env.storage()
-        .instance()
-        .set(&GovernanceDataKey::MultisigConfig, &new_config);
-    Ok(())
-}

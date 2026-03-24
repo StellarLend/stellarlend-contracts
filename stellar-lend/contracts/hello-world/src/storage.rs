@@ -28,6 +28,15 @@ pub enum LegacyDepositDataKey {
     TotalDeposits,
     UserDeposits(Address),
     ProtocolReserve(Option<Address>),
+    CollateralBalance(Address),
+    AssetParams(Address),
+    PauseSwitches,
+    Admin,
+    Position(Address),
+    ProtocolAnalytics,
+    UserAnalytics(Address),
+    ActivityLog,
+    NativeAssetAddress,
 }
 
 #[derive(Clone)]
@@ -94,4 +103,9 @@ pub fn can_vote(env: &Env, voter: Address, proposal_id: u64) -> bool {
     } else {
         false
     }
+}
+pub fn get_native_asset_address(env: &Env) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&DepositDataKey::NativeAssetAddress)
 }

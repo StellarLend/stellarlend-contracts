@@ -31,6 +31,7 @@ use crate::events::{
     emit_user_activity_tracked, AnalyticsUpdatedEvent, BorrowerHealthEventV1, DepositEvent,
     PositionUpdatedEvent, UserActivityTrackedEvent,
 };
+pub use crate::storage::DepositDataKey;
 
 /// Errors that can occur during deposit operations
 #[contracterror]
@@ -53,33 +54,6 @@ pub enum DepositError {
     Reentrancy = 7,
 }
 
-/// Storage keys for deposit-related data
-#[contracttype]
-#[derive(Clone)]
-#[cfg_attr(test, derive(Debug, PartialEq))]
-pub enum DepositDataKey {
-    /// User collateral balance (legacy)
-    /// Value type: i128
-    CollateralBalance(Address),
-    /// Asset-specific parameters (legacy)
-    /// Value type: AssetParams
-    AssetParams(Address),
-    /// Legacy operation pause switches: Map<Symbol, bool>
-    PauseSwitches,
-    Position(Address),
-    /// Global protocol analytics (TVL, aggregate borrows/deposits)
-    /// Value type: ProtocolAnalytics
-    ProtocolAnalytics,
-    /// Granular per-user analytics metrics
-    /// Value type: UserAnalytics
-    UserAnalytics(Address),
-    /// Bounded log of recent deposit activities: Vec<Activity>
-    ActivityLog,
-    /// Protocol reserve per asset: Map<Option<Address>, i128>
-    ProtocolReserve(Option<Address>),
-    /// Native asset (XLM) contract address
-    NativeAssetAddress,
-}
 
 /// Asset parameters for collateral
 #[contracttype]
@@ -239,6 +213,8 @@ pub fn deposit_collateral(
     // Get current timestamp
     let timestamp = env.ledger().timestamp();
 
+    // Resolve the effective asset address (for both token and native XLM)
+    // None resolves to the configured native XLM (SAC) address
     let actual_asset = match &asset {
         Some(addr) => addr.clone(),
         None => env
@@ -271,7 +247,7 @@ pub fn deposit_collateral(
     }
 
     // Transfer tokens from user to contract using token contract
-    // Use the token contract's transfer_from method
+    // Both standard tokens and the Native Asset in Soroban implement the token interface
     let token_client = soroban_sdk::token::Client::new(env, &actual_asset);
 
     // Check user balance
