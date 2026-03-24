@@ -52,6 +52,8 @@ use stellarlend_common::upgrade;
 pub use stellarlend_common::upgrade::{UpgradeError, UpgradeStage, UpgradeStatus};
 
 #[cfg(test)]
+mod liquidation_test;
+#[cfg(test)]
 mod borrow_test;
 #[cfg(test)]
 mod deposit_test;
