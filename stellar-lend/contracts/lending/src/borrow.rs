@@ -4,6 +4,7 @@
 //! validation, debt tracking, interest calculation, and pause controls.
 //!
 //! [Issue #391] Optimized gas usage by migrating protocol settings to Instance storage.
+#![allow(unexpected_cfgs)]
 
 use crate::constants::{
     BPS_SCALE, DEFAULT_CLOSE_FACTOR_BPS, DEFAULT_LIQUIDATION_INCENTIVE_BPS,

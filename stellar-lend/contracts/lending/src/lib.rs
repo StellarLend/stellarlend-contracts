@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(deprecated)]
 #![allow(clippy::absurd_extreme_comparisons)]
+#![allow(unexpected_cfgs)]
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
 
 mod borrow;
