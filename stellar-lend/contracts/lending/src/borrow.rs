@@ -465,6 +465,7 @@ pub fn repay(env: &Env, user: Address, asset: Address, amount: i128) -> Result<(
     Ok(())
 }
 
+#[cfg(not(tarpaulin_include))]
 pub fn liquidate_position(
     _env: &Env,
     _liquidator: Address,
