@@ -176,14 +176,15 @@ fn test_liquidation_interest_accrual_integration() {
     // Fast forward 1 year (5% interest)
     env.ledger().with_mut(|li| li.timestamp = 1000 + 31_536_000);
     
-    // Debt balance will be roughly 10_500
-    let debt_bal = client.get_debt_balance(&borrower);
-    assert!(debt_bal >= 10_500);
+    // Capture balance before liquidation and use dynamic expected remaining debt (50% close factor)
+    let debt_bal_before = client.get_debt_balance(&borrower);
+    assert!(debt_bal_before >= 10_500);
+    let expected_remaining = debt_bal_before / 2;
     
     // Liquidate based on accrued debt
-    // Close factor 50% of 10,500 = 5,250
+    // Try to repay all (10,000), but capped at 50%
     client.liquidate(&liquidator, &borrower, &asset, &collateral_asset, &10_000);
     
     let remaining_debt = client.get_debt_balance(&borrower);
-    assert_eq!(remaining_debt, 5_250);
+    assert_eq!(remaining_debt, expected_remaining);
 }
