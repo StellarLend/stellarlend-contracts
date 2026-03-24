@@ -116,7 +116,6 @@ fn get_collateral_balance(env: &Env, contract_id: &Address, user: &Address) -> i
 
 /// Test successful partial liquidation
 #[test]
-#[ignore] // Native XLM liquidation not yet supported
 fn test_liquidate_partial_liquidation() {
     let env = create_test_env();
     let (contract_id, _admin, client) = setup_contract_with_admin(&env);

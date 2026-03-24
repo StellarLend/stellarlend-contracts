@@ -65,6 +65,8 @@ pub enum LiquidationError {
     PriceNotAvailable = 10,
     /// Liquidation would leave position undercollateralized
     InsufficientLiquidation = 11,
+    /// Cannot liquidate yourself
+    SelfLiquidation = 12,
 }
 
 /// Annual interest rate in basis points (e.g., 500 = 5% per year)
@@ -211,6 +213,14 @@ pub fn liquidate(
         return Err(LiquidationError::InvalidAmount);
     }
 
+    // Require liquidator authorization
+    liquidator.require_auth();
+
+    // Prevent self-liquidation
+    if liquidator == borrower {
+        return Err(LiquidationError::SelfLiquidation);
+    }
+
     // Check emergency pause
     if is_emergency_paused(env) {
         return Err(LiquidationError::LiquidationPaused);
@@ -348,8 +358,12 @@ pub fn liquidate(
     };
 
     // Apply incentive: collateral_seized = collateral_value_liquidated * (1 + incentive_bps / 10000)
+    let total_incentive_multiplier = 10000i128
+        .checked_add(incentive_bps)
+        .ok_or(LiquidationError::Overflow)?;
+
     let collateral_seized = collateral_value_liquidated
-        .checked_mul(10000 + incentive_bps)
+        .checked_mul(total_incentive_multiplier)
         .ok_or(LiquidationError::Overflow)?
         .checked_div(10000)
         .ok_or(LiquidationError::Overflow)?;
@@ -361,42 +375,7 @@ pub fn liquidate(
         collateral_seized
     };
 
-    // Check liquidator has sufficient balance to repay debt
-    if let Some(ref debt_addr) = debt_asset {
-        let token_client = soroban_sdk::token::Client::new(env, debt_addr);
-        let liquidator_balance = token_client.balance(&liquidator);
-        if liquidator_balance < actual_debt_liquidated {
-            return Err(LiquidationError::InsufficientBalance);
-        }
-
-        // Transfer debt asset from liquidator to contract (liquidator repays debt)
-        token_client.transfer_from(
-            &env.current_contract_address(), // spender (this contract)
-            &liquidator,                     // from (liquidator)
-            &env.current_contract_address(), // to (this contract)
-            &actual_debt_liquidated,
-        );
-    } else {
-        // Native XLM handling - placeholder for now
-    }
-
-    // Check contract has sufficient collateral to transfer
-    if let Some(ref collateral_addr) = collateral_asset {
-        let token_client = soroban_sdk::token::Client::new(env, collateral_addr);
-        let contract_balance = token_client.balance(&env.current_contract_address());
-        if contract_balance < actual_collateral_seized {
-            return Err(LiquidationError::InsufficientBalance);
-        }
-
-        // Transfer collateral asset from contract to liquidator (with incentive)
-        token_client.transfer(
-            &env.current_contract_address(), // from (this contract)
-            &liquidator,                     // to (liquidator)
-            &actual_collateral_seized,
-        );
-    } else {
-        // Native XLM handling - placeholder for now
-    }
+    // --- EFFECTS ---
 
     // Update borrower's debt (pay interest first, then principal)
     let interest_to_pay = if actual_debt_liquidated <= position.borrow_interest {
@@ -429,6 +408,29 @@ pub fn liquidate(
 
     // Save updated position
     env.storage().persistent().set(&position_key, &position);
+
+    // --- INTERACTIONS ---
+
+    // Transfer debt asset from liquidator to contract
+    if let Some(ref debt_addr) = debt_asset {
+        let token_client = soroban_sdk::token::Client::new(env, debt_addr);
+        // Transfer from liquidator directly
+        token_client.transfer(
+            &liquidator,                     // from
+            &env.current_contract_address(), // to
+            &actual_debt_liquidated,
+        );
+    }
+
+    // Transfer collateral asset from contract to liquidator (with incentive)
+    if let Some(ref collateral_addr) = collateral_asset {
+        let token_client = soroban_sdk::token::Client::new(env, collateral_addr);
+        token_client.transfer(
+            &env.current_contract_address(), // from
+            &liquidator,                     // to
+            &actual_collateral_seized,
+        );
+    }
 
     // Update analytics
     update_liquidation_analytics(
