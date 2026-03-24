@@ -12,6 +12,7 @@ mod pause;
 mod token_receiver;
 mod withdraw;
 
+use borrow::{borrow as borrow_impl, deposit as borrow_deposit};
 use borrow::{
     get_admin as get_protocol_admin, get_liquidation_threshold_bps as get_liq_threshold_impl,
     get_oracle as get_oracle_impl, get_total_debt, get_user_collateral as get_borrow_collateral,
@@ -22,7 +23,6 @@ use borrow::{
     set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
     BorrowCollateral, BorrowError, DebtPosition,
 };
-use borrow::{borrow as borrow_impl, deposit as borrow_deposit};
 use deposit::{
     deposit as deposit_impl, get_user_collateral as get_deposit_collateral_impl,
     initialize_deposit_settings as init_deposit_settings_impl, set_deposit_cap as set_cap_impl,
@@ -109,7 +109,12 @@ impl LendingContract {
     }
 
     // --- Deposit/Withdraw ---
-    pub fn deposit(env: Env, user: Address, asset: Address, amount: i128) -> Result<(), BorrowError> {
+    pub fn deposit(
+        env: Env,
+        user: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), BorrowError> {
         // We use the borrow-compatible deposit which tracks it as collateral
         borrow_deposit(&env, user, asset, amount)
     }
