@@ -7,19 +7,23 @@ mod token_receiver;
 mod views;
 
 use borrow::{
-    get_admin as get_protocol_admin, get_liquidation_close_factor, get_liquidation_incentive,
-    get_liquidation_threshold_bps as get_liq_threshold_impl, get_total_debt,
+    borrow as borrow_impl, deposit as borrow_deposit, get_admin as get_protocol_admin,
+    get_close_factor_bps as get_close_factor_impl,
+    get_liquidation_incentive_bps as get_liquidation_incentive_bps_impl,
     get_user_collateral as get_borrow_collateral, get_user_debt as get_user_debt_impl,
-    get_user_deposit as get_user_deposit_impl,
-    initialize_borrow_settings as init_borrow_settings_impl,
-    initialize_deposit_settings as init_deposit_settings_impl,
-    initialize_withdraw_settings as init_withdraw_settings_impl, repay as borrow_repay,
-    set_admin as set_protocol_admin, set_deposit_cap as set_cap_impl,
-    set_liquidation_close_factor as set_close_factor_impl,
-    set_liquidation_incentive as set_incentive_impl,
+    initialize_borrow_settings as init_borrow_settings_impl, repay as borrow_repay,
+    set_admin as set_protocol_admin, set_close_factor_bps as set_close_factor_impl,
+    set_liquidation_incentive_bps as set_liquidation_incentive_bps_impl,
     set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
-    withdraw as withdraw_impl, borrow as borrow_impl, deposit as borrow_deposit,
     BorrowCollateral, BorrowError, DebtPosition,
+};
+use deposit::{
+    deposit as deposit_impl, get_user_collateral as get_deposit_collateral_impl,
+    initialize_deposit_settings as init_deposit_settings_impl, DepositCollateral, DepositError,
+};
+use flash_loan::{
+    flash_loan as flash_loan_impl, set_flash_loan_fee_bps as set_flash_loan_fee_impl,
+    FlashLoanError,
 };
 pub use data_store::{DataStore, DataStoreError};
 use flash_loan::set_flash_loan_fee_bps as set_flash_fee_impl;
@@ -30,8 +34,17 @@ use pause::{
     start_recovery as start_recovery_impl, trigger_shutdown as trigger_shutdown_impl,
     EmergencyState, PauseType,
 };
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
-use stellarlend_common::upgrade::{UpgradeManager, UpgradeStatus};
+use token_receiver::receive as receive_impl;
+
+mod views;
+use views::{
+    get_collateral_balance as view_collateral_balance,
+    get_collateral_value as view_collateral_value, get_debt_balance as view_debt_balance,
+    get_debt_value as view_debt_value, get_health_factor as view_health_factor,
+    get_liquidation_incentive_amount as view_liquidation_incentive_amount,
+    get_max_liquidatable_amount as view_max_liquidatable_amount,
+    get_user_position as view_user_position, UserPositionSummary,
+};
 
 pub use borrow::{BorrowDataKey, DepositBalance};
 pub use flash_loan::FlashLoanError;
@@ -65,7 +78,9 @@ mod upgrade_test;
 #[cfg(test)]
 mod views_test;
 #[cfg(test)]
-mod withdraw_test;
+mod liquidation_boundary_test;
+#[cfg(test)]
+mod stress_test;
 
 #[contract]
 pub struct LendingContract;
@@ -240,7 +255,45 @@ impl LendingContract {
         Ok(())
     }
 
-    pub fn set_pause(
+    /// Returns the close factor in basis points (default 5000 = 50%).
+    /// Max fraction of a debt position that can be liquidated per call.
+    pub fn get_close_factor_bps(env: Env) -> i128 {
+        get_close_factor_impl(&env)
+    }
+
+    /// Sets the close factor in basis points (1–10000). Admin only.
+    pub fn set_close_factor_bps(env: Env, admin: Address, bps: i128) -> Result<(), BorrowError> {
+        set_close_factor_impl(&env, &admin, bps)
+    }
+
+    /// Returns the liquidation incentive in basis points (default 1000 = 10%).
+    pub fn get_liquidation_incentive_bps(env: Env) -> i128 {
+        get_liquidation_incentive_bps_impl(&env)
+    }
+
+    /// Sets the liquidation incentive in basis points (0–10000). Admin only.
+    pub fn set_liquidation_incentive_bps(
+        env: Env,
+        admin: Address,
+        bps: i128,
+    ) -> Result<(), BorrowError> {
+        set_liquidation_incentive_bps_impl(&env, &admin, bps)
+    }
+
+    /// Returns the maximum debt that can be liquidated for `user` in one call.
+    /// Returns 0 if healthy, no debt, or oracle not configured.
+    pub fn get_max_liquidatable_amount(env: Env, user: Address) -> i128 {
+        view_max_liquidatable_amount(&env, &user)
+    }
+
+    /// Returns the collateral bonus amount a liquidator receives for repaying `repay_amount`.
+    /// Formula: repay_amount * (10000 + incentive_bps) / 10000
+    pub fn get_liquidation_incentive_amount(env: Env, repay_amount: i128) -> i128 {
+        view_liquidation_incentive_amount(&env, repay_amount)
+    }
+
+    /// Initialize borrow settings (admin only)
+    pub fn initialize_borrow_settings(
         env: Env,
         admin: Address,
         pause_type: pause::PauseType,

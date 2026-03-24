@@ -37,12 +37,8 @@ pub enum BorrowDataKey {
     BorrowMinAmount,
     OracleAddress,
     LiquidationThresholdBps,
-    LiquidationCloseFactorBps,
+    CloseFactor,
     LiquidationIncentiveBps,
-    BorrowDepositCap,
-    BorrowMinDeposit,
-    BorrowMinWithdraw,
-    BorrowTotalDeposited,
 }
 
 #[contracttype]
@@ -297,6 +293,60 @@ pub fn set_liquidation_incentive(env: &Env, admin: &Address, bps: i128) -> Resul
     }
     admin.require_auth();
     if bps < 0 || bps > 5000 {
+        return Err(BorrowError::InvalidAmount);
+    }
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::LiquidationIncentiveBps, &bps);
+    Ok(())
+}
+
+/// Returns the close factor in basis points (default 5000 = 50%).
+/// Determines the maximum fraction of a debt position that can be liquidated in one call.
+pub fn get_close_factor_bps(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::CloseFactor)
+        .unwrap_or(5000)
+}
+
+/// Sets the close factor in basis points (1–10000). Admin only.
+pub fn set_close_factor_bps(env: &Env, admin: &Address, bps: i128) -> Result<(), BorrowError> {
+    let current = get_admin(env).ok_or(BorrowError::Unauthorized)?;
+    if *admin != current {
+        return Err(BorrowError::Unauthorized);
+    }
+    admin.require_auth();
+    if !(1..=10000).contains(&bps) {
+        return Err(BorrowError::InvalidAmount);
+    }
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::CloseFactor, &bps);
+    Ok(())
+}
+
+/// Returns the liquidation incentive in basis points (default 1000 = 10%).
+/// Extra collateral given to the liquidator above the debt repaid.
+pub fn get_liquidation_incentive_bps(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::LiquidationIncentiveBps)
+        .unwrap_or(1000)
+}
+
+/// Sets the liquidation incentive in basis points (0–10000). Admin only.
+pub fn set_liquidation_incentive_bps(
+    env: &Env,
+    admin: &Address,
+    bps: i128,
+) -> Result<(), BorrowError> {
+    let current = get_admin(env).ok_or(BorrowError::Unauthorized)?;
+    if *admin != current {
+        return Err(BorrowError::Unauthorized);
+    }
+    admin.require_auth();
+    if !(0..=10000).contains(&bps) {
         return Err(BorrowError::InvalidAmount);
     }
     env.storage()
