@@ -181,9 +181,9 @@ fn test_liquidation_interest_accrual_integration() {
     assert!(debt_bal >= 10_500);
     
     // Liquidate based on accrued debt
-    // Close factor 50% of 10_500 = 5_250
+    // Close factor 50% of 10,500 = 5,250
     client.liquidate(&liquidator, &borrower, &asset, &collateral_asset, &10_000);
     
     let remaining_debt = client.get_debt_balance(&borrower);
-    assert!(remaining_debt <= 5_250);
+    assert_eq!(remaining_debt, 5_250);
 }
