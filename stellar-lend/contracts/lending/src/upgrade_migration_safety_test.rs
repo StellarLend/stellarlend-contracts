@@ -44,7 +44,7 @@ fn seed_user_state(env: &Env, client: &LendingContractClient, admin: &Address, u
     client.data_store_init(admin);
 
     for (idx, _user) in users.iter().enumerate() {
-        let key = SorobanString::from_str(env, &format!("user_{}", idx));
+        let key = SorobanString::from_str(env, &format!("user_{idx}"));
         let value = soroban_sdk::Bytes::from_slice(env, &[idx as u8; 32]);
         client.data_save(admin, &key, &value);
     }
@@ -125,7 +125,7 @@ fn test_upgrade_preserves_multiple_user_states() {
     assert_eq!(client.data_entry_count(), pre_upgrade_count);
 
     for (idx, _user) in users.iter().enumerate() {
-        let key = SorobanString::from_str(&env, &format!("user_{}", idx));
+        let key = SorobanString::from_str(&env, &format!("user_{idx}"));
         let expected = soroban_sdk::Bytes::from_slice(&env, &[idx as u8; 32]);
         assert_eq!(client.data_load(&key), expected);
     }
@@ -480,7 +480,7 @@ fn test_migration_with_large_dataset() {
 
     // Create large dataset
     for i in 0..50 {
-        let key = SorobanString::from_str(&env, &format!("key_{}", i));
+        let key = SorobanString::from_str(&env, &format!("key_{i}"));
         let val = soroban_sdk::Bytes::from_slice(&env, &[i as u8; 64]);
         client.data_save(&admin, &key, &val);
     }
@@ -495,7 +495,7 @@ fn test_migration_with_large_dataset() {
     assert_eq!(client.data_entry_count(), 50);
 
     for i in 0..50 {
-        let key = SorobanString::from_str(&env, &format!("key_{}", i));
+        let key = SorobanString::from_str(&env, &format!("key_{i}"));
         let expected = soroban_sdk::Bytes::from_slice(&env, &[i as u8; 64]);
         assert_eq!(client.data_load(&key), expected);
     }

@@ -6,7 +6,7 @@
 //! [Issue #391] Optimized gas usage by migrating protocol settings to Instance storage.
 
 use crate::pause::{self, blocks_high_risk_ops, PauseType};
-use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env, FromVal, IntoVal, Val, I256};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env, IntoVal, I256};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -268,13 +268,17 @@ pub fn get_liquidation_incentive_bps(env: &Env) -> i128 {
         .unwrap_or(1000) // Default 10%
 }
 
-pub fn set_liquidation_incentive_bps(env: &Env, admin: &Address, bps: i128) -> Result<(), BorrowError> {
+pub fn set_liquidation_incentive_bps(
+    env: &Env,
+    admin: &Address,
+    bps: i128,
+) -> Result<(), BorrowError> {
     let current = get_admin(env).ok_or(BorrowError::Unauthorized)?;
     if *admin != current {
         return Err(BorrowError::Unauthorized);
     }
     admin.require_auth();
-    if bps < 0 || bps > 5000 {
+    if !(0..=5000).contains(&bps) {
         return Err(BorrowError::InvalidAmount);
     }
     env.storage()
@@ -495,10 +499,16 @@ pub fn liquidate_position(
     }
 
     let accrued = calculate_interest(env, &debt_pos);
-    debt_pos.interest_accrued = debt_pos.interest_accrued.checked_add(accrued).ok_or(BorrowError::Overflow)?;
+    debt_pos.interest_accrued = debt_pos
+        .interest_accrued
+        .checked_add(accrued)
+        .ok_or(BorrowError::Overflow)?;
     debt_pos.last_update = env.ledger().timestamp();
 
-    let total_debt = debt_pos.borrowed_amount.checked_add(debt_pos.interest_accrued).ok_or(BorrowError::Overflow)?;
+    let total_debt = debt_pos
+        .borrowed_amount
+        .checked_add(debt_pos.interest_accrued)
+        .ok_or(BorrowError::Overflow)?;
 
     // 2. Validate health factor
     let oracle = get_oracle(env).ok_or(BorrowError::Unauthorized)?;
@@ -511,12 +521,12 @@ pub fn liquidate_position(
 
     let dv = calculate_value(env, total_debt, price_debt);
     let cv = calculate_value(env, collateral_pos.amount, price_collateral);
-    
+
     let threshold = get_liquidation_threshold_bps(env);
     let weighted_collateral = I256::from_i128(env, cv)
         .mul(&I256::from_i128(env, threshold))
         .div(&I256::from_i128(env, 10000));
-    
+
     if weighted_collateral >= I256::from_i128(env, dv) {
         return Err(BorrowError::NotLiquidatable);
     }
@@ -526,8 +536,9 @@ pub fn liquidate_position(
     let max_repayable = I256::from_i128(env, total_debt)
         .mul(&I256::from_i128(env, close_factor))
         .div(&I256::from_i128(env, 10000))
-        .to_i128().ok_or(BorrowError::Overflow)?;
-    
+        .to_i128()
+        .ok_or(BorrowError::Overflow)?;
+
     if amount > max_repayable {
         return Err(BorrowError::ExceedsCloseFactor);
     }
@@ -536,15 +547,15 @@ pub fn liquidate_position(
 
     // 4. Calculate seized collateral with incentive
     let incentive_bps = get_liquidation_incentive_bps(env);
-    
+
     let base_seizure = I256::from_i128(env, actual_repay)
         .mul(&I256::from_i128(env, price_debt))
         .div(&I256::from_i128(env, price_collateral));
-    
+
     let total_seizure_256 = base_seizure
         .mul(&I256::from_i128(env, 10000 + incentive_bps))
         .div(&I256::from_i128(env, 10000));
-    
+
     let collateral_to_seize = total_seizure_256.to_i128().ok_or(BorrowError::Overflow)?;
     let final_seizure = if collateral_to_seize > collateral_pos.amount {
         collateral_pos.amount
@@ -552,9 +563,7 @@ pub fn liquidate_position(
         collateral_to_seize
     };
 
-    let incentive_amount = final_seizure.saturating_sub(
-        base_seizure.to_i128().unwrap_or(0)
-    );
+    let incentive_amount = final_seizure.saturating_sub(base_seizure.to_i128().unwrap_or(0));
 
     // 5. Update state
     let mut remaining_repay = actual_repay;
@@ -565,10 +574,16 @@ pub fn liquidate_position(
         debt_pos.interest_accrued -= remaining_repay;
         remaining_repay = 0;
     }
-    debt_pos.borrowed_amount = debt_pos.borrowed_amount.checked_sub(remaining_repay).unwrap_or(0);
+    debt_pos.borrowed_amount = debt_pos
+        .borrowed_amount
+        .checked_sub(remaining_repay)
+        .unwrap_or(0);
     save_debt_position(env, &borrower, &debt_pos);
 
-    collateral_pos.amount = collateral_pos.amount.checked_sub(final_seizure).unwrap_or(0);
+    collateral_pos.amount = collateral_pos
+        .amount
+        .checked_sub(final_seizure)
+        .unwrap_or(0);
     save_collateral_position(env, &borrower, &collateral_pos);
 
     let total_debt_global = get_total_debt(env);
@@ -584,13 +599,14 @@ pub fn liquidate_position(
         collateral_seized: final_seizure,
         incentive_amount,
         timestamp: env.ledger().timestamp(),
-    }.publish(env);
+    }
+    .publish(env);
 
     Ok((actual_repay, final_seizure))
 }
 
 fn get_asset_price(env: &Env, oracle: &Address, asset: &Address) -> i128 {
-    use soroban_sdk::{Val, Symbol, FromVal};
+    use soroban_sdk::{FromVal, Symbol, Val};
     let price_val: Val = env.invoke_contract(
         oracle,
         &Symbol::new(env, "price"),
@@ -603,5 +619,9 @@ fn calculate_value(env: &Env, amount: i128, price: i128) -> i128 {
     let amount_256 = I256::from_i128(env, amount);
     let price_256 = I256::from_i128(env, price);
     let scale_256 = I256::from_i128(env, PRICE_SCALE);
-    amount_256.mul(&price_256).div(&scale_256).to_i128().unwrap_or(0)
+    amount_256
+        .mul(&price_256)
+        .div(&scale_256)
+        .to_i128()
+        .unwrap_or(0)
 }

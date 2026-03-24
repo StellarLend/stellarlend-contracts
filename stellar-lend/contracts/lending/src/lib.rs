@@ -52,8 +52,6 @@ use stellarlend_common::upgrade;
 pub use stellarlend_common::upgrade::{UpgradeError, UpgradeStage, UpgradeStatus};
 
 #[cfg(test)]
-mod liquidation_test;
-#[cfg(test)]
 mod borrow_test;
 #[cfg(test)]
 mod deposit_test;
@@ -61,6 +59,8 @@ mod deposit_test;
 mod emergency_shutdown_test;
 #[cfg(test)]
 mod flash_loan_test;
+#[cfg(test)]
+mod liquidation_test;
 #[cfg(test)]
 mod pause_test;
 #[cfg(test)]
@@ -232,16 +232,20 @@ impl LendingContract {
 
         let (actual_repay, seized_collateral) = borrow::liquidate_position(
             &env,
-            liquidator,
+            liquidator.clone(),
             borrower,
             debt_asset,
-            collateral_asset,
+            collateral_asset.clone(),
             amount,
         )?;
 
         // Execute physical transfer of seized collateral (Architecture: Pure accounting in borrow, Physical move in lib/hook)
         let token_client = token::Client::new(&env, &collateral_asset);
-        token_client.transfer(&env.current_contract_address(), &liquidator, &seized_collateral);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &liquidator,
+            &seized_collateral,
+        );
 
         Ok((actual_repay, seized_collateral))
     }
@@ -319,11 +323,7 @@ impl LendingContract {
     }
 
     /// Set close factor in basis points, e.g. 5000 = 50% (admin only).
-    pub fn set_close_factor_bps(
-        env: Env,
-        admin: Address,
-        bps: i128,
-    ) -> Result<(), BorrowError> {
+    pub fn set_close_factor_bps(env: Env, admin: Address, bps: i128) -> Result<(), BorrowError> {
         borrow::set_close_factor_bps(&env, &admin, bps)
     }
 
