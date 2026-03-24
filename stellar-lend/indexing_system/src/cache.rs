@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+#![allow(unexpected_cfgs)]
 /// Redis cache service for caching frequently accessed data
 use crate::error::{IndexerError, IndexerResult};
 use crate::models::{Event, EventStats};

@@ -191,3 +191,31 @@ pub enum UpdateType {
     /// Event removed (for reorg handling)
     Deleted,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_event_query() {
+        let query = EventQuery::new()
+            .with_contract("0x123".to_string())
+            .with_event_name("Transfer".to_string())
+            .with_block_range(100, 200)
+            .with_pagination(50, 10);
+            
+        assert_eq!(query.contract_address.unwrap(), "0x123");
+        assert_eq!(query.event_name.unwrap(), "Transfer");
+        assert_eq!(query.from_block.unwrap(), 100);
+        assert_eq!(query.to_block.unwrap(), 200);
+        assert_eq!(query.limit.unwrap(), 50);
+        assert_eq!(query.offset.unwrap(), 10);
+    }
+
+    #[test]
+    fn test_event_query_default() {
+        let query = EventQuery::default();
+        assert!(query.contract_address.is_none());
+        assert_eq!(query.limit.unwrap(), 100);
+    }
+}

@@ -131,3 +131,27 @@ impl Config {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert_eq!(config.blockchain.chain_id, 1);
+        assert_eq!(config.indexer.confirmations, 12);
+    }
+    
+    #[test]
+    fn test_config_from_env() {
+        let config = Config::from_env().unwrap();
+        assert_eq!(config.blockchain.chain_id, 1);
+    }
+
+    #[test]
+    fn test_config_from_file_error() {
+        let result = Config::from_file("nonexistent_file.toml");
+        assert!(result.is_err());
+    }
+}
