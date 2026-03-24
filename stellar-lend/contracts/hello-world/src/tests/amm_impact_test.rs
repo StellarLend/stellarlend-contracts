@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use stellarlend_amm::TokenPair;
 use crate::{AmmProtocolConfig, HelloContract, HelloContractClient, SwapParams, TokenPair};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},

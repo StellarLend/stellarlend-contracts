@@ -12,10 +12,14 @@ fn setup() -> (Env, Address, Address) {
     let admin = Address::generate(&env);
     env.as_contract(&contract_id, || {
         crate::risk_management::initialize_risk_management(&env, admin.clone()).unwrap();
+<<<<<<< HEAD
         // Bootstrap multisig admins so require_multisig_admin passes
         let mut admins = soroban_sdk::Vec::new(&env);
         admins.push_back(admin.clone());
         crate::multisig::ms_set_admins(&env, admin.clone(), admins, 1).unwrap();
+=======
+        crate::governance::initialize(&env, admin.clone()).unwrap();
+>>>>>>> 43f305e (test: implement soroban env fuzz tests)
     });
     (env, contract_id, admin)
 }

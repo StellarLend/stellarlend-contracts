@@ -330,6 +330,32 @@ impl HelloContract {
         risk_management::get_risk_config(&env)
     }
 
+    pub fn set_pause_switch(
+        env: Env,
+        admin: Address,
+        operation: Symbol,
+        paused: bool,
+    ) -> Result<(), RiskManagementError> {
+        risk_management::set_pause_switch(&env, admin, operation, paused)
+    }
+
+    pub fn is_operation_paused(env: Env, operation: Symbol) -> bool {
+        risk_management::is_operation_paused(&env, operation)
+    }
+
+    pub fn is_emergency_paused(env: Env) -> bool {
+        risk_management::is_emergency_paused(&env)
+    }
+
+    pub fn set_emergency_pause(
+        env: Env,
+        admin: Address,
+        paused: bool,
+    ) -> Result<(), RiskManagementError> {
+        risk_management::set_emergency_pause(&env, admin, paused)
+    }
+
+
     /// Get minimum collateral ratio.
     /// Get a read-only configuration snapshot of the protocol
     ///
@@ -447,12 +473,12 @@ impl HelloContract {
     }
 
     /// Check if a position meets minimum collateral ratio.
-    pub fn check_min_collateral_ratio(
+    pub fn require_min_collateral_ratio(
         env: Env,
         collateral_value: i128,
         debt_value: i128,
     ) -> Result<(), RiskManagementError> {
-        require_min_collateral_ratio(&env, collateral_value, debt_value)
+        crate::risk_params::require_min_collateral_ratio(&env, collateral_value, debt_value)
             .map_err(|_| RiskManagementError::InsufficientCollateralRatio)
     }
 

@@ -20,6 +20,7 @@ fn setup(env: &Env) -> (Address, Address) {
 
     // Initialize governance for tests that require it
     env.as_contract(&contract_id, || {
+<<<<<<< HEAD
         crate::governance::initialize_governance(
             env,
             admin.clone(),
@@ -31,6 +32,9 @@ fn setup(env: &Env) -> (Address, Address) {
             None,
             None,
         ).unwrap();
+=======
+        crate::governance::initialize(&env, admin.clone()).unwrap();
+>>>>>>> 43f305e (test: implement soroban env fuzz tests)
     });
     
     (contract_id, admin)

@@ -1,3 +1,5 @@
+use crate::deposit;
+use crate::analytics::AnalyticsDataKey;
 use crate::deposit::{DepositDataKey, Position, ProtocolAnalytics, UserAnalytics};
 use crate::{HelloContract, HelloContractClient};
 use soroban_sdk::{Address, Env, Map, Symbol, Vec};
