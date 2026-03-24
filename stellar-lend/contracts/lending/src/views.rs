@@ -12,8 +12,8 @@
 use soroban_sdk::{contracttype, Address, Env, IntoVal, Symbol, I256};
 
 use crate::borrow::{
-    get_liquidation_threshold_bps, get_oracle, get_user_collateral, get_user_debt,
-    BorrowCollateral, DebtPosition,
+    calculate_interest, get_liquidation_threshold_bps, get_oracle, get_user_collateral,
+    get_user_debt, BorrowCollateral, DebtPosition,
 };
 
 /// Scale for oracle price (1e8 = one unit). Value = amount * price / PRICE_SCALE.
@@ -53,11 +53,13 @@ pub struct UserPositionSummary {
 /// This is read-only; no state is modified. Oracle is trusted (admin-configured).
 #[inline]
 fn get_asset_price(env: &Env, oracle: &Address, asset: &Address) -> i128 {
-    env.invoke_contract(
+    use soroban_sdk::FromVal;
+    let price_val: soroban_sdk::Val = env.invoke_contract(
         oracle,
         &Symbol::new(env, "price"),
         (asset.clone(),).into_val(env),
-    )
+    );
+    i128::from_val(env, &price_val)
 }
 
 /// Computes collateral value in common unit (amount * price / PRICE_SCALE).
@@ -85,9 +87,11 @@ pub(crate) fn collateral_value(env: &Env, collateral: &BorrowCollateral) -> i128
 /// Returns 0 if oracle is not set or debt is zero.
 #[inline]
 pub(crate) fn debt_value(env: &Env, position: &DebtPosition) -> i128 {
+    let accrued = calculate_interest(env, position);
     let total_debt = position
         .borrowed_amount
         .checked_add(position.interest_accrued)
+        .and_then(|v| v.checked_add(accrued))
         .unwrap_or(0);
     if total_debt <= 0 {
         return 0;
@@ -141,9 +145,7 @@ pub(crate) fn compute_health_factor(
     hf_256.to_i128().unwrap_or(0)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Public view functions (read-only; no state changes)
-// ═══════════════════════════════════════════════════════════════════════════
+// View functions (read-only; for frontends and liquidations)
 
 /// Returns the user's collateral balance (raw amount and asset from borrow position).
 ///
@@ -174,9 +176,11 @@ pub fn get_collateral_balance(env: &Env, user: &Address) -> i128 {
 /// Read-only; no state change. Uses existing borrow storage and interest accrual.
 pub fn get_debt_balance(env: &Env, user: &Address) -> i128 {
     let position = get_user_debt(env, user);
+    let accrued = calculate_interest(env, &position);
     position
         .borrowed_amount
         .checked_add(position.interest_accrued)
+        .and_then(|v| v.checked_add(accrued))
         .unwrap_or(0)
 }
 
@@ -215,9 +219,11 @@ pub fn get_debt_value(env: &Env, user: &Address) -> i128 {
 pub fn get_health_factor(env: &Env, user: &Address) -> i128 {
     let collateral = get_user_collateral(env, user);
     let position = get_user_debt(env, user);
+    let accrued = calculate_interest(env, &position);
     let debt_balance = position
         .borrowed_amount
         .checked_add(position.interest_accrued)
+        .and_then(|v| v.checked_add(accrued))
         .unwrap_or(0);
     let cv = collateral_value(env, &collateral);
     let dv = debt_value(env, &position);
@@ -233,9 +239,11 @@ pub fn get_health_factor(env: &Env, user: &Address) -> i128 {
 pub fn get_user_position(env: &Env, user: &Address) -> UserPositionSummary {
     let collateral = get_user_collateral(env, user);
     let position = get_user_debt(env, user);
+    let accrued = calculate_interest(env, &position);
     let debt_balance = position
         .borrowed_amount
         .checked_add(position.interest_accrued)
+        .and_then(|v| v.checked_add(accrued))
         .unwrap_or(0);
     let collateral_value_usd = collateral_value(env, &collateral);
     let debt_value_usd = debt_value(env, &position);
@@ -249,4 +257,33 @@ pub fn get_user_position(env: &Env, user: &Address) -> UserPositionSummary {
         debt_value: debt_value_usd,
         health_factor,
     }
+}
+
+/// Returns the maximum debt amount (in units) a liquidator can repay for `user`.
+///
+/// This is capped by the protocol's `CloseFactorBps`.
+pub fn get_max_liquidatable_amount(env: &Env, user: &Address) -> i128 {
+    let position = get_user_debt(env, user);
+    let accrued = calculate_interest(env, &position);
+    let total_debt = position
+        .borrowed_amount
+        .checked_add(position.interest_accrued)
+        .and_then(|v| v.checked_add(accrued))
+        .unwrap_or(0);
+    
+    if total_debt <= 0 {
+        return 0;
+    }
+
+    let close_factor = crate::borrow::get_close_factor_bps(env);
+    I256::from_i128(env, total_debt)
+        .mul(&I256::from_i128(env, close_factor))
+        .div(&I256::from_i128(env, 10000))
+        .to_i128()
+        .unwrap_or(0)
+}
+
+/// Returns the protocol's liquidation incentive in basis points (e.g. 1000 = 10%).
+pub fn get_liquidation_incentive(env: &Env) -> i128 {
+    crate::borrow::get_liquidation_incentive_bps(env)
 }

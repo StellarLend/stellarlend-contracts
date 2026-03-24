@@ -3,7 +3,7 @@
 //! Handles incoming token transfers to the contract, enabling automatic
 //! collateral deposits and repayments.
 
-use crate::borrow::{deposit, repay, BorrowError};
+use crate::borrow::{deposit, liquidate_position, repay, BorrowError};
 use soroban_sdk::{Address, Env, FromVal, Symbol, Val, Vec};
 
 /// Token receiver hook for Soroban tokens
@@ -34,6 +34,14 @@ pub fn receive(
         deposit(&env, from, token_asset, amount)
     } else if action == Symbol::new(&env, "repay") {
         repay(&env, from, token_asset, amount)
+    } else if action == Symbol::new(&env, "liquidate") {
+        let borrower = Address::from_val(&env, &payload.get(1).ok_or(BorrowError::InvalidAmount)?);
+        let collateral_asset = Address::from_val(&env, &payload.get(2).ok_or(BorrowError::InvalidAmount)?);
+        let (_repaid, seized) = liquidate_position(&env, from.clone(), borrower, token_asset, collateral_asset.clone(), amount)?;
+        
+        let token_client = soroban_sdk::token::Client::new(&env, &collateral_asset);
+        token_client.transfer(&env.current_contract_address(), &from, &seized);
+        Ok(())
     } else {
         Err(BorrowError::AssetNotSupported)
     }

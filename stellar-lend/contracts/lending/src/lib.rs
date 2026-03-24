@@ -1,7 +1,7 @@
 #![no_std]
 #![allow(deprecated)]
 #![allow(clippy::absurd_extreme_comparisons)]
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
+use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Val, Vec};
 
 mod borrow;
 mod deposit;
@@ -214,7 +214,7 @@ impl LendingContract {
         deposit_impl(&env, user, asset, amount)
     }
 
-    /// Liquidate a position [Issue #391 - Profiling Enabled]
+    /// Liquidate a position
     pub fn liquidate(
         env: Env,
         liquidator: Address,
@@ -222,14 +222,13 @@ impl LendingContract {
         debt_asset: Address,
         collateral_asset: Address,
         amount: i128,
-    ) -> Result<(), BorrowError> {
+    ) -> Result<(i128, i128), BorrowError> {
         liquidator.require_auth();
         if is_paused(&env, PauseType::Liquidation) || blocks_high_risk_ops(&env) {
             return Err(BorrowError::ProtocolPaused);
         }
 
-        // Point to the internal liquidation logic in the borrow module
-        borrow::liquidate_position(
+        let (actual_repay, seized_collateral) = borrow::liquidate_position(
             &env,
             liquidator,
             borrower,
@@ -238,7 +237,11 @@ impl LendingContract {
             amount,
         )?;
 
-        Ok(())
+        // Execute physical transfer of seized collateral (Architecture: Pure accounting in borrow, Physical move in lib/hook)
+        let token_client = token::Client::new(&env, &collateral_asset);
+        token_client.transfer(&env.current_contract_address(), &liquidator, &seized_collateral);
+
+        Ok((actual_repay, seized_collateral))
     }
 
     /// Returns gas/performance stats for the current transaction (Issue #391)
@@ -262,9 +265,7 @@ impl LendingContract {
         get_borrow_collateral(&env, &user)
     }
 
-    // ═══════════════════════════════════════════════════════════════════
     // View functions (read-only; for frontends and liquidations)
-    // ═══════════════════════════════════════════════════════════════════
 
     /// Returns the user's collateral balance (raw amount).
     pub fn get_collateral_balance(env: Env, user: Address) -> i128 {
@@ -296,6 +297,11 @@ impl LendingContract {
         view_user_position(&env, &user)
     }
 
+    /// Returns the maximum debt amount (in units) a liquidator can repay for `user`.
+    pub fn get_max_liquidatable_amount(env: Env, user: Address) -> i128 {
+        views::get_max_liquidatable_amount(&env, &user)
+    }
+
     /// Set oracle address for price feeds (admin only).
     pub fn set_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), BorrowError> {
         set_oracle_impl(&env, &admin, oracle)
@@ -308,6 +314,24 @@ impl LendingContract {
         bps: i128,
     ) -> Result<(), BorrowError> {
         set_liq_threshold_impl(&env, &admin, bps)
+    }
+
+    /// Set close factor in basis points, e.g. 5000 = 50% (admin only).
+    pub fn set_close_factor_bps(
+        env: Env,
+        admin: Address,
+        bps: i128,
+    ) -> Result<(), BorrowError> {
+        borrow::set_close_factor_bps(&env, &admin, bps)
+    }
+
+    /// Set liquidation incentive in basis points, e.g. 1000 = 10% (admin only).
+    pub fn set_liquidation_incentive_bps(
+        env: Env,
+        admin: Address,
+        bps: i128,
+    ) -> Result<(), BorrowError> {
+        borrow::set_liquidation_incentive_bps(&env, &admin, bps)
     }
 
     /// Initialize borrow settings (admin only)
