@@ -467,6 +467,7 @@ pub fn liquidate_position(
     debt_asset: Address,
     collateral_asset: Address,
     amount: i128,
+) -> Result<(i128, i128), BorrowError> {
     if liquidator == borrower {
         return Err(BorrowError::Unauthorized);
     }
