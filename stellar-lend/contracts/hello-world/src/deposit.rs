@@ -31,6 +31,7 @@ use crate::events::{
     emit_user_activity_tracked, AnalyticsUpdatedEvent, BorrowerHealthEventV1, DepositEvent,
     PositionUpdatedEvent, UserActivityTrackedEvent,
 };
+pub use crate::storage::DepositDataKey;
 
 /// Errors that can occur during deposit operations
 #[contracterror]
@@ -239,22 +240,19 @@ pub fn deposit_collateral(
     // Get current timestamp
     let timestamp = env.ledger().timestamp();
 
-    let actual_asset = match &asset {
-        Some(addr) => addr.clone(),
-        None => env
-            .storage()
-            .persistent()
-            .get::<DepositDataKey, Address>(&DepositDataKey::NativeAssetAddress)
-            .ok_or(DepositError::InvalidAsset)?,
+    // Resolve the effective asset address (for both token and native XLM)
+    let asset_addr = match asset {
+        Some(ref addr) => addr.clone(),
+        None => crate::storage::get_native_asset_address(env).ok_or(DepositError::InvalidAsset)?,
     };
 
     // Validate asset address - ensure it's not the contract itself
-    if actual_asset == env.current_contract_address() {
+    if asset_addr == env.current_contract_address() {
         return Err(DepositError::InvalidAsset);
     }
 
     // Check asset parameters
-    let asset_params_key = DepositDataKey::AssetParams(actual_asset.clone());
+    let asset_params_key = DepositDataKey::AssetParams(asset_addr.clone());
     if let Some(params) = env
         .storage()
         .persistent()
@@ -271,8 +269,8 @@ pub fn deposit_collateral(
     }
 
     // Transfer tokens from user to contract using token contract
-    // Use the token contract's transfer_from method
-    let token_client = soroban_sdk::token::Client::new(env, &actual_asset);
+    // Both standard tokens and the Native Asset in Soroban implement the token interface
+    let token_client = soroban_sdk::token::Client::new(env, &asset_addr);
 
     // Check user balance
     let user_balance = token_client.balance(&user);
@@ -282,7 +280,6 @@ pub fn deposit_collateral(
 
     // Transfer tokens from user to contract
     // The user must have approved the contract to spend their tokens
-    // transfer_from requires: spender (contract), from (user), to (contract), amount
     token_client.transfer_from(
         &env.current_contract_address(), // spender (this contract)
         &user,                           // from (user)

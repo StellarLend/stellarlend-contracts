@@ -358,7 +358,7 @@ fn test_set_fee_bps_non_admin() {
 
     let result = env.as_contract(&contract_id, || set_flash_loan_fee(&env, user, 25));
 
-    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), FlashLoanError::UnauthorizedCaller);
 }
 
 /// Test invalid fee values
@@ -588,4 +588,234 @@ fn test_invalid_configuration() {
         configure_flash_loan(&env, admin, config)
     });
     assert!(result.is_err());
+}
+
+// ============================================================================
+// EDGE-CASE TESTS (Issue #477)
+// ============================================================================
+
+/// Test that repay clears the active flash loan record from storage
+#[test]
+fn test_repay_clears_active_record() {
+    let (env, contract_id, _admin, user, token_address) = setup_with_balance(10_000_000);
+    let callback = Address::generate(&env);
+    let token_client = token::StellarAssetClient::new(&env, &token_address);
+    let token_std_client = token::TokenClient::new(&env, &token_address);
+
+    let total = env.as_contract(&contract_id, || {
+        execute_flash_loan(
+            &env,
+            user.clone(),
+            token_address.clone(),
+            1_000_000,
+            callback,
+        )
+        .unwrap()
+    });
+
+    // Verify record exists
+    env.as_contract(&contract_id, || {
+        let key = FlashLoanDataKey::ActiveFlashLoan(user.clone(), token_address.clone());
+        assert!(env
+            .storage()
+            .persistent()
+            .get::<FlashLoanDataKey, crate::flash_loan::FlashLoanRecord>(&key)
+            .is_some());
+    });
+
+    // Repay
+    token_client.mint(&user, &(total * 2));
+    token_std_client.approve(&user, &contract_id, &total, &99999);
+    env.as_contract(&contract_id, || {
+        repay_flash_loan(&env, user.clone(), token_address.clone(), total).unwrap();
+    });
+
+    // Verify record is cleared
+    env.as_contract(&contract_id, || {
+        let key = FlashLoanDataKey::ActiveFlashLoan(user.clone(), token_address.clone());
+        assert!(env
+            .storage()
+            .persistent()
+            .get::<FlashLoanDataKey, crate::flash_loan::FlashLoanRecord>(&key)
+            .is_none());
+    });
+}
+
+/// Test that fee is credited to the protocol reserve on successful repayment
+#[test]
+fn test_fee_credited_to_protocol_reserve() {
+    use crate::deposit::DepositDataKey;
+
+    let (env, contract_id, _admin, user, token_address) = setup_with_balance(10_000_000);
+    let callback = Address::generate(&env);
+    let token_client = token::StellarAssetClient::new(&env, &token_address);
+    let token_std_client = token::TokenClient::new(&env, &token_address);
+
+    // Check initial reserve
+    let initial_reserve = env.as_contract(&contract_id, || {
+        let key = DepositDataKey::ProtocolReserve(Some(token_address.clone()));
+        env.storage()
+            .persistent()
+            .get::<DepositDataKey, i128>(&key)
+            .unwrap_or(0)
+    });
+
+    let total = env.as_contract(&contract_id, || {
+        execute_flash_loan(
+            &env,
+            user.clone(),
+            token_address.clone(),
+            1_000_000,
+            callback,
+        )
+        .unwrap()
+    });
+
+    let expected_fee = 900_i128; // 1_000_000 * 9 / 10_000
+
+    token_client.mint(&user, &(total * 2));
+    token_std_client.approve(&user, &contract_id, &total, &99999);
+    env.as_contract(&contract_id, || {
+        repay_flash_loan(&env, user.clone(), token_address.clone(), total).unwrap();
+    });
+
+    // Verify reserve increased by the fee
+    let final_reserve = env.as_contract(&contract_id, || {
+        let key = DepositDataKey::ProtocolReserve(Some(token_address.clone()));
+        env.storage()
+            .persistent()
+            .get::<DepositDataKey, i128>(&key)
+            .unwrap_or(0)
+    });
+
+    assert_eq!(final_reserve, initial_reserve + expected_fee);
+}
+
+/// Test non-admin cannot call configure_flash_loan
+#[test]
+fn test_configure_flash_loan_non_admin() {
+    let (env, contract_id, _admin, user, _token_address) = setup_env();
+
+    let result = env.as_contract(&contract_id, || {
+        let config = FlashLoanConfig {
+            fee_bps: 9,
+            max_amount: 10_000_000,
+            min_amount: 1_000,
+        };
+        configure_flash_loan(&env, user, config)
+    });
+
+    assert_eq!(result.unwrap_err(), FlashLoanError::UnauthorizedCaller);
+}
+
+/// Test repay with zero amount is rejected
+#[test]
+fn test_repay_zero_amount() {
+    let (env, contract_id, _admin, user, token_address) = setup_with_balance(10_000_000);
+    let callback = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        execute_flash_loan(
+            &env,
+            user.clone(),
+            token_address.clone(),
+            1_000_000,
+            callback,
+        )
+        .unwrap();
+    });
+
+    let result = env.as_contract(&contract_id, || {
+        repay_flash_loan(&env, user.clone(), token_address.clone(), 0)
+    });
+
+    assert_eq!(result.unwrap_err(), FlashLoanError::InvalidAmount);
+}
+
+/// Test that user can re-borrow after successful repayment (reentrancy guard cleared)
+#[test]
+fn test_execute_after_repay_reentrancy_cleared() {
+    let (env, contract_id, _admin, user, token_address) = setup_with_balance(10_000_000);
+    let callback = Address::generate(&env);
+    let token_client = token::StellarAssetClient::new(&env, &token_address);
+    let token_std_client = token::TokenClient::new(&env, &token_address);
+
+    // First flash loan
+    let total = env.as_contract(&contract_id, || {
+        execute_flash_loan(
+            &env,
+            user.clone(),
+            token_address.clone(),
+            1_000_000,
+            callback.clone(),
+        )
+        .unwrap()
+    });
+
+    // Repay it
+    token_client.mint(&user, &(total * 2));
+    token_std_client.approve(&user, &contract_id, &total, &99999);
+    env.as_contract(&contract_id, || {
+        repay_flash_loan(&env, user.clone(), token_address.clone(), total).unwrap();
+    });
+
+    // Second flash loan should succeed (reentrancy guard was cleared)
+    let result = env.as_contract(&contract_id, || {
+        execute_flash_loan(
+            &env,
+            user.clone(),
+            token_address.clone(),
+            500_000,
+            callback,
+        )
+    });
+
+    assert!(result.is_ok());
+}
+
+/// Test flash loan at exact max_amount boundary succeeds
+#[test]
+fn test_flash_loan_max_amount_boundary() {
+    let (env, contract_id, admin, user, token_address) = setup_with_balance(100_000_000);
+    let callback = Address::generate(&env);
+
+    // Set max to exactly 10_000_000
+    env.as_contract(&contract_id, || {
+        let config = FlashLoanConfig {
+            fee_bps: 9,
+            max_amount: 10_000_000,
+            min_amount: 1_000,
+        };
+        configure_flash_loan(&env, admin, config).unwrap();
+    });
+
+    // Exact max should succeed
+    let result = env.as_contract(&contract_id, || {
+        execute_flash_loan(
+            &env,
+            user.clone(),
+            token_address.clone(),
+            10_000_000,
+            callback.clone(),
+        )
+    });
+    assert!(result.is_ok());
+
+    // Clear for next test
+    env.as_contract(&contract_id, || {
+        let key = FlashLoanDataKey::ActiveFlashLoan(user.clone(), token_address.clone());
+        env.storage().persistent().remove(&key);
+    });
+
+    // One above max should fail
+    let result = env.as_contract(&contract_id, || {
+        execute_flash_loan(
+            &env,
+            user.clone(),
+            token_address.clone(),
+            10_000_001,
+            callback,
+        )
+    });
+    assert_eq!(result.unwrap_err(), FlashLoanError::InvalidAmount);
 }

@@ -1,7 +1,28 @@
 //! # Multisig Module
 //!
 //! Implements a proposal → approve → execute governance flow
-//! for updating critical StellarLend protocol parameters via multisig approval.
+<<<<<<< HEAD
+//! for updating critical StellarLend protocol parameters.
+//!
+//! ## How It Works
+//! Sensitive changes (for example, updating the minimum collateral ratio)
+//! must go through a multisig approval process:
+//!
+//! 1. Configure the admin set and approval threshold via [`ms_set_admins`].
+//! 2. An admin creates a proposal with [`ms_propose_set_min_cr`]
+//!    (the proposer auto-approves).
+//! 3. Other admins approve using [`ms_approve`] until the threshold is met.
+//! 4. Any admin executes the proposal with [`ms_execute`].
+//!
+//! ## Safety Guarantees
+//! - Only registered admins can propose, approve, or update the admin set.
+//! - Each admin can approve a proposal only once.
+//! - Proposal IDs are strictly increasing and never reused.
+//! - Executed proposals cannot be run again.
+//! - Only one active proposal can exist at a time.
+
+#![allow(unused)]
+use soroban_sdk::{Address, Env, Vec};
 
 use crate::errors::GovernanceError;
 use crate::governance::{
