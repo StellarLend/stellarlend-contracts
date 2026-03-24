@@ -21,6 +21,8 @@ pub enum BorrowError {
     AssetNotSupported = 7,
     BelowMinimumBorrow = 8,
     RepayAmountTooHigh = 9,
+    PositionNotLiquidatable = 10,
+    InvalidLiquidationAmount = 11,
 }
 
 #[contracttype]
@@ -34,6 +36,8 @@ pub enum BorrowDataKey {
     BorrowMinAmount,
     OracleAddress,
     LiquidationThresholdBps,
+    LiquidationCloseFactorBps,
+    LiquidationIncentiveBps,
 }
 
 #[contracttype]
@@ -156,14 +160,14 @@ fn get_debt_ceiling(env: &Env) -> i128 {
         .unwrap_or(i128::MAX)
 }
 
-fn get_total_debt(env: &Env) -> i128 {
+pub(crate) fn get_total_debt(env: &Env) -> i128 {
     env.storage()
         .instance()
         .get(&BorrowDataKey::BorrowTotalDebt)
         .unwrap_or(0)
 }
 
-fn set_total_debt(env: &Env, amount: i128) {
+pub(crate) fn set_total_debt(env: &Env, amount: i128) {
     env.storage()
         .instance()
         .set(&BorrowDataKey::BorrowTotalDebt, &amount);
@@ -195,13 +199,6 @@ pub fn set_oracle(env: &Env, admin: &Address, oracle: Address) -> Result<(), Bor
     Ok(())
 }
 
-pub fn get_liquidation_threshold_bps(env: &Env) -> i128 {
-    env.storage()
-        .instance()
-        .get(&BorrowDataKey::LiquidationThresholdBps)
-        .unwrap_or(8000)
-}
-
 pub fn set_liquidation_threshold_bps(
     env: &Env,
     admin: &Address,
@@ -221,6 +218,62 @@ pub fn set_liquidation_threshold_bps(
     Ok(())
 }
 
+pub fn get_liquidation_threshold_bps(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::LiquidationThresholdBps)
+        .unwrap_or(8000)
+}
+
+pub fn get_liquidation_close_factor(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::LiquidationCloseFactorBps)
+        .unwrap_or(5000) // Default 50%
+}
+
+pub fn set_liquidation_close_factor(
+    env: &Env,
+    admin: &Address,
+    bps: i128,
+) -> Result<(), BorrowError> {
+    let current = get_admin(env).ok_or(BorrowError::Unauthorized)?;
+    if *admin != current {
+        return Err(BorrowError::Unauthorized);
+    }
+    admin.require_auth();
+    if bps <= 0 || bps > 10000 {
+        return Err(BorrowError::InvalidAmount);
+    }
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::LiquidationCloseFactorBps, &bps);
+    Ok(())
+}
+
+pub fn get_liquidation_incentive(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::LiquidationIncentiveBps)
+        .unwrap_or(1000) // Default 10%
+}
+
+pub fn set_liquidation_incentive(env: &Env, admin: &Address, bps: i128) -> Result<(), BorrowError> {
+    let current = get_admin(env).ok_or(BorrowError::Unauthorized)?;
+    if *admin != current {
+        return Err(BorrowError::Unauthorized);
+    }
+    admin.require_auth();
+    if bps < 0 || bps > 5000 {
+        // Cap incentive at 50%
+        return Err(BorrowError::InvalidAmount);
+    }
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::LiquidationIncentiveBps, &bps);
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // USER DATA: Persistent Storage (Remains for data scaling)
 // ═══════════════════════════════════════════════════════════════════
@@ -237,7 +290,7 @@ fn get_debt_position(env: &Env, user: &Address) -> DebtPosition {
         })
 }
 
-fn save_debt_position(env: &Env, user: &Address, position: &DebtPosition) {
+pub(crate) fn save_debt_position(env: &Env, user: &Address, position: &DebtPosition) {
     env.storage()
         .persistent()
         .set(&BorrowDataKey::BorrowUserDebt(user.clone()), position);
@@ -253,7 +306,7 @@ fn get_collateral_position(env: &Env, user: &Address) -> BorrowCollateral {
         })
 }
 
-fn save_collateral_position(env: &Env, user: &Address, position: &BorrowCollateral) {
+pub(crate) fn save_collateral_position(env: &Env, user: &Address, position: &BorrowCollateral) {
     env.storage()
         .persistent()
         .set(&BorrowDataKey::BorrowUserCollateral(user.clone()), position);
@@ -397,17 +450,5 @@ pub fn repay(env: &Env, user: Address, asset: Address, amount: i128) -> Result<(
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);
-    Ok(())
-}
-
-pub fn liquidate_position(
-    _env: &Env,
-    _liquidator: Address,
-    _borrower: Address,
-    _debt_asset: Address,
-    _collateral_asset: Address,
-    _amount: i128,
-) -> Result<(), BorrowError> {
-    // Profiling entry point for Issue #391
     Ok(())
 }

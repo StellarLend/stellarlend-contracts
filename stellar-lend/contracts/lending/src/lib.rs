@@ -9,13 +9,15 @@ mod flash_loan;
 mod pause;
 mod token_receiver;
 mod withdraw;
+mod liquidate;
 
 use borrow::{
     borrow as borrow_impl, deposit as borrow_deposit, get_admin as get_protocol_admin,
     get_user_collateral as get_borrow_collateral, get_user_debt as get_user_debt_impl,
     initialize_borrow_settings as init_borrow_settings_impl, repay as borrow_repay,
     set_admin as set_protocol_admin, set_liquidation_threshold_bps as set_liq_threshold_impl,
-    set_oracle as set_oracle_impl, BorrowCollateral, BorrowError, DebtPosition,
+    set_oracle as set_oracle_impl, set_liquidation_close_factor as set_close_factor_impl,
+    set_liquidation_incentive as set_incentive_impl, BorrowCollateral, BorrowError, DebtPosition,
 };
 use deposit::{
     deposit as deposit_impl, get_user_collateral as get_deposit_collateral_impl,
@@ -81,6 +83,8 @@ mod withdraw_test;
 
 #[cfg(test)]
 mod stress_test;
+#[cfg(test)]
+mod liquidate_test;
 
 #[contract]
 pub struct LendingContract;
@@ -228,8 +232,7 @@ impl LendingContract {
             return Err(BorrowError::ProtocolPaused);
         }
 
-        // Point to the internal liquidation logic in the borrow module
-        borrow::liquidate_position(
+        liquidate::liquidate(
             &env,
             liquidator,
             borrower,
@@ -239,6 +242,24 @@ impl LendingContract {
         )?;
 
         Ok(())
+    }
+
+    /// Set liquidation close factor (admin only).
+    pub fn set_liquidation_close_factor(
+        env: Env,
+        admin: Address,
+        bps: i128,
+    ) -> Result<(), BorrowError> {
+        set_close_factor_impl(&env, &admin, bps)
+    }
+
+    /// Set liquidation incentive (admin only).
+    pub fn set_liquidation_incentive(
+        env: Env,
+        admin: Address,
+        bps: i128,
+    ) -> Result<(), BorrowError> {
+        set_incentive_impl(&env, &admin, bps)
     }
 
     /// Returns gas/performance stats for the current transaction (Issue #391)
