@@ -146,8 +146,7 @@ impl SorobanRpcClient {
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
                     return Err(BlockchainError::SorobanRpcError(format!(
-                        "HTTP {}: {}",
-                        status, error_text
+                        "HTTP {status}: {error_text}"
                     )));
                 }
 

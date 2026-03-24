@@ -229,12 +229,48 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "BorrowDepositCap"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": "170141183460469231731687303715884105727"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "BorrowMinAmount"
                             }
                           ]
                         },
                         "val": {
                           "i128": "1000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "BorrowMinDeposit"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": "100"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "BorrowMinWithdraw"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": "100"
                         }
                       },
                       {

@@ -12,7 +12,8 @@ use alloc::{format, vec::Vec};
 
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String as SorobanString};
 
-use crate::{LendingContract, LendingContractClient, UpgradeStage};
+use crate::{LendingContract, LendingContractClient};
+use stellarlend_common::upgrade::UpgradeStage;
 
 // ═══════════════════════════════════════════════════════
 // Test Helpers
@@ -23,7 +24,7 @@ fn hash(env: &Env, b: u8) -> BytesN<32> {
 }
 
 fn setup_contract(env: &Env) -> (LendingContractClient<'_>, Address) {
-    let contract_id = env.register_contract(None, LendingContract);
+    let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     (client, admin)
@@ -431,7 +432,7 @@ fn test_schema_version_bump_during_upgrade() {
 
     // Bump schema version to match new contract
     let memo = SorobanString::from_str(&env, "v1_schema_migration");
-    client.data_migrate_bump_version(&admin, &1, &memo);
+    client.data_migrate_bump_version(&admin, &1, &Some(memo));
 
     assert_eq!(client.data_schema_version(), 1);
     assert_eq!(client.current_version(), 1);

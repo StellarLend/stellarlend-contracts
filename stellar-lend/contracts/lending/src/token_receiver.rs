@@ -31,7 +31,7 @@ pub fn receive(
     let action = Symbol::from_val(&env, &payload.get(0).ok_or(BorrowError::InvalidAmount)?);
 
     if action == Symbol::new(&env, "deposit") {
-        deposit(&env, from, token_asset, amount)
+        deposit(&env, from, token_asset, amount).map(|_| ())
     } else if action == Symbol::new(&env, "repay") {
         repay(&env, from, token_asset, amount)
     } else {

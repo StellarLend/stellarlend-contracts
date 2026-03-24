@@ -1,6 +1,4 @@
 use super::*;
-use crate::deposit::DepositError;
-use crate::withdraw::WithdrawError;
 use soroban_sdk::{
     testutils::{Address as _, Events},
     Address, Env, Symbol, TryFromVal,
@@ -64,7 +62,7 @@ fn test_global_pause() {
     );
     assert_eq!(
         client.try_deposit(&user, &asset, &10_000),
-        Err(Ok(DepositError::DepositPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     assert_eq!(
         client.try_repay(&user, &asset, &10_000),
@@ -72,7 +70,7 @@ fn test_global_pause() {
     );
     assert_eq!(
         client.try_withdraw(&user, &asset, &10_000),
-        Err(Ok(WithdrawError::WithdrawPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     assert_eq!(
         client.try_liquidate(&admin, &user, &asset, &collateral_asset, &10_000),
@@ -124,7 +122,7 @@ fn test_all_granular_pauses() {
     client.set_pause(&admin, &PauseType::Deposit, &true);
     assert_eq!(
         client.try_deposit(&user, &asset, &10_000),
-        Err(Ok(DepositError::DepositPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
     client.set_pause(&admin, &PauseType::Deposit, &false);
@@ -141,7 +139,7 @@ fn test_all_granular_pauses() {
     client.set_pause(&admin, &PauseType::Withdraw, &true);
     assert_eq!(
         client.try_withdraw(&user, &asset, &10_000),
-        Err(Ok(WithdrawError::WithdrawPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     client.set_pause(&admin, &PauseType::Withdraw, &false);
 

@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match client.health_check().await {
         Ok(_) => println!("✓ Health check passed\n"),
         Err(e) => {
-            eprintln!("✗ Health check failed: {}\n", e);
+            eprintln!("✗ Health check failed: {e}\n");
             return Err(e.into());
         }
     }
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
         }
         Err(e) => {
-            eprintln!("✗ Failed to fetch network info: {}\n", e);
+            eprintln!("✗ Failed to fetch network info: {e}\n");
         }
     }
 
@@ -56,10 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Fetching latest ledger from Soroban RPC...");
     match client.get_latest_ledger().await {
         Ok(ledger) => {
-            println!("✓ Latest Ledger: {}\n", ledger);
+            println!("✓ Latest Ledger: {ledger}\n");
         }
         Err(e) => {
-            eprintln!("✗ Failed to fetch latest ledger: {}\n", e);
+            eprintln!("✗ Failed to fetch latest ledger: {e}\n");
         }
     }
 

@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_hash = "your_transaction_hash_here";
 
     // Monitor with default options
-    println!("Monitoring transaction (default options): {}\n", tx_hash);
+    println!("Monitoring transaction (default options): {tx_hash}\n");
 
     let options = MonitorOptions::from_config(client.config())
         .with_poll_interval(500) // Poll every 500ms
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  - Operations: {:?}", details.operation_count);
         }
         Ok(MonitorResult::Failed(error)) => {
-            println!("✗ Transaction failed: {}", error);
+            println!("✗ Transaction failed: {error}");
         }
         Ok(MonitorResult::Timeout) => {
             println!("✗ Transaction monitoring timed out");
@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  - Ledger: {}", result.ledger);
         }
         Err(e) => {
-            eprintln!("✗ Error monitoring transaction: {}", e);
+            eprintln!("✗ Error monitoring transaction: {e}");
         }
     }
 
@@ -75,10 +75,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  - Status: {:?}", result.status);
         }
         Ok(result) => {
-            println!("Transaction result: {:?}", result);
+            println!("Transaction result: {result:?}");
         }
         Err(e) => {
-            eprintln!("✗ Error: {}", e);
+            eprintln!("✗ Error: {e}");
         }
     }
 

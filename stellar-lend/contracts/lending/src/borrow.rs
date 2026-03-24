@@ -31,6 +31,7 @@ pub enum BorrowDataKey {
     ProtocolAdmin,
     BorrowUserDebt(Address),
     BorrowUserCollateral(Address),
+    BorrowDepositBalance(Address),
     BorrowTotalDebt,
     BorrowDebtCeiling,
     BorrowMinAmount,
@@ -38,6 +39,10 @@ pub enum BorrowDataKey {
     LiquidationThresholdBps,
     LiquidationCloseFactorBps,
     LiquidationIncentiveBps,
+    BorrowDepositCap,
+    BorrowMinDeposit,
+    BorrowMinWithdraw,
+    BorrowTotalDeposited,
 }
 
 #[contracttype]
@@ -54,6 +59,15 @@ pub struct DebtPosition {
 pub struct BorrowCollateral {
     pub amount: i128,
     pub asset: Address,
+}
+
+/// Standalone deposit balance — stored separately from borrow collateral
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DepositBalance {
+    pub amount: i128,
+    pub asset: Address,
+    pub last_deposit_time: u64,
 }
 
 #[contractevent]
@@ -75,12 +89,31 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct DepositEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+    pub timestamp: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct WithdrawEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+    pub remaining_balance: i128,
+    pub timestamp: u64,
+}
+
 const COLLATERAL_RATIO_MIN: i128 = 15000; // 150%
 const INTEREST_RATE_PER_YEAR: i128 = 500; // 5%
 const SECONDS_PER_YEAR: u64 = 31536000;
 
 /// Borrow assets against deposited collateral.
-/// Optimized to minimize CPU instructions via storage locality.
 pub fn borrow(
     env: &Env,
     user: Address,
@@ -99,7 +132,6 @@ pub fn borrow(
         return Err(BorrowError::InvalidAmount);
     }
 
-    // Instance storage read (Cheap)
     let min_borrow = get_min_borrow_amount(env);
     if amount < min_borrow {
         return Err(BorrowError::BelowMinimumBorrow);
@@ -265,7 +297,6 @@ pub fn set_liquidation_incentive(env: &Env, admin: &Address, bps: i128) -> Resul
     }
     admin.require_auth();
     if bps < 0 || bps > 5000 {
-        // Cap incentive at 50%
         return Err(BorrowError::InvalidAmount);
     }
     env.storage()
@@ -275,7 +306,7 @@ pub fn set_liquidation_incentive(env: &Env, admin: &Address, bps: i128) -> Resul
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// USER DATA: Persistent Storage (Remains for data scaling)
+// USER DATA: Persistent Storage
 // ═══════════════════════════════════════════════════════════════════
 
 fn get_debt_position(env: &Env, user: &Address) -> DebtPosition {
@@ -286,7 +317,7 @@ fn get_debt_position(env: &Env, user: &Address) -> DebtPosition {
             borrowed_amount: 0,
             interest_accrued: 0,
             last_update: env.ledger().timestamp(),
-            asset: user.clone(),
+            asset: env.current_contract_address(), // Better default
         })
 }
 
@@ -297,13 +328,32 @@ pub(crate) fn save_debt_position(env: &Env, user: &Address, position: &DebtPosit
 }
 
 fn get_collateral_position(env: &Env, user: &Address) -> BorrowCollateral {
-    env.storage()
+    let specific_collat: Option<BorrowCollateral> = env.storage()
         .persistent()
-        .get(&BorrowDataKey::BorrowUserCollateral(user.clone()))
-        .unwrap_or(BorrowCollateral {
-            amount: 0,
-            asset: user.clone(),
-        })
+        .get(&BorrowDataKey::BorrowUserCollateral(user.clone()));
+
+    if let Some(c) = specific_collat {
+        if c.amount > 0 {
+            return c;
+        }
+    }
+
+    // Fallback to decoupled deposit balance if no specific borrow-collateral exists
+    let dep: Option<DepositBalance> = env.storage()
+        .persistent()
+        .get(&BorrowDataKey::BorrowDepositBalance(user.clone()));
+
+    if let Some(d) = dep {
+        return BorrowCollateral {
+            amount: d.amount,
+            asset: d.asset,
+        };
+    }
+
+    BorrowCollateral {
+        amount: 0,
+        asset: user.clone(),
+    }
 }
 
 pub(crate) fn save_collateral_position(env: &Env, user: &Address, position: &BorrowCollateral) {
@@ -312,7 +362,6 @@ pub(crate) fn save_collateral_position(env: &Env, user: &Address, position: &Bor
         .set(&BorrowDataKey::BorrowUserCollateral(user.clone()), position);
 }
 
-// Remaining logic (calculate_interest, etc) remains unchanged but benefits from optimized callers.
 pub(crate) fn calculate_interest(env: &Env, position: &DebtPosition) -> i128 {
     if position.borrowed_amount == 0 {
         return 0;
@@ -382,33 +431,220 @@ pub fn get_user_collateral(env: &Env, user: &Address) -> BorrowCollateral {
     get_collateral_position(env, user)
 }
 
-pub fn deposit(env: &Env, user: Address, asset: Address, amount: i128) -> Result<(), BorrowError> {
+pub fn get_user_deposit(env: &Env, user: &Address, asset: &Address) -> DepositBalance {
+    get_deposit_balance(env, user, asset)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Deposit / Withdraw — use dedicated BorrowDepositBalance storage key
+// This is fully decoupled from BorrowUserCollateral (borrow collateral)
+// ─────────────────────────────────────────────────────────────────────
+
+fn get_deposit_balance(env: &Env, user: &Address, asset: &Address) -> DepositBalance {
+    env.storage()
+        .persistent()
+        .get(&BorrowDataKey::BorrowDepositBalance(user.clone()))
+        .unwrap_or(DepositBalance {
+            amount: 0,
+            asset: asset.clone(),
+            last_deposit_time: env.ledger().timestamp(),
+        })
+}
+
+fn save_deposit_balance(env: &Env, user: &Address, balance: &DepositBalance) {
+    env.storage()
+        .persistent()
+        .set(&BorrowDataKey::BorrowDepositBalance(user.clone()), balance);
+}
+
+fn get_deposit_cap(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::BorrowDepositCap)
+        .unwrap_or(i128::MAX)
+}
+
+fn get_min_deposit(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::BorrowMinDeposit)
+        .unwrap_or(0)
+}
+
+fn get_min_withdraw(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::BorrowMinWithdraw)
+        .unwrap_or(0)
+}
+
+fn get_total_deposited(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&BorrowDataKey::BorrowTotalDeposited)
+        .unwrap_or(0)
+}
+
+fn set_total_deposited(env: &Env, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::BorrowTotalDeposited, &amount);
+}
+
+pub fn deposit(env: &Env, user: Address, asset: Address, amount: i128) -> Result<i128, BorrowError> {
+    user.require_auth();
+
+    if pause::is_paused(env, PauseType::Deposit) || blocks_high_risk_ops(env) {
+        return Err(BorrowError::ProtocolPaused);
+    }
+
     if amount <= 0 {
         return Err(BorrowError::InvalidAmount);
     }
-    let mut collateral_position = get_collateral_position(env, &user);
-    if collateral_position.amount == 0 {
-        collateral_position.asset = asset.clone();
-    } else if collateral_position.asset != asset {
-        return Err(BorrowError::AssetNotSupported);
+
+    let min_deposit = get_min_deposit(env);
+    if amount < min_deposit {
+        return Err(BorrowError::InvalidAmount);
     }
-    collateral_position.amount = collateral_position
-        .amount
+
+    let total_deposited = get_total_deposited(env);
+    let cap = get_deposit_cap(env);
+    let new_total = total_deposited
         .checked_add(amount)
         .ok_or(BorrowError::Overflow)?;
-    save_collateral_position(env, &user, &collateral_position);
-    crate::deposit::DepositEvent {
-        user,
+
+    if new_total > cap {
+        return Err(BorrowError::Overflow);
+    }
+
+    // Use BorrowDepositBalance — fully decoupled from BorrowUserCollateral
+    let mut bal = get_deposit_balance(env, &user, &asset);
+    bal.amount = bal.amount.checked_add(amount).ok_or(BorrowError::Overflow)?;
+    bal.asset = asset.clone();
+    bal.last_deposit_time = env.ledger().timestamp();
+
+    save_deposit_balance(env, &user, &bal);
+    set_total_deposited(env, new_total);
+
+    DepositEvent {
+        user: user.clone(),
         asset,
         amount,
-        new_balance: collateral_position.amount,
+        new_balance: bal.amount,
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);
+
+    Ok(bal.amount)
+}
+
+pub fn withdraw(
+    env: &Env,
+    user: Address,
+    asset: Address,
+    amount: i128,
+) -> Result<i128, BorrowError> {
+    user.require_auth();
+
+    if pause::is_paused(env, PauseType::Withdraw) {
+        return Err(BorrowError::ProtocolPaused);
+    }
+    // Withdraw allowed in Recovery mode
+    if pause::get_emergency_state(env) == pause::EmergencyState::Shutdown {
+        return Err(BorrowError::ProtocolPaused);
+    }
+
+    if amount <= 0 {
+        return Err(BorrowError::InvalidAmount);
+    }
+
+    // amount must be STRICTLY GREATER than min_withdraw (exact min is rejected)
+    let min_withdraw = get_min_withdraw(env);
+    if amount <= min_withdraw {
+        return Err(BorrowError::InvalidAmount);
+    }
+
+    let mut bal = get_deposit_balance(env, &user, &asset);
+
+    if bal.amount < amount {
+        return Err(BorrowError::InsufficientCollateral);
+    }
+
+    let new_balance = bal.amount - amount;
+
+    // Cross-validate against borrow debt
+    let debt = get_debt_position(env, &user);
+    let total_debt = debt
+        .borrowed_amount
+        .checked_add(calculate_interest(env, &debt))
+        .ok_or(BorrowError::Overflow)?;
+
+    if total_debt > 0 {
+        validate_collateral_ratio(new_balance, total_debt)?;
+    }
+
+    // Preserve last_deposit_time — only updated by deposit, not withdraw
+    bal.amount = new_balance;
+    save_deposit_balance(env, &user, &bal);
+
+    let total_deposited = get_total_deposited(env);
+    set_total_deposited(env, total_deposited.saturating_sub(amount));
+
+    WithdrawEvent {
+        user: user.clone(),
+        asset,
+        amount,
+        remaining_balance: new_balance,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+
+    Ok(new_balance)
+}
+
+/// Initialize deposit settings — no admin check, called only during protocol setup
+pub fn initialize_deposit_settings(env: &Env, cap: i128, min_deposit: i128) -> Result<(), BorrowError> {
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::BorrowDepositCap, &cap);
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::BorrowMinDeposit, &min_deposit);
+    Ok(())
+}
+
+pub fn set_deposit_cap(env: &Env, admin: &Address, cap: i128) -> Result<(), BorrowError> {
+    let current = get_admin(env).ok_or(BorrowError::Unauthorized)?;
+    if *admin != current {
+        return Err(BorrowError::Unauthorized);
+    }
+    admin.require_auth();
+    if cap < 0 {
+        return Err(BorrowError::InvalidAmount);
+    }
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::BorrowDepositCap, &cap);
+    Ok(())
+}
+
+/// Initialize withdraw settings — no admin check, called only during protocol setup
+pub fn initialize_withdraw_settings(env: &Env, min_withdraw: i128) -> Result<(), BorrowError> {
+    env.storage()
+        .instance()
+        .set(&BorrowDataKey::BorrowMinWithdraw, &min_withdraw);
     Ok(())
 }
 
 pub fn repay(env: &Env, user: Address, asset: Address, amount: i128) -> Result<(), BorrowError> {
+    if pause::is_paused(env, PauseType::Repay) {
+        return Err(BorrowError::ProtocolPaused);
+    }
+    // High-risk ops are blocked in Shutdown, but repay is allowed in Recovery.
+    if pause::get_emergency_state(env) == pause::EmergencyState::Shutdown {
+        return Err(BorrowError::ProtocolPaused);
+    }
+
     if amount <= 0 {
         return Err(BorrowError::InvalidAmount);
     }
@@ -416,7 +652,8 @@ pub fn repay(env: &Env, user: Address, asset: Address, amount: i128) -> Result<(
     if debt_position.borrowed_amount == 0 && debt_position.interest_accrued == 0 {
         return Err(BorrowError::InvalidAmount);
     }
-    if debt_position.asset != asset {
+    // Only check asset if there is something to repay
+    if (debt_position.borrowed_amount > 0 || debt_position.interest_accrued > 0) && debt_position.asset != asset {
         return Err(BorrowError::AssetNotSupported);
     }
     let accrued_interest = calculate_interest(env, &debt_position);

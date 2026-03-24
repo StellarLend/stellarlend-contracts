@@ -14,7 +14,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "set_pause",
+              "function_name": "set_protocol_pause",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
@@ -128,12 +128,48 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "BorrowDepositCap"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": "170141183460469231731687303715884105727"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "BorrowMinAmount"
                             }
                           ]
                         },
                         "val": {
                           "i128": "1000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "BorrowMinDeposit"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": "100"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "BorrowMinWithdraw"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": "100"
                         }
                       },
                       {

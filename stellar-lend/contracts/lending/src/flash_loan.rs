@@ -43,6 +43,11 @@ pub fn flash_loan(
         return Err(FlashLoanError::InvalidAmount);
     }
 
+    use crate::pause::{is_paused, blocks_high_risk_ops, PauseType};
+    if is_paused(env, PauseType::All) || blocks_high_risk_ops(env) {
+        return Err(FlashLoanError::ProtocolPaused);
+    }
+
     let guard_key = FlashLoanDataKey::ReentrancyGuard;
     if env.storage().instance().get(&guard_key).unwrap_or(false) {
         return Err(FlashLoanError::Reentrancy);

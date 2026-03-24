@@ -1,7 +1,4 @@
 use super::*;
-use crate::deposit::DepositError;
-use crate::flash_loan::FlashLoanError;
-use crate::withdraw::WithdrawError;
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
@@ -53,8 +50,6 @@ fn test_shutdown_blocks_high_risk_ops_and_recovery_allows_unwind_only() {
 
     client.initialize(&admin, &1_000_000_000, &1000);
     client.set_guardian(&admin, &guardian);
-    client.initialize_deposit_settings(&1_000_000_000, &100);
-    client.initialize_withdraw_settings(&100);
 
     client.deposit(&user, &asset, &50_000);
     client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
@@ -63,7 +58,7 @@ fn test_shutdown_blocks_high_risk_ops_and_recovery_allows_unwind_only() {
 
     assert_eq!(
         client.try_deposit(&user, &asset, &1000),
-        Err(Ok(DepositError::DepositPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     assert_eq!(
         client.try_borrow(&user, &asset, &1000, &collateral_asset, &2000),
@@ -75,7 +70,7 @@ fn test_shutdown_blocks_high_risk_ops_and_recovery_allows_unwind_only() {
     );
     assert_eq!(
         client.try_withdraw(&user, &asset, &1000),
-        Err(Ok(WithdrawError::WithdrawPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     assert_eq!(
         client.try_flash_loan(&user, &asset, &1000, &soroban_sdk::Bytes::new(&env)),
@@ -90,7 +85,7 @@ fn test_shutdown_blocks_high_risk_ops_and_recovery_allows_unwind_only() {
     );
     assert_eq!(
         client.try_deposit(&user, &asset, &1000),
-        Err(Ok(DepositError::DepositPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     assert_eq!(
         client.try_flash_loan(&user, &asset, &1000, &soroban_sdk::Bytes::new(&env)),
@@ -118,8 +113,6 @@ fn test_recovery_transition_edge_cases_and_partial_pause() {
 
     client.initialize(&admin, &1_000_000_000, &1000);
     client.set_guardian(&admin, &guardian);
-    client.initialize_deposit_settings(&1_000_000_000, &100);
-    client.initialize_withdraw_settings(&100);
 
     // Cannot start recovery before a shutdown.
     assert_eq!(
@@ -144,7 +137,7 @@ fn test_recovery_transition_edge_cases_and_partial_pause() {
     client.set_pause(&admin, &PauseType::Withdraw, &true);
     assert_eq!(
         client.try_withdraw(&user, &asset, &1000),
-        Err(Ok(WithdrawError::WithdrawPaused))
+        Err(Ok(BorrowError::ProtocolPaused))
     );
     client.set_pause(&admin, &PauseType::Withdraw, &false);
 

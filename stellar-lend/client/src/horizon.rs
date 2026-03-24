@@ -81,8 +81,7 @@ impl HorizonClient {
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
                     Err(BlockchainError::HorizonError(format!(
-                        "Status {}: {}",
-                        status, error_text
+                        "Status {status}: {error_text}"
                     )))
                 }
             })
@@ -187,8 +186,7 @@ impl HorizonClient {
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
                     Err(BlockchainError::HorizonError(format!(
-                        "Status {}: {}",
-                        status, error_text
+                        "Status {status}: {error_text}"
                     )))
                 }
             })
@@ -235,8 +233,7 @@ impl HorizonClient {
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
                     Err(BlockchainError::HorizonError(format!(
-                        "Status {}: {}",
-                        status, error_text
+                        "Status {status}: {error_text}"
                     )))
                 }
             })
@@ -269,10 +266,7 @@ impl HorizonClient {
                         .text()
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
-                    Err(BlockchainError::HorizonError(format!(
-                        "Status {}: {}",
-                        status, error_text
-                    )))
+                    Err(BlockchainError::HorizonError(format!("Status {status}: {error_text}")))
                 }
             })
             .await

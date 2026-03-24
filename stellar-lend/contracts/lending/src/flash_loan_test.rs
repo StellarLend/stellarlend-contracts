@@ -90,7 +90,7 @@ fn test_flash_loan_success() {
 
     // 1. Initial setup
     client.initialize(&admin, &1_000_000_000, &1000);
-    client.set_flash_loan_fee_bps(&100); // 1% fee
+    client.set_flash_loan_fee_bps(&admin, &100); // 1% fee
 
     // Mint some assets to the lending contract so it can lend
     token_admin.mint(&contract_id, &100_000);
@@ -151,7 +151,7 @@ fn test_set_flash_loan_fee_bps() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
-    client.set_flash_loan_fee_bps(&50);
+    client.set_flash_loan_fee_bps(&admin, &50);
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn test_set_flash_loan_fee_too_high() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
-    client.set_flash_loan_fee_bps(&2000); // Exceeds MAX_FEE_BPS (1000)
+    client.set_flash_loan_fee_bps(&admin, &2000); // Exceeds MAX_FEE_BPS (1000)
 }
 
 // Mock receiver contract that attempts reentrancy
@@ -314,7 +314,7 @@ fn test_flash_loan_minimal_fee() {
     let receiver_address = receiver_id.clone();
 
     client.initialize(&admin, &1_000_000_000, &1000);
-    client.set_flash_loan_fee_bps(&5); // 0.05% fee
+    client.set_flash_loan_fee_bps(&admin, &5); // 0.05% fee
 
     token_admin.mint(&contract_id, &1_000_000);
     token_admin.mint(&receiver_address, &100);
@@ -347,7 +347,7 @@ fn test_flash_loan_max_fee() {
     let receiver_address = receiver_id.clone();
 
     client.initialize(&admin, &1_000_000_000, &1000);
-    client.set_flash_loan_fee_bps(&1000); // 10% fee
+    client.set_flash_loan_fee_bps(&admin, &1000); // 10% fee
 
     token_admin.mint(&contract_id, &100_000);
     token_admin.mint(&receiver_address, &2000);

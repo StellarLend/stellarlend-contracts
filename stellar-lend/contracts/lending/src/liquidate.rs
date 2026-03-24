@@ -40,6 +40,15 @@ pub fn liquidate(
     repay_amount: i128,
 ) -> Result<(), BorrowError> {
     liquidator.require_auth();
+    use crate::pause::{self, blocks_high_risk_ops, PauseType};
+
+    if pause::is_paused(env, PauseType::Liquidation) {
+        return Err(BorrowError::ProtocolPaused);
+    }
+    // Liquidation (unwind) allowed in Recovery, but blocked in Shutdown
+    if pause::get_emergency_state(env) == pause::EmergencyState::Shutdown {
+        return Err(BorrowError::ProtocolPaused);
+    }
 
     if repay_amount <= 0 {
         return Err(BorrowError::InvalidAmount);

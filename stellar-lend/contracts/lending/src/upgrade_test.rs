@@ -1,6 +1,7 @@
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, Error, InvokeError};
 
-use crate::{LendingContract, LendingContractClient, UpgradeError, UpgradeStage};
+use crate::{LendingContract, LendingContractClient};
+use stellarlend_common::upgrade::{UpgradeError, UpgradeStage};
 
 fn hash(env: &Env, b: u8) -> BytesN<32> {
     BytesN::from_array(env, &[b; 32])

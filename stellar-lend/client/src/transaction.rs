@@ -99,8 +99,7 @@ impl TransactionManager {
                     .error
                     .unwrap_or_else(|| "Unknown simulation error".to_string());
                 return Err(BlockchainError::TransactionSubmissionError(format!(
-                    "Simulation failed: {}",
-                    error_msg
+                    "Simulation failed: {error_msg}"
                 )));
             }
 

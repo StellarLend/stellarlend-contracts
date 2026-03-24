@@ -57,7 +57,7 @@ fn test_borrow_protocol_paused() {
     env.mock_all_auths();
     let (client, admin, user, asset, collateral_asset) = setup_test(&env);
 
-    client.set_pause(&admin, &PauseType::Borrow, &true);
+    client.set_protocol_pause(&admin, &PauseType::Borrow, &true);
 
     let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
     assert_eq!(result, Err(Ok(BorrowError::ProtocolPaused)));
@@ -170,11 +170,11 @@ fn test_pause_unpause() {
     env.mock_all_auths();
     let (client, admin, user, asset, collateral_asset) = setup_test(&env);
 
-    client.set_pause(&admin, &PauseType::Borrow, &true);
+    client.set_protocol_pause(&admin, &PauseType::Borrow, &true);
     let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
     assert_eq!(result, Err(Ok(BorrowError::ProtocolPaused)));
 
-    client.set_pause(&admin, &PauseType::Borrow, &false);
+    client.set_protocol_pause(&admin, &PauseType::Borrow, &false);
     client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
 }
 

@@ -116,6 +116,19 @@ pub fn initialize_deposit_settings(
     Ok(())
 }
 
+pub fn set_deposit_cap(env: &Env, admin: &Address, cap: i128) -> Result<(), DepositError> {
+    // In a real implementation, we'd check admin auth here.
+    // For now, we assume the caller in lib.rs handles auth.
+    admin.require_auth();
+    if cap < 0 {
+        return Err(DepositError::InvalidAmount);
+    }
+    env.storage()
+        .persistent()
+        .set(&DepositDataKey::CapAmount, &cap);
+    Ok(())
+}
+
 pub fn get_user_collateral(env: &Env, user: &Address, asset: &Address) -> DepositCollateral {
     get_deposit_position(env, user, asset)
 }
