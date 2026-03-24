@@ -548,19 +548,22 @@ pub fn liquidate_position(
     // 4. Calculate seized collateral with incentive
     let incentive_bps = get_liquidation_incentive_bps(env);
 
+    // base_seizure = (repay * price_debt) / price_collateral
     let base_seizure = I256::from_i128(env, actual_repay)
         .mul(&I256::from_i128(env, price_debt))
         .div(&I256::from_i128(env, price_collateral));
 
+    // total_seizure = base_seizure * (10000 + incentive) / 10000
     let total_seizure_256 = base_seizure
         .mul(&I256::from_i128(env, 10000 + incentive_bps))
         .div(&I256::from_i128(env, 10000));
 
-    let collateral_to_seize = total_seizure_256.to_i128().ok_or(BorrowError::Overflow)?;
-    let final_seizure = if collateral_to_seize > collateral_pos.amount {
+    let total_seizure = total_seizure_256.to_i128().unwrap_or(i128::MAX);
+
+    let final_seizure = if total_seizure > collateral_pos.amount {
         collateral_pos.amount
     } else {
-        collateral_to_seize
+        total_seizure
     };
 
     let incentive_amount = final_seizure.saturating_sub(base_seizure.to_i128().unwrap_or(0));
