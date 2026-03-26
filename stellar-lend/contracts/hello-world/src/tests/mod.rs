@@ -1,51 +1,55 @@
-// Active test modules — only include modules that compile cleanly
-// against the current contract API surface.
-
-pub mod config_snapshot_test;
+// Legacy API mismatch with current contract surface.
+// pub mod access_control_regression_test;
+pub mod admin_test;
+pub mod analytics_test;
+pub mod asset_config_test;
 pub mod config_test;
 pub mod governance_test;
 pub mod oracle_test;
 pub mod withdraw_test;
-
-// Disabled — pre-existing runtime failures (cross_asset not fully implemented)
-// pub mod borrow_cap_test;
-// pub mod gov_asset_test;
-// pub mod oracle_staleness_fallback_test;
 
 pub mod multisig_governance_execution_test;
 pub mod multisig_test;
 pub mod recovery_multisig_test;
 pub mod recovery_test;
 
-// Disabled — API mismatches (pre-existing, unrelated to withdraw changes)
-// pub mod analytics_test;    // references missing test_helpers module + type inference issues
-// pub mod deploy_test;       // get_utilization + require_min_collateral_ratio not in client
-// pub mod risk_params_test;  // RiskConfig fields renamed (pause_switches/last_update only)
+pub mod interest_rate_test;
+pub mod test_helpers;
+pub mod cross_asset_test;
+pub mod borrow_boundaries_test;
+pub mod borrow_cap_test;
+pub mod borrow_test;
+pub mod oracle_staleness_fallback_test;
+pub mod events_test;
+pub mod interest_accrual_test;
 
-// Disabled — legacy API mismatches (pre-existing, unrelated to withdraw changes)
+// Disabled — pre-existing runtime failures (cross_asset not fully implemented)
+// pub mod gov_asset_test;
+// pub mod oracle_staleness_fallback_test;
+
+// Disabled — API mismatches (pre-existing, unrelated to withdraw changes)
+// pub mod analytics_test;
+// pub mod deploy_test;
+// pub mod risk_params_test;
 // pub mod access_control_regression_test;
 // pub mod admin_test;
-// pub mod amm_impact_test;       // AmmProtocolConfig, SwapParams, TokenPair not re-exported from crate root
+// pub mod amm_impact_test;
 // pub mod amm_test;
-// pub mod asset_config_test;     // wrong AssetConfig field names
-// pub mod bridge_test;           // missing API
-// pub mod cross_contract_test;   // missing API
-// pub mod edge_cases_test;       // missing API
-// pub mod events_test;
-// pub mod integration_test;      // wrong arg counts
-// pub mod interest_accrual_test;
-pub mod interest_rate_test;    // re-enabled: API aligned with new entrypoints
+// pub mod asset_config_test;
+// pub mod bridge_test;
+// pub mod cross_contract_test;
+// pub mod edge_cases_test;
+// pub mod integration_test;
 // pub mod liquidate_test;
-// pub mod multisig_governance_execution_test; // private governance types + missing functions
-// pub mod pause_test;            // set_pause_switches API mismatch
+// pub mod pause_test;
 // pub mod repay_test;
 // pub mod reserve_test;
 // pub mod security_test;
 // pub mod storage_test;
-// pub mod test;                  // inline pub mod inside function body (merge artifact)
+// pub mod test;
 // pub mod test_cross_asset;
 // pub mod test_cross_asset_borrow_repay_edge_cases;
-pub mod test_helpers;
-pub mod cross_asset_test;
 // pub mod views_test;
 // pub mod fees_test;
+// pub mod monitor_test;
+// pub mod multisig_governance_execution_test;

@@ -2277,29 +2277,7 @@ fn test_borrow_asset_collateral_ratio_maintained() {
     let analytics = get_user_analytics(&env, &contract_id, &user).unwrap();
     // Ratio should be: collateral_value / debt_value * 10000
     // = 3000 / 1500 * 10000 = 20000 (200%)
-    assert!(analytics.collateralization_ratio >= 15000); //pub mod multisig_test;
-    pub mod cross_contract_test;
-    pub mod gov_asset_test;
-    pub mod borrow_cap_test;
-    pub mod amm_impact_test;
-    id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
-
-    let user = Address::generate(&env);
-
-    // Deposit collateral
-    let collateral = 1500;
-    client.deposit_collateral(&user, &None, &collateral);
-
-    // Calculate max borrow: 1500 * 10000 / 15000 = 1000
-    let max_borrow = 1000;
-
-    // Borrow exactly at max (should succeed)
-    client.borrow_asset(&user, &None, &max_borrow);
-
-    // Verify position
-    let position = get_user_position(&env, &contract_id, &user).unwrap();
-    assert_eq!(position.debt, max_borrow);
+    assert!(analytics.collateralization_ratio >= 15000);
 }
 
 #[test]

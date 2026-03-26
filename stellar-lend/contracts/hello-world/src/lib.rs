@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, Map, Symbol, Vec};
 
 pub mod admin;
 pub mod amm;
@@ -55,14 +56,12 @@ use crate::interest_rate::{
     initialize_interest_rate_config, update_interest_rate_config, InterestRateConfig,
     InterestRateError,
 };
-use crate::liquidate::liquidate;
-use crate::amm::{SwapParams, AmmError};
-
-use crate::oracle::OracleConfig;
-use crate::risk_management::{
-    check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
-    require_admin, set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
+use crate::oracle::{
+    configure_oracle, get_price, set_fallback_oracle, set_primary_oracle, update_price_feed,
+    OracleConfig,
 };
+
+use crate::amm::{SwapParams, AmmError};
 use crate::risk_params::{
     can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
     initialize_risk_params, require_min_collateral_ratio, RiskParamsError,
@@ -312,6 +311,7 @@ impl HelloContract {
         crate::repay::repay_debt(&env, user, asset, amount)
     }
 
+    /// Liquidate an undercollateralized position.
     pub fn liquidate(
         env: Env,
         liquidator: Address,
@@ -320,7 +320,8 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
-        let (repaid, _seized, _fee) = crate::liquidate::liquidate(&env, liquidator, borrower, debt_asset, collateral_asset, amount)?;
+        let (repaid, _seized, _fee) =
+            crate::liquidate::liquidate(&env, liquidator, borrower, debt_asset, collateral_asset, amount)?;
         Ok(repaid)
     }
 
@@ -503,7 +504,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         asset: Option<Address>,
-        _to: Address,
+        to: Address,
         amount: i128,
     ) -> Result<(), RiskManagementError> {
         require_admin(&env, &caller)?;
@@ -1230,5 +1231,3 @@ mod flash_loan_test;
 // mod governance_test;
 
 // monitor_test references Monitor contract types not present in this crate
-// #[cfg(test)]
-// mod monitor_test;

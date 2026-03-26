@@ -235,6 +235,7 @@ fn set_asset_params(
             deposit_enabled,
             collateral_factor,
             max_deposit,
+            borrow_fee_bps: 0,
         };
         let key = DepositDataKey::AssetParams(asset.clone());
         env.storage().persistent().set(&key, &params);
@@ -503,7 +504,7 @@ fn test_borrow_asset_with_different_collateral_factor() {
 /// Scenario: User attempts to borrow zero amount.
 /// Expected: Returns BorrowError::InvalidAmount.
 #[test]
-#[should_panic(expected = "InvalidAmount")]
+#[should_panic(expected = "Error(Contract, #1)")] // BorrowError::InvalidAmount = 1
 fn test_borrow_asset_zero_amount() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -523,7 +524,7 @@ fn test_borrow_asset_zero_amount() {
 /// Scenario: User attempts to borrow negative amount.
 /// Expected: Returns BorrowError::InvalidAmount.
 #[test]
-#[should_panic(expected = "InvalidAmount")]
+#[should_panic(expected = "Error(Contract, #1)")] // BorrowError::InvalidAmount = 1
 fn test_borrow_asset_negative_amount() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -543,7 +544,7 @@ fn test_borrow_asset_negative_amount() {
 /// Scenario: User attempts to borrow using contract address as asset.
 /// Expected: Returns BorrowError::InvalidAsset.
 #[test]
-#[should_panic(expected = "InvalidAsset")]
+#[should_panic(expected = "Error(Contract, #2)")] // BorrowError::InvalidAsset = 2
 fn test_borrow_asset_invalid_asset_contract_address() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -563,7 +564,7 @@ fn test_borrow_asset_invalid_asset_contract_address() {
 /// Scenario: User attempts to borrow without depositing collateral.
 /// Expected: Returns BorrowError::InsufficientCollateral.
 #[test]
-#[should_panic(expected = "InsufficientCollateral")]
+#[should_panic(expected = "Error(Contract, #3)")] // BorrowError::InsufficientCollateral = 3
 fn test_borrow_asset_no_collateral() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -580,7 +581,7 @@ fn test_borrow_asset_no_collateral() {
 /// Scenario: User attempts to borrow more than allowed by collateral ratio.
 /// Expected: Returns BorrowError::MaxBorrowExceeded or InsufficientCollateralRatio.
 #[test]
-#[should_panic(expected = "MaxBorrowExceeded")]
+#[should_panic(expected = "Error(Contract, #8)")] // BorrowError::MaxBorrowExceeded = 8
 fn test_borrow_asset_exceeds_collateral_ratio() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -603,7 +604,7 @@ fn test_borrow_asset_exceeds_collateral_ratio() {
 /// Scenario: User borrows, then attempts to borrow more than remaining capacity.
 /// Expected: Returns BorrowError::MaxBorrowExceeded.
 #[test]
-#[should_panic(expected = "MaxBorrowExceeded")]
+#[should_panic(expected = "Error(Contract, #8)")] // BorrowError::MaxBorrowExceeded = 8
 fn test_borrow_asset_max_borrow_exceeded() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -631,7 +632,7 @@ fn test_borrow_asset_max_borrow_exceeded() {
 /// Scenario: User attempts to borrow asset that is not enabled (deposit_enabled = false).
 /// Expected: Returns BorrowError::AssetNotEnabled.
 #[test]
-#[should_panic(expected = "AssetNotEnabled")]
+#[should_panic(expected = "Error(Contract, #9)")] // BorrowError::AssetNotEnabled = 9
 fn test_borrow_asset_not_enabled() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -826,7 +827,7 @@ fn test_borrow_interest_resets_on_zero_debt() {
 /// Scenario: Borrow operations are paused via pause switch.
 /// Expected: Returns BorrowError::BorrowPaused.
 #[test]
-#[should_panic(expected = "BorrowPaused")]
+#[should_panic(expected = "Error(Contract, #4)")] // BorrowError::BorrowPaused = 4
 fn test_borrow_asset_paused() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -1067,7 +1068,7 @@ fn test_borrow_asset_one_below_max() {
 /// Scenario: User attempts to borrow 1 unit more than maximum.
 /// Expected: Returns BorrowError::MaxBorrowExceeded.
 #[test]
-#[should_panic(expected = "MaxBorrowExceeded")]
+#[should_panic(expected = "Error(Contract, #8)")] // BorrowError::MaxBorrowExceeded = 8
 fn test_borrow_asset_one_above_max() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());
@@ -1158,7 +1159,7 @@ fn test_borrow_asset_multiple_users() {
 /// Scenario: Asset has 0% collateral factor.
 /// Expected: Max borrow should be zero, borrow should fail.
 #[test]
-#[should_panic(expected = "MaxBorrowExceeded")]
+#[should_panic(expected = "Error(Contract, #8)")] // BorrowError::MaxBorrowExceeded = 8
 fn test_borrow_asset_zero_collateral_factor() {
     let env = create_test_env();
     let contract_id = env.register(HelloContract, ());

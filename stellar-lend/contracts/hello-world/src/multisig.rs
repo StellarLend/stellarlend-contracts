@@ -5,8 +5,9 @@
 
 use soroban_sdk::{Address, Env, Vec, String, Symbol};
 use crate::governance::{
-    create_proposal, get_multisig_config, get_proposal, get_proposal_approvals,
-    execute_proposal_action
+    create_proposal, get_proposal, get_proposal_approvals,
+    execute_proposal_action, approve_proposal, emit_approval_event, emit_proposal_executed_event,
+    execute_multisig_proposal, get_multisig_admins, get_multisig_config, get_multisig_threshold, set_multisig_admins, set_multisig_threshold,
 };
 use crate::errors::GovernanceError;
 use crate::storage::GovernanceDataKey;
@@ -120,8 +121,8 @@ pub fn ms_propose_set_min_cr(
         None,
     )?;
 
-    // Auto-approve as proposer
-    ms_approve(env, proposer, proposal_id)?;
+    // Proposer auto-approves their own proposal
+    approve_proposal(env, proposer, proposal_id)?;
 
     Ok(proposal_id)
 }
@@ -195,7 +196,8 @@ pub fn ms_execute(env: &Env, executor: Address, proposal_id: u64) -> Result<(), 
     env.storage().persistent().set(&GovernanceDataKey::Proposal(proposal_id), &proposal);
 
     // Execute the action via the shared dispatcher in governance.rs
-    execute_proposal_action(env, &proposal.proposal_type)
+    execute_proposal_action(env, &proposal.proposal_type)?;
+    execute_multisig_proposal(env, executor, proposal_id)
 }
 
 // ============================================================================
