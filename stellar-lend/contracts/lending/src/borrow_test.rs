@@ -377,28 +377,18 @@ fn test_borrow_zero_collateral_rejected() {
 }
 
 /// Collateral exactly at 150 % of borrow amount must be accepted.
-///
-/// # Security
-/// The boundary must be inclusive: borrow 10_000 with 15_000 collateral
-/// is valid. Off-by-one errors here could either block legitimate users or
-/// allow under-collateralised positions.
 #[test]
 fn test_borrow_collateral_exactly_at_150_percent_boundary() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
 
-    // 15_000 / 10_000 = 1.5 — exactly the minimum ratio.
     client.borrow(&user, &asset, &10_000, &collateral_asset, &15_000);
     let debt = client.get_user_debt(&user);
     assert_eq!(debt.borrowed_amount, 10_000);
 }
 
 /// One unit below 150 % must be rejected.
-///
-/// # Security
-/// Ensures the boundary check is strict: 14_999 collateral for 10_000 borrow
-/// is below the 150 % threshold and must be rejected.
 #[test]
 fn test_borrow_collateral_one_unit_below_boundary_rejected() {
     let env = Env::default();
@@ -409,33 +399,18 @@ fn test_borrow_collateral_one_unit_below_boundary_rejected() {
     assert_eq!(result, Err(Ok(BorrowError::InsufficientCollateral)));
 }
 
-/// A second borrow that reduces the effective collateral ratio below 150 %
-/// must be rejected even if the first borrow succeeded.
-///
-/// # Security
-/// The protocol must aggregate existing debt when validating new borrows so
-/// that a user cannot bypass the collateral ratio through incremental borrows.
 #[test]
 fn test_borrow_second_borrow_insufficient_combined_collateral() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
 
-    // First borrow succeeds: 20_000 collateral, 10_000 borrow (200 %).
     client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
 
-    // Second borrow: add only 1_000 collateral but borrow 5_000 more.
-    // Combined: 21_000 collateral, 15_000 debt = 140 % — must fail.
     let result = client.try_borrow(&user, &asset, &5_000, &collateral_asset, &1_000);
     assert_eq!(result, Err(Ok(BorrowError::InsufficientCollateral)));
 }
 
-/// Negative collateral amount is treated as an invalid amount, not a collateral
-/// shortfall, so the protocol returns InvalidAmount before any ratio check.
-///
-/// # Security
-/// Negative values must be rejected at input validation to prevent sign-related
-/// arithmetic bypasses in the collateral ratio computation.
 #[test]
 fn test_borrow_negative_collateral_returns_invalid_amount() {
     let env = Env::default();
@@ -446,12 +421,6 @@ fn test_borrow_negative_collateral_returns_invalid_amount() {
     assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
 }
 
-/// Even with sufficient collateral, a borrow while the protocol is paused
-/// must be rejected.
-///
-/// # Security
-/// The pause check must occur before the collateral ratio check. A passing
-/// collateral ratio must not bypass an active pause.
 #[test]
 fn test_borrow_paused_overrides_sufficient_collateral() {
     let env = Env::default();
@@ -460,26 +429,186 @@ fn test_borrow_paused_overrides_sufficient_collateral() {
 
     client.set_pause(&admin, &PauseType::Borrow, &true);
 
-    // Collateral is more than sufficient (200 %) — still must fail due to pause.
     let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
     assert_eq!(result, Err(Ok(BorrowError::ProtocolPaused)));
 }
 
-/// Maximum collateral (i128::MAX / 2) with a small borrow must succeed without
-/// overflow in the ratio calculation.
-///
-/// # Security
-/// Large collateral values must not trigger overflow in the 150 % ratio check.
-/// This validates the checked-arithmetic path for extreme inputs.
 #[test]
 fn test_borrow_large_collateral_no_overflow() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
 
-    // Very large collateral, modest borrow — should succeed.
     let large_collateral: i128 = 1_000_000_000_000;
     client.borrow(&user, &asset, &1000, &collateral_asset, &large_collateral);
     let debt = client.get_user_debt(&user);
     assert_eq!(debt.borrowed_amount, 1000);
+}
+
+// --- deposit_collateral error branch coverage ---
+
+#[test]
+fn test_deposit_collateral_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, _collateral_asset) = setup_test(&env);
+
+    let result = client.try_deposit_collateral(&user, &asset, &0);
+    assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
+}
+
+#[test]
+fn test_deposit_collateral_asset_mismatch() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    client.deposit_collateral(&user, &asset, &1000);
+
+    let result = client.try_deposit_collateral(&user, &collateral_asset, &1000);
+    assert_eq!(result, Err(Ok(BorrowError::AssetNotSupported)));
+}
+
+// --- repay error branch coverage ---
+
+#[test]
+fn test_repay_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
+
+    let result = client.try_repay(&user, &asset, &0);
+    assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
+}
+
+#[test]
+fn test_repay_no_existing_debt() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, _collateral_asset) = setup_test(&env);
+
+    let result = client.try_repay(&user, &asset, &1000);
+    assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
+}
+
+#[test]
+fn test_repay_wrong_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
+
+    let result = client.try_repay(&user, &collateral_asset, &5_000);
+    assert_eq!(result, Err(Ok(BorrowError::AssetNotSupported)));
+}
+
+#[test]
+fn test_repay_overpayment() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
+
+    let result = client.try_repay(&user, &asset, &20_000);
+    assert_eq!(result, Err(Ok(BorrowError::RepayAmountTooHigh)));
+}
+
+#[test]
+fn test_repay_partial_interest_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+    client.borrow(&user, &asset, &100_000, &collateral_asset, &200_000);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000 + 31536000;
+    });
+
+    let debt_before = client.get_user_debt(&user);
+    assert!(debt_before.interest_accrued > 0);
+
+    let partial_interest = debt_before.interest_accrued / 2;
+    if partial_interest > 0 {
+        client.repay(&user, &asset, &partial_interest);
+
+        let debt_after = client.get_user_debt(&user);
+        assert_eq!(debt_after.borrowed_amount, 100_000);
+    }
+}
+
+// --- lib.rs uncovered function coverage ---
+
+#[test]
+fn test_initialize_twice_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+
+    let result = client.try_initialize(&admin, &1_000_000_000, &1000);
+    assert_eq!(result, Err(Ok(BorrowError::Unauthorized)));
+}
+
+#[test]
+fn test_get_performance_stats() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _user, _asset, _collateral_asset) = setup_test(&env);
+
+    let stats = client.get_performance_stats();
+    assert_eq!(stats.len(), 2);
+    assert_eq!(stats.get(0), Some(0u64));
+    assert_eq!(stats.get(1), Some(0u64));
+}
+
+#[test]
+fn test_get_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    assert!(client.get_admin().is_none());
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+
+    assert_eq!(client.get_admin(), Some(admin));
+}
+
+#[test]
+fn test_initialize_borrow_settings() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _user, _asset, _collateral_asset) = setup_test(&env);
+
+    let result = client.try_initialize_borrow_settings(&5_000_000_000i128, &500i128);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_set_deposit_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _user, _asset, _collateral_asset) = setup_test(&env);
+
+    let result = client.try_set_deposit_paused(&true);
+    assert!(result.is_ok());
+
+    let result = client.try_set_deposit_paused(&false);
+    assert!(result.is_ok());
 }

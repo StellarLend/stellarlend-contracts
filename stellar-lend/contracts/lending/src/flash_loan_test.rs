@@ -359,3 +359,79 @@ fn test_flash_loan_max_fee() {
     let token_client = token::Client::new(&env, &asset);
     assert_eq!(token_client.balance(&contract_id), 100_000 + expected_fee);
 }
+
+#[test]
+fn test_flash_loan_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let asset = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let receiver_id = env.register(FlashLoanReceiver, ());
+    let receiver_address = receiver_id.clone();
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+
+    let result = client.try_flash_loan(&receiver_address, &asset, &0, &Bytes::new(&env));
+    assert_eq!(result, Err(Ok(FlashLoanError::InvalidAmount)));
+}
+
+#[test]
+fn test_flash_loan_negative_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let asset = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let receiver_id = env.register(FlashLoanReceiver, ());
+    let receiver_address = receiver_id.clone();
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+
+    let result = client.try_flash_loan(&receiver_address, &asset, &-1, &Bytes::new(&env));
+    assert_eq!(result, Err(Ok(FlashLoanError::InvalidAmount)));
+}
+
+#[test]
+fn test_flash_loan_reentrancy_guard_via_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let asset = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &asset);
+
+    let receiver_id = env.register(FlashLoanReceiver, ());
+    let receiver_address = receiver_id.clone();
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    token_admin.mint(&contract_id, &100_000);
+    token_admin.mint(&receiver_address, &1000);
+
+    // Pre-set the reentrancy guard in contract storage to simulate re-entry
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .instance()
+            .set(&crate::flash_loan::FlashLoanDataKey::ReentrancyGuard, &true);
+    });
+
+    let result = client.try_flash_loan(&receiver_address, &asset, &1000, &Bytes::new(&env));
+    assert_eq!(result, Err(Ok(FlashLoanError::Reentrancy)));
+}
