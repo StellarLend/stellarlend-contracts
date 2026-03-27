@@ -84,3 +84,53 @@ impl core::fmt::Debug for ReentrancyGuard<'_> {
 pub(crate) fn is_locked(env: &Env) -> bool {
     env.storage().temporary().has(&ReentrancyDataKey::LockV1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{contract, contractimpl, Env};
+
+    #[contract]
+    struct TestContract;
+
+    #[contractimpl]
+    impl TestContract {}
+
+    #[test]
+    fn test_reentrancy_guard_success() {
+        let env = Env::default();
+        let contract_id = env.register(TestContract, ());
+        env.as_contract(&contract_id, || {
+            let guard = ReentrancyGuard::new(&env);
+            assert!(guard.is_ok());
+        });
+    }
+
+    #[test]
+    fn test_reentrancy_guard_blocks_reentry() {
+        let env = Env::default();
+        let contract_id = env.register(TestContract, ());
+        env.as_contract(&contract_id, || {
+            let _guard = ReentrancyGuard::new(&env).unwrap();
+            let result = ReentrancyGuard::new(&env);
+            match result {
+                Err(code) => assert_eq!(code, 7u32),
+                Ok(_) => panic!("expected reentrancy error"),
+            }
+        });
+    }
+
+    #[test]
+    fn test_reentrancy_guard_drop_releases_lock() {
+        let env = Env::default();
+        let contract_id = env.register(TestContract, ());
+        env.as_contract(&contract_id, || {
+            {
+                let _guard = ReentrancyGuard::new(&env).unwrap();
+                assert!(ReentrancyGuard::new(&env).is_err());
+            }
+            // After drop, the lock should be released
+            assert!(ReentrancyGuard::new(&env).is_ok());
+        });
+    }
+}
