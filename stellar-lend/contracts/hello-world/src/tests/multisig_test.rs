@@ -15,8 +15,19 @@ fn setup() -> (Env, Address, Address) {
     env.mock_all_auths();
     let contract_id = env.register(HelloContract, ());
     let admin = Address::generate(&env);
+    let vote_token = Address::generate(&env);
     env.as_contract(&contract_id, || {
-        crate::governance::initialize(&env, admin.clone()).unwrap();
+        crate::governance::initialize(
+            &env,
+            admin.clone(),
+            vote_token,
+            None, // voting_period
+            None, // execution_delay
+            None, // quorum_bps
+            None, // proposal_threshold
+            None, // timelock_duration
+            None, // default_voting_threshold
+        ).unwrap();
     });
     (env, contract_id, admin)
 }
@@ -71,13 +82,14 @@ fn test_ms_propose_min_cr_at_100_percent_returns_error() {
 fn test_ms_full_flow_2_of_2() {
     let (env, cid, admin) = setup();
     let admin2 = Address::generate(&env);
+    let mut pid = 0u64;
     env.as_contract(&cid, || {
         let mut admins = Vec::new(&env);
         admins.push_back(admin.clone());
         admins.push_back(admin2.clone());
         ms_set_admins(&env, admin.clone(), admins, 2).unwrap();
         // propose auto-approves for admin (1 of 2)
-        let pid = ms_propose_set_min_cr(&env, admin.clone(), 15_000).unwrap();
+        pid = ms_propose_set_min_cr(&env, admin.clone(), 15_000).unwrap();
         // admin2 approves — threshold (2) now met
         ms_approve(&env, admin2.clone(), pid).unwrap();
     });
@@ -85,6 +97,14 @@ fn test_ms_full_flow_2_of_2() {
         li.timestamp += 10 * 24 * 60 * 60;
     });
     env.as_contract(&cid, || {
-        ms_execute(&env, admin, 1).unwrap();
+        // Ensure proposal is queued before execution
+        let proposal = crate::governance::get_proposal(&env, pid).unwrap();
+        println!("Before queue: status={:?}", proposal.status);
+        if proposal.status != crate::types::ProposalStatus::Queued {
+            crate::governance::queue_proposal(&env, admin.clone(), pid).unwrap();
+        }
+        let proposal = crate::governance::get_proposal(&env, pid).unwrap();
+        println!("Before execute: status={:?}", proposal.status);
+        ms_execute(&env, admin, pid).unwrap();
     });
 }

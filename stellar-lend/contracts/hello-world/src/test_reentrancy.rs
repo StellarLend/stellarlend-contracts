@@ -42,7 +42,7 @@ fn attempt_callback_reentry(env: &Env, user: &Address) {
     let deposit_result = client.try_deposit_collateral(user, &token, &100);
     assert!(deposit_result.is_err());
 
-    let withdraw_result = client.try_withdraw_collateral(user, &token, &100);
+    let withdraw_result = client.try_ca_withdraw_collateral(user, &token, &100);
     assert!(withdraw_result.is_err());
 
     let borrow_result = client.try_borrow_asset(user, &token, &100);
@@ -60,7 +60,7 @@ fn setup_test() -> (Env, Address, HelloContractClient<'static>, Address, Address
     let user = Address::generate(&env);
     let contract_id = env.register(HelloContract, ());
     let client = HelloContractClient::new(&env, &contract_id);
-    client.initialize(&admin).unwrap();
+    client.initialize(&admin);
 
     let malicious_token_id = env.register(MaliciousToken, ());
 
@@ -118,10 +118,10 @@ fn reentrancy_guard_rejects_nested_entry_and_unlocks_after_drop() {
         let guard = ReentrancyGuard::new(&env).unwrap();
         assert!(is_locked(&env));
 
-        assert_eq!(
-            ReentrancyGuard::new(&env).unwrap_err(),
-            REENTRANCY_ERROR_CODE
-        );
+        match ReentrancyGuard::new(&env) {
+            Ok(_) => panic!("Expected error, got Ok"),
+            Err(err) => assert_eq!(err, REENTRANCY_ERROR_CODE),
+        }
 
         drop(guard);
 
@@ -134,7 +134,8 @@ fn reentrancy_guard_rejects_nested_entry_and_unlocks_after_drop() {
 fn deposit_rejects_callback_reentry_and_releases_lock() {
     let (env, contract_id, client, token_id, user) = setup_test();
 
-    client.deposit_collateral(&user, &Some(token_id), &1_000).unwrap();
+    let result = client.deposit_collateral(&user, &Some(token_id), &1_000);
+    assert!(result >= 0);
 
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -146,7 +147,9 @@ fn withdraw_rejects_callback_reentry_and_releases_lock() {
     let (env, contract_id, client, token_id, user) = setup_test();
     seed_position(&env, &contract_id, &user, 1_000, 0);
 
-    client.withdraw_collateral(&user, &Some(token_id), &500).unwrap();
+    let result = client.ca_withdraw_collateral(&user, &Some(token_id), &500);
+    // AssetPosition is returned, just check collateral is as expected (>=0)
+    assert!(result.collateral >= 0);
 
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -158,7 +161,9 @@ fn repay_rejects_callback_reentry_and_releases_lock() {
     let (env, contract_id, client, token_id, user) = setup_test();
     seed_position(&env, &contract_id, &user, 10_000, 1_000);
 
-    client.repay_debt(&user, &Some(token_id), &500).unwrap();
+    let result = client.repay_debt(&user, &Some(token_id), &500);
+    // (i128, i128, i128) tuple, just check principal_paid >= 0
+    assert!(result.0 >= 0);
 
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));

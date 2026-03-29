@@ -86,7 +86,7 @@ fn test_analytics_after_full_withdraw() {
     let user = Address::generate(&env);
 
     client.deposit_collateral(&user, &None, &1000);
-    client.withdraw_collateral(&user, &None, &1000);
+    client.ca_withdraw_collateral(&user, &None, &1000);
     let report = client.get_protocol_report();
     assert_eq!(report.metrics.total_value_locked, 0);
 }
