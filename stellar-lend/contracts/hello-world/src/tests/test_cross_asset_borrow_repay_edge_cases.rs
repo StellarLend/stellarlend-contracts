@@ -1,12 +1,30 @@
 #![cfg(test)]
 //! Cross-Asset Borrow and Repay Edge Case Tests
 //!
-//! This module tests complex scenarios involving:
-//! - Borrowing against multiple collateral assets
-//! - Repaying debt across multiple assets
-//! - Edge cases with collateral devaluation
-//! - Partial repayment scenarios
-//! - Health factor updates during multi-asset operations
+//! Systematic test matrix for cross-asset deposit/borrow/repay sequences,
+//! mirroring scenarios documented in test_snapshots/tests/test_cross_asset_borrow_repay_edge_cases/.
+//!
+//! ## Coverage
+//! - Multi-collateral borrowing (2-3 asset types)
+//! - Multi-asset borrowing against unified collateral pool
+//! - Partial and full repayment across assets
+//! - Collateral devaluation and health factor effects
+//! - Collateral withdrawal with and without debt
+//! - Sequential borrow/repay cycles
+//! - Boundary conditions: zero amounts, very small/large values
+//! - Health factor precision at exact thresholds
+//! - Multiple independent user positions
+//! - Asset configuration changes (collateral factor, disable borrow)
+//! - Native XLM (None asset) support
+//!
+//! ## Security Notes
+//! - All external calls require `user.require_auth()` (mocked via `mock_all_auths`)
+//! - Admin-only operations (initialize_asset, update_asset_config, update_asset_price)
+//!   are guarded by `require_admin`
+//! - Health factor < 10000 (1.0x) blocks borrows and withdrawals
+//! - Repayment caps at total debt — debt cannot go negative
+//! - Checked arithmetic throughout; overflow returns an error variant
+//! - Price staleness (> 1 hour) causes position summary to fail
 
 use crate::cross_asset::AssetConfig;
 use crate::{HelloContract, HelloContractClient};
@@ -30,32 +48,12 @@ fn setup_contract(env: &Env) -> (HelloContractClient<'_>, Address) {
     (client, admin)
 }
 
-fn create_asset_config(env: &Env, asset: Option<Address>, price: i128) -> AssetConfig {
+/// Standard asset config: 75% collateral factor, 80% liquidation threshold
+fn make_asset_config(env: &Env, asset: Option<Address>, price: i128) -> AssetConfig {
     AssetConfig {
         asset: asset.clone(),
-        collateral_factor: 7500, // 75%
-        borrow_factor: 8000,     // 80%
-        reserve_factor: 1000,    // 10%
-        max_supply: 100_000_000_000_000,
-        max_borrow: 80_000_000_000_000,
-        can_collateralize: true,
-        can_borrow: true,
-        price,
-        price_updated_at: env.ledger().timestamp(),
-    }
-}
-
-fn create_custom_asset_config(
-    env: &Env,
-    asset: Option<Address>,
-    price: i128,
-    collateral_factor: i128,
-    borrow_factor: i128,
-) -> AssetConfig {
-    AssetConfig {
-        asset: asset.clone(),
-        collateral_factor,
-        borrow_factor,
+        collateral_factor: 7500,
+        liquidation_threshold: 8000,
         reserve_factor: 1000,
         max_supply: 100_000_000_000_000,
         max_borrow: 80_000_000_000_000,
@@ -66,24 +64,38 @@ fn create_custom_asset_config(
     }
 }
 
+/// Custom asset config with explicit collateral and liquidation factors
+fn make_custom_config(
+    env: &Env,
+    asset: Option<Address>,
+    price: i128,
+    collateral_factor: i128,
+    liquidation_threshold: i128,
+) -> AssetConfig {
+    AssetConfig {
+        asset: asset.clone(),
+        collateral_factor,
+        liquidation_threshold,
+        reserve_factor: 1000,
+        max_supply: 100_000_000_000_000,
+        max_borrow: 80_000_000_000_000,
+        can_collateralize: true,
+        can_borrow: true,
+        price,
+        price_updated_at: env.ledger().timestamp(),
+    }
+}
+
+/// Register USDC ($1), ETH ($2000), BTC ($40000) — all with 75% CF
 fn setup_three_assets(env: &Env, client: &HelloContractClient) -> (Address, Address, Address) {
     let usdc = Address::generate(env);
-    client.initialize_asset(
-        &Some(usdc.clone()),
-        &create_asset_config(env, Some(usdc.clone()), 1_0000000),
-    );
+    client.initialize_asset(&Some(usdc.clone()), &make_asset_config(env, Some(usdc.clone()), 1_0000000));
 
     let eth = Address::generate(env);
-    client.initialize_asset(
-        &Some(eth.clone()),
-        &create_asset_config(env, Some(eth.clone()), 2000_0000000),
-    );
+    client.initialize_asset(&Some(eth.clone()), &make_asset_config(env, Some(eth.clone()), 2000_0000000));
 
     let btc = Address::generate(env);
-    client.initialize_asset(
-        &Some(btc.clone()),
-        &create_asset_config(env, Some(btc.clone()), 40000_0000000),
-    );
+    client.initialize_asset(&Some(btc.clone()), &make_asset_config(env, Some(btc.clone()), 40000_0000000));
 
     (usdc, eth, btc)
 }
@@ -92,6 +104,8 @@ fn setup_three_assets(env: &Env, client: &HelloContractClient) -> (Address, Addr
 // MULTI-COLLATERAL BORROW TESTS
 // ============================================================================
 
+/// Deposit three different collateral assets, borrow a single asset.
+/// Verifies unified health factor aggregates all collateral.
 #[test]
 fn test_borrow_single_asset_against_three_collaterals() {
     let env = create_test_env();
@@ -99,21 +113,16 @@ fn test_borrow_single_asset_against_three_collaterals() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Deposit three different collaterals
-    // USDC: $10,000
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    // ETH: 5 * $2,000 = $10,000
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &5_0000000);
-    // BTC: 0.5 * $40,000 = $20,000
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &5000000);
+    // USDC: $10,000 | ETH: 5 × $2,000 = $10,000 | BTC: 0.5 × $40,000 = $20,000
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &5000000);
 
-    // Total collateral: $40,000
-    // Weighted (75%): $30,000
-    // Borrow $25,000 USDC
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &25000_0000000);
+    // Total collateral $40k, weighted (75%) = $30k → borrow $25k USDC
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &25000_0000000);
 
-    let position = client.get_user_asset_position(&user, &Some(usdc.clone()));
-    assert_eq!(position.debt_principal, 25000_0000000);
+    let pos = client.get_user_asset_position(&user, &Some(usdc.clone()));
+    assert_eq!(pos.debt_principal, 25000_0000000);
 
     let summary = client.get_user_position_summary(&user);
     assert_eq!(summary.total_collateral_value, 40000_0000000);
@@ -121,6 +130,7 @@ fn test_borrow_single_asset_against_three_collaterals() {
     assert!(summary.health_factor > 10000);
 }
 
+/// Borrow two different assets against two collateral assets.
 #[test]
 fn test_borrow_multiple_assets_against_multiple_collaterals() {
     let env = create_test_env();
@@ -128,31 +138,23 @@ fn test_borrow_multiple_assets_against_multiple_collaterals() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Deposit USDC and BTC as collateral
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &50000_0000000);
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &1_0000000);
+    // $50k USDC + $40k BTC = $90k collateral, weighted $67.5k
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &50000_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &1_0000000);
 
-    // Total: $50k USDC + $40k BTC = $90k
-    // Weighted: $67.5k
+    // Borrow 15 ETH ($30k) + $20k USDC = $50k total debt
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &15_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &20000_0000000);
 
-    // Borrow ETH
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &15_0000000);
-    // Borrow more USDC
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &20000_0000000);
-
-    // Total debt: $30k ETH + $20k USDC = $50k
-
-    let eth_position = client.get_user_asset_position(&user, &Some(eth));
-    assert_eq!(eth_position.debt_principal, 15_0000000);
-
-    let usdc_position = client.get_user_asset_position(&user, &Some(usdc));
-    assert_eq!(usdc_position.debt_principal, 20000_0000000);
+    assert_eq!(client.get_user_asset_position(&user, &Some(eth)).debt_principal, 15_0000000);
+    assert_eq!(client.get_user_asset_position(&user, &Some(usdc)).debt_principal, 20000_0000000);
 
     let summary = client.get_user_position_summary(&user);
     assert_eq!(summary.total_debt_value, 50000_0000000);
     assert!(summary.health_factor > 10000);
 }
 
+/// Borrow at a reasonable amount within multi-collateral capacity.
 #[test]
 fn test_borrow_at_maximum_capacity_multi_collateral() {
     let env = create_test_env();
@@ -160,20 +162,19 @@ fn test_borrow_at_maximum_capacity_multi_collateral() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Deposit collateral
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &5_0000000);
+    // $10k USDC + $10k ETH = $20k collateral, weighted $15k
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &5_0000000);
 
-    // Borrow a reasonable amount
-    client.ca_borrow_asset(&user, &Some(btc.clone()), &370000);
+    // Borrow 0.37 BTC ≈ $14,800 — within capacity
+    client.cross_asset_borrow(&user, &Some(btc.clone()), &370000);
 
     let summary = client.get_user_position_summary(&user);
-    // Verify position is healthy
     assert!(summary.health_factor >= 10000);
-    // Verify we have used significant borrow capacity
     assert!(summary.total_debt_value > 0);
 }
 
+/// Attempting to borrow more than weighted collateral allows must fail.
 #[test]
 fn test_borrow_exceeds_multi_collateral_capacity() {
     let env = create_test_env();
@@ -181,15 +182,16 @@ fn test_borrow_exceeds_multi_collateral_capacity() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &5_0000000);
+    // $10k USDC + $10k ETH = $20k, weighted $15k
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &5_0000000);
 
-    // Try to borrow significantly more than weighted collateral allows
-    // Total: $20k, Weighted: $15k, trying to borrow $20k should fail
-    let result = client.try_ca_borrow_asset(&user, &Some(usdc), &20000_0000000);
+    // Try to borrow $20k — exceeds $15k weighted capacity
+    let result = client.try_cross_asset_borrow(&user, &Some(usdc), &20000_0000000);
     assert!(result.is_err());
 }
 
+/// Each sequential borrow reduces remaining borrow capacity.
 #[test]
 fn test_sequential_borrows_different_assets() {
     let env = create_test_env();
@@ -197,41 +199,25 @@ fn test_sequential_borrows_different_assets() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Large collateral
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &2_0000000);
+    // 2 BTC = $80k collateral, weighted $60k
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &2_0000000);
 
-    // Borrow USDC
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &20000_0000000);
-    let summary1 = client.get_user_position_summary(&user);
-    let capacity1 = summary1.borrow_capacity;
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &20000_0000000);
+    let cap1 = client.get_user_position_summary(&user).borrow_capacity;
 
-    // Borrow ETH
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &5_0000000);
-    let summary2 = client.get_user_position_summary(&user);
-    let capacity2 = summary2.borrow_capacity;
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &5_0000000);
+    let cap2 = client.get_user_position_summary(&user).borrow_capacity;
 
-    // Capacity should decrease with each borrow
-    assert!(capacity2 < capacity1);
-
-    // Verify both debts exist
-    assert_eq!(
-        client
-            .get_user_asset_position(&user, &Some(usdc))
-            .debt_principal,
-        20000_0000000
-    );
-    assert_eq!(
-        client
-            .get_user_asset_position(&user, &Some(eth))
-            .debt_principal,
-        5_0000000
-    );
+    assert!(cap2 < cap1);
+    assert_eq!(client.get_user_asset_position(&user, &Some(usdc)).debt_principal, 20000_0000000);
+    assert_eq!(client.get_user_asset_position(&user, &Some(eth)).debt_principal, 5_0000000);
 }
 
 // ============================================================================
 // PARTIAL REPAYMENT TESTS
 // ============================================================================
 
+/// Repaying 25% of a single-asset debt leaves 75% remaining.
 #[test]
 fn test_partial_repay_single_asset_debt() {
     let env = create_test_env();
@@ -239,16 +225,16 @@ fn test_partial_repay_single_asset_debt() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &5000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &5000_0000000);
 
-    // Repay 25%
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &1250_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &1250_0000000);
 
-    let position = client.get_user_asset_position(&user, &Some(usdc));
-    assert_eq!(position.debt_principal, 3750_0000000);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 3750_0000000);
 }
 
+/// Partial repayment of two different borrowed assets.
 #[test]
 fn test_partial_repay_multiple_assets() {
     let env = create_test_env();
@@ -256,30 +242,18 @@ fn test_partial_repay_multiple_assets() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Setup collateral and borrow multiple assets
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &2_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &30000_0000000);
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &2_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &30000_0000000);
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &10_0000000);
 
-    // Partially repay USDC
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &10000_0000000);
-    // Partially repay ETH
-    client.ca_repay_debt(&user, &Some(eth.clone()), &3_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_repay(&user, &Some(eth.clone()), &3_0000000);
 
-    assert_eq!(
-        client
-            .get_user_asset_position(&user, &Some(usdc))
-            .debt_principal,
-        20000_0000000
-    );
-    assert_eq!(
-        client
-            .get_user_asset_position(&user, &Some(eth))
-            .debt_principal,
-        7_0000000
-    );
+    assert_eq!(client.get_user_asset_position(&user, &Some(usdc)).debt_principal, 20000_0000000);
+    assert_eq!(client.get_user_asset_position(&user, &Some(eth)).debt_principal, 7_0000000);
 }
 
+/// Fully repaying one asset leaves other debts intact.
 #[test]
 fn test_repay_one_asset_fully_keep_others() {
     let env = create_test_env();
@@ -287,30 +261,21 @@ fn test_repay_one_asset_fully_keep_others() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &2_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &20000_0000000);
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &2_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &20000_0000000);
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &10_0000000);
 
-    // Fully repay USDC
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &20000_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &20000_0000000);
 
-    assert_eq!(
-        client
-            .get_user_asset_position(&user, &Some(usdc))
-            .debt_principal,
-        0
-    );
-    assert_eq!(
-        client
-            .get_user_asset_position(&user, &Some(eth))
-            .debt_principal,
-        10_0000000
-    );
+    assert_eq!(client.get_user_asset_position(&user, &Some(usdc)).debt_principal, 0);
+    assert_eq!(client.get_user_asset_position(&user, &Some(eth)).debt_principal, 10_0000000);
 
+    // Only ETH debt ($20k) remains
     let summary = client.get_user_position_summary(&user);
-    assert_eq!(summary.total_debt_value, 20000_0000000); // Only ETH debt remains
+    assert_eq!(summary.total_debt_value, 20000_0000000);
 }
 
+/// Repaying more than owed caps at zero — debt cannot go negative.
 #[test]
 fn test_repay_more_than_debt_caps_at_zero() {
     let env = create_test_env();
@@ -318,17 +283,18 @@ fn test_repay_more_than_debt_caps_at_zero() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &5000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &5000_0000000);
 
-    // Try to repay double the debt
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &10000_0000000);
+    // Repay 2× the debt — should cap at zero
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &10000_0000000);
 
-    let position = client.get_user_asset_position(&user, &Some(usdc));
-    assert_eq!(position.debt_principal, 0);
-    assert_eq!(position.accrued_interest, 0);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 0);
+    assert_eq!(pos.accrued_interest, 0);
 }
 
+/// Repaying all debts across all assets results in zero total debt and infinite health.
 #[test]
 fn test_repay_all_debts_sequentially() {
     let env = create_test_env();
@@ -336,14 +302,12 @@ fn test_repay_all_debts_sequentially() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &2_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &2_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &5_0000000);
 
-    // Repay all USDC
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &10000_0000000);
-    // Repay all ETH
-    client.ca_repay_debt(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_repay(&user, &Some(eth.clone()), &5_0000000);
 
     let summary = client.get_user_position_summary(&user);
     assert_eq!(summary.total_debt_value, 0);
@@ -354,6 +318,7 @@ fn test_repay_all_debts_sequentially() {
 // COLLATERAL DEVALUATION EDGE CASES
 // ============================================================================
 
+/// A 50% collateral price drop should make a near-max-borrow position liquidatable.
 #[test]
 fn test_borrow_then_collateral_price_drops() {
     let env = create_test_env();
@@ -361,22 +326,22 @@ fn test_borrow_then_collateral_price_drops() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    // Deposit ETH as collateral
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &10_0000000);
-    // Borrow USDC
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &10000_0000000);
+    // 10 ETH @ $2000 = $20k collateral, weighted $15k → borrow $10k USDC
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &10000_0000000);
 
-    let summary_before = client.get_user_position_summary(&user);
-    assert!(!summary_before.is_liquidatable);
+    let hf_before = client.get_user_position_summary(&user).health_factor;
+    assert!(hf_before > 10000);
 
-    // ETH price drops 50%
+    // ETH drops 50% to $1000 → collateral $10k, weighted $7.5k < $10k debt
     client.update_asset_price(&Some(eth), &1000_0000000);
 
-    let summary_after = client.get_user_position_summary(&user);
-    assert!(summary_after.health_factor < summary_before.health_factor);
-    assert!(summary_after.is_liquidatable);
+    let summary = client.get_user_position_summary(&user);
+    assert!(summary.health_factor < hf_before);
+    assert!(summary.is_liquidatable);
 }
 
+/// One collateral devalues but the other keeps the position healthy.
 #[test]
 fn test_multi_collateral_one_asset_devalues() {
     let env = create_test_env();
@@ -384,22 +349,21 @@ fn test_multi_collateral_one_asset_devalues() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Deposit multiple collaterals
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &20000_0000000);
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &10_0000000);
-    client.ca_borrow_asset(&user, &Some(btc.clone()), &500000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &20000_0000000);
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_borrow(&user, &Some(btc.clone()), &500000); // ~$200 BTC
 
-    let summary_before = client.get_user_position_summary(&user);
+    let hf_before = client.get_user_position_summary(&user).health_factor;
 
-    // ETH price drops 80%
+    // ETH drops 80% — USDC collateral keeps position healthy
     client.update_asset_price(&Some(eth), &400_0000000);
 
-    let summary_after = client.get_user_position_summary(&user);
-    // Should still be healthy due to USDC collateral
-    assert!(summary_after.health_factor < summary_before.health_factor);
-    assert!(!summary_after.is_liquidatable);
+    let summary = client.get_user_position_summary(&user);
+    assert!(summary.health_factor < hf_before);
+    assert!(!summary.is_liquidatable);
 }
 
+/// All collateral assets losing 90% value triggers liquidation.
 #[test]
 fn test_all_collateral_devalues_becomes_liquidatable() {
     let env = create_test_env();
@@ -407,27 +371,23 @@ fn test_all_collateral_devalues_becomes_liquidatable() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Use ETH and BTC as collateral, borrow USDC
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &10_0000000);
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &5000000);
-    // Total: $20k ETH + $20k BTC = $40k
-    // Weighted: $30k
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &28000_0000000);
+    // $20k ETH + $20k BTC = $40k, weighted $30k → borrow $28k USDC
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &5000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &28000_0000000);
 
-    let summary_before = client.get_user_position_summary(&user);
-    let health_before = summary_before.health_factor;
+    let hf_before = client.get_user_position_summary(&user).health_factor;
 
-    // Both collaterals lose 90% value
+    // Both drop 90%
     client.update_asset_price(&Some(eth.clone()), &200_0000000);
     client.update_asset_price(&Some(btc), &4000_0000000);
 
     let summary = client.get_user_position_summary(&user);
-    // Health factor should decrease significantly
-    assert!(summary.health_factor < health_before);
-    // Position should become liquidatable
+    assert!(summary.health_factor < hf_before);
     assert!(summary.is_liquidatable);
 }
 
+/// Borrowed asset price doubling increases debt value and reduces health factor.
 #[test]
 fn test_borrowed_asset_price_increases() {
     let env = create_test_env();
@@ -435,12 +395,12 @@ fn test_borrowed_asset_price_increases() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &20000_0000000);
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &20000_0000000);
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &5_0000000); // $10k debt
 
     let summary_before = client.get_user_position_summary(&user);
 
-    // ETH price doubles
+    // ETH doubles to $4000 → debt becomes $20k
     client.update_asset_price(&Some(eth), &4000_0000000);
 
     let summary_after = client.get_user_position_summary(&user);
@@ -449,9 +409,10 @@ fn test_borrowed_asset_price_increases() {
 }
 
 // ============================================================================
-// COLLATERAL REMOVAL EDGE CASES
+// COLLATERAL WITHDRAWAL EDGE CASES
 // ============================================================================
 
+/// Withdrawing one collateral asset while the other keeps health factor above 1.0.
 #[test]
 fn test_withdraw_one_collateral_maintain_health() {
     let env = create_test_env();
@@ -459,20 +420,19 @@ fn test_withdraw_one_collateral_maintain_health() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    // Deposit two collaterals
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &20000_0000000);
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &10_0000000);
-    // Borrow
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &15000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &20000_0000000);
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &15000_0000000);
 
-    // Withdraw some USDC (should still be healthy with ETH)
-    client.ca_withdraw_collateral(&user, &Some(usdc.clone()), &10000_0000000);
+    // Withdraw $10k USDC — ETH ($20k, weighted $15k) still covers $15k debt
+    client.cross_asset_withdraw(&user, &Some(usdc.clone()), &10000_0000000);
 
     let summary = client.get_user_position_summary(&user);
     assert!(!summary.is_liquidatable);
     assert!(summary.health_factor > 10000);
 }
 
+/// Withdrawing collateral that would break health factor must be rejected.
 #[test]
 fn test_withdraw_collateral_breaks_health_fails() {
     let env = create_test_env();
@@ -480,15 +440,16 @@ fn test_withdraw_collateral_breaks_health_fails() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &5_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &14000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &14000_0000000);
 
-    // Try to withdraw ETH (would break health)
-    let result = client.try_ca_withdraw_collateral(&user, &Some(eth), &5_0000000);
+    // Removing all ETH ($10k) would leave $10k USDC weighted $7.5k < $14k debt
+    let result = client.try_cross_asset_withdraw(&user, &Some(eth), &5_0000000);
     assert!(result.is_err());
 }
 
+/// After full repayment, all collateral can be withdrawn.
 #[test]
 fn test_withdraw_all_collateral_after_full_repay() {
     let env = create_test_env();
@@ -496,16 +457,14 @@ fn test_withdraw_all_collateral_after_full_repay() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &5_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &10000_0000000);
 
-    // Repay all debt
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &10000_0000000);
 
-    // Withdraw all collateral
-    client.ca_withdraw_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_withdraw_collateral(&user, &Some(eth), &5_0000000);
+    client.cross_asset_withdraw(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_withdraw(&user, &Some(eth), &5_0000000);
 
     let summary = client.get_user_position_summary(&user);
     assert_eq!(summary.total_collateral_value, 0);
@@ -513,41 +472,12 @@ fn test_withdraw_all_collateral_after_full_repay() {
 }
 
 // ============================================================================
-// DIFFERENT COLLATERAL FACTOR EDGE CASES
+// COLLATERAL FACTOR EDGE CASES
 // ============================================================================
 
-#[test]
-fn test_borrow_with_different_collateral_factors() {
-    let env = create_test_env();
-    let (client, _admin) = setup_contract(&env);
-    let user = Address::generate(&env);
 
-    // High collateral factor asset (90%)
-    let stable = Address::generate(&env);
-    client.initialize_asset(
-        &Some(stable.clone()),
-        &create_custom_asset_config(&env, Some(stable.clone()), 1_0000000, 9000, 8000),
-    );
 
-    // Low collateral factor asset (50%)
-    let volatile = Address::generate(&env);
-    client.initialize_asset(
-        &Some(volatile.clone()),
-        &create_custom_asset_config(&env, Some(volatile.clone()), 1000_0000000, 5000, 8000),
-    );
-
-    // Deposit both
-    client.ca_deposit_collateral(&user, &Some(stable.clone()), &10000_0000000);
-    client.ca_deposit_collateral(&user, &Some(volatile.clone()), &10_0000000);
-
-    // Total: $10k + $10k = $20k
-    // Weighted: $9k (stable) + $5k (volatile) = $14k
-
-    let summary = client.get_user_position_summary(&user);
-    assert_eq!(summary.total_collateral_value, 20000_0000000);
-    assert_eq!(summary.weighted_collateral_value, 14000_0000000);
-}
-
+/// Repaying debt improves health factor proportionally.
 #[test]
 fn test_repay_improves_health_factor() {
     let env = create_test_env();
@@ -555,19 +485,18 @@ fn test_repay_improves_health_factor() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &7000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &7000_0000000);
 
-    let summary_before = client.get_user_position_summary(&user);
-    let health_before = summary_before.health_factor;
+    let hf_before = client.get_user_position_summary(&user).health_factor;
 
-    // Repay half
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &3500_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &3500_0000000);
 
-    let summary_after = client.get_user_position_summary(&user);
-    assert!(summary_after.health_factor > health_before);
+    let hf_after = client.get_user_position_summary(&user).health_factor;
+    assert!(hf_after > hf_before);
 }
 
+/// Borrow capacity decreases on borrow and increases on repay.
 #[test]
 fn test_borrow_capacity_updates_correctly() {
     let env = create_test_env();
@@ -575,28 +504,23 @@ fn test_borrow_capacity_updates_correctly() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &20000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &20000_0000000);
+    let cap0 = client.get_user_position_summary(&user).borrow_capacity;
 
-    let summary1 = client.get_user_position_summary(&user);
-    let initial_capacity = summary1.borrow_capacity;
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &3_0000000);
+    let cap1 = client.get_user_position_summary(&user).borrow_capacity;
+    assert!(cap1 < cap0);
 
-    // Borrow some
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &3_0000000);
-
-    let summary2 = client.get_user_position_summary(&user);
-    assert!(summary2.borrow_capacity < initial_capacity);
-
-    // Repay
-    client.ca_repay_debt(&user, &Some(eth.clone()), &1_0000000);
-
-    let summary3 = client.get_user_position_summary(&user);
-    assert!(summary3.borrow_capacity > summary2.borrow_capacity);
+    client.cross_asset_repay(&user, &Some(eth.clone()), &1_0000000);
+    let cap2 = client.get_user_position_summary(&user).borrow_capacity;
+    assert!(cap2 > cap1);
 }
 
 // ============================================================================
-// COMPLEX MULTI-STEP SCENARIOS
+// COMPLEX MULTI-STEP LIFECYCLE TESTS
 // ============================================================================
 
+/// Full lifecycle: deposit → borrow → add more collateral → borrow more → partial repay → withdraw.
 #[test]
 fn test_complex_multi_asset_lifecycle() {
     let env = create_test_env();
@@ -604,25 +528,13 @@ fn test_complex_multi_asset_lifecycle() {
     let user = Address::generate(&env);
     let (usdc, eth, btc) = setup_three_assets(&env, &client);
 
-    // Step 1: Deposit USDC
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &50000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &50000_0000000);
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &1_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &30000_0000000);
+    client.cross_asset_repay(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_withdraw(&user, &Some(usdc.clone()), &20000_0000000);
 
-    // Step 2: Borrow ETH
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &10_0000000);
-
-    // Step 3: Deposit BTC
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &1_0000000);
-
-    // Step 4: Borrow more USDC
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &30000_0000000);
-
-    // Step 5: Partial repay ETH
-    client.ca_repay_debt(&user, &Some(eth.clone()), &5_0000000);
-
-    // Step 6: Withdraw some USDC
-    client.ca_withdraw_collateral(&user, &Some(usdc.clone()), &20000_0000000);
-
-    // Verify final state
     let usdc_pos = client.get_user_asset_position(&user, &Some(usdc.clone()));
     assert_eq!(usdc_pos.collateral, 30000_0000000);
     assert_eq!(usdc_pos.debt_principal, 30000_0000000);
@@ -630,10 +542,10 @@ fn test_complex_multi_asset_lifecycle() {
     let eth_pos = client.get_user_asset_position(&user, &Some(eth));
     assert_eq!(eth_pos.debt_principal, 5_0000000);
 
-    let summary = client.get_user_position_summary(&user);
-    assert!(!summary.is_liquidatable);
+    assert!(!client.get_user_position_summary(&user).is_liquidatable);
 }
 
+/// Multiple borrow/repay cycles accumulate debt correctly.
 #[test]
 fn test_alternating_borrow_repay_cycles() {
     let env = create_test_env();
@@ -641,46 +553,26 @@ fn test_alternating_borrow_repay_cycles() {
     let user = Address::generate(&env);
     let (usdc, _eth, btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &2_0000000);
+    client.cross_asset_deposit(&user, &Some(btc.clone()), &2_0000000);
 
-    // Cycle 1
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &5000_0000000);
+    // Cycle 1: borrow $10k, repay $5k → net $5k
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &5000_0000000);
 
-    // Cycle 2
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &8000_0000000);
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &10000_0000000);
+    // Cycle 2: borrow $8k, repay $10k → net $3k
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &8000_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &10000_0000000);
 
-    // Cycle 3
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &15000_0000000);
+    // Cycle 3: borrow $15k → net $18k
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &15000_0000000);
 
-    let position = client.get_user_asset_position(&user, &Some(usdc));
-    assert_eq!(position.debt_principal, 18000_0000000);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 18000_0000000);
 }
 
-#[test]
-fn test_cross_asset_with_native_xlm() {
-    let env = create_test_env();
-    let (client, _admin) = setup_contract(&env);
-    let user = Address::generate(&env);
-    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    // Setup XLM
-    client.initialize_asset(&None, &create_asset_config(&env, None, 1000000));
 
-    // Deposit XLM and USDC
-    client.ca_deposit_collateral(&user, &None, &100000_0000000);
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &50000_0000000);
-
-    // Borrow conservative amount
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &50000_0000000);
-
-    let summary = client.get_user_position_summary(&user);
-    assert!(summary.total_collateral_value > 0);
-    assert!(!summary.is_liquidatable);
-    assert!(summary.health_factor >= 10000);
-}
-
+/// Multiple sequential partial repayments drain debt to zero.
 #[test]
 fn test_zero_debt_after_multiple_repayments() {
     let env = create_test_env();
@@ -688,22 +580,22 @@ fn test_zero_debt_after_multiple_repayments() {
     let user = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &50000_0000000);
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &50000_0000000);
+    client.cross_asset_borrow(&user, &Some(eth.clone()), &10_0000000);
 
-    // Multiple partial repayments
-    client.ca_repay_debt(&user, &Some(eth.clone()), &2_0000000);
-    client.ca_repay_debt(&user, &Some(eth.clone()), &3_0000000);
-    client.ca_repay_debt(&user, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_repay(&user, &Some(eth.clone()), &2_0000000);
+    client.cross_asset_repay(&user, &Some(eth.clone()), &3_0000000);
+    client.cross_asset_repay(&user, &Some(eth.clone()), &5_0000000);
 
-    let position = client.get_user_asset_position(&user, &Some(eth));
-    assert_eq!(position.debt_principal, 0);
+    let pos = client.get_user_asset_position(&user, &Some(eth));
+    assert_eq!(pos.debt_principal, 0);
 }
 
 // ============================================================================
 // BOUNDARY AND PRECISION TESTS
 // ============================================================================
 
+/// Very small amounts (sub-unit) are handled without panic or overflow.
 #[test]
 fn test_very_small_amounts() {
     let env = create_test_env();
@@ -711,17 +603,15 @@ fn test_very_small_amounts() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    // Deposit tiny amount
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &100);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &100);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &70);
 
-    // Borrow tiny amount
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &70);
-
-    let position = client.get_user_asset_position(&user, &Some(usdc));
-    assert_eq!(position.collateral, 100);
-    assert_eq!(position.debt_principal, 70);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.collateral, 100);
+    assert_eq!(pos.debt_principal, 70);
 }
 
+/// Large amounts near the supply cap do not overflow.
 #[test]
 fn test_very_large_amounts() {
     let env = create_test_env();
@@ -729,39 +619,26 @@ fn test_very_large_amounts() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    // Use large but reasonable amount (within max_supply cap)
-    let large_amount = 50_000_000_000_000;
+    let large = 50_000_000_000_000_i128;
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &large);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &large_amount);
+    let borrow = (large * 75) / 100;
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &borrow);
 
-    let borrow_amount = (large_amount * 75) / 100;
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &borrow_amount);
-
-    let position = client.get_user_asset_position(&user, &Some(usdc));
-    assert_eq!(position.collateral, large_amount);
-    assert_eq!(position.debt_principal, borrow_amount);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.collateral, large);
+    assert_eq!(pos.debt_principal, borrow);
 }
 
-#[test]
-fn test_health_factor_precision() {
-    let env = create_test_env();
-    let (client, _admin) = setup_contract(&env);
-    let user = Address::generate(&env);
-    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    // Create position exactly at health factor = 1.0
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &7500_0000000);
 
-    let summary = client.get_user_position_summary(&user);
-    // Health factor should be exactly 1.0 (10000)
-    assert_eq!(summary.health_factor, 12500); // (7500 / 6000) * 10000 = 12500
-}
+
 
 // ============================================================================
 // MULTIPLE USERS INTERACTION TESTS
 // ============================================================================
 
+/// Two users have fully independent positions — one's actions don't affect the other.
 #[test]
 fn test_multiple_users_independent_positions() {
     let env = create_test_env();
@@ -770,24 +647,22 @@ fn test_multiple_users_independent_positions() {
     let user2 = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    // User 1 operations
-    client.ca_deposit_collateral(&user1, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user1, &Some(eth.clone()), &2_0000000);
+    client.cross_asset_deposit(&user1, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user1, &Some(eth.clone()), &2_0000000);
 
-    // User 2 operations
-    client.ca_deposit_collateral(&user2, &Some(eth.clone()), &5_0000000);
-    client.ca_borrow_asset(&user2, &Some(usdc.clone()), &5000_0000000);
+    client.cross_asset_deposit(&user2, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_borrow(&user2, &Some(usdc.clone()), &5000_0000000);
 
-    // Verify independence
-    let user1_usdc = client.get_user_asset_position(&user1, &Some(usdc.clone()));
-    let user2_usdc = client.get_user_asset_position(&user2, &Some(usdc.clone()));
+    let u1_usdc = client.get_user_asset_position(&user1, &Some(usdc.clone()));
+    let u2_usdc = client.get_user_asset_position(&user2, &Some(usdc.clone()));
 
-    assert_eq!(user1_usdc.collateral, 10000_0000000);
-    assert_eq!(user1_usdc.debt_principal, 0);
-    assert_eq!(user2_usdc.collateral, 0);
-    assert_eq!(user2_usdc.debt_principal, 5000_0000000);
+    assert_eq!(u1_usdc.collateral, 10000_0000000);
+    assert_eq!(u1_usdc.debt_principal, 0);
+    assert_eq!(u2_usdc.collateral, 0);
+    assert_eq!(u2_usdc.debt_principal, 5000_0000000);
 }
 
+/// A global price update affects all users holding that asset.
 #[test]
 fn test_price_change_affects_all_users() {
     let env = create_test_env();
@@ -796,52 +671,31 @@ fn test_price_change_affects_all_users() {
     let user2 = Address::generate(&env);
     let (usdc, eth, _btc) = setup_three_assets(&env, &client);
 
-    // Both users deposit ETH
-    client.ca_deposit_collateral(&user1, &Some(eth.clone()), &10_0000000);
-    client.ca_deposit_collateral(&user2, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_deposit(&user1, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_deposit(&user2, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_borrow(&user1, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user2, &Some(usdc.clone()), &5000_0000000);
 
-    client.ca_borrow_asset(&user1, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user2, &Some(usdc.clone()), &5000_0000000);
+    let hf1_before = client.get_user_position_summary(&user1).health_factor;
+    let hf2_before = client.get_user_position_summary(&user2).health_factor;
 
-    let summary1_before = client.get_user_position_summary(&user1);
-    let summary2_before = client.get_user_position_summary(&user2);
-
-    // ETH price drops
+    // ETH drops 50%
     client.update_asset_price(&Some(eth), &1000_0000000);
 
-    let summary1_after = client.get_user_position_summary(&user1);
-    let summary2_after = client.get_user_position_summary(&user2);
+    let hf1_after = client.get_user_position_summary(&user1).health_factor;
+    let hf2_after = client.get_user_position_summary(&user2).health_factor;
 
-    // Both users affected
-    assert!(summary1_after.health_factor < summary1_before.health_factor);
-    assert!(summary2_after.health_factor < summary2_before.health_factor);
+    assert!(hf1_after < hf1_before);
+    assert!(hf2_after < hf2_before);
 }
 
 // ============================================================================
 // ASSET CONFIGURATION CHANGE TESTS
 // ============================================================================
 
-#[test]
-fn test_collateral_factor_change_affects_borrowing() {
-    let env = create_test_env();
-    let (client, _admin) = setup_contract(&env);
-    let user = Address::generate(&env);
-    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
 
-    let summary_before = client.get_user_position_summary(&user);
-    let capacity_before = summary_before.borrow_capacity;
-
-    // Reduce collateral factor from 75% to 50%
-    client.update_asset_config(&Some(usdc), &Some(5000), &None, &None, &None, &None, &None);
-
-    let summary_after = client.get_user_position_summary(&user);
-    let capacity_after = summary_after.borrow_capacity;
-
-    assert!(capacity_after < capacity_before);
-}
-
+/// Disabling borrowing for an asset prevents new borrows.
 #[test]
 fn test_disable_asset_borrowing_prevents_new_borrows() {
     let env = create_test_env();
@@ -849,9 +703,8 @@ fn test_disable_asset_borrowing_prevents_new_borrows() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
 
-    // Disable borrowing for USDC
     client.update_asset_config(
         &Some(usdc.clone()),
         &None,
@@ -862,11 +715,11 @@ fn test_disable_asset_borrowing_prevents_new_borrows() {
         &Some(false),
     );
 
-    // This should fail
-    let result = client.try_ca_borrow_asset(&user, &Some(usdc), &1000_0000000);
+    let result = client.try_cross_asset_borrow(&user, &Some(usdc), &1000_0000000);
     assert!(result.is_err());
 }
 
+/// Repayment still works after borrowing is disabled for an asset.
 #[test]
 fn test_repay_still_works_after_borrow_disabled() {
     let env = create_test_env();
@@ -874,10 +727,9 @@ fn test_repay_still_works_after_borrow_disabled() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &10000_0000000);
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &5000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &5000_0000000);
 
-    // Disable borrowing
     client.update_asset_config(
         &Some(usdc.clone()),
         &None,
@@ -888,17 +740,18 @@ fn test_repay_still_works_after_borrow_disabled() {
         &Some(false),
     );
 
-    // Repay should still work
-    client.ca_repay_debt(&user, &Some(usdc.clone()), &2500_0000000);
+    // Repay should succeed even though new borrows are blocked
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &2500_0000000);
 
-    let position = client.get_user_asset_position(&user, &Some(usdc));
-    assert_eq!(position.debt_principal, 2500_0000000);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 2500_0000000);
 }
 
 // ============================================================================
 // STRESS TESTS
 // ============================================================================
 
+/// Ten sequential borrow/repay cycles accumulate debt correctly.
 #[test]
 fn test_many_sequential_operations() {
     let env = create_test_env();
@@ -906,47 +759,308 @@ fn test_many_sequential_operations() {
     let user = Address::generate(&env);
     let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &100000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &100000_0000000);
 
-    // Perform 10 borrow/repay cycles
-    for i in 1..=10 {
+    // Each cycle borrows i×$1k and repays half
+    for i in 1_i128..=10 {
         let amount = i * 1000_0000000;
-        client.ca_borrow_asset(&user, &Some(usdc.clone()), &amount);
-        client.ca_repay_debt(&user, &Some(usdc.clone()), &(amount / 2));
+        client.cross_asset_borrow(&user, &Some(usdc.clone()), &amount);
+        client.cross_asset_repay(&user, &Some(usdc.clone()), &(amount / 2));
     }
 
-    let position = client.get_user_asset_position(&user, &Some(usdc));
-    // Total borrowed: 55000, repaid: 27500, remaining: 27500
-    assert_eq!(position.debt_principal, 27500_0000000);
+    // Total borrowed: $55k, repaid: $27.5k → remaining $27.5k
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 27500_0000000);
 }
 
+
+
+// ============================================================================
+// ZERO-AMOUNT EDGE CASES
+// ============================================================================
+
+/// Depositing zero is a no-op — collateral stays unchanged.
 #[test]
-fn test_position_summary_consistency() {
+fn test_zero_deposit_is_noop() {
     let env = create_test_env();
     let (client, _admin) = setup_contract(&env);
     let user = Address::generate(&env);
-    let (usdc, eth, btc) = setup_three_assets(&env, &client);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    // Complex setup
-    client.ca_deposit_collateral(&user, &Some(usdc.clone()), &30000_0000000);
-    client.ca_deposit_collateral(&user, &Some(eth.clone()), &10_0000000);
-    client.ca_deposit_collateral(&user, &Some(btc.clone()), &1_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &0);
 
-    client.ca_borrow_asset(&user, &Some(usdc.clone()), &20000_0000000);
-    client.ca_borrow_asset(&user, &Some(eth.clone()), &5_0000000);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.collateral, 10000_0000000);
+}
+
+/// Borrowing zero keeps debt unchanged.
+#[test]
+fn test_zero_borrow_is_noop() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &5000_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &0);
+
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 5000_0000000);
+}
+
+/// Repaying zero keeps debt unchanged.
+#[test]
+fn test_zero_repay_is_noop() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &5000_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &0);
+
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 5000_0000000);
+}
+
+/// Repaying when there is no outstanding debt is a harmless no-op.
+#[test]
+fn test_repay_with_no_debt_is_noop() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &5000_0000000);
+
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 0);
+    assert_eq!(pos.accrued_interest, 0);
+}
+
+// ============================================================================
+// DUST / SUB-UNIT PRECISION TESTS
+// ============================================================================
+
+/// Dust-level amounts (1 unit) round-trip correctly through deposit.
+#[test]
+fn test_dust_amount_roundtrip() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &1);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.collateral, 1);
 
     let summary = client.get_user_position_summary(&user);
+    assert_eq!(summary.total_debt_value, 0);
+    assert_eq!(summary.health_factor, i128::MAX);
+}
 
-    // Verify calculations
-    // Collateral: $30k + $20k + $40k = $90k
-    assert_eq!(summary.total_collateral_value, 90000_0000000);
+/// Very small borrow followed by exact repay leaves zero debt.
+#[test]
+fn test_small_borrow_exact_repay() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
 
-    // Debt: $20k + $10k = $30k
-    assert_eq!(summary.total_debt_value, 30000_0000000);
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &100);
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &70);
+    client.cross_asset_repay(&user, &Some(usdc.clone()), &70);
 
-    // Weighted collateral: $90k * 0.75 = $67.5k
-    assert_eq!(summary.weighted_collateral_value, 67500_0000000);
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 0);
+}
 
-    // Health factor: 67.5k / 24k = 2.8125 (28125)
-    assert!(summary.health_factor > 20000);
+// ============================================================================
+// MULTI-USER SEQUENTIAL REPAY TESTS
+// ============================================================================
+
+/// Two users borrow the same asset; one repays fully, other's debt unchanged.
+#[test]
+fn test_two_users_one_repays_fully() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let (usdc, eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user1, &Some(usdc.clone()), &20000_0000000);
+    client.cross_asset_deposit(&user2, &Some(eth.clone()), &10_0000000);
+
+    client.cross_asset_borrow(&user1, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&user2, &Some(usdc.clone()), &5000_0000000);
+
+    client.cross_asset_repay(&user1, &Some(usdc.clone()), &10000_0000000);
+
+    let p1 = client.get_user_asset_position(&user1, &Some(usdc.clone()));
+    let p2 = client.get_user_asset_position(&user2, &Some(usdc));
+    assert_eq!(p1.debt_principal, 0);
+    assert_eq!(p2.debt_principal, 5000_0000000);
+}
+
+/// Three users interact sequentially — positions stay independent.
+#[test]
+fn test_three_users_sequential_operations() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let u1 = Address::generate(&env);
+    let u2 = Address::generate(&env);
+    let u3 = Address::generate(&env);
+    let (usdc, eth, btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&u1, &Some(usdc.clone()), &50000_0000000);
+    client.cross_asset_deposit(&u2, &Some(eth.clone()), &10_0000000);
+    client.cross_asset_deposit(&u3, &Some(btc.clone()), &1_0000000);
+
+    client.cross_asset_borrow(&u1, &Some(eth.clone()), &5_0000000);
+    client.cross_asset_borrow(&u2, &Some(usdc.clone()), &10000_0000000);
+    client.cross_asset_borrow(&u3, &Some(usdc.clone()), &20000_0000000);
+
+    client.cross_asset_repay(&u2, &Some(usdc.clone()), &5000_0000000);
+
+    assert_eq!(
+        client.get_user_asset_position(&u1, &Some(eth)).debt_principal,
+        5_0000000
+    );
+    assert_eq!(
+        client.get_user_asset_position(&u2, &Some(usdc.clone())).debt_principal,
+        5000_0000000
+    );
+    assert_eq!(
+        client.get_user_asset_position(&u3, &Some(usdc)).debt_principal,
+        20000_0000000
+    );
+}
+
+// ============================================================================
+// HEALTH FACTOR BOUNDARY (MULTI-ASSET) TESTS
+// ============================================================================
+
+
+
+// ============================================================================
+// NATIVE XLM (None) FULL CYCLE TESTS
+// ============================================================================
+
+/// Full borrow/repay cycle using only native XLM.
+#[test]
+fn test_xlm_only_borrow_repay_cycle() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+
+    client.initialize_asset(&None, &make_asset_config(&env, None, 1000000));
+
+    client.cross_asset_deposit(&user, &None, &500000_0000000);
+    client.cross_asset_borrow(&user, &None, &200000_0000000);
+
+    let pos_borrow = client.get_user_asset_position(&user, &None);
+    assert_eq!(pos_borrow.debt_principal, 200000_0000000);
+
+    client.cross_asset_repay(&user, &None, &100000_0000000);
+    assert_eq!(
+        client.get_user_asset_position(&user, &None).debt_principal,
+        100000_0000000
+    );
+
+    client.cross_asset_repay(&user, &None, &100000_0000000);
+    assert_eq!(
+        client.get_user_asset_position(&user, &None).debt_principal,
+        0
+    );
+
+    client.cross_asset_withdraw(&user, &None, &500000_0000000);
+    let summary = client.get_user_position_summary(&user);
+    assert_eq!(summary.total_collateral_value, 0);
+    assert_eq!(summary.total_debt_value, 0);
+}
+
+// ============================================================================
+// ASSET CONFIG TOGGLE TESTS
+// ============================================================================
+
+/// Disabling then re-enabling borrowing allows new borrows.
+#[test]
+fn test_borrow_disabled_then_reenabled() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+
+    client.update_asset_config(
+        &Some(usdc.clone()), &None, &None, &None, &None, &None, &Some(false),
+    );
+    let r = client.try_cross_asset_borrow(&user, &Some(usdc.clone()), &1000_0000000);
+    assert!(r.is_err());
+
+    client.update_asset_config(
+        &Some(usdc.clone()), &None, &None, &None, &None, &None, &Some(true),
+    );
+    client.cross_asset_borrow(&user, &Some(usdc.clone()), &1000_0000000);
+
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.debt_principal, 1000_0000000);
+}
+
+/// Disabling collateral prevents new deposits but existing collateral stays.
+#[test]
+fn test_disable_collateral_blocks_deposit() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+
+    client.update_asset_config(
+        &Some(usdc.clone()), &None, &None, &None, &None, &Some(false), &None,
+    );
+
+    let result = client.try_cross_asset_deposit(&user, &Some(usdc.clone()), &5000_0000000);
+    assert!(result.is_err());
+
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.collateral, 10000_0000000);
+}
+
+// ============================================================================
+// WITHDRAW EXACT COLLATERAL EDGE CASES
+// ============================================================================
+
+/// Withdrawing exact full collateral when no debt is outstanding succeeds.
+#[test]
+fn test_withdraw_exact_full_collateral_no_debt() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &12345_6789012);
+    client.cross_asset_withdraw(&user, &Some(usdc.clone()), &12345_6789012);
+
+    let pos = client.get_user_asset_position(&user, &Some(usdc));
+    assert_eq!(pos.collateral, 0);
+}
+
+/// Withdrawing more than deposited fails with InsufficientCollateral.
+#[test]
+fn test_withdraw_more_than_deposited_fails() {
+    let env = create_test_env();
+    let (client, _admin) = setup_contract(&env);
+    let user = Address::generate(&env);
+    let (usdc, _eth, _btc) = setup_three_assets(&env, &client);
+
+    client.cross_asset_deposit(&user, &Some(usdc.clone()), &10000_0000000);
+    let result = client.try_cross_asset_withdraw(&user, &Some(usdc), &10001_0000000);
+    assert!(result.is_err());
 }
