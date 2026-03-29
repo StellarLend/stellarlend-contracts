@@ -17,6 +17,8 @@ use crate::borrow::{
 };
 use crate::oracle;
 
+use crate::constants::BPS_SCALE;
+
 /// Scale for oracle price (1e8 = one unit). Value = amount * price / PRICE_SCALE.
 const PRICE_SCALE: i128 = 100_000_000;
 
