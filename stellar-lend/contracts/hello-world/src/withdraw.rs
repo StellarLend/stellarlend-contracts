@@ -371,8 +371,11 @@ pub fn withdraw_collateral(
     // -----------------------------------------------------------------------
     // 11. Analytics and event emission
     // -----------------------------------------------------------------------
+
     update_user_analytics_withdraw(env, &user, amount, timestamp)?;
     update_protocol_analytics_withdraw(env, amount)?;
+    // Force protocol metrics update after withdrawal to ensure TVL is correct
+    let _ = crate::analytics::update_protocol_metrics(env);
 
     add_activity_log(
         env,

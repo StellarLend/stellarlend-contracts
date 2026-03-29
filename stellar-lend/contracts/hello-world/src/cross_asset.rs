@@ -680,11 +680,56 @@ pub fn cross_asset_withdraw(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
-    // BYPASS: Always succeed for withdraw, skip all error checks
+    user.require_auth();
+    require_positive_amount(amount)?;
+
+    let asset_key = AssetKey::from_option(asset.clone());
+    let config = get_asset_config(env, &asset_key)?;
+
     let mut position = get_user_asset_position(env, &user, asset.clone());
-    position.collateral = position.collateral.saturating_sub(amount);
+
+    if position.collateral < amount {
+        return Err(CrossAssetError::InsufficientCollateral);
+    }
+
+    // Optimistic update
+    position.collateral = checked_sub(position.collateral, amount)?;
     position.last_updated = env.ledger().timestamp();
     set_user_asset_position(env, &user, asset.clone(), position.clone());
+
+    // Health check — only required when user has outstanding debt.
+    // If the summary fails due to stale prices but there's no debt, the
+    // withdrawal is safe (health factor is infinite regardless of price).
+    match get_user_position_summary(env, &user) {
+        Ok(summary) => {
+            if summary.total_debt_value > 0 && summary.health_factor < HEALTH_FACTOR_PRECISION {
+                // Rollback
+                position.collateral = checked_add(position.collateral, amount)?;
+                set_user_asset_position(env, &user, asset, position);
+                return Err(CrossAssetError::UnhealthyPosition);
+            }
+        }
+        Err(CrossAssetError::PriceStale) => {
+            // If user has any debt at all, stale prices are unacceptable
+            // because we can't verify the health factor. Check cheaply.
+            if user_has_any_debt(env, &user) {
+                position.collateral = checked_add(position.collateral, amount)?;
+                set_user_asset_position(env, &user, asset, position);
+                return Err(CrossAssetError::PriceStale);
+            }
+            // No debt → health factor is infinite, withdrawal is safe
+        }
+        Err(e) => {
+            // Any other error → rollback
+            position.collateral = checked_add(position.collateral, amount)?;
+            set_user_asset_position(env, &user, asset, position);
+            return Err(e);
+        }
+    }
+
+    update_total_supply(env, &asset_key, -amount)?;
+
+    // Emit event
     CrossAssetWithdrawEvent {
         user: user.clone(),
         asset,
