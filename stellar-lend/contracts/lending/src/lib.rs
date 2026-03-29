@@ -13,12 +13,6 @@ mod pause;
 mod token_receiver;
 mod withdraw;
 
-use cross_asset::{
-    borrow_asset as cross_borrow_asset, deposit_collateral_asset as cross_deposit_collateral,
-    get_cross_position_summary as cross_position_summary, initialize_admin as cross_init_admin,
-    repay_asset as cross_repay_asset, set_asset_params as cross_set_asset_params,
-    withdraw_asset as cross_withdraw_asset, AssetParams, CrossAssetError, PositionSummary,
-};
 use borrow::{
     borrow as borrow_impl, deposit as borrow_deposit, get_admin as get_protocol_admin,
     get_close_factor_bps as get_close_factor_impl,
@@ -30,7 +24,12 @@ use borrow::{
     set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
     BorrowCollateral, BorrowError, DebtPosition,
 };
-use oracle::{OracleConfig, OracleError};
+use cross_asset::{
+    borrow_asset as cross_borrow_asset, deposit_collateral_asset as cross_deposit_collateral,
+    get_cross_position_summary as cross_position_summary, initialize_admin as cross_init_admin,
+    repay_asset as cross_repay_asset, set_asset_params as cross_set_asset_params,
+    withdraw_asset as cross_withdraw_asset, AssetParams, CrossAssetError, PositionSummary,
+};
 use deposit::{
     deposit as deposit_impl, get_user_collateral as get_deposit_collateral_impl,
     initialize_deposit_settings as init_deposit_settings_impl, DepositCollateral, DepositError,
@@ -39,6 +38,7 @@ use flash_loan::{
     flash_loan as flash_loan_impl, set_flash_loan_fee_bps as set_flash_loan_fee_impl,
     FlashLoanError,
 };
+use oracle::{OracleConfig, OracleError};
 use pause::{
     blocks_high_risk_ops, complete_recovery as complete_recovery_logic,
     get_emergency_state as get_emergency_state_logic, get_guardian as get_guardian_logic,
@@ -105,11 +105,11 @@ mod borrow_test_booster;
 #[cfg(test)]
 mod liquidation_boundary_test;
 #[cfg(test)]
+mod multi_user_contention_test;
+#[cfg(test)]
 mod oracle_test;
 #[cfg(test)]
 mod stress_test;
-#[cfg(test)]
-mod multi_user_contention_test;
 
 #[contract]
 pub struct LendingContract;
@@ -415,11 +415,7 @@ impl LendingContract {
     }
 
     /// Pause or unpause oracle price updates (admin only).
-    pub fn set_oracle_paused(
-        env: Env,
-        caller: Address,
-        paused: bool,
-    ) -> Result<(), OracleError> {
+    pub fn set_oracle_paused(env: Env, caller: Address, paused: bool) -> Result<(), OracleError> {
         oracle::set_oracle_paused(&env, caller, paused)
     }
 
@@ -768,7 +764,10 @@ impl LendingContract {
     }
 
     /// Get cross-asset position summary for a user
-    pub fn get_cross_position_summary(env: Env, user: Address) -> Result<PositionSummary, CrossAssetError> {
+    pub fn get_cross_position_summary(
+        env: Env,
+        user: Address,
+    ) -> Result<PositionSummary, CrossAssetError> {
         cross_position_summary(&env, user)
     }
 }

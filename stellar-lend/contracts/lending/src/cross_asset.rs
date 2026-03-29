@@ -105,10 +105,10 @@ pub enum CrossAssetError {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct AssetParams {
-    pub ltv: i128,                // Loan to Value ratio (basis points)
+    pub ltv: i128,                   // Loan to Value ratio (basis points)
     pub liquidation_threshold: i128, // Liquidation threshold (basis points)
-    pub price_feed: Address,      // Oracle address for price
-    pub debt_ceiling: i128,       // Maximum debt allowed for this asset
+    pub price_feed: Address,         // Oracle address for price
+    pub debt_ceiling: i128,          // Maximum debt allowed for this asset
     pub is_active: bool,
 }
 
@@ -145,7 +145,9 @@ pub fn set_asset_params(
     params: AssetParams,
 ) -> Result<(), CrossAssetError> {
     check_admin(env)?;
-    env.storage().persistent().set(&CrossAssetDataKey::AssetParams(asset), &params);
+    env.storage()
+        .persistent()
+        .set(&CrossAssetDataKey::AssetParams(asset), &params);
     Ok(())
 }
 
@@ -159,7 +161,7 @@ pub fn deposit_collateral_asset(
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
-    
+
     let params = get_asset_params(env, &asset)?;
     if !params.is_active {
         return Err(CrossAssetError::AssetNotSupported);
@@ -167,13 +169,18 @@ pub fn deposit_collateral_asset(
 
     let mut position = get_user_position(env, &user);
     let current_balance = position.collateral_balances.get(asset.clone()).unwrap_or(0);
-    position.collateral_balances.set(asset, current_balance.checked_add(amount).ok_or(CrossAssetError::Overflow)?);
-    
+    position.collateral_balances.set(
+        asset,
+        current_balance
+            .checked_add(amount)
+            .ok_or(CrossAssetError::Overflow)?,
+    );
+
     save_user_position(env, &user, &position);
-    
+
     // In a real implementation, we would transfer tokens from user to contract here
     // env.invoke_contract(...)
-    
+
     Ok(())
 }
 
@@ -194,19 +201,28 @@ pub fn borrow_asset(
     }
 
     let total_debt = get_total_asset_debt(env, &asset);
-    if total_debt.checked_add(amount).ok_or(CrossAssetError::Overflow)? > params.debt_ceiling {
+    if total_debt
+        .checked_add(amount)
+        .ok_or(CrossAssetError::Overflow)?
+        > params.debt_ceiling
+    {
         return Err(CrossAssetError::DebtCeilingReached);
     }
 
     let mut position = get_user_position(env, &user);
-    
+
     // Calculate new position health
     let mut debt_balances = position.debt_balances.clone();
     let current_debt = debt_balances.get(asset.clone()).unwrap_or(0);
-    debt_balances.set(asset.clone(), current_debt.checked_add(amount).ok_or(CrossAssetError::Overflow)?);
-    
+    debt_balances.set(
+        asset.clone(),
+        current_debt
+            .checked_add(amount)
+            .ok_or(CrossAssetError::Overflow)?,
+    );
+
     let summary = calculate_position_summary(env, &position.collateral_balances, &debt_balances)?;
-    
+
     // Health factor must be > 1.0 (10000) after borrowing
     if summary.health_factor < HEALTH_FACTOR_SCALE {
         return Err(CrossAssetError::InsufficientCollateral);
@@ -214,9 +230,15 @@ pub fn borrow_asset(
 
     position.debt_balances = debt_balances;
     position.last_update = env.ledger().timestamp();
-    
+
     save_user_position(env, &user, &position);
-    set_total_asset_debt(env, &asset, total_debt.checked_add(amount).ok_or(CrossAssetError::Overflow)?);
+    set_total_asset_debt(
+        env,
+        &asset,
+        total_debt
+            .checked_add(amount)
+            .ok_or(CrossAssetError::Overflow)?,
+    );
 
     Ok(())
 }
@@ -234,15 +256,30 @@ pub fn repay_asset(
 
     let mut position = get_user_position(env, &user);
     let current_debt = position.debt_balances.get(asset.clone()).unwrap_or(0);
-    
-    let repay_amount = if amount > current_debt { current_debt } else { amount };
-    
-    position.debt_balances.set(asset.clone(), current_debt.checked_sub(repay_amount).ok_or(CrossAssetError::Overflow)?);
-    
+
+    let repay_amount = if amount > current_debt {
+        current_debt
+    } else {
+        amount
+    };
+
+    position.debt_balances.set(
+        asset.clone(),
+        current_debt
+            .checked_sub(repay_amount)
+            .ok_or(CrossAssetError::Overflow)?,
+    );
+
     save_user_position(env, &user, &position);
-    
+
     let total_debt = get_total_asset_debt(env, &asset);
-    set_total_asset_debt(env, &asset, total_debt.checked_sub(repay_amount).ok_or(CrossAssetError::Overflow)?);
+    set_total_asset_debt(
+        env,
+        &asset,
+        total_debt
+            .checked_sub(repay_amount)
+            .ok_or(CrossAssetError::Overflow)?,
+    );
 
     Ok(())
 }
@@ -260,16 +297,21 @@ pub fn withdraw_asset(
 
     let mut position = get_user_position(env, &user);
     let current_balance = position.collateral_balances.get(asset.clone()).unwrap_or(0);
-    
+
     if amount > current_balance {
         return Err(CrossAssetError::InvalidAmount);
     }
 
     let mut collateral_balances = position.collateral_balances.clone();
-    collateral_balances.set(asset.clone(), current_balance.checked_sub(amount).ok_or(CrossAssetError::Overflow)?);
-    
+    collateral_balances.set(
+        asset.clone(),
+        current_balance
+            .checked_sub(amount)
+            .ok_or(CrossAssetError::Overflow)?,
+    );
+
     let summary = calculate_position_summary(env, &collateral_balances, &position.debt_balances)?;
-    
+
     // Only allow withdrawal if health factor remains healthy
     if summary.total_debt_usd > 0 && summary.health_factor < HEALTH_FACTOR_SCALE {
         return Err(CrossAssetError::InsufficientCollateral);
@@ -281,7 +323,10 @@ pub fn withdraw_asset(
     Ok(())
 }
 
-pub fn get_cross_position_summary(env: &Env, user: Address) -> Result<PositionSummary, CrossAssetError> {
+pub fn get_cross_position_summary(
+    env: &Env,
+    user: Address,
+) -> Result<PositionSummary, CrossAssetError> {
     let position = get_user_position(env, &user);
     calculate_position_summary(env, &position.collateral_balances, &position.debt_balances)
 }
@@ -289,33 +334,50 @@ pub fn get_cross_position_summary(env: &Env, user: Address) -> Result<PositionSu
 // Internal helpers
 
 fn check_admin(env: &Env) -> Result<(), CrossAssetError> {
-    let admin: Address = env.storage().persistent().get(&CrossAssetDataKey::Admin).ok_or(CrossAssetError::Unauthorized)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&CrossAssetDataKey::Admin)
+        .ok_or(CrossAssetError::Unauthorized)?;
     admin.require_auth();
     Ok(())
 }
 
 fn get_asset_params(env: &Env, asset: &Address) -> Result<AssetParams, CrossAssetError> {
-    env.storage().persistent().get(&CrossAssetDataKey::AssetParams(asset.clone())).ok_or(CrossAssetError::AssetNotSupported)
+    env.storage()
+        .persistent()
+        .get(&CrossAssetDataKey::AssetParams(asset.clone()))
+        .ok_or(CrossAssetError::AssetNotSupported)
 }
 
 fn get_user_position(env: &Env, user: &Address) -> UserCrossPosition {
-    env.storage().persistent().get(&CrossAssetDataKey::UserPosition(user.clone())).unwrap_or(UserCrossPosition {
-        collateral_balances: Map::new(env),
-        debt_balances: Map::new(env),
-        last_update: env.ledger().timestamp(),
-    })
+    env.storage()
+        .persistent()
+        .get(&CrossAssetDataKey::UserPosition(user.clone()))
+        .unwrap_or(UserCrossPosition {
+            collateral_balances: Map::new(env),
+            debt_balances: Map::new(env),
+            last_update: env.ledger().timestamp(),
+        })
 }
 
 fn save_user_position(env: &Env, user: &Address, position: &UserCrossPosition) {
-    env.storage().persistent().set(&CrossAssetDataKey::UserPosition(user.clone()), position);
+    env.storage()
+        .persistent()
+        .set(&CrossAssetDataKey::UserPosition(user.clone()), position);
 }
 
 fn get_total_asset_debt(env: &Env, asset: &Address) -> i128 {
-    env.storage().persistent().get(&CrossAssetDataKey::TotalAssetDebt(asset.clone())).unwrap_or(0)
+    env.storage()
+        .persistent()
+        .get(&CrossAssetDataKey::TotalAssetDebt(asset.clone()))
+        .unwrap_or(0)
 }
 
 fn set_total_asset_debt(env: &Env, asset: &Address, amount: i128) {
-    env.storage().persistent().set(&CrossAssetDataKey::TotalAssetDebt(asset.clone()), &amount);
+    env.storage()
+        .persistent()
+        .set(&CrossAssetDataKey::TotalAssetDebt(asset.clone()), &amount);
 }
 
 fn calculate_position_summary(
@@ -330,24 +392,46 @@ fn calculate_position_summary(
     for (asset, amount) in collateral_balances.iter() {
         let params = get_asset_params(env, &asset)?;
         let price = get_price(env, &params.price_feed)?;
-        let value_usd = amount.checked_mul(price).ok_or(CrossAssetError::Overflow)?.checked_div(10000000).ok_or(CrossAssetError::Overflow)?;
-        total_collateral_usd = total_collateral_usd.checked_add(value_usd).ok_or(CrossAssetError::Overflow)?;
-        
-        let weighted_value = value_usd.checked_mul(params.ltv).ok_or(CrossAssetError::Overflow)?.checked_div(BPS_SCALE).ok_or(CrossAssetError::Overflow)?;
-        total_weighted_collateral_usd = total_weighted_collateral_usd.checked_add(weighted_value).ok_or(CrossAssetError::Overflow)?;
+        let value_usd = amount
+            .checked_mul(price)
+            .ok_or(CrossAssetError::Overflow)?
+            .checked_div(10000000)
+            .ok_or(CrossAssetError::Overflow)?;
+        total_collateral_usd = total_collateral_usd
+            .checked_add(value_usd)
+            .ok_or(CrossAssetError::Overflow)?;
+
+        let weighted_value = value_usd
+            .checked_mul(params.ltv)
+            .ok_or(CrossAssetError::Overflow)?
+            .checked_div(BPS_SCALE)
+            .ok_or(CrossAssetError::Overflow)?;
+        total_weighted_collateral_usd = total_weighted_collateral_usd
+            .checked_add(weighted_value)
+            .ok_or(CrossAssetError::Overflow)?;
     }
 
     for (asset, amount) in debt_balances.iter() {
         let params = get_asset_params(env, &asset)?;
         let price = get_price(env, &params.price_feed)?;
-        let value_usd = amount.checked_mul(price).ok_or(CrossAssetError::Overflow)?.checked_div(10000000).ok_or(CrossAssetError::Overflow)?;
-        total_debt_usd = total_debt_usd.checked_add(value_usd).ok_or(CrossAssetError::Overflow)?;
+        let value_usd = amount
+            .checked_mul(price)
+            .ok_or(CrossAssetError::Overflow)?
+            .checked_div(10000000)
+            .ok_or(CrossAssetError::Overflow)?;
+        total_debt_usd = total_debt_usd
+            .checked_add(value_usd)
+            .ok_or(CrossAssetError::Overflow)?;
     }
 
     let health_factor = if total_debt_usd == 0 {
         1000000 // Very large number if no debt
     } else {
-        total_weighted_collateral_usd.checked_mul(BPS_SCALE).ok_or(CrossAssetError::Overflow)?.checked_div(total_debt_usd).ok_or(CrossAssetError::Overflow)?
+        total_weighted_collateral_usd
+            .checked_mul(BPS_SCALE)
+            .ok_or(CrossAssetError::Overflow)?
+            .checked_div(total_debt_usd)
+            .ok_or(CrossAssetError::Overflow)?
     };
 
     Ok(PositionSummary {
@@ -363,5 +447,7 @@ fn get_price(_env: &Env, _price_feed: &Address) -> Result<i128, CrossAssetError>
 }
 
 pub fn initialize_admin(env: &Env, admin: Address) {
-    env.storage().persistent().set(&CrossAssetDataKey::Admin, &admin);
+    env.storage()
+        .persistent()
+        .set(&CrossAssetDataKey::Admin, &admin);
 }
