@@ -254,6 +254,10 @@ pub fn repay_debt(
         position.borrow_interest
     };
 
+    // The actual amount repaid (could be less than requested if user overpays)
+    let actual_repay_amount = repay_amount;
+
+    // Principal paid is the remainder after interest is paid
     let principal_paid = actual_repay_amount
         .checked_sub(interest_paid)
         .ok_or(RepayError::Overflow)?;
@@ -338,7 +342,11 @@ pub fn repay_debt(
         timestamp,
     };
     log_repay(env, event);
-    emit_position_updated_event(env, &user, &position);
+
+    // The final amount repaid (for analytics/events)
+    let final_repay_amount = actual_repay_amount;
+
+    emit_position_updated_event(env, &user, &position, Symbol::new(env, "repay"), timestamp);
     emit_analytics_updated_event(env, &user, "repay", final_repay_amount, timestamp);
     emit_user_activity_tracked_event(
         env,

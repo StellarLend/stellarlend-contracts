@@ -1,4 +1,5 @@
-#![allow(unused)]
+use soroban_sdk::I256;
+#[allow(unused)]
 use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Symbol, Val, Vec};
 
 /// Errors that can occur during risk parameter management

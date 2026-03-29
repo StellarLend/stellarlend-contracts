@@ -42,7 +42,7 @@ pub enum LiquidationError {
     /// Invalid debt asset
     InvalidDebtAsset = 10,
     /// Price not available for asset
-    PriceNotAvailable = 10,
+    PriceNotAvailable = 11,
 }
 
 /// Helper to get asset decimals from the token contract or default to 7 for XLM.
@@ -259,13 +259,17 @@ pub fn liquidate(
     env.storage().persistent().set(&position_key, &position);
     env.storage().persistent().set(&collateral_key, &position.collateral);
 
-    update_protocol_analytics(env, actual_debt_liquidated, collateral_seized)
+    // Update protocol analytics for liquidation (not a deposit)
+    update_protocol_analytics(env, actual_debt_liquidated, false)
         .map_err(|_| LiquidationError::Overflow)?;
 
     // 9. EXTERNAL INTERACTIONS (TRANSFERS)
     // Transfers are performed LAST to follow CEI pattern
     
-    let debt_addr = match &debt_asset {
+    // (removed unreachable duplicate let debt_addr assignment)
+
+    let debt_asset_cloned = debt_asset.clone();
+    let debt_addr = match &debt_asset_cloned {
         Some(ref addr) => addr.clone(),
         None => get_native_asset_address(env)?,
     };
@@ -293,32 +297,9 @@ pub fn liquidate(
         timestamp: position.last_accrual_time,
     });
     
-    emit_position_updated_event(env, &borrower, &position);
-    add_activity_log(env, &borrower, Symbol::new(env, "liquidate"), actual_debt_liquidated, debt_asset.clone(), position.last_accrual_time).ok();
+    emit_position_updated_event(env, &borrower, &position, Symbol::new(env, "liquidate"), position.last_accrual_time);
+    add_activity_log(env, &borrower, Symbol::new(env, "liquidate"), actual_debt_liquidated, debt_asset_cloned, position.last_accrual_time).ok();
 
     Ok((actual_debt_liquidated, collateral_seized, incentive_amount))
 }
 
-/// Update protocol analytics after liquidation
-fn update_protocol_analytics(
-    env: &Env,
-    debt_liquidated: i128,
-    collateral_seized: i128,
-) -> Result<(), LiquidationError> {
-    let analytics_key = DepositDataKey::ProtocolAnalytics;
-    let mut analytics = env
-        .storage()
-        .persistent()
-        .get::<DepositDataKey, ProtocolAnalytics>(&analytics_key)
-        .unwrap_or(ProtocolAnalytics {
-            total_deposits: 0,
-            total_borrows: 0,
-            total_value_locked: 0,
-        });
-
-    analytics.total_borrows = analytics.total_borrows.checked_sub(debt_liquidated).unwrap_or(0);
-    analytics.total_value_locked = analytics.total_value_locked.checked_sub(collateral_seized).unwrap_or(0);
-
-    env.storage().persistent().set(&analytics_key, &analytics);
-    Ok(())
-}

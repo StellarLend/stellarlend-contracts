@@ -1,26 +1,3 @@
-//! # Analytics Module
-//!
-//! Provides protocol-wide and per-user analytics, reporting, and activity tracking.
-//!
-//! This module aggregates data from the deposit, borrow, and repay modules to produce:
-//! - **Protocol metrics**: TVL, utilization, average borrow rate, total users/transactions
-//! - **User metrics**: collateral, debt, health factor, risk level, activity score
-//! - **Activity feed**: bounded log of recent protocol operations (max 10,000 entries)
-//!
-//! ## Health Factor
-//! `health_factor = (collateral * 10000) / debt`
-//!
-//! A health factor below 10,000 (1.0x) indicates an undercollateralized position.
-//!
-//! ## Risk Levels
-//! | Health Factor | Risk Level |
-//! |---------------|------------|
-//! | ≥ 1.50        | 1 (Low)    |
-//! | ≥ 1.20        | 2          |
-//! | ≥ 1.10        | 3          |
-//! | ≥ 1.05        | 4          |
-//! | < 1.05        | 5 (Critical) |
-
 #![allow(unused)]
 use soroban_sdk::{contracterror, contracttype, Address, Env, Map, Symbol, Vec};
 
@@ -565,12 +542,19 @@ pub fn get_user_activity_feed(
         .get::<AnalyticsDataKey, Vec<ActivityEntry>>(&AnalyticsDataKey::ActivityLog)
         .unwrap_or_else(|| Vec::new(env));
 
+    // Collect only enough user entries for the requested page (offset + limit)
     let mut user_activities = Vec::new(env);
+    let mut found = 0u32;
+    let needed = offset + limit;
 
     for i in (0..activity_log.len()).rev() {
         if let Some(entry) = activity_log.get(i) {
             if entry.user == *user {
                 user_activities.push_back(entry);
+                found += 1;
+                if found >= needed {
+                    break;
+                }
             }
         }
     }

@@ -1,18 +1,18 @@
 #![cfg(not(tarpaulin_include))]
 #![allow(unexpected_cfgs)]
 use soroban_sdk::{Env, Symbol};
-//! Reentrancy protection for same-transaction nested calls.
-//!
-//! Soroban executes contract invocations synchronously within a single invocation tree. A
-//! token `transfer` or `transfer_from` can therefore call back into this contract before the
-//! outer function finishes. This module blocks that shape of nested re-entry by setting a
-//! temporary per-contract lock for the duration of the protected frame.
-//!
-//! The guard does not persist across transactions and does not replace authorization,
-//! pause-switch, or collateral checks. It is a defense-in-depth layer for fund-moving entry
-//! points that perform external contract calls.
+// Reentrancy protection for same-transaction nested calls.
+//
+// Soroban executes contract invocations synchronously within a single invocation tree. A
+// token `transfer` or `transfer_from` can therefore call back into this contract before the
+// outer function finishes. This module blocks that shape of nested re-entry by setting a
+// temporary per-contract lock for the duration of the protected frame.
+//
+// The guard does not persist across transactions and does not replace authorization,
+// pause-switch, or collateral checks. It is a defense-in-depth layer for fund-moving entry
+// points that perform external contract calls.
 
-use soroban_sdk::{contracttype, Env};
+use soroban_sdk::{contracttype};
 
 /// Standardized error code used by operation-specific error enums for reentrancy rejection.
 pub const REENTRANCY_ERROR_CODE: u32 = 7;

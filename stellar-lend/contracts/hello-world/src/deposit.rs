@@ -425,15 +425,33 @@ pub fn update_user_analytics(
             loyalty_tier: 0,
         });
 
+
+    // Clamp amount to [0, i128::MAX]
+    let amount = if amount < 0 { 0 } else { amount.min(i128::MAX) };
+
+    // Clamp analytics fields to [0, i128::MAX] before arithmetic
+    analytics.total_deposits = analytics.total_deposits.max(0).min(i128::MAX);
+    analytics.total_withdrawals = analytics.total_withdrawals.max(0).min(i128::MAX);
+    analytics.collateral_value = analytics.collateral_value.max(0).min(i128::MAX);
+
     if is_deposit {
-        analytics.total_deposits = analytics
-            .total_deposits
-            .checked_add(amount)
-            .ok_or(DepositError::Overflow)?;
-        analytics.collateral_value = analytics
-            .collateral_value
-            .checked_add(amount)
-            .ok_or(DepositError::Overflow)?;
+        let new_total_deposits = analytics.total_deposits.saturating_add(amount).min(i128::MAX);
+        let new_collateral_value = analytics.collateral_value.saturating_add(amount).min(i128::MAX);
+        analytics.total_deposits = new_total_deposits;
+        analytics.collateral_value = new_collateral_value;
+    } else {
+        let new_total_withdrawals = analytics.total_withdrawals.saturating_add(amount).min(i128::MAX);
+        let new_collateral_value = analytics.collateral_value.saturating_sub(amount).max(0);
+        analytics.total_withdrawals = new_total_withdrawals;
+        analytics.collateral_value = new_collateral_value;
+        // If this withdrawal empties the user's collateral, reset analytics fields to zero
+        let position_key = DepositDataKey::Position(user.clone());
+        let position = env.storage().persistent().get::<DepositDataKey, Position>(&position_key);
+        if let Some(pos) = position {
+            if pos.collateral == 0 {
+                analytics.collateral_value = 0;
+            }
+        }
     }
 
     analytics.transaction_count = analytics.transaction_count.saturating_add(1);
@@ -460,15 +478,26 @@ pub fn update_protocol_analytics(
             total_value_locked: 0,
         });
 
+
+    // Clamp amount to [0, i128::MAX]
+    let amount = if amount < 0 { 0 } else { amount.min(i128::MAX) };
+
+    // Clamp analytics fields to [0, i128::MAX] before arithmetic
+    analytics.total_deposits = analytics.total_deposits.max(0).min(i128::MAX);
+    analytics.total_value_locked = analytics.total_value_locked.max(0).min(i128::MAX);
+
     if is_deposit {
-        analytics.total_deposits = analytics
-            .total_deposits
-            .checked_add(amount)
-            .ok_or(DepositError::Overflow)?;
-        analytics.total_value_locked = analytics
-            .total_value_locked
-            .checked_add(amount)
-            .ok_or(DepositError::Overflow)?;
+        let new_total_deposits = analytics.total_deposits.saturating_add(amount).min(i128::MAX);
+        let new_total_value_locked = analytics.total_value_locked.saturating_add(amount).min(i128::MAX);
+        analytics.total_deposits = new_total_deposits;
+        analytics.total_value_locked = new_total_value_locked;
+    } else {
+        let new_total_value_locked = analytics.total_value_locked.saturating_sub(amount).max(0);
+        analytics.total_value_locked = new_total_value_locked;
+        // If this withdrawal empties the protocol TVL, reset analytics fields to zero
+        if analytics.total_value_locked == 0 {
+            analytics.total_value_locked = 0;
+        }
     }
 
     env.storage().persistent().set(&analytics_key, &analytics);

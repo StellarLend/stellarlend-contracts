@@ -393,7 +393,7 @@ pub fn withdraw_collateral(
             timestamp,
         },
     );
-    emit_position_updated_event(env, &user, &position);
+    emit_position_updated_event(env, &user, &position, Symbol::new(env, "withdraw"), timestamp);
     emit_analytics_updated_event(env, &user, "withdraw", amount, timestamp);
     emit_user_activity_tracked_event(env, &user, Symbol::new(env, "withdraw"), amount, timestamp);
 
