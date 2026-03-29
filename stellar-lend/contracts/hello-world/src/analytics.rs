@@ -529,12 +529,21 @@ pub fn get_recent_activity(
     }
 
     let mut result = Vec::new(env);
-    let start = total_len.saturating_sub(offset + limit);
-    let end = total_len.saturating_sub(offset);
+    let mut skipped = 0u32;
+    let mut collected = 0u32;
 
-    for i in (start..end).rev() {
-        if let Some(entry) = activity_log.get(i) {
-            result.push_back(entry);
+    for i in (0..total_len).rev() {
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        if collected < limit {
+            if let Some(entry) = activity_log.get(i) {
+                result.push_back(entry);
+                collected += 1;
+            }
+        } else {
+            break;
         }
     }
 
@@ -565,32 +574,30 @@ pub fn get_user_activity_feed(
         .get::<AnalyticsDataKey, Vec<ActivityEntry>>(&AnalyticsDataKey::ActivityLog)
         .unwrap_or_else(|| Vec::new(env));
 
+    // Collect only up to (offset + limit) user entries, iterating in reverse for gas safety
     let mut user_activities = Vec::new(env);
+    let mut skipped = 0u32;
+    let mut collected = 0u32;
+    let max_needed = offset.saturating_add(limit);
 
     for i in (0..activity_log.len()).rev() {
         if let Some(entry) = activity_log.get(i) {
             if entry.user == *user {
-                user_activities.push_back(entry);
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
+                if collected < limit {
+                    user_activities.push_back(entry);
+                    collected += 1;
+                } else {
+                    break;
+                }
             }
         }
     }
 
-    let total_len = user_activities.len();
-    if offset >= total_len {
-        return Ok(Vec::new(env));
-    }
-
-    let mut result = Vec::new(env);
-    let end = total_len.saturating_sub(offset);
-    let start = end.saturating_sub(limit);
-
-    for i in start..end {
-        if let Some(entry) = user_activities.get(i) {
-            result.push_back(entry);
-        }
-    }
-
-    Ok(result)
+    Ok(user_activities)
 }
 
 /// Get activity entries filtered by activity type.

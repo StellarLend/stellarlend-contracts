@@ -136,9 +136,6 @@ fn test_initialize_reserve_config_success() {
     let result = test_initialize_reserve_config(
         &env,
         &contract_id,
-        &contract_id,
-        contract_id,
-        contract_id,
         asset.clone(),
         DEFAULT_RESERVE_FACTOR_BPS,
     );
@@ -148,9 +145,6 @@ fn test_initialize_reserve_config_success() {
     let factor = test_get_reserve_factor(
         &env,
         &contract_id,
-        &contract_id,
-        contract_id,
-        contract_id,
         asset.clone(),
     );
     assert_eq!(factor, DEFAULT_RESERVE_FACTOR_BPS);
@@ -159,9 +153,6 @@ fn test_initialize_reserve_config_success() {
     let balance = test_get_reserve_balance(
         &env,
         &contract_id,
-        &contract_id,
-        contract_id,
-        contract_id,
         asset,
     );
     assert_eq!(balance, 0);

@@ -15,8 +15,19 @@ fn setup() -> (Env, Address, Address) {
     env.mock_all_auths();
     let contract_id = env.register(HelloContract, ());
     let admin = Address::generate(&env);
+    let vote_token = Address::generate(&env);
     env.as_contract(&contract_id, || {
-        crate::governance::initialize(&env, admin.clone()).unwrap();
+        crate::governance::initialize(
+            &env,
+            admin.clone(),
+            vote_token,
+            Some(259200), // voting_period: 3 days
+            Some(86400),  // execution_delay: 1 day
+            Some(4000),   // quorum_bps: 40%
+            Some(100),    // proposal_threshold
+            Some(604800), // timelock_duration: 7 days
+            Some(5000),   // default_voting_threshold: 50%
+        ).unwrap();
     });
     (env, contract_id, admin)
 }
