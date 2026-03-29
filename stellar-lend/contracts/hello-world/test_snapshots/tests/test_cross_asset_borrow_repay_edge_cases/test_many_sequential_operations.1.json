@@ -1,7 +1,8 @@
 {
   "generators": {
     "address": 6,
-    "nonce": 0
+    "nonce": 0,
+    "mux_id": 0
   },
   "auth": [
     [],
@@ -48,17 +49,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "borrow_factor"
-                      },
-                      "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 8000
-                        }
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "can_borrow"
                       },
                       "val": {
@@ -78,10 +68,15 @@
                         "symbol": "collateral_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 7500
-                        }
+                        "i128": "7500"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "liquidation_threshold"
+                      },
+                      "val": {
+                        "i128": "8000"
                       }
                     },
                     {
@@ -89,10 +84,7 @@
                         "symbol": "max_borrow"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 80000000000000
-                        }
+                        "i128": "80000000000000"
                       }
                     },
                     {
@@ -100,10 +92,7 @@
                         "symbol": "max_supply"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 100000000000000
-                        }
+                        "i128": "100000000000000"
                       }
                     },
                     {
@@ -111,10 +100,7 @@
                         "symbol": "price"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 10000000
-                        }
+                        "i128": "10000000"
                       }
                     },
                     {
@@ -122,7 +108,7 @@
                         "symbol": "price_updated_at"
                       },
                       "val": {
-                        "u64": 0
+                        "u64": "0"
                       }
                     },
                     {
@@ -130,10 +116,7 @@
                         "symbol": "reserve_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 1000
-                        }
+                        "i128": "1000"
                       }
                     }
                   ]
@@ -169,17 +152,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "borrow_factor"
-                      },
-                      "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 8000
-                        }
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "can_borrow"
                       },
                       "val": {
@@ -199,10 +171,15 @@
                         "symbol": "collateral_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 7500
-                        }
+                        "i128": "7500"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "liquidation_threshold"
+                      },
+                      "val": {
+                        "i128": "8000"
                       }
                     },
                     {
@@ -210,10 +187,7 @@
                         "symbol": "max_borrow"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 80000000000000
-                        }
+                        "i128": "80000000000000"
                       }
                     },
                     {
@@ -221,10 +195,7 @@
                         "symbol": "max_supply"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 100000000000000
-                        }
+                        "i128": "100000000000000"
                       }
                     },
                     {
@@ -232,10 +203,7 @@
                         "symbol": "price"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 20000000000
-                        }
+                        "i128": "20000000000"
                       }
                     },
                     {
@@ -243,7 +211,7 @@
                         "symbol": "price_updated_at"
                       },
                       "val": {
-                        "u64": 0
+                        "u64": "0"
                       }
                     },
                     {
@@ -251,10 +219,7 @@
                         "symbol": "reserve_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 1000
-                        }
+                        "i128": "1000"
                       }
                     }
                   ]
@@ -290,17 +255,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "borrow_factor"
-                      },
-                      "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 8000
-                        }
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "can_borrow"
                       },
                       "val": {
@@ -320,10 +274,15 @@
                         "symbol": "collateral_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 7500
-                        }
+                        "i128": "7500"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "liquidation_threshold"
+                      },
+                      "val": {
+                        "i128": "8000"
                       }
                     },
                     {
@@ -331,10 +290,7 @@
                         "symbol": "max_borrow"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 80000000000000
-                        }
+                        "i128": "80000000000000"
                       }
                     },
                     {
@@ -342,10 +298,7 @@
                         "symbol": "max_supply"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 100000000000000
-                        }
+                        "i128": "100000000000000"
                       }
                     },
                     {
@@ -353,10 +306,7 @@
                         "symbol": "price"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 400000000000
-                        }
+                        "i128": "400000000000"
                       }
                     },
                     {
@@ -364,7 +314,7 @@
                         "symbol": "price_updated_at"
                       },
                       "val": {
-                        "u64": 0
+                        "u64": "0"
                       }
                     },
                     {
@@ -372,10 +322,7 @@
                         "symbol": "reserve_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 1000
-                        }
+                        "i128": "1000"
                       }
                     }
                   ]
@@ -394,7 +341,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_deposit_collateral",
+              "function_name": "cross_asset_deposit",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -403,10 +350,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 1000000000000
-                  }
+                  "i128": "1000000000000"
                 }
               ]
             }
@@ -422,7 +366,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -431,10 +375,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 10000000000
-                  }
+                  "i128": "10000000000"
                 }
               ]
             }
@@ -450,7 +391,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -459,10 +400,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 5000000000
-                  }
+                  "i128": "5000000000"
                 }
               ]
             }
@@ -478,7 +416,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -487,10 +425,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 20000000000
-                  }
+                  "i128": "20000000000"
                 }
               ]
             }
@@ -506,7 +441,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -515,10 +450,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 10000000000
-                  }
+                  "i128": "10000000000"
                 }
               ]
             }
@@ -534,7 +466,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -543,10 +475,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 30000000000
-                  }
+                  "i128": "30000000000"
                 }
               ]
             }
@@ -562,7 +491,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -571,10 +500,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 15000000000
-                  }
+                  "i128": "15000000000"
                 }
               ]
             }
@@ -590,7 +516,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -599,10 +525,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 40000000000
-                  }
+                  "i128": "40000000000"
                 }
               ]
             }
@@ -618,7 +541,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -627,10 +550,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 20000000000
-                  }
+                  "i128": "20000000000"
                 }
               ]
             }
@@ -646,7 +566,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -655,10 +575,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 50000000000
-                  }
+                  "i128": "50000000000"
                 }
               ]
             }
@@ -674,7 +591,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -683,10 +600,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 25000000000
-                  }
+                  "i128": "25000000000"
                 }
               ]
             }
@@ -702,7 +616,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -711,10 +625,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 60000000000
-                  }
+                  "i128": "60000000000"
                 }
               ]
             }
@@ -730,7 +641,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -739,10 +650,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 30000000000
-                  }
+                  "i128": "30000000000"
                 }
               ]
             }
@@ -758,7 +666,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -767,10 +675,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 70000000000
-                  }
+                  "i128": "70000000000"
                 }
               ]
             }
@@ -786,7 +691,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -795,10 +700,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 35000000000
-                  }
+                  "i128": "35000000000"
                 }
               ]
             }
@@ -814,7 +716,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -823,10 +725,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 80000000000
-                  }
+                  "i128": "80000000000"
                 }
               ]
             }
@@ -842,7 +741,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -851,10 +750,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 40000000000
-                  }
+                  "i128": "40000000000"
                 }
               ]
             }
@@ -870,7 +766,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -879,10 +775,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 90000000000
-                  }
+                  "i128": "90000000000"
                 }
               ]
             }
@@ -898,7 +791,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -907,10 +800,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 45000000000
-                  }
+                  "i128": "45000000000"
                 }
               ]
             }
@@ -926,7 +816,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_borrow_asset",
+              "function_name": "cross_asset_borrow",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -935,10 +825,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 100000000000
-                  }
+                  "i128": "100000000000"
                 }
               ]
             }
@@ -954,7 +841,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_repay_debt",
+              "function_name": "cross_asset_repay",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -963,10 +850,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 50000000000
-                  }
+                  "i128": "50000000000"
                 }
               ]
             }
@@ -978,7 +862,7 @@
     []
   ],
   "ledger": {
-    "protocol_version": 22,
+    "protocol_version": 23,
     "sequence_number": 0,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -1115,10 +999,7 @@
                         ]
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 275000000000
-                        }
+                        "i128": "275000000000"
                       }
                     }
                   ]
@@ -1176,17 +1057,6 @@
                           },
                           {
                             "key": {
-                              "symbol": "borrow_factor"
-                            },
-                            "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 8000
-                              }
-                            }
-                          },
-                          {
-                            "key": {
                               "symbol": "can_borrow"
                             },
                             "val": {
@@ -1206,10 +1076,15 @@
                               "symbol": "collateral_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 7500
-                              }
+                              "i128": "7500"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "liquidation_threshold"
+                            },
+                            "val": {
+                              "i128": "8000"
                             }
                           },
                           {
@@ -1217,10 +1092,7 @@
                               "symbol": "max_borrow"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 80000000000000
-                              }
+                              "i128": "80000000000000"
                             }
                           },
                           {
@@ -1228,10 +1100,7 @@
                               "symbol": "max_supply"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 100000000000000
-                              }
+                              "i128": "100000000000000"
                             }
                           },
                           {
@@ -1239,10 +1108,7 @@
                               "symbol": "price"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 10000000
-                              }
+                              "i128": "10000000"
                             }
                           },
                           {
@@ -1250,7 +1116,7 @@
                               "symbol": "price_updated_at"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           },
                           {
@@ -1258,10 +1124,7 @@
                               "symbol": "reserve_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 1000
-                              }
+                              "i128": "1000"
                             }
                           }
                         ]
@@ -1290,17 +1153,6 @@
                           },
                           {
                             "key": {
-                              "symbol": "borrow_factor"
-                            },
-                            "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 8000
-                              }
-                            }
-                          },
-                          {
-                            "key": {
                               "symbol": "can_borrow"
                             },
                             "val": {
@@ -1320,10 +1172,15 @@
                               "symbol": "collateral_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 7500
-                              }
+                              "i128": "7500"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "liquidation_threshold"
+                            },
+                            "val": {
+                              "i128": "8000"
                             }
                           },
                           {
@@ -1331,10 +1188,7 @@
                               "symbol": "max_borrow"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 80000000000000
-                              }
+                              "i128": "80000000000000"
                             }
                           },
                           {
@@ -1342,10 +1196,7 @@
                               "symbol": "max_supply"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 100000000000000
-                              }
+                              "i128": "100000000000000"
                             }
                           },
                           {
@@ -1353,10 +1204,7 @@
                               "symbol": "price"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 20000000000
-                              }
+                              "i128": "20000000000"
                             }
                           },
                           {
@@ -1364,7 +1212,7 @@
                               "symbol": "price_updated_at"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           },
                           {
@@ -1372,10 +1220,7 @@
                               "symbol": "reserve_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 1000
-                              }
+                              "i128": "1000"
                             }
                           }
                         ]
@@ -1404,17 +1249,6 @@
                           },
                           {
                             "key": {
-                              "symbol": "borrow_factor"
-                            },
-                            "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 8000
-                              }
-                            }
-                          },
-                          {
-                            "key": {
                               "symbol": "can_borrow"
                             },
                             "val": {
@@ -1434,10 +1268,15 @@
                               "symbol": "collateral_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 7500
-                              }
+                              "i128": "7500"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "liquidation_threshold"
+                            },
+                            "val": {
+                              "i128": "8000"
                             }
                           },
                           {
@@ -1445,10 +1284,7 @@
                               "symbol": "max_borrow"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 80000000000000
-                              }
+                              "i128": "80000000000000"
                             }
                           },
                           {
@@ -1456,10 +1292,7 @@
                               "symbol": "max_supply"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 100000000000000
-                              }
+                              "i128": "100000000000000"
                             }
                           },
                           {
@@ -1467,10 +1300,7 @@
                               "symbol": "price"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 400000000000
-                              }
+                              "i128": "400000000000"
                             }
                           },
                           {
@@ -1478,7 +1308,7 @@
                               "symbol": "price_updated_at"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           },
                           {
@@ -1486,10 +1316,7 @@
                               "symbol": "reserve_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 1000
-                              }
+                              "i128": "1000"
                             }
                           }
                         ]
@@ -1562,10 +1389,7 @@
                               "symbol": "accrued_interest"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 0
-                              }
+                              "i128": "0"
                             }
                           },
                           {
@@ -1573,10 +1397,7 @@
                               "symbol": "collateral"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 1000000000000
-                              }
+                              "i128": "1000000000000"
                             }
                           },
                           {
@@ -1584,10 +1405,7 @@
                               "symbol": "debt_principal"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 275000000000
-                              }
+                              "i128": "275000000000"
                             }
                           },
                           {
@@ -1595,7 +1413,7 @@
                               "symbol": "last_updated"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           }
                         ]
@@ -1645,10 +1463,7 @@
                         ]
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 1000000000000
-                        }
+                        "i128": "1000000000000"
                       }
                     }
                   ]
@@ -1698,7 +1513,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 801925984706572462
+                "nonce": "801925984706572462"
               }
             },
             "durability": "temporary"
@@ -1713,7 +1528,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 801925984706572462
+                    "nonce": "801925984706572462"
                   }
                 },
                 "durability": "temporary",
@@ -1731,7 +1546,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1033654523790656264
+                "nonce": "1033654523790656264"
               }
             },
             "durability": "temporary"
@@ -1746,7 +1561,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1033654523790656264
+                    "nonce": "1033654523790656264"
                   }
                 },
                 "durability": "temporary",
@@ -1764,7 +1579,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 4837995959683129791
+                "nonce": "4837995959683129791"
               }
             },
             "durability": "temporary"
@@ -1779,7 +1594,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 4837995959683129791
+                    "nonce": "4837995959683129791"
                   }
                 },
                 "durability": "temporary",
@@ -1797,7 +1612,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 5541220902715666415
+                "nonce": "5541220902715666415"
               }
             },
             "durability": "temporary"
@@ -1812,7 +1627,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 5541220902715666415
+                    "nonce": "5541220902715666415"
                   }
                 },
                 "durability": "temporary",
@@ -1830,7 +1645,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 115220454072064130
+                "nonce": "115220454072064130"
               }
             },
             "durability": "temporary"
@@ -1845,7 +1660,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 115220454072064130
+                    "nonce": "115220454072064130"
                   }
                 },
                 "durability": "temporary",
@@ -1863,7 +1678,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1194852393571756375
+                "nonce": "1194852393571756375"
               }
             },
             "durability": "temporary"
@@ -1878,7 +1693,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1194852393571756375
+                    "nonce": "1194852393571756375"
                   }
                 },
                 "durability": "temporary",
@@ -1896,7 +1711,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1301173170172112462
+                "nonce": "1301173170172112462"
               }
             },
             "durability": "temporary"
@@ -1911,7 +1726,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1301173170172112462
+                    "nonce": "1301173170172112462"
                   }
                 },
                 "durability": "temporary",
@@ -1929,7 +1744,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1345255804540566779
+                "nonce": "1345255804540566779"
               }
             },
             "durability": "temporary"
@@ -1944,7 +1759,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1345255804540566779
+                    "nonce": "1345255804540566779"
                   }
                 },
                 "durability": "temporary",
@@ -1962,7 +1777,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 2032731177588607455
+                "nonce": "2032731177588607455"
               }
             },
             "durability": "temporary"
@@ -1977,7 +1792,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 2032731177588607455
+                    "nonce": "2032731177588607455"
                   }
                 },
                 "durability": "temporary",
@@ -1995,7 +1810,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 2140788761963629343
+                "nonce": "2140788761963629343"
               }
             },
             "durability": "temporary"
@@ -2010,7 +1825,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 2140788761963629343
+                    "nonce": "2140788761963629343"
                   }
                 },
                 "durability": "temporary",
@@ -2028,7 +1843,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 2307661404550649928
+                "nonce": "2307661404550649928"
               }
             },
             "durability": "temporary"
@@ -2043,7 +1858,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 2307661404550649928
+                    "nonce": "2307661404550649928"
                   }
                 },
                 "durability": "temporary",
@@ -2061,7 +1876,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 2578412842719982537
+                "nonce": "2578412842719982537"
               }
             },
             "durability": "temporary"
@@ -2076,7 +1891,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 2578412842719982537
+                    "nonce": "2578412842719982537"
                   }
                 },
                 "durability": "temporary",
@@ -2094,7 +1909,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 2781962168096793370
+                "nonce": "2781962168096793370"
               }
             },
             "durability": "temporary"
@@ -2109,7 +1924,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 2781962168096793370
+                    "nonce": "2781962168096793370"
                   }
                 },
                 "durability": "temporary",
@@ -2127,7 +1942,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 3126073502131104533
+                "nonce": "3126073502131104533"
               }
             },
             "durability": "temporary"
@@ -2142,7 +1957,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 3126073502131104533
+                    "nonce": "3126073502131104533"
                   }
                 },
                 "durability": "temporary",
@@ -2160,7 +1975,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 3736142932239307322
+                "nonce": "3736142932239307322"
               }
             },
             "durability": "temporary"
@@ -2175,7 +1990,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 3736142932239307322
+                    "nonce": "3736142932239307322"
                   }
                 },
                 "durability": "temporary",
@@ -2193,7 +2008,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 4270020994084947596
+                "nonce": "4270020994084947596"
               }
             },
             "durability": "temporary"
@@ -2208,7 +2023,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 4270020994084947596
+                    "nonce": "4270020994084947596"
                   }
                 },
                 "durability": "temporary",
@@ -2226,7 +2041,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 4571470874178140630
+                "nonce": "4571470874178140630"
               }
             },
             "durability": "temporary"
@@ -2241,7 +2056,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 4571470874178140630
+                    "nonce": "4571470874178140630"
                   }
                 },
                 "durability": "temporary",
@@ -2259,7 +2074,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 5012940724606903311
+                "nonce": "5012940724606903311"
               }
             },
             "durability": "temporary"
@@ -2274,7 +2089,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 5012940724606903311
+                    "nonce": "5012940724606903311"
                   }
                 },
                 "durability": "temporary",
@@ -2292,7 +2107,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 5806905060045992000
+                "nonce": "5806905060045992000"
               }
             },
             "durability": "temporary"
@@ -2307,7 +2122,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 5806905060045992000
+                    "nonce": "5806905060045992000"
                   }
                 },
                 "durability": "temporary",
@@ -2325,7 +2140,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 6277191135259896685
+                "nonce": "6277191135259896685"
               }
             },
             "durability": "temporary"
@@ -2340,7 +2155,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 6277191135259896685
+                    "nonce": "6277191135259896685"
                   }
                 },
                 "durability": "temporary",
@@ -2358,7 +2173,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 6391496069076573377
+                "nonce": "6391496069076573377"
               }
             },
             "durability": "temporary"
@@ -2373,7 +2188,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 6391496069076573377
+                    "nonce": "6391496069076573377"
                   }
                 },
                 "durability": "temporary",
@@ -2391,7 +2206,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 6517132746326325848
+                "nonce": "6517132746326325848"
               }
             },
             "durability": "temporary"
@@ -2406,7 +2221,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 6517132746326325848
+                    "nonce": "6517132746326325848"
                   }
                 },
                 "durability": "temporary",
@@ -2424,7 +2239,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 7270604957039011794
+                "nonce": "7270604957039011794"
               }
             },
             "durability": "temporary"
@@ -2439,7 +2254,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 7270604957039011794
+                    "nonce": "7270604957039011794"
                   }
                 },
                 "durability": "temporary",
@@ -2457,7 +2272,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 8077058277077262192
+                "nonce": "8077058277077262192"
               }
             },
             "durability": "temporary"
@@ -2472,7 +2287,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 8077058277077262192
+                    "nonce": "8077058277077262192"
                   }
                 },
                 "durability": "temporary",
@@ -2490,7 +2305,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 8370022561469687789
+                "nonce": "8370022561469687789"
               }
             },
             "durability": "temporary"
@@ -2505,7 +2320,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 8370022561469687789
+                    "nonce": "8370022561469687789"
                   }
                 },
                 "durability": "temporary",

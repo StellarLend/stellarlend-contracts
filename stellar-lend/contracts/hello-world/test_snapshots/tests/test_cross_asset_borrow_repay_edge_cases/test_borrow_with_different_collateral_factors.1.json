@@ -1,7 +1,8 @@
 {
   "generators": {
     "address": 5,
-    "nonce": 0
+    "nonce": 0,
+    "mux_id": 0
   },
   "auth": [
     [],
@@ -48,17 +49,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "borrow_factor"
-                      },
-                      "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 8000
-                        }
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "can_borrow"
                       },
                       "val": {
@@ -78,10 +68,15 @@
                         "symbol": "collateral_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 9000
-                        }
+                        "i128": "9000"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "liquidation_threshold"
+                      },
+                      "val": {
+                        "i128": "9000"
                       }
                     },
                     {
@@ -89,10 +84,7 @@
                         "symbol": "max_borrow"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 80000000000000
-                        }
+                        "i128": "80000000000000"
                       }
                     },
                     {
@@ -100,10 +92,7 @@
                         "symbol": "max_supply"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 100000000000000
-                        }
+                        "i128": "100000000000000"
                       }
                     },
                     {
@@ -111,10 +100,7 @@
                         "symbol": "price"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 10000000
-                        }
+                        "i128": "10000000"
                       }
                     },
                     {
@@ -122,7 +108,7 @@
                         "symbol": "price_updated_at"
                       },
                       "val": {
-                        "u64": 0
+                        "u64": "0"
                       }
                     },
                     {
@@ -130,10 +116,7 @@
                         "symbol": "reserve_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 1000
-                        }
+                        "i128": "1000"
                       }
                     }
                   ]
@@ -169,17 +152,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "borrow_factor"
-                      },
-                      "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 8000
-                        }
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "can_borrow"
                       },
                       "val": {
@@ -199,10 +171,15 @@
                         "symbol": "collateral_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 5000
-                        }
+                        "i128": "5000"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "liquidation_threshold"
+                      },
+                      "val": {
+                        "i128": "8000"
                       }
                     },
                     {
@@ -210,10 +187,7 @@
                         "symbol": "max_borrow"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 80000000000000
-                        }
+                        "i128": "80000000000000"
                       }
                     },
                     {
@@ -221,10 +195,7 @@
                         "symbol": "max_supply"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 100000000000000
-                        }
+                        "i128": "100000000000000"
                       }
                     },
                     {
@@ -232,10 +203,7 @@
                         "symbol": "price"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 10000000000
-                        }
+                        "i128": "10000000000"
                       }
                     },
                     {
@@ -243,7 +211,7 @@
                         "symbol": "price_updated_at"
                       },
                       "val": {
-                        "u64": 0
+                        "u64": "0"
                       }
                     },
                     {
@@ -251,10 +219,7 @@
                         "symbol": "reserve_factor"
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 1000
-                        }
+                        "i128": "1000"
                       }
                     }
                   ]
@@ -273,7 +238,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_deposit_collateral",
+              "function_name": "cross_asset_deposit",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -282,10 +247,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 100000000000
-                  }
+                  "i128": "100000000000"
                 }
               ]
             }
@@ -301,7 +263,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "ca_deposit_collateral",
+              "function_name": "cross_asset_deposit",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -310,10 +272,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 100000000
-                  }
+                  "i128": "100000000"
                 }
               ]
             }
@@ -325,7 +284,7 @@
     []
   ],
   "ledger": {
-    "protocol_version": 22,
+    "protocol_version": 23,
     "sequence_number": 0,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -463,17 +422,6 @@
                           },
                           {
                             "key": {
-                              "symbol": "borrow_factor"
-                            },
-                            "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 8000
-                              }
-                            }
-                          },
-                          {
-                            "key": {
                               "symbol": "can_borrow"
                             },
                             "val": {
@@ -493,10 +441,15 @@
                               "symbol": "collateral_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 9000
-                              }
+                              "i128": "9000"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "liquidation_threshold"
+                            },
+                            "val": {
+                              "i128": "9000"
                             }
                           },
                           {
@@ -504,10 +457,7 @@
                               "symbol": "max_borrow"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 80000000000000
-                              }
+                              "i128": "80000000000000"
                             }
                           },
                           {
@@ -515,10 +465,7 @@
                               "symbol": "max_supply"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 100000000000000
-                              }
+                              "i128": "100000000000000"
                             }
                           },
                           {
@@ -526,10 +473,7 @@
                               "symbol": "price"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 10000000
-                              }
+                              "i128": "10000000"
                             }
                           },
                           {
@@ -537,7 +481,7 @@
                               "symbol": "price_updated_at"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           },
                           {
@@ -545,10 +489,7 @@
                               "symbol": "reserve_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 1000
-                              }
+                              "i128": "1000"
                             }
                           }
                         ]
@@ -577,17 +518,6 @@
                           },
                           {
                             "key": {
-                              "symbol": "borrow_factor"
-                            },
-                            "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 8000
-                              }
-                            }
-                          },
-                          {
-                            "key": {
                               "symbol": "can_borrow"
                             },
                             "val": {
@@ -607,10 +537,15 @@
                               "symbol": "collateral_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 5000
-                              }
+                              "i128": "5000"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "liquidation_threshold"
+                            },
+                            "val": {
+                              "i128": "8000"
                             }
                           },
                           {
@@ -618,10 +553,7 @@
                               "symbol": "max_borrow"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 80000000000000
-                              }
+                              "i128": "80000000000000"
                             }
                           },
                           {
@@ -629,10 +561,7 @@
                               "symbol": "max_supply"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 100000000000000
-                              }
+                              "i128": "100000000000000"
                             }
                           },
                           {
@@ -640,10 +569,7 @@
                               "symbol": "price"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 10000000000
-                              }
+                              "i128": "10000000000"
                             }
                           },
                           {
@@ -651,7 +577,7 @@
                               "symbol": "price_updated_at"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           },
                           {
@@ -659,10 +585,7 @@
                               "symbol": "reserve_factor"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 1000
-                              }
+                              "i128": "1000"
                             }
                           }
                         ]
@@ -735,10 +658,7 @@
                               "symbol": "accrued_interest"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 0
-                              }
+                              "i128": "0"
                             }
                           },
                           {
@@ -746,10 +666,7 @@
                               "symbol": "collateral"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 100000000000
-                              }
+                              "i128": "100000000000"
                             }
                           },
                           {
@@ -757,10 +674,7 @@
                               "symbol": "debt_principal"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 0
-                              }
+                              "i128": "0"
                             }
                           },
                           {
@@ -768,7 +682,7 @@
                               "symbol": "last_updated"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           }
                         ]
@@ -809,10 +723,7 @@
                               "symbol": "accrued_interest"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 0
-                              }
+                              "i128": "0"
                             }
                           },
                           {
@@ -820,10 +731,7 @@
                               "symbol": "collateral"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 100000000
-                              }
+                              "i128": "100000000"
                             }
                           },
                           {
@@ -831,10 +739,7 @@
                               "symbol": "debt_principal"
                             },
                             "val": {
-                              "i128": {
-                                "hi": 0,
-                                "lo": 0
-                              }
+                              "i128": "0"
                             }
                           },
                           {
@@ -842,7 +747,7 @@
                               "symbol": "last_updated"
                             },
                             "val": {
-                              "u64": 0
+                              "u64": "0"
                             }
                           }
                         ]
@@ -892,10 +797,7 @@
                         ]
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 100000000000
-                        }
+                        "i128": "100000000000"
                       }
                     },
                     {
@@ -910,10 +812,7 @@
                         ]
                       },
                       "val": {
-                        "i128": {
-                          "hi": 0,
-                          "lo": 100000000
-                        }
+                        "i128": "100000000"
                       }
                     }
                   ]
@@ -963,7 +862,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 801925984706572462
+                "nonce": "801925984706572462"
               }
             },
             "durability": "temporary"
@@ -978,7 +877,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 801925984706572462
+                    "nonce": "801925984706572462"
                   }
                 },
                 "durability": "temporary",
@@ -996,7 +895,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1033654523790656264
+                "nonce": "1033654523790656264"
               }
             },
             "durability": "temporary"
@@ -1011,7 +910,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1033654523790656264
+                    "nonce": "1033654523790656264"
                   }
                 },
                 "durability": "temporary",
@@ -1029,7 +928,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 5541220902715666415
+                "nonce": "5541220902715666415"
               }
             },
             "durability": "temporary"
@@ -1044,7 +943,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 5541220902715666415
+                    "nonce": "5541220902715666415"
                   }
                 },
                 "durability": "temporary",
@@ -1062,7 +961,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 2032731177588607455
+                "nonce": "2032731177588607455"
               }
             },
             "durability": "temporary"
@@ -1077,7 +976,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 2032731177588607455
+                    "nonce": "2032731177588607455"
                   }
                 },
                 "durability": "temporary",
@@ -1095,7 +994,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 4837995959683129791
+                "nonce": "4837995959683129791"
               }
             },
             "durability": "temporary"
@@ -1110,7 +1009,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 4837995959683129791
+                    "nonce": "4837995959683129791"
                   }
                 },
                 "durability": "temporary",

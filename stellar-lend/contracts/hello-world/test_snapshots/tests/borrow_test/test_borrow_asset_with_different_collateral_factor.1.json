@@ -200,6 +200,14 @@
                   "map": [
                     {
                       "key": {
+                        "symbol": "borrow_fee_bps"
+                      },
+                      "val": {
+                        "i128": "0"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "collateral_factor"
                       },
                       "val": {
