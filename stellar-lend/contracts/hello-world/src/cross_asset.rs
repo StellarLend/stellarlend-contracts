@@ -83,6 +83,9 @@ pub struct AssetConfig {
     pub can_collateralize: bool,
     /// Whether the asset can be borrowed.
     pub can_borrow: bool,
+    /// Borrow factor in basis points (e.g., 8000 = 80%).
+    /// Weights the debt value in health calculations.
+    pub borrow_factor: i128,
     /// Asset price in base units, normalized to 7 decimals.
     /// E.g., $1.00 = 10_000_000.
     pub price: i128,
@@ -205,6 +208,7 @@ pub struct AssetConfigUpdatedEvent {
     pub asset: Option<Address>,
     pub collateral_factor: i128,
     pub liquidation_threshold: i128,
+    pub borrow_factor: i128,
     pub timestamp: u64,
 }
 
@@ -315,7 +319,10 @@ const HEALTH_FACTOR_PRECISION: i128 = 10_000;
 /// # Security
 /// * Only callable once. The admin address is immutable within this module.
 pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
-    if env.storage().persistent().has(&ADMIN) {
+    if let Some(existing_admin) = env.storage().persistent().get::<Symbol, Address>(&ADMIN) {
+        if existing_admin == admin {
+            return Ok(()); // Already initialized with the same admin
+        }
         return Err(CrossAssetError::AlreadyInitialized);
     }
 
@@ -455,6 +462,7 @@ pub fn update_asset_config(
     max_borrow: Option<i128>,
     can_collateralize: Option<bool>,
     can_borrow: Option<bool>,
+    borrow_factor: Option<i128>,
 ) -> Result<(), CrossAssetError> {
     require_admin(env)?;
 
@@ -479,11 +487,15 @@ pub fn update_asset_config(
     if let Some(cb) = can_borrow {
         config.can_borrow = cb;
     }
+    if let Some(bf) = borrow_factor {
+        config.borrow_factor = bf;
+    }
 
     // Validate the *resulting* config holistically
     require_valid_basis_points(config.collateral_factor)?;
     require_valid_basis_points(config.liquidation_threshold)?;
     require_valid_basis_points(config.reserve_factor)?;
+    require_valid_basis_points(config.borrow_factor)?;
 
     if config.liquidation_threshold < config.collateral_factor {
         return Err(CrossAssetError::InvalidConfig);
@@ -504,6 +516,7 @@ pub fn update_asset_config(
         asset,
         collateral_factor: config.collateral_factor,
         liquidation_threshold: config.liquidation_threshold,
+        borrow_factor: config.borrow_factor,
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);
@@ -1001,7 +1014,10 @@ pub fn get_user_position_summary(
                 .checked_div(PRICE_PRECISION)
                 .ok_or(CrossAssetError::Overflow)?;
             total_debt_value = checked_add(total_debt_value, debt_value)?;
-            weighted_debt_value = checked_add(weighted_debt_value, debt_value)?;
+            let weighted_debt = checked_mul(debt_value, config.borrow_factor)?
+                .checked_div(BPS_DENOMINATOR)
+                .ok_or(CrossAssetError::Overflow)?;
+            weighted_debt_value = checked_add(weighted_debt_value, weighted_debt)?;
         }
     }
 

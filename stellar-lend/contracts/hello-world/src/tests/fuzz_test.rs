@@ -126,7 +126,7 @@ fn fuzz_round(seed: u64, num_users: usize, max_ops: usize) {
         if rng.range(0, 4) == 0 {
             env.ledger().with_mut(|li| {
                 li.timestamp += rng.range(60, 86400 * 7); // up to 1 week
-                li.sequence += 1;
+                li.sequence_number += 1;
             });
         }
 

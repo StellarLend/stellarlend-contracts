@@ -1,5 +1,8 @@
 use soroban_sdk::{Address, Env};
-pub use stellarlend_amm::{AmmError, AmmProtocolConfig, LiquidityParams, SwapParams};
+pub use stellarlend_amm::{
+    AmmCallbackData, AmmError, AmmProtocolConfig, AmmSettings, LiquidityParams, MockAmm, SwapParams,
+    TokenPair, AmmContract, AmmContractClient
+};
 
 /// Initialize AMM settings (admin only)
 pub fn initialize_amm(

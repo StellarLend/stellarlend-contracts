@@ -29,7 +29,7 @@ use crate::reserve::{
     withdraw_reserve_funds, ReserveError, BASIS_POINTS_SCALE, DEFAULT_RESERVE_FACTOR_BPS,
     MAX_RESERVE_FACTOR_BPS,
 };
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{contracttype, testutils::Address as _, Address, Env, Vec};
 
 /// Helper function to create a test environment with an admin
 fn setup_test_env() -> (Env, Address, Address, Address, Address) {
@@ -39,12 +39,10 @@ fn setup_test_env() -> (Env, Address, Address, Address, Address) {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
 
-    // Set admin in storage (wrapped in as_contract)
-    env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DepositDataKey::Admin, &admin);
-    });
+    // Initialize the contract properly
+    let client = crate::HelloContractClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.initialize(&admin);
 
     (env, contract_id, admin, user, treasury)
 }
@@ -136,9 +134,6 @@ fn test_initialize_reserve_config_success() {
     let result = test_initialize_reserve_config(
         &env,
         &contract_id,
-        &contract_id,
-        contract_id,
-        contract_id,
         asset.clone(),
         DEFAULT_RESERVE_FACTOR_BPS,
     );
@@ -148,9 +143,6 @@ fn test_initialize_reserve_config_success() {
     let factor = test_get_reserve_factor(
         &env,
         &contract_id,
-        &contract_id,
-        contract_id,
-        contract_id,
         asset.clone(),
     );
     assert_eq!(factor, DEFAULT_RESERVE_FACTOR_BPS);
@@ -159,9 +151,6 @@ fn test_initialize_reserve_config_success() {
     let balance = test_get_reserve_balance(
         &env,
         &contract_id,
-        &contract_id,
-        contract_id,
-        contract_id,
         asset,
     );
     assert_eq!(balance, 0);
@@ -263,7 +252,7 @@ fn test_set_reserve_factor_by_admin() {
 
     // Admin sets new reserve factor (25%)
     let new_factor = 2500i128;
-    let _result = test_set_reserve_factor(&env, &contract_id, admin, asset.clone(), new_factor);
+    let result = test_set_reserve_factor(&env, &contract_id, admin, asset.clone(), new_factor);
     assert!(result.is_ok());
 
     // Verify factor is updated
@@ -272,7 +261,7 @@ fn test_set_reserve_factor_by_admin() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Auth, InvalidAction(0))")]
+#[should_panic(expected = "Unauthorized")]
 fn test_set_reserve_factor_by_non_admin() {
     let (env, contract_id, _admin, user, _treasury) = setup_test_env();
     let asset = Some(Address::generate(&env));
@@ -287,7 +276,7 @@ fn test_set_reserve_factor_by_non_admin() {
     .unwrap();
 
     // Non-admin tries to set reserve factor - should fail
-    let _ = test_set_reserve_factor(&env, &contract_id, user, asset, 2000);
+    test_set_reserve_factor(&env, &contract_id, user, asset, 2000).unwrap();
 }
 
 #[test]
@@ -325,7 +314,7 @@ fn test_set_reserve_factor_to_zero() {
     .unwrap();
 
     // Set reserve factor to zero (disable reserves)
-    let _result = test_set_reserve_factor(&env, &contract_id, admin, asset.clone(), 0);
+    let result = test_set_reserve_factor(&env, &contract_id, admin, asset.clone(), 0);
     assert!(result.is_ok());
 
     let factor = test_get_reserve_factor(&env, &contract_id, asset);
@@ -521,12 +510,13 @@ fn test_set_treasury_address_by_admin() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Auth, InvalidAction(0))")]
+#[should_panic(expected = "Unauthorized")]
 fn test_set_treasury_address_by_non_admin() {
-    let (env, contract_id, _admin, user, _treasury) = setup_test_env();
+
+    let (env, contract_id, _admin, user, treasury) = setup_test_env();
 
     // Non-admin tries to set treasury address - should fail
-    let _ = test_set_treasury_address(&env, &contract_id, user, treasury);
+    test_set_treasury_address(&env, &contract_id, user, treasury).unwrap();
 }
 
 #[test]
@@ -534,7 +524,7 @@ fn test_set_treasury_address_to_contract() {
     let (env, contract_id, admin, _user, _treasury) = setup_test_env();
 
     // Try to set treasury to contract address - should fail
-    let contract_addr = env.current_contract_address();
+    let contract_addr = contract_id.clone();
     let result = test_set_treasury_address(&env, &contract_id, admin, contract_addr);
     assert_eq!(result, Err(ReserveError::InvalidTreasury));
 }
@@ -671,9 +661,9 @@ fn test_withdraw_reserve_treasury_not_set() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Auth, InvalidAction(0))")]
+#[should_panic(expected = "Unauthorized")]
 fn test_withdraw_reserve_by_non_admin() {
-    let (env, contract_id, admin, _user, treasury) = setup_test_env();
+    let (env, contract_id, admin, user, treasury) = setup_test_env();
     let asset = Some(Address::generate(&env));
 
     // Setup
@@ -682,7 +672,7 @@ fn test_withdraw_reserve_by_non_admin() {
     test_accrue_reserve(&env, &contract_id, asset.clone(), 10000).unwrap();
 
     // Non-admin tries to withdraw - should fail
-    let _ = test_withdraw_reserve_funds(&env, &contract_id, user, asset, 500);
+    test_withdraw_reserve_funds(&env, &contract_id, user, asset, 500).unwrap();
 }
 
 #[test]
@@ -751,6 +741,7 @@ fn test_withdraw_reserve_from_zero_balance() {
 /// 5. All calculations use checked arithmetic to prevent overflow
 
 /// Structure to track interest distribution at different points in time
+#[contracttype]
 #[derive(Debug, Clone)]
 struct InterestDistribution {
     period: u32,
@@ -1391,25 +1382,22 @@ fn test_reserve_factor_formula_precision() {
     let asset = Some(Address::generate(&env));
 
     // Test various factor/interest combinations
-    let test_cases: Vec<(i128, i128, i128)> = Vec::from_array(
-        &env,
-        [
-            (1000, 1, 0),                   // 1 * 10% = 0.1 → 0 (truncated)
-            (1000, 9, 0),                   // 9 * 10% = 0.9 → 0 (truncated)
-            (1000, 10, 1),                  // 10 * 10% = 1
-            (1000, 99, 9),                  // 99 * 10% = 9.9 → 9 (truncated)
-            (1000, 100, 10),                // 100 * 10% = 10
-            (3333, 100, 33),                // 100 * 33.33% = 33.33 → 33
-            (1, 10000, 1),                  // 10000 * 0.01% = 1
-            (MAX_RESERVE_FACTOR_BPS, 3, 1), // 3 * 50% = 1.5 → 1
-        ],
-    );
+    let test_cases: [(i128, i128, i128); 8] = [
+        (1000, 1, 0),                   // 1 * 10% = 0.1 → 0 (truncated)
+        (1000, 9, 0),                   // 9 * 10% = 0.9 → 0 (truncated)
+        (1000, 10, 1),                  // 10 * 10% = 1
+        (1000, 99, 9),                  // 99 * 10% = 9.9 → 9 (truncated)
+        (1000, 100, 10),                // 100 * 10% = 10
+        (3333, 100, 33),                // 100 * 33.33% = 33.33 → 33
+        (1, 10000, 1),                  // 10000 * 0.01% = 1
+        (MAX_RESERVE_FACTOR_BPS, 3, 1), // 3 * 50% = 1.5 → 1
+    ];
 
     for (factor, interest, expected_reserve) in test_cases.iter() {
         // Initialize with specific factor
         test_initialize_reserve_config(&env, &contract_id, asset.clone(), *factor).unwrap();
 
-        let (r, _l) = test_accrue_reserve(&env, &contract_id, asset.clone(), *interest).unwrap();
+        let (r, l) = test_accrue_reserve(&env, &contract_id, asset.clone(), *interest).unwrap();
 
         assert_eq!(
             r, *expected_reserve,
@@ -1482,7 +1470,7 @@ fn test_concurrent_asset_factor_independence() {
 }
 
 #[test]
-fn test_get_reserve_stats() {
+fn test_get_reserve_stats_logic() {
     let (env, contract_id, admin, _user, treasury) = setup_test_env();
     let asset = Some(Address::generate(&env));
 
@@ -1837,7 +1825,7 @@ fn test_security_trust_boundaries() {
     test_initialize_reserve_config(&env, &contract_id, asset.clone(), 1000).unwrap();
 
     // Test 2: Treasury boundary - cannot set contract as treasury
-    let contract_addr = env.current_contract_address();
+    let contract_addr = contract_id.clone();
     let result = test_set_treasury_address(&env, &contract_id, admin.clone(), contract_addr);
     assert_eq!(result, Err(ReserveError::InvalidTreasury));
 

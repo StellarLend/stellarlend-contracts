@@ -1,3 +1,4 @@
+#![cfg(test)]
 //! # Flash Loan Test Suite
 //!
 //! Comprehensive tests for flash loan functionality including:
@@ -25,8 +26,8 @@ fn setup_env() -> (Env, Address, Address, Address, Address) {
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_address = token_contract.address();
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
 
     // Set admin in contract context
     env.as_contract(&contract_id, || {

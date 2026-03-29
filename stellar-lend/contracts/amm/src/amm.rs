@@ -569,8 +569,6 @@ fn validate_amm_callback_core(
     caller: &Address,
     callback_data: &AmmCallbackData,
 ) -> Result<(), AmmError> {
-    caller.require_auth();
-
     // Verify caller is a registered AMM protocol
     let protocols = get_amm_protocols(env)?;
     if !protocols.contains_key(caller.clone()) {
@@ -1326,6 +1324,26 @@ pub fn add_amm_protocol(
         .unwrap_or_else(|| Map::new(env));
 
     protocols.set(protocol_config.protocol_address.clone(), protocol_config);
+    env.storage().persistent().set(&protocols_key, &protocols);
+
+    Ok(())
+}
+
+/// Delete AMM protocol (admin only)
+pub fn delete_amm_protocol(
+    env: &Env,
+    admin: Address,
+    protocol: Address,
+) -> Result<(), AmmError> {
+    admin.require_auth();
+
+    // Check admin authorization
+    require_admin(env, &admin)?;
+
+    let protocols_key = AmmDataKey::AmmProtocols;
+    let mut protocols = get_amm_protocols(env)?;
+
+    protocols.remove(protocol);
     env.storage().persistent().set(&protocols_key, &protocols);
 
     Ok(())

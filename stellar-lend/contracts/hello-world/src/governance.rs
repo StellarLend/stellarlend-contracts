@@ -165,7 +165,7 @@ pub fn initialize_governance(
     if td > MAX_TIMELOCK_DURATION {
         return Err(GovernanceError::MathOverflow);
     }
-    if dvt < 0 || dvt > BASIS_POINTS_SCALE {
+    if !(0..=BASIS_POINTS_SCALE).contains(&dvt) {
         return Err(GovernanceError::InvalidThreshold);
     }
     if pt < 0 {
@@ -272,7 +272,7 @@ pub fn create_proposal(
 
     // ── validate custom threshold ──
     if let Some(vt) = voting_threshold {
-        if vt < 0 || vt > BASIS_POINTS_SCALE {
+        if !(0..=BASIS_POINTS_SCALE).contains(&vt) {
             return Err(GovernanceError::InvalidThreshold);
         }
     }
@@ -760,7 +760,7 @@ pub(crate) fn execute_proposal_action(
             )
             .map_err(|_| GovernanceError::ExecutionFailed)?;
         }
-        ProposalType::AssetConfigUpdate(asset, cf, lt, ms, mb, cc, cb) => {
+        ProposalType::AssetConfigUpdate(asset, cf, lt, ms, mb, cc, cb, bf) => {
             crate::cross_asset::update_asset_config(
                 env,
                 asset.clone(),
@@ -770,16 +770,17 @@ pub(crate) fn execute_proposal_action(
                 *mb,
                 *cc,
                 *cb,
+                *bf,
             )
             .map_err(|_| GovernanceError::ExecutionFailed)?;
         }
         ProposalType::PauseSwitch(op, paused) => {
-            let admin = env.current_contract_address();
+            let admin = crate::admin::get_admin(env).ok_or(GovernanceError::ExecutionFailed)?;
             crate::risk_management::set_pause_switch(env, admin, op.clone(), *paused)
                 .map_err(|_| GovernanceError::ExecutionFailed)?;
         }
         ProposalType::EmergencyPause(paused) => {
-            let admin = env.current_contract_address();
+            let admin = crate::admin::get_admin(env).ok_or(GovernanceError::ExecutionFailed)?;
             crate::risk_management::set_emergency_pause(env, admin, *paused)
                 .map_err(|_| GovernanceError::ExecutionFailed)?;
         }
@@ -1582,7 +1583,7 @@ pub fn propose_set_min_collateral_ratio(
     proposer: Address,
     new_ratio: i128,
 ) -> Result<u64, GovernanceError> {
-    crate::multisig::ms_propose_set_min_cr(env, proposer, new_ratio as i128)
+    crate::multisig::ms_propose_set_min_cr(env, proposer, new_ratio)
 }
 
 // ========================================================================

@@ -102,9 +102,9 @@ fn calculate_accrued_debt(env: &Env, position: &Position) -> Result<i128, Liquid
         return Ok(stored_interest);
     }
     if current_time <= position.last_accrual_time {
-        return Ok(principal
+        return principal
             .checked_add(stored_interest)
-            .ok_or(LiquidationError::Overflow)?);
+            .ok_or(LiquidationError::Overflow);
     }
 
     let rate_bps =

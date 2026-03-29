@@ -15,6 +15,7 @@ use crate::borrow::{
     get_close_factor_bps, get_liquidation_incentive_bps, get_liquidation_threshold_bps, get_oracle,
     get_user_collateral, get_user_debt, BorrowCollateral, DebtPosition,
 };
+use crate::constants::BPS_SCALE;
 use crate::oracle;
 
 /// Scale for oracle price (1e8 = one unit). Value = amount * price / PRICE_SCALE.

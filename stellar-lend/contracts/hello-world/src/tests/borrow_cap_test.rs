@@ -33,6 +33,7 @@ fn create_asset_config(
         max_borrow,
         can_collateralize: true,
         can_borrow: true,
+        borrow_factor: 7000,
         price,
         price_updated_at: env.ledger().timestamp(),
     }
@@ -53,14 +54,18 @@ fn test_borrow_cap_enforcement() {
     let config = create_asset_config(&env, Some(usdc.clone()), 1_0000000, cap);
     client.initialize_asset(&Some(usdc.clone()), &config);
 
-    // User 1 deposits collateral (Native XLM)
-    client.deposit_collateral(&user1, &None, &5000);
+    // Initialize Native XLM as a cross-asset instrument so health checks work
+    let xlm_config = create_asset_config(&env, None, 1_0000000, 0);
+    client.initialize_asset(&None, &xlm_config);
+
+    // User 1 deposits collateral (Native XLM) via cross-asset deposit
+    client.cross_asset_deposit(&user1, &None, &5000);
 
     // User 1 borrows 600 USDC (Within cap)
     client.cross_asset_borrow(&user1, &Some(usdc.clone()), &600);
 
     // User 2 deposits collateral
-    client.deposit_collateral(&user2, &None, &5000);
+    client.cross_asset_deposit(&user2, &None, &5000);
 
     // User 2 tries to borrow 500 USDC (Would exceed cap: 600 + 500 = 1100 > 1000)
     let result = client.try_cross_asset_borrow(&user2, &Some(usdc.clone()), &500);
@@ -83,7 +88,11 @@ fn test_borrow_cap_update_via_admin() {
     let config = create_asset_config(&env, Some(usdc.clone()), 1_0000000, 500);
     client.initialize_asset(&Some(usdc.clone()), &config);
 
-    client.deposit_collateral(&user, &None, &5000);
+    // Initialize Native XLM as a cross-asset instrument so health checks work
+    let xlm_config = create_asset_config(&env, None, 1_0000000, 0);
+    client.initialize_asset(&None, &xlm_config);
+
+    client.cross_asset_deposit(&user, &None, &5000);
 
     // Borrow fails at 600
     assert!(client
@@ -99,6 +108,7 @@ fn test_borrow_cap_update_via_admin() {
         &Some(1000), // max_borrow
         &None,       // can_collateralize
         &None,       // can_borrow
+        &None,       // borrow_factor
     );
 
     // Now borrow 600 works

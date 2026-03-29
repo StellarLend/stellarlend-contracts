@@ -23,9 +23,29 @@ pub use crate::amm::{
 };
 
 use stellarlend_common::upgrade;
+pub struct DebugConfig { pub x: i128 }
 
 #[contract]
 pub struct AmmContract;
+
+#[contract]
+pub struct MockAmm;
+
+#[contractimpl]
+impl MockAmm {
+    pub fn swap(
+        _env: Env,
+        _executor: Address,
+        _token_in: Option<Address>,
+        _token_out: Option<Address>,
+        amount_in: i128,
+        _min_amount_out: i128,
+        _callback_data: AmmCallbackData,
+    ) -> i128 {
+        // Mock swap: 1% fee (99% return)
+        amount_in * 99 / 100
+    }
+}
 
 #[contractimpl]
 impl AmmContract {
@@ -126,6 +146,15 @@ impl AmmContract {
         protocol_config: AmmProtocolConfig,
     ) -> Result<(), AmmError> {
         add_amm_protocol(&env, admin, protocol_config)
+    }
+
+    /// Delete AMM protocol (admin only)
+    pub fn delete_amm_protocol(
+        env: Env,
+        admin: Address,
+        protocol: Address,
+    ) -> Result<(), AmmError> {
+        amm::delete_amm_protocol(&env, admin, protocol)
     }
 
     /// Update AMM settings (admin only)

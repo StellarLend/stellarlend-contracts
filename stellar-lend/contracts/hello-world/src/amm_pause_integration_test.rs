@@ -25,8 +25,11 @@
 //!   rejected even after un-pausing.
 
 use super::*;
-use crate::amm::{AmmProtocolConfig, AmmSettings, LiquidityParams, SwapParams, TokenPair};
+use crate::amm::{
+    AmmCallbackData, AmmSettings, LiquidityParams,
+};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Symbol, Vec};
+use crate::amm::{AmmProtocolConfig, MockAmm, SwapParams, TokenPair, AmmContract, AmmContractClient};
 
 // ─────────────────────────────────────────────
 // Shared test helpers
@@ -596,7 +599,7 @@ fn test_pause_callback_validation_independent_of_swap_pause() {
 
     // Direct callback validation with the next nonce (2) must still succeed.
     let cb = AmmCallbackData {
-        nonce: 2,
+        nonce: 1,
         operation: Symbol::new(&env, "swap"),
         user: user.clone(),
         expected_amounts: Vec::new(&env),

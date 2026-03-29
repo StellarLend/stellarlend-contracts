@@ -45,7 +45,7 @@ fn test_contention_interleaved_deposits_borrows() {
     let num_users = 50;
     let users = generate_users(&env, num_users);
 
-    let mut expected_total_deposits = 0;
+    let mut _expected_total_deposits = 0;
     let mut expected_total_borrows = 0;
 
     // Interleaved deposit and borrow operations
@@ -55,7 +55,7 @@ fn test_contention_interleaved_deposits_borrows() {
         // Every user deposits collateral
         let deposit_amount = 50_000 + (i as i128 * 100);
         client.deposit(&user, &collateral_asset, &deposit_amount);
-        expected_total_deposits += deposit_amount;
+        _expected_total_deposits += deposit_amount;
 
         // Alternate users borrow
         if i % 2 == 0 {

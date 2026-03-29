@@ -116,7 +116,7 @@ pub fn initialize_reserve_config(
     reserve_factor_bps: i128,
 ) -> Result<(), ReserveError> {
     // Validate reserve factor
-    if reserve_factor_bps < 0 || reserve_factor_bps > MAX_RESERVE_FACTOR_BPS {
+    if !(0..=MAX_RESERVE_FACTOR_BPS).contains(&reserve_factor_bps) {
         return Err(ReserveError::InvalidReserveFactor);
     }
 
@@ -169,7 +169,7 @@ pub fn set_reserve_factor(
     require_admin(env, &caller)?;
 
     // Validate reserve factor
-    if reserve_factor_bps < 0 || reserve_factor_bps > MAX_RESERVE_FACTOR_BPS {
+    if !(0..=MAX_RESERVE_FACTOR_BPS).contains(&reserve_factor_bps) {
         return Err(ReserveError::InvalidReserveFactor);
     }
 

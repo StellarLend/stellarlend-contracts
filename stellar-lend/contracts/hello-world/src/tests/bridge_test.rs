@@ -96,13 +96,14 @@ fn test_bridge_deposit_withdraw() {
         let config = AssetConfig {
             asset: Some(asset.clone()),
             collateral_factor: 7500,
-            borrow_factor: 8000,
+            liquidation_threshold: 8000,
             reserve_factor: 1000,
-            max_supply: 1_000_000,
-            max_borrow: 1_000_000,
+            max_supply: 0,
+            max_borrow: 0,
             can_collateralize: true,
             can_borrow: true,
-            price: 1_000_000,
+            borrow_factor: 7000,
+            price: 10_000_000,
             price_updated_at: env.ledger().timestamp(),
         };
         initialize_asset(&env, Some(asset.clone()), config).unwrap();

@@ -328,6 +328,7 @@ fn test_coverage_extremes() {
 
     // 3. Upgrade Branch Coverage
     let hash = BytesN::from_array(&env, &[1; 32]);
+    client.upgrade_init(&admin, &hash, &1);
     let pid = client.upgrade_propose(&admin, &hash, &100);
     let _ = client.upgrade_status(&pid);
 

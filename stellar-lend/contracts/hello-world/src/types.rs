@@ -42,6 +42,7 @@ pub enum ProposalType {
         Option<i128>,
         Option<bool>,
         Option<bool>,
+        Option<i128>,
     ),
     /// Pause/unpause operation
     PauseSwitch(Symbol, bool),
