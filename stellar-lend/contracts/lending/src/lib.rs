@@ -4,8 +4,8 @@
 #![allow(unexpected_cfgs)]
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
 
-mod constants;
 mod borrow;
+mod constants;
 mod cross_asset;
 mod deposit;
 mod flash_loan;
