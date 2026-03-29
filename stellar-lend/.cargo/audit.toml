@@ -13,7 +13,11 @@ ignore = [
     "RUSTSEC-2025-0009",  # ring - panics on AES (indexing_system ethers-rs dependency)
     "RUSTSEC-2025-0010",  # ring - unmaintained (indexing_system ethers-rs dependency)
     "RUSTSEC-2025-0057",  # fxhash - unmaintained (indexing_system ethers-rs dependency)
+    "RUSTSEC-2023-0071",  # rsa - Marvin Attack (no fixed upgrade available for 0.9.x)
 ]
+
+[yanked]
+enabled = false
 
 [database]
 fetch = true
