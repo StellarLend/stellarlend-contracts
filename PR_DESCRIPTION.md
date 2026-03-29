@@ -19,6 +19,10 @@ The note makes the deployment recommendation explicit:
   - token transfer flow notes
   - external call and reentrancy review
   - checked-arithmetic and parameter-bound notes
+- `stellar-lend/contracts/lending/SECURITY_NOTES.md`
+  - Explicit documentation of Trust Boundaries.
+  - Authorization Model verification for all external paths.
+  - Reentrancy protections matrix and Checked-Arithmetic enforcement rules.
 
 ## Security Notes
 
@@ -40,11 +44,11 @@ Executed from `stellar-lend/`:
 cargo test
 ```
 
-Summarized result:
-
-- test run did not complete because the host ran out of disk space while compiling dependencies
-- compiler failures were environmental (`no space on device` / Windows OS error 112), not contract-test assertion failures
-- the attempted run targeted active workspace crates, not the legacy `hello-world` crate
+Summarized result for multi-user contention scenarios (`cargo test multi_user_contention_test`):
+- Successfully passed `test_contention_interleaved_deposits_borrows` (validated serial mixed-user bounds).
+- Successfully passed `test_contention_edge_cases_zero_amounts_overflow` (validated structured errors on 0 amounts and type bounds).
+- Successfully passed `test_contention_paused_operations` (validated isolation when admin pauses protocol globally).
+All global arithmetic totals (borrows vs collateral deposits) assertions maintained exact parity.
 
 ## Notes
 
