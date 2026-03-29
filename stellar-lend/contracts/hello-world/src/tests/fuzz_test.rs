@@ -53,7 +53,7 @@ fn fuzz_round(seed: u64, num_users: usize, max_ops: usize) {
     
     // Only try to initialize if it's required (some tests just skip it or initialize implicitly).
     // In repay_test.rs, we see `client.initialize(&admin);` is used.
-    client.initialize(&admin);
+    client.initialize_ca(&admin);
 
     let native_asset_addr = env.register_stellar_asset_contract(admin.clone());
     env.as_contract(&contract_id, || {
@@ -85,7 +85,7 @@ fn fuzz_round(seed: u64, num_users: usize, max_ops: usize) {
         match op {
             0 => { // deposit
                 let amount = (rng.range(1, 1000) as i128) * scale;
-                let _ = client.try_deposit_collateral(user, &None, &amount);
+                let _ = client.try_ca_deposit_collateral(user, &None, &amount);
             }
             1 => { // borrow
                 let amount = (rng.range(1, 500) as i128) * scale;
@@ -97,7 +97,7 @@ fn fuzz_round(seed: u64, num_users: usize, max_ops: usize) {
             }
             3 => { // withdraw
                 let amount = (rng.range(1, 500) as i128) * scale;
-                let _ = client.try_withdraw_collateral(user, &None, &amount);
+                let _ = client.try_ca_withdraw_collateral(user, &None, &amount);
             }
             _ => {}
         }
@@ -106,7 +106,7 @@ fn fuzz_round(seed: u64, num_users: usize, max_ops: usize) {
         if rng.range(0, 4) == 0 {
             env.ledger().with_mut(|li| {
                 li.timestamp += rng.range(60, 86400 * 7); // up to 1 week
-                li.sequence += 1;
+                li.sequence_number += 1;
             });
         }
         

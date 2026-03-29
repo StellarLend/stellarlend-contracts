@@ -13,7 +13,6 @@ fn create_test_env() -> Env {
 fn setup_protocol<'a>(env: &'a Env, admin: &'a Address) -> HelloContractClient<'a> {
     let contract_id = env.register(HelloContract, ());
     let client = HelloContractClient::new(env, &contract_id);
-    client.initialize(admin);
     client.initialize_ca(admin);
     client
 }
@@ -54,13 +53,13 @@ fn test_borrow_cap_enforcement() {
     client.initialize_asset(&Some(usdc.clone()), &config);
 
     // User 1 deposits collateral (Native XLM)
-    client.deposit_collateral(&user1, &None, &5000);
+    client.ca_deposit_collateral(&user1, &None, &5000);
 
     // User 1 borrows 600 USDC (Within cap)
     client.cross_asset_borrow(&user1, &Some(usdc.clone()), &600);
 
     // User 2 deposits collateral
-    client.deposit_collateral(&user2, &None, &5000);
+    client.ca_deposit_collateral(&user2, &None, &5000);
 
     // User 2 tries to borrow 500 USDC (Would exceed cap: 600 + 500 = 1100 > 1000)
     let result = client.try_cross_asset_borrow(&user2, &Some(usdc.clone()), &500);
@@ -83,7 +82,7 @@ fn test_borrow_cap_update_via_admin() {
     let config = create_asset_config(&env, Some(usdc.clone()), 1_0000000, 500);
     client.initialize_asset(&Some(usdc.clone()), &config);
 
-    client.deposit_collateral(&user, &None, &5000);
+    client.ca_deposit_collateral(&user, &None, &5000);
 
     // Borrow fails at 600
     assert!(client

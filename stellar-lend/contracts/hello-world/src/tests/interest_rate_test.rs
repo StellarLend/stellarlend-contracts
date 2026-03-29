@@ -40,7 +40,7 @@ fn setup_contract_with_admin(env: &Env) -> (Address, Address, HelloContractClien
     let contract_id = env.register(HelloContract, ());
     let client = HelloContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
-    client.initialize(&admin);
+    client.initialize_ca(&admin);
     (contract_id, admin, client)
 }
 
