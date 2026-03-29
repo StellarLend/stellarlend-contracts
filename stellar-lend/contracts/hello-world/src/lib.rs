@@ -2,6 +2,9 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, Map, Symbol, Vec,
+};
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, Symbol, Vec};
 use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, Map, Symbol, Vec};
 
@@ -110,9 +113,6 @@ impl HelloContract {
 
         Ok(())
     }
-
-
-
 
     /// Transfer super admin rights.
     pub fn transfer_admin(
@@ -348,7 +348,6 @@ impl HelloContract {
     ) -> Result<(), RiskManagementError> {
         risk_management::set_emergency_pause(&env, admin, paused)
     }
-
 
     /// Get minimum collateral ratio.
     /// Get a read-only configuration snapshot of the protocol
@@ -1010,7 +1009,7 @@ impl HelloContract {
             expires_at,
         )
     }
-    
+
     /// Create a new proposal (alias for backward compatibility).
     pub fn create_proposal(
         env: Env,

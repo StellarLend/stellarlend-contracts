@@ -1,3 +1,9 @@
+<<<<<<< HEAD
+=======
+#![cfg(not(tarpaulin_include))]
+#![allow(unexpected_cfgs)]
+
+>>>>>>> 3c70e89 (style: fix format errors in the contract)
 //! Reentrancy protection for same-transaction nested calls.
 //!
 //! Soroban executes contract invocations synchronously within a single invocation tree. A

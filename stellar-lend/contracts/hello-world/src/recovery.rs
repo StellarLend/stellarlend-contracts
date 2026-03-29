@@ -1,19 +1,19 @@
 #![allow(unused)]
 use soroban_sdk::{Address, Env, Vec};
 
+use crate::errors::GovernanceError;
 use crate::governance::{
     emit_guardian_added_event, emit_guardian_removed_event, emit_recovery_approved_event,
     emit_recovery_executed_event, emit_recovery_started_event,
 };
-use crate::errors::GovernanceError;
 use crate::storage::GovernanceDataKey;
 use crate::types::RecoveryRequest;
 
 const DEFAULT_RECOVERY_PERIOD: u64 = 3 * 24 * 60 * 60;
 
 fn require_multisig_admin(env: &Env, caller: &Address) -> Result<(), GovernanceError> {
-    let config = crate::governance::get_multisig_config(env)
-        .ok_or(GovernanceError::NotInitialized)?;
+    let config =
+        crate::governance::get_multisig_config(env).ok_or(GovernanceError::NotInitialized)?;
     if !config.admins.contains(caller.clone()) {
         return Err(GovernanceError::Unauthorized);
     }
@@ -277,8 +277,8 @@ pub fn execute_recovery(env: &Env, executor: Address) -> Result<(), GovernanceEr
         return Err(GovernanceError::InsufficientApprovals);
     }
 
-    let mut config = crate::governance::get_multisig_config(env)
-        .ok_or(GovernanceError::NotInitialized)?;
+    let mut config =
+        crate::governance::get_multisig_config(env).ok_or(GovernanceError::NotInitialized)?;
 
     let mut new_admins = Vec::new(env);
     for a in config.admins.iter() {
@@ -287,7 +287,7 @@ pub fn execute_recovery(env: &Env, executor: Address) -> Result<(), GovernanceEr
         }
     }
     new_admins.push_back(recovery.new_admin.clone());
-    
+
     config.admins = new_admins;
     env.storage()
         .instance()

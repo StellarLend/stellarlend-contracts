@@ -50,7 +50,13 @@ fn setup(env: &Env) -> (Address, Address, HelloContractClient<'_>) {
 }
 
 /// Directly write a price feed with a custom timestamp to simulate staleness
-fn write_stale_feed(env: &Env, contract_id: &Address, asset: &Address, price: i128, timestamp: u64) {
+fn write_stale_feed(
+    env: &Env,
+    contract_id: &Address,
+    asset: &Address,
+    price: i128,
+    timestamp: u64,
+) {
     env.as_contract(contract_id, || {
         let key = OracleDataKey::PriceFeed(asset.clone());
         let oracle = Address::generate(env);
@@ -241,7 +247,13 @@ fn test_fallback_used_when_primary_missing() {
 
     // No primary price set — update via fallback oracle directly
     let fallback_price = 99_000_000i128;
-    client.update_price_feed(&fallback_oracle, &asset, &fallback_price, &8, &fallback_oracle);
+    client.update_price_feed(
+        &fallback_oracle,
+        &asset,
+        &fallback_price,
+        &8,
+        &fallback_oracle,
+    );
 
     let price = client.get_price(&asset);
     assert_eq!(price, fallback_price);
@@ -268,7 +280,13 @@ fn test_fallback_used_when_primary_stale() {
 
     // Submit fresh fallback price
     let fallback_price = 102_000_000i128;
-    client.update_price_feed(&fallback_oracle, &asset, &fallback_price, &8, &fallback_oracle);
+    client.update_price_feed(
+        &fallback_oracle,
+        &asset,
+        &fallback_price,
+        &8,
+        &fallback_oracle,
+    );
 
     let price = client.get_price(&asset);
     assert_eq!(price, fallback_price);
@@ -416,7 +434,13 @@ fn test_missing_primary_uses_fallback() {
     client.set_fallback_oracle(&admin, &asset, &fallback_oracle);
 
     let fallback_price = 88_000_000i128;
-    client.update_price_feed(&fallback_oracle, &asset, &fallback_price, &8, &fallback_oracle);
+    client.update_price_feed(
+        &fallback_oracle,
+        &asset,
+        &fallback_price,
+        &8,
+        &fallback_oracle,
+    );
 
     let price = client.get_price(&asset);
     assert_eq!(price, fallback_price);

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, String, Symbol, Vec, Val};
+use soroban_sdk::{contracttype, Address, Bytes, String, Symbol, Val, Vec};
 
 // ========================================================================
 // Proposal Types

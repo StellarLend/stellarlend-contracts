@@ -258,7 +258,7 @@ pub fn repay_debt(
         .checked_sub(interest_paid)
         .ok_or(RepayError::Overflow)?;
 
-    // Handle asset transfer - user pays the contract 
+    // Handle asset transfer - user pays the contract
     // Uses standardized SRC-20 transfer format requiring pre-authorization
     #[cfg(not(test))]
     {
@@ -281,11 +281,8 @@ pub fn repay_debt(
         .borrow_interest
         .checked_sub(interest_paid)
         .unwrap_or(0);
-    
-    position.debt = position
-        .debt
-        .checked_sub(principal_paid)
-        .unwrap_or(0);
+
+    position.debt = position.debt.checked_sub(principal_paid).unwrap_or(0);
 
     position.last_accrual_time = timestamp;
 
@@ -299,7 +296,7 @@ pub fn repay_debt(
             .ok_or(RepayError::Overflow)?
             .checked_div(10000)
             .unwrap_or(0); // Floor rounding bounds protocol take to >= 0
-            
+
         if reserve_amount > 0 {
             let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
             let current_reserve = env
@@ -318,7 +315,7 @@ pub fn repay_debt(
 
     update_user_analytics_repay(env, &user, repay_amount, timestamp)?;
     update_protocol_analytics_repay(env, repay_amount)?;
-    
+
     // Add to activity log tracking for metrics
     add_activity_log(
         env,
@@ -352,7 +349,7 @@ pub fn repay_debt(
         .debt
         .checked_add(position.borrow_interest)
         .unwrap_or(0);
-        
+
     Ok((remaining_debt, interest_paid, principal_paid))
 }
 

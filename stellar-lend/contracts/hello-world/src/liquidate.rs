@@ -1,19 +1,20 @@
 #![allow(unused)]
 use crate::events::{emit_liquidation, LiquidationEvent};
-use soroban_sdk::{contracterror, Address, Env, IntoVal, Map, Symbol, Val, Vec, I256, token};
 use soroban_sdk::token::Client as TokenClient;
+use soroban_sdk::{contracterror, token, Address, Env, IntoVal, Map, Symbol, Val, Vec, I256};
 
 use crate::deposit::{
     add_activity_log, emit_analytics_updated_event, emit_position_updated_event,
-    emit_user_activity_tracked_event, AssetParams, DepositDataKey,
-    Position, ProtocolAnalytics, UserAnalytics,
+    emit_user_activity_tracked_event, AssetParams, DepositDataKey, Position, ProtocolAnalytics,
+    UserAnalytics,
 };
 use crate::oracle::get_price;
 use crate::risk_management::{
     is_emergency_paused, is_operation_paused, require_operation_not_paused, RiskManagementError,
 };
 use crate::risk_params::{
-    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount, get_risk_params,
+    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
+    get_risk_params,
 };
 
 /// Errors that can occur during liquidation operations
@@ -62,7 +63,11 @@ fn get_native_asset_address(env: &Env) -> Result<Address, LiquidationError> {
 }
 
 /// Fetch prices for both debt and collateral assets
-fn get_liquidation_prices(env: &Env, debt_asset: &Option<Address>, collateral_asset: &Option<Address>) -> Result<(i128, i128), LiquidationError> {
+fn get_liquidation_prices(
+    env: &Env,
+    debt_asset: &Option<Address>,
+    collateral_asset: &Option<Address>,
+) -> Result<(i128, i128), LiquidationError> {
     let d_price = if let Some(ref asset) = debt_asset {
         get_asset_price(env, asset)
     } else {
@@ -92,23 +97,26 @@ fn calculate_accrued_debt(env: &Env, position: &Position) -> Result<i128, Liquid
     let current_time = env.ledger().timestamp();
     let principal = position.debt;
     let stored_interest = position.borrow_interest;
-    
+
     if principal == 0 {
         return Ok(stored_interest);
     }
     if current_time <= position.last_accrual_time {
-        return Ok(principal.checked_add(stored_interest).ok_or(LiquidationError::Overflow)?);
+        return Ok(principal
+            .checked_add(stored_interest)
+            .ok_or(LiquidationError::Overflow)?);
     }
 
-    let rate_bps = crate::interest_rate::calculate_borrow_rate(env)
-        .map_err(|_| LiquidationError::Overflow)?;
-    
+    let rate_bps =
+        crate::interest_rate::calculate_borrow_rate(env).map_err(|_| LiquidationError::Overflow)?;
+
     let delta_interest = crate::interest_rate::calculate_accrued_interest(
         principal,
         position.last_accrual_time,
         current_time,
         rate_bps,
-    ).map_err(|_| LiquidationError::Overflow)?;
+    )
+    .map_err(|_| LiquidationError::Overflow)?;
 
     principal
         .checked_add(stored_interest)
@@ -118,7 +126,7 @@ fn calculate_accrued_debt(env: &Env, position: &Position) -> Result<i128, Liquid
 
 /// # Liquidation: Debt Repayment and Collateral Seizure
 ///
-/// This function allows a liquidator to repay a portion of a borrower's undercollateralized debt 
+/// This function allows a liquidator to repay a portion of a borrower's undercollateralized debt
 /// in exchange for a discounted portion of their collateral.
 ///
 /// # Logic and Economics
@@ -154,7 +162,7 @@ pub fn liquidate(
     if debt_amount <= 0 {
         return Err(LiquidationError::InvalidAmount);
     }
-    
+
     // Explicit authorization check for liquidator
     liquidator.require_auth();
 
@@ -168,25 +176,30 @@ pub fn liquidate(
 
     // 3. Load Borrower State
     let position_key = DepositDataKey::Position(borrower.clone());
-    let mut position = env.storage().persistent()
+    let mut position = env
+        .storage()
+        .persistent()
         .get::<DepositDataKey, Position>(&position_key)
         .ok_or(LiquidationError::NotLiquidatable)?;
 
     // 4. Load Collateral State
     let collateral_key = DepositDataKey::CollateralBalance(borrower.clone());
-    let borrower_collateral = env.storage().persistent()
+    let borrower_collateral = env
+        .storage()
+        .persistent()
         .get::<DepositDataKey, i128>(&collateral_key)
         .unwrap_or(0);
 
     // 5. Fetch Prices and Decimals (Interactions - allowed here as they don't modify state)
-    let (debt_price, collateral_price) = get_liquidation_prices(env, &debt_asset, &collateral_asset)?;
+    let (debt_price, collateral_price) =
+        get_liquidation_prices(env, &debt_asset, &collateral_asset)?;
     let debt_decimals = get_asset_decimals(env, &debt_asset);
     let collateral_decimals = get_asset_decimals(env, &collateral_asset);
 
     // 6. ENFORCE HEALTH AND CLOSE FACTOR
     // Accrue debt up to current timestamp for accurate health assessment
     let current_total_debt = calculate_accrued_debt(env, &position)?;
-    
+
     if !can_be_liquidated(env, borrower_collateral, current_total_debt).unwrap_or(false) {
         return Err(LiquidationError::NotLiquidatable);
     }
@@ -201,10 +214,14 @@ pub fn liquidate(
 
     // 7. CALCULATE SEIZURE WITH PRECISION MATH
     // math: amount * price_debt * (10000 + incentive) * 10^col_decimals / (price_col * 10000 * 10^debt_decimals)
-    
-    let incentive_bps = get_risk_params(env).map(|p| p.liquidation_incentive).unwrap_or(1000);
-    let bonus_multiplier = 10000i128.checked_add(incentive_bps).ok_or(LiquidationError::Overflow)?;
-    
+
+    let incentive_bps = get_risk_params(env)
+        .map(|p| p.liquidation_incentive)
+        .unwrap_or(1000);
+    let bonus_multiplier = 10000i128
+        .checked_add(incentive_bps)
+        .ok_or(LiquidationError::Overflow)?;
+
     let amount_256 = I256::from_i128(env, actual_debt_liquidated);
     let debt_price_256 = I256::from_i128(env, debt_price);
     let bonus_multiplier_256 = I256::from_i128(env, bonus_multiplier);
@@ -233,68 +250,106 @@ pub fn liquidate(
 
     // Cap seizure at available collateral
     collateral_seized = collateral_seized.min(borrower_collateral);
-    
-    let incentive_amount = get_liquidation_incentive_amount(env, actual_debt_liquidated)
-        .unwrap_or(0);
+
+    let incentive_amount =
+        get_liquidation_incentive_amount(env, actual_debt_liquidated).unwrap_or(0);
 
     // 8. UPDATE STORAGE (EFFECTS)
-    
+
     // Resolve Interest and Debt (mirroring repay_debt logic)
     // Interest is paid first, then principal.
-    let total_interest_to_repay = position.borrow_interest.checked_add(
-        current_total_debt.checked_sub(position.debt + position.borrow_interest).unwrap_or(0)
-    ).ok_or(LiquidationError::Overflow)?;
+    let total_interest_to_repay = position
+        .borrow_interest
+        .checked_add(
+            current_total_debt
+                .checked_sub(position.debt + position.borrow_interest)
+                .unwrap_or(0),
+        )
+        .ok_or(LiquidationError::Overflow)?;
 
     if actual_debt_liquidated <= total_interest_to_repay {
         position.borrow_interest = total_interest_to_repay - actual_debt_liquidated;
     } else {
         let remaining_to_principal = actual_debt_liquidated - total_interest_to_repay;
         position.borrow_interest = 0;
-        position.debt = position.debt.checked_sub(remaining_to_principal).unwrap_or(0);
+        position.debt = position
+            .debt
+            .checked_sub(remaining_to_principal)
+            .unwrap_or(0);
     }
-    
-    position.collateral = borrower_collateral.checked_sub(collateral_seized).unwrap_or(0);
+
+    position.collateral = borrower_collateral
+        .checked_sub(collateral_seized)
+        .unwrap_or(0);
     position.last_accrual_time = env.ledger().timestamp();
 
     env.storage().persistent().set(&position_key, &position);
-    env.storage().persistent().set(&collateral_key, &position.collateral);
+    env.storage()
+        .persistent()
+        .set(&collateral_key, &position.collateral);
 
     update_protocol_analytics(env, actual_debt_liquidated, collateral_seized)
         .map_err(|_| LiquidationError::Overflow)?;
 
     // 9. EXTERNAL INTERACTIONS (TRANSFERS)
     // Transfers are performed LAST to follow CEI pattern
-    
+
     let debt_addr = match &debt_asset {
         Some(ref addr) => addr.clone(),
         None => get_native_asset_address(env)?,
     };
     let debt_client = TokenClient::new(env, &debt_addr);
-    debt_client.transfer_from(&env.current_contract_address(), &liquidator, &env.current_contract_address(), &actual_debt_liquidated);
+    debt_client.transfer_from(
+        &env.current_contract_address(),
+        &liquidator,
+        &env.current_contract_address(),
+        &actual_debt_liquidated,
+    );
 
     let col_addr = match &collateral_asset {
         Some(ref addr) => addr.clone(),
         None => get_native_asset_address(env)?,
     };
     let col_client = TokenClient::new(env, &col_addr);
-    col_client.transfer(&env.current_contract_address(), &liquidator, &collateral_seized);
+    col_client.transfer(
+        &env.current_contract_address(),
+        &liquidator,
+        &collateral_seized,
+    );
 
     // 10. EMIT EVENTS
-    emit_liquidation(env, LiquidationEvent {
-        liquidator: liquidator.clone(),
-        borrower: borrower.clone(),
-        debt_asset: debt_asset.clone(),
-        collateral_asset,
-        debt_liquidated: actual_debt_liquidated,
-        collateral_seized,
-        incentive_amount,
-        debt_price,
-        collateral_price,
-        timestamp: position.last_accrual_time,
-    });
-    
-    emit_position_updated_event(env, &borrower, &position, Symbol::new(env, "liquidate"), position.last_accrual_time);
-    add_activity_log(env, &borrower, Symbol::new(env, "liquidate"), actual_debt_liquidated, debt_asset.clone(), position.last_accrual_time).ok();
+    emit_liquidation(
+        env,
+        LiquidationEvent {
+            liquidator: liquidator.clone(),
+            borrower: borrower.clone(),
+            debt_asset: debt_asset.clone(),
+            collateral_asset,
+            debt_liquidated: actual_debt_liquidated,
+            collateral_seized,
+            incentive_amount,
+            debt_price,
+            collateral_price,
+            timestamp: position.last_accrual_time,
+        },
+    );
+
+    emit_position_updated_event(
+        env,
+        &borrower,
+        &position,
+        Symbol::new(env, "liquidate"),
+        position.last_accrual_time,
+    );
+    add_activity_log(
+        env,
+        &borrower,
+        Symbol::new(env, "liquidate"),
+        actual_debt_liquidated,
+        debt_asset.clone(),
+        position.last_accrual_time,
+    )
+    .ok();
 
     Ok((actual_debt_liquidated, collateral_seized, incentive_amount))
 }
@@ -316,8 +371,14 @@ fn update_protocol_analytics(
             total_value_locked: 0,
         });
 
-    analytics.total_borrows = analytics.total_borrows.checked_sub(debt_liquidated).unwrap_or(0);
-    analytics.total_value_locked = analytics.total_value_locked.checked_sub(collateral_seized).unwrap_or(0);
+    analytics.total_borrows = analytics
+        .total_borrows
+        .checked_sub(debt_liquidated)
+        .unwrap_or(0);
+    analytics.total_value_locked = analytics
+        .total_value_locked
+        .checked_sub(collateral_seized)
+        .unwrap_or(0);
 
     env.storage().persistent().set(&analytics_key, &analytics);
     Ok(())

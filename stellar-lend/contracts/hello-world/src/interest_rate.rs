@@ -216,7 +216,11 @@ pub fn initialize_interest_rate_config(
 ) -> Result<(), InterestRateError> {
     let config_key = InterestRateDataKey::InterestRateConfig;
 
-    if env.storage().persistent().has::<InterestRateDataKey>(&config_key) {
+    if env
+        .storage()
+        .persistent()
+        .has::<InterestRateDataKey>(&config_key)
+    {
         return Err(InterestRateError::AlreadyInitialized);
     }
 

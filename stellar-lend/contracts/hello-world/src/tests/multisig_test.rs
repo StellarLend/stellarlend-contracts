@@ -14,7 +14,7 @@ fn setup(env: &Env) -> (Address, Address) {
     env.mock_all_auths();
     let contract_id = env.register(HelloContract, ());
     let admin = Address::generate(env);
-    
+
     let client = HelloContractClient::new(env, &contract_id);
     client.initialize(&admin);
 
@@ -31,12 +31,17 @@ fn setup(env: &Env) -> (Address, Address) {
             None,
             None,
             None,
+<<<<<<< HEAD
         ).unwrap();
 =======
         crate::governance::initialize(&env, admin.clone()).unwrap();
 >>>>>>> 43f305e (test: implement soroban env fuzz tests)
+=======
+        )
+        .unwrap();
+>>>>>>> 3c70e89 (style: fix format errors in the contract)
     });
-    
+
     (contract_id, admin)
 }
 

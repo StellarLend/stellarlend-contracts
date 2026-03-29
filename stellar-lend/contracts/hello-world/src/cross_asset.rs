@@ -1212,7 +1212,11 @@ fn get_total_supply(env: &Env, asset_key: &AssetKey) -> i128 {
     supplies.get(asset_key.clone()).unwrap_or(0)
 }
 
-fn update_total_supply(env: &Env, asset_key: &AssetKey, delta: i128) -> Result<(), CrossAssetError> {
+fn update_total_supply(
+    env: &Env,
+    asset_key: &AssetKey,
+    delta: i128,
+) -> Result<(), CrossAssetError> {
     let mut supplies: Map<AssetKey, i128> = env
         .storage()
         .persistent()
@@ -1240,7 +1244,11 @@ fn get_total_borrow(env: &Env, asset_key: &AssetKey) -> i128 {
     borrows.get(asset_key.clone()).unwrap_or(0)
 }
 
-fn update_total_borrow(env: &Env, asset_key: &AssetKey, delta: i128) -> Result<(), CrossAssetError> {
+fn update_total_borrow(
+    env: &Env,
+    asset_key: &AssetKey,
+    delta: i128,
+) -> Result<(), CrossAssetError> {
     let mut borrows: Map<AssetKey, i128> = env
         .storage()
         .persistent()

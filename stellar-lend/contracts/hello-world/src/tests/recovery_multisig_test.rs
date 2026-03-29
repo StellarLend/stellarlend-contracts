@@ -17,6 +17,7 @@
 #![allow(unused_variables)]
 #![cfg(test)]
 
+use crate::errors::GovernanceError;
 use crate::governance::{
     approve_proposal, create_proposal, execute_multisig_proposal, get_multisig_admins,
     get_multisig_config, get_multisig_threshold, get_proposal, get_proposal_approvals,
@@ -28,9 +29,8 @@ use crate::recovery::{
     get_recovery_approvals, get_recovery_request, remove_guardian, set_guardian_threshold,
     set_guardians, start_recovery,
 };
+use crate::types::{Proposal, ProposalStatus, ProposalType};
 use crate::{HelloContract, HelloContractClient};
-use crate::types::{ProposalStatus, ProposalType, Proposal};
-use crate::errors::GovernanceError;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env, String, Symbol, Vec,
@@ -50,7 +50,18 @@ fn setup() -> (Env, Address, Address) {
     client.initialize(&admin);
 
     env.as_contract(&contract_id, || {
-        initialize_governance(&env, admin.clone(), None, None, None, None, None, None, None).unwrap();
+        initialize_governance(
+            &env,
+            admin.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
     });
 
     (env, contract_id, admin)

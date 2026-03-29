@@ -115,7 +115,9 @@ fn reentrancy_guard_rejects_nested_entry_and_unlocks_after_drop() {
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
 
-        let guard = ReentrancyGuard::new(&env).map_err(|e| panic!("failed to create guard: {}", e)).unwrap();
+        let guard = ReentrancyGuard::new(&env)
+            .map_err(|e| panic!("failed to create guard: {}", e))
+            .unwrap();
         assert!(is_locked(&env));
 
         assert_eq!(

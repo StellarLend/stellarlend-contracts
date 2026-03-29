@@ -10,8 +10,13 @@ use crate::governance::{
     execute_multisig_proposal, get_multisig_admins, get_multisig_config, get_multisig_threshold, set_multisig_admins, set_multisig_threshold,
 };
 use crate::errors::GovernanceError;
+use crate::governance::{
+    create_proposal, execute_proposal_action, get_multisig_config, get_proposal,
+    get_proposal_approvals,
+};
 use crate::storage::GovernanceDataKey;
-use crate::types::{Proposal, ProposalStatus, ProposalType, MultisigConfig};
+use crate::types::{MultisigConfig, Proposal, ProposalStatus, ProposalType};
+use soroban_sdk::{Address, Env, String, Symbol, Vec};
 
 // ============================================================================
 // Admin Management
@@ -58,7 +63,9 @@ pub fn ms_set_admins(
     }
 
     let new_config = MultisigConfig { admins, threshold };
-    env.storage().instance().set(&GovernanceDataKey::MultisigConfig, &new_config);
+    env.storage()
+        .instance()
+        .set(&GovernanceDataKey::MultisigConfig, &new_config);
     Ok(())
 }
 
@@ -69,15 +76,17 @@ pub fn set_ms_threshold(env: &Env, caller: Address, threshold: u32) -> Result<()
     if !config.admins.contains(&caller) {
         return Err(GovernanceError::Unauthorized);
     }
-    
+
     if threshold == 0 || threshold > config.admins.len() as u32 {
         return Err(GovernanceError::InvalidMultisigConfig);
     }
-    
+
     let mut new_config = config;
     new_config.threshold = threshold;
-    
-    env.storage().instance().set(&GovernanceDataKey::MultisigConfig, &new_config);
+
+    env.storage()
+        .instance()
+        .set(&GovernanceDataKey::MultisigConfig, &new_config);
     Ok(())
 }
 
@@ -147,7 +156,10 @@ pub fn ms_approve(env: &Env, approver: Address, proposal_id: u64) -> Result<(), 
     }
 
     approvals.push_back(approver);
-    env.storage().persistent().set(&GovernanceDataKey::ProposalApprovals(proposal_id), &approvals);
+    env.storage().persistent().set(
+        &GovernanceDataKey::ProposalApprovals(proposal_id),
+        &approvals,
+    );
     Ok(())
 }
 
@@ -193,7 +205,9 @@ pub fn ms_execute(env: &Env, executor: Address, proposal_id: u64) -> Result<(), 
 
     // Transition state (Check-Effect-Interaction)
     proposal.status = ProposalStatus::Executed;
-    env.storage().persistent().set(&GovernanceDataKey::Proposal(proposal_id), &proposal);
+    env.storage()
+        .persistent()
+        .set(&GovernanceDataKey::Proposal(proposal_id), &proposal);
 
     // Execute the action via the shared dispatcher in governance.rs
     execute_proposal_action(env, &proposal.proposal_type)?;
@@ -211,7 +225,9 @@ pub fn get_ms_admins(env: &Env) -> Option<Vec<Address>> {
 
 /// Returns the multisig approval threshold.
 pub fn get_ms_threshold(env: &Env) -> u32 {
-    get_multisig_config(env).map(|config| config.threshold).unwrap_or(1)
+    get_multisig_config(env)
+        .map(|config| config.threshold)
+        .unwrap_or(1)
 }
 
 /// Returns a proposal by its ID.

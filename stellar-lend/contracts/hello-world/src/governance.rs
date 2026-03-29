@@ -721,7 +721,7 @@ pub fn execute_proposal(
         proposal.status = ProposalStatus::Queued;
         env.storage()
             .persistent()
-        .set(&GovernanceDataKey::Proposal(proposal_id), &proposal);
+            .set(&GovernanceDataKey::Proposal(proposal_id), &proposal);
         return exec_result;
     }
 
@@ -741,7 +741,10 @@ pub fn execute_proposal(
 ///
 /// `GenericAction` invokes an arbitrary contract — the target is fully
 /// untrusted. The reentrancy guard in `execute_proposal` covers re-entry.
-pub(crate) fn execute_proposal_action(env: &Env, proposal_type: &ProposalType) -> Result<(), GovernanceError> {
+pub(crate) fn execute_proposal_action(
+    env: &Env,
+    proposal_type: &ProposalType,
+) -> Result<(), GovernanceError> {
     match proposal_type {
         ProposalType::MinCollateralRatio(val) => {
             crate::risk_params::set_risk_params(env, Some(*val), None, None, None)
@@ -1630,12 +1633,12 @@ mod tests {
         client.gov_initialize(
             &admin,
             &token,
-            &Some(259_200),  // 3 days voting
-            &Some(86_400),   // 1 day execution delay
-            &Some(400),      // 4% quorum
-            &Some(100),      // 100 token threshold
-            &Some(604_800),  // 7 day timelock
-            &Some(5_000),    // 50% threshold
+            &Some(259_200), // 3 days voting
+            &Some(86_400),  // 1 day execution delay
+            &Some(400),     // 4% quorum
+            &Some(100),     // 100 token threshold
+            &Some(604_800), // 7 day timelock
+            &Some(5_000),   // 50% threshold
         );
         // Leak env to get 'static lifetime for tests
         let env: &'static Env = Box::leak(Box::new(env));
@@ -1669,16 +1672,8 @@ mod tests {
     #[test]
     fn test_initialize_double_init_fails() {
         let (env, admin, token, client) = setup();
-        let result = client.try_gov_initialize(
-            &admin,
-            &token,
-            &None,
-            &None,
-            &None,
-            &None,
-            &None,
-            &None,
-        );
+        let result =
+            client.try_gov_initialize(&admin, &token, &None, &None, &None, &None, &None, &None);
         assert!(result.is_err());
     }
 

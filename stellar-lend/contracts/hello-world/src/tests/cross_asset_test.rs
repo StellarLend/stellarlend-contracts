@@ -23,10 +23,10 @@ fn default_config(env: &Env) -> AssetConfig {
     AssetConfig {
         asset: None,
         collateral_factor: 7500,       // 75% LTV
-        liquidation_threshold: 8000,    // 80%
-        reserve_factor: 1000,           // 10%
-        max_supply: 1_000_000_0000000,  // 1M (7 decimals)
-        max_borrow: 500_000_0000000,    // 500K
+        liquidation_threshold: 8000,   // 80%
+        reserve_factor: 1000,          // 10%
+        max_supply: 1_000_000_0000000, // 1M (7 decimals)
+        max_borrow: 500_000_0000000,   // 500K
         can_collateralize: true,
         can_borrow: true,
         price: 10_000_000, // $1.00 (7 decimals)
@@ -38,9 +38,9 @@ fn default_config(env: &Env) -> AssetConfig {
 fn token_config(env: &Env, addr: &Address) -> AssetConfig {
     AssetConfig {
         asset: Some(addr.clone()),
-        collateral_factor: 6000,        // 60% LTV
-        liquidation_threshold: 7000,    // 70%
-        reserve_factor: 2000,           // 20%
+        collateral_factor: 6000,     // 60% LTV
+        liquidation_threshold: 7000, // 70%
+        reserve_factor: 2000,        // 20%
         max_supply: 500_000_0000000,
         max_borrow: 250_000_0000000,
         can_collateralize: true,
@@ -222,8 +222,8 @@ fn test_update_asset_config_success() {
 
     client.update_asset_config(
         &None,
-        &Some(6000),  // new LTV
-        &Some(7000),  // new threshold
+        &Some(6000), // new LTV
+        &Some(7000), // new threshold
         &None,
         &None,
         &None,
@@ -245,15 +245,7 @@ fn test_update_asset_config_partial_update() {
     client.initialize_asset(&None, &config);
 
     // Only update can_borrow
-    client.update_asset_config(
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &Some(false),
-    );
+    client.update_asset_config(&None, &None, &None, &None, &None, &None, &Some(false));
 
     let fetched = client.get_asset_config(&None);
     assert_eq!(fetched.can_borrow, false);
@@ -270,8 +262,8 @@ fn test_update_asset_config_ltv_above_threshold_fails() {
     // Try to set LTV > current threshold (8000)
     client.update_asset_config(
         &None,
-        &Some(9000),  // LTV 90% > threshold 80%
-        &None,         // Keep threshold at 8000
+        &Some(9000), // LTV 90% > threshold 80%
+        &None,       // Keep threshold at 8000
         &None,
         &None,
         &None,
@@ -302,15 +294,7 @@ fn test_update_asset_config_out_of_bounds_fails() {
 fn test_update_asset_config_unconfigured_asset_fails() {
     let (_env, client, _admin) = setup();
     // Asset not initialized
-    client.update_asset_config(
-        &None,
-        &Some(5000),
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
+    client.update_asset_config(&None, &Some(5000), &None, &None, &None, &None, &None);
 }
 
 // ============================================================================
@@ -1139,15 +1123,7 @@ fn test_config_update_preserves_price() {
 
     client.update_asset_price(&None, &50_000_000); // $5.00
 
-    client.update_asset_config(
-        &None,
-        &Some(5000),
-        &Some(6000),
-        &None,
-        &None,
-        &None,
-        &None,
-    );
+    client.update_asset_config(&None, &Some(5000), &Some(6000), &None, &None, &None, &None);
 
     let fetched = client.get_asset_config(&None);
     assert_eq!(fetched.price, 50_000_000); // Price preserved

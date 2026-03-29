@@ -107,8 +107,12 @@ impl ReentrantReceiver {
         _fee: i128,
         _params: Bytes,
     ) -> bool {
-        LendingContractClient::new(&env, &initiator)
-            .flash_loan(&env.current_contract_address(), &asset, &100, &Bytes::new(&env));
+        LendingContractClient::new(&env, &initiator).flash_loan(
+            &env.current_contract_address(),
+            &asset,
+            &100,
+            &Bytes::new(&env),
+        );
         true
     }
 }
@@ -246,8 +250,13 @@ fn test_repay_one_short_rejected() {
 
     let amount: i128 = 10_000;
     let fee: i128 = 100; // 1% of 10_000
-    // Repay principal + fee − 1
-    client.flash_loan(&receiver, &asset, &amount, &encode_repay(&env, amount + fee - 1));
+                         // Repay principal + fee − 1
+    client.flash_loan(
+        &receiver,
+        &asset,
+        &amount,
+        &encode_repay(&env, amount + fee - 1),
+    );
 }
 
 // ─── 9. Reentrancy ────────────────────────────────────────────────────────────
