@@ -26,6 +26,7 @@ pub enum BorrowError {
     AssetNotSupported = 7,
     BelowMinimumBorrow = 8,
     RepayAmountTooHigh = 9,
+    Reentrancy = 10,
 }
 
 #[contracttype]

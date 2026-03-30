@@ -3,8 +3,9 @@
 //! Simulating many users depositing/borrowing in interleaved order within
 //! the same ledger context to validate security, bounds, and reentrancy protections.
 
-use super::*;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::*;
+use crate::testutils::create_token;
+use soroban_sdk::{testutils::Address as _, token, Address, Env, Vec};
 
 fn setup_contention_test(
     env: &Env,
@@ -13,19 +14,21 @@ fn setup_contention_test(
     Address, // admin
     Address, // asset (debt)
     Address, // collateral_asset
+    token::StellarAssetClient<'_>, // asset_client
+    token::StellarAssetClient<'_>, // collateral_client
 ) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);
 
     let admin = Address::generate(env);
-    let asset = Address::generate(env);
-    let collateral_asset = Address::generate(env);
+    let (asset, asset_client) = create_token(env, &admin);
+    let (collateral_asset, collateral_client) = create_token(env, &admin);
 
     client.initialize(&admin, &10_000_000_000, &100);
-    client.initialize_deposit_settings(&10_000_000_000, &100);
+    client.initialize_deposit_settings(&10_000_000_000, &1000);
     client.initialize_withdraw_settings(&100);
 
-    (client, admin, asset, collateral_asset)
+    (client, admin, asset, collateral_asset, asset_client, collateral_client)
 }
 
 fn generate_users(env: &Env, count: u32) -> Vec<Address> {
@@ -40,20 +43,19 @@ fn generate_users(env: &Env, count: u32) -> Vec<Address> {
 fn test_contention_interleaved_deposits_borrows() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, asset, collateral_asset) = setup_contention_test(&env);
+    let (client, _admin, asset, collateral_asset, _, collateral_client) = setup_contention_test(&env);
 
     let num_users = 50;
     let users = generate_users(&env, num_users);
 
-    let mut _expected_total_deposits = 0;
-    let mut expected_total_borrows = 0;
+    let mut _expected_total_deposits = 0i128;
+    let mut expected_total_borrows = 0i128;
 
     // Interleaved deposit and borrow operations
     for (i, user) in users.iter().enumerate() {
-        // Even indices deposit first, odd indices borrow first (if they have collateral)
-
         // Every user deposits collateral
-        let deposit_amount = 50_000 + (i as i128 * 100);
+        let deposit_amount = 500_000 + (i as i128 * 100);
+        collateral_client.mint(&user, &deposit_amount);
         client.deposit(&user, &collateral_asset, &deposit_amount);
         _expected_total_deposits += deposit_amount;
 
@@ -76,7 +78,7 @@ fn test_contention_interleaved_deposits_borrows() {
     let mut actual_debt = 0i128;
     for (i, user) in users.iter().enumerate() {
         let collat = client.get_user_collateral_deposit(&user, &collateral_asset);
-        assert_eq!(collat.amount, 50_000 + (i as i128 * 100));
+        assert_eq!(collat.amount, 500_000 + (i as i128 * 100));
 
         let debt = client.get_user_debt(&user);
         if i % 2 == 0 {
@@ -94,7 +96,7 @@ fn test_contention_interleaved_deposits_borrows() {
 fn test_contention_edge_cases_zero_amounts_overflow() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, asset, collateral_asset) = setup_contention_test(&env);
+    let (client, admin, asset, collateral_asset, asset_client, collateral_client) = setup_contention_test(&env);
     let user = Address::generate(&env);
 
     // Zero amount deposit
@@ -102,11 +104,13 @@ fn test_contention_edge_cases_zero_amounts_overflow() {
     assert!(res_deposit.is_err());
 
     // Zero amount borrow
+    collateral_client.mint(&user, &100_000);
     client.deposit(&user, &collateral_asset, &100_000);
     let res_borrow = client.try_borrow(&user, &asset, &0, &collateral_asset, &0);
     assert!(res_borrow.is_err());
 
     // Max amount (overflow testing)
+    asset_client.mint(&user, &i128::MAX);
     let res_overflow_deposit = client.try_deposit(&user, &asset, &i128::MAX);
     assert!(res_overflow_deposit.is_err()); // Exceeds deposit cap
 }
@@ -115,17 +119,19 @@ fn test_contention_edge_cases_zero_amounts_overflow() {
 fn test_contention_paused_operations() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, asset, collateral_asset) = setup_contention_test(&env);
+    let (client, admin, asset, collateral_asset, _, collateral_client) = setup_contention_test(&env);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
 
+    collateral_client.mint(&user1, &50_000);
     client.deposit(&user1, &collateral_asset, &50_000);
 
     // Pause deposits
     client.set_deposit_paused(&true);
 
     // Trying to deposit while paused under contention scenario
+    collateral_client.mint(&user2, &50_000);
     let deposit_res = client.try_deposit(&user2, &collateral_asset, &50_000);
     assert!(deposit_res.is_err());
 

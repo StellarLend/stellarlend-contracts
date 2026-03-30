@@ -1,8 +1,9 @@
-use super::*;
+use crate::*;
+use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
-    Address, Env, FromVal, Symbol,
+    token, Address, Env, FromVal, Symbol,
 };
 
 /// Helper: register contract and return client
@@ -18,14 +19,16 @@ fn setup_env() -> (Env, LendingContractClient<'static>) {
 fn setup_with_deposit(
     _env: &Env,
     client: &LendingContractClient,
+    admin: &Address,
     user: &Address,
     asset: &Address,
+    asset_client: &token::StellarAssetClient,
     deposit_amount: i128,
 ) {
-    let admin = Address::generate(_env);
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&100);
+    asset_client.mint(user, &deposit_amount);
     client.deposit(user, asset, &deposit_amount);
 }
 
@@ -35,9 +38,10 @@ fn setup_with_deposit(
 fn test_withdraw_success() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     let remaining = client.withdraw(&user, &asset, &20_000);
     assert_eq!(remaining, 30_000);
@@ -50,9 +54,10 @@ fn test_withdraw_success() {
 fn test_withdraw_full_balance() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     let remaining = client.withdraw(&user, &asset, &50_000);
     assert_eq!(remaining, 0);
@@ -65,9 +70,10 @@ fn test_withdraw_full_balance() {
 fn test_withdraw_multiple_times() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 100_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 100_000);
 
     let r1 = client.withdraw(&user, &asset, &30_000);
     assert_eq!(r1, 70_000);
@@ -85,9 +91,10 @@ fn test_withdraw_multiple_times() {
 fn test_withdraw_invalid_amount_zero() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     let result = client.try_withdraw(&user, &asset, &0);
     assert_eq!(result, Err(Ok(WithdrawError::InvalidAmount)));
@@ -97,9 +104,10 @@ fn test_withdraw_invalid_amount_zero() {
 fn test_withdraw_invalid_amount_negative() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     let result = client.try_withdraw(&user, &asset, &-500);
     assert_eq!(result, Err(Ok(WithdrawError::InvalidAmount)));
@@ -109,12 +117,12 @@ fn test_withdraw_invalid_amount_negative() {
 fn test_withdraw_below_minimum() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&5000);
+    asset_client.mint(&user, &50_000);
     client.deposit(&user, &asset, &50_000);
 
     let result = client.try_withdraw(&user, &asset, &1000);
@@ -127,9 +135,10 @@ fn test_withdraw_below_minimum() {
 fn test_withdraw_insufficient_collateral() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 10_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 10_000);
 
     let result = client.try_withdraw(&user, &asset, &50_000);
     assert_eq!(result, Err(Ok(WithdrawError::InsufficientCollateral)));
@@ -139,9 +148,9 @@ fn test_withdraw_insufficient_collateral() {
 fn test_withdraw_no_deposit() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&100);
@@ -156,9 +165,10 @@ fn test_withdraw_no_deposit() {
 fn test_withdraw_paused() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
     client.set_withdraw_paused(&true);
 
     let result = client.try_withdraw(&user, &asset, &10_000);
@@ -169,9 +179,10 @@ fn test_withdraw_paused() {
 fn test_withdraw_pause_unpause() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     client.set_withdraw_paused(&true);
     let result = client.try_withdraw(&user, &asset, &10_000);
@@ -188,12 +199,13 @@ fn test_withdraw_pause_unpause() {
 fn test_withdraw_ratio_violation_with_debt() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let borrow_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
+    let (borrow_asset, _) = create_token(&env, &admin);
 
     // Deposit 100,000 collateral
-    setup_with_deposit(&env, &client, &user, &asset, 100_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 100_000);
 
     // Contract already initialized in setup_with_deposit
     client.borrow(&user, &borrow_asset, &10_000, &collateral_asset, &15_000);
@@ -207,12 +219,13 @@ fn test_withdraw_ratio_violation_with_debt() {
 fn test_withdraw_ratio_valid_with_debt() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let borrow_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
+    let (borrow_asset, _) = create_token(&env, &admin);
 
     // Deposit 100,000 collateral
-    setup_with_deposit(&env, &client, &user, &asset, 100_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 100_000);
 
     // Borrow 10,000 against 15,000 collateral
     client.borrow(&user, &borrow_asset, &10_000, &collateral_asset, &15_000);
@@ -226,12 +239,13 @@ fn test_withdraw_ratio_valid_with_debt() {
 fn test_withdraw_ratio_boundary_exact_150_percent() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let borrow_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
+    let (borrow_asset, _) = create_token(&env, &admin);
 
     // Deposit 100,000
-    setup_with_deposit(&env, &client, &user, &asset, 100_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 100_000);
 
     // Borrow 10,000 (min collateral = 10,000 * 1.5 = 15,000)
     client.borrow(&user, &borrow_asset, &10_000, &collateral_asset, &15_000);
@@ -247,12 +261,13 @@ fn test_withdraw_ratio_boundary_exact_150_percent() {
 fn test_withdraw_ratio_boundary_just_below() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let borrow_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (borrow_asset, _) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
 
     // Deposit 30,000
-    setup_with_deposit(&env, &client, &user, &asset, 30_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 30_000);
 
     // Borrow 10,000 (min collateral = 15,000)
     client.borrow(&user, &borrow_asset, &10_000, &collateral_asset, &15_000);
@@ -266,9 +281,10 @@ fn test_withdraw_ratio_boundary_just_below() {
 fn test_withdraw_no_debt_allows_full_withdrawal() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     // No borrow debt — full withdrawal allowed
     let remaining = client.withdraw(&user, &asset, &50_000);
@@ -281,12 +297,13 @@ fn test_withdraw_no_debt_allows_full_withdrawal() {
 fn test_withdraw_max_with_debt() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let borrow_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
+    let (borrow_asset, _) = create_token(&env, &admin);
 
     // Deposit 100,000
-    setup_with_deposit(&env, &client, &user, &asset, 100_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 100_000);
 
     // Borrow 10,000 (min collateral = 15,000)
     client.borrow(&user, &borrow_asset, &10_000, &collateral_asset, &15_000);
@@ -307,9 +324,11 @@ fn test_withdraw_updates_total_deposits() {
     let (env, client) = setup_env();
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user1, &asset, 60_000);
+    setup_with_deposit(&env, &client, &admin, &user1, &asset, &asset_client, 60_000);
+    asset_client.mint(&user2, &40_000);
     client.deposit(&user2, &asset, &40_000);
 
     // Total deposits = 100,000
@@ -331,9 +350,11 @@ fn test_withdraw_separate_users() {
     let (env, client) = setup_env();
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user1, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user1, &asset, &asset_client, 50_000);
+    asset_client.mint(&user2, &30_000);
     client.deposit(&user2, &asset, &30_000);
 
     client.withdraw(&user1, &asset, &10_000);
@@ -355,9 +376,10 @@ fn test_withdraw_preserves_deposit_timestamp() {
     });
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     let pos_before = client.get_user_collateral_deposit(&user, &asset);
     assert_eq!(pos_before.last_deposit_time, 1000);
@@ -385,9 +407,10 @@ fn test_withdraw_emits_event() {
     });
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     client.withdraw(&user, &asset, &20_000);
 
@@ -404,12 +427,12 @@ fn test_withdraw_emits_event() {
 fn test_withdraw_minimum_amount_boundary() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&500);
+    asset_client.mint(&user, &50_000);
     client.deposit(&user, &asset, &50_000);
 
     // Below minimum — should fail
@@ -425,9 +448,11 @@ fn test_withdraw_minimum_amount_boundary() {
 fn test_withdraw_after_multiple_deposits() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 20_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 20_000);
+    asset_client.mint(&user, &30_000);
     client.deposit(&user, &asset, &30_000);
 
     // Total deposited = 50,000
@@ -439,14 +464,16 @@ fn test_withdraw_after_multiple_deposits() {
 fn test_withdraw_deposit_withdraw_cycle() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     client.withdraw(&user, &asset, &20_000);
     let pos = client.get_user_collateral_deposit(&user, &asset);
     assert_eq!(pos.amount, 30_000);
 
+    asset_client.mint(&user, &10_000);
     client.deposit(&user, &asset, &10_000);
     let pos = client.get_user_collateral_deposit(&user, &asset);
     assert_eq!(pos.amount, 40_000);
@@ -460,9 +487,10 @@ fn test_withdraw_deposit_withdraw_cycle() {
 fn test_withdraw_global_pause() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     // Set global pause instead of withdraw-specific pause
     let admin = client.get_admin().unwrap();
@@ -476,9 +504,10 @@ fn test_withdraw_global_pause() {
 fn test_withdraw_invalid_min_amount_setup() {
     let (env, client) = setup_env();
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
 
-    setup_with_deposit(&env, &client, &user, &asset, 50_000);
+    setup_with_deposit(&env, &client, &admin, &user, &asset, &asset_client, 50_000);
 
     // Set min withdraw to 500
     client.initialize_withdraw_settings(&500);

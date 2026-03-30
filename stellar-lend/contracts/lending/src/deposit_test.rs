@@ -1,8 +1,14 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    Address, Env,
+    token, Address, Env,
 };
+
+fn create_token(env: &Env, admin: &Address) -> (Address, token::StellarAssetClient<'static>) {
+    let token_address = env.register_stellar_asset_contract(admin.clone());
+    let token_client = token::StellarAssetClient::new(env, &token_address);
+    (token_address, token_client)
+}
 
 #[test]
 fn test_deposit_success() {
@@ -13,17 +19,51 @@ fn test_deposit_success() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
+
+    // Setup: Mint tokens to user
+    asset_client.mint(&user, &20_000);
 
     let balance = client.deposit(&user, &asset, &10_000);
     assert_eq!(balance, 10_000);
 
     let position = client.get_user_collateral_deposit(&user, &asset);
     assert_eq!(position.amount, 10_000);
+
+    // Verify physical transfer
+    let token_client = token::Client::new(&env, &asset);
+    assert_eq!(token_client.balance(&contract_id), 10_000);
+    assert_eq!(token_client.balance(&user), 10_000);
+}
+
+#[test]
+fn test_deposit_asset_mismatch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset1, asset1_client) = create_token(&env, &admin);
+    let (asset2, asset2_client) = create_token(&env, &admin);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.initialize_deposit_settings(&1_000_000_000, &100);
+
+    asset1_client.mint(&user, &10_000);
+    asset2_client.mint(&user, &10_000);
+
+    client.deposit(&user, &asset1, &5_000);
+    
+    // Attempting to deposit asset2 into asset1 position should fail
+    let result = client.try_deposit(&user, &asset2, &5_000);
+    assert_eq!(result, Err(Ok(DepositError::AssetNotSupported)));
 }
 
 #[test]
@@ -35,9 +75,9 @@ fn test_deposit_invalid_amount_zero() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
 
@@ -54,9 +94,9 @@ fn test_deposit_invalid_amount_negative() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
 
@@ -73,9 +113,9 @@ fn test_deposit_below_minimum() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &5000);
 
@@ -92,9 +132,9 @@ fn test_deposit_paused() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.set_deposit_paused(&true);
@@ -112,9 +152,9 @@ fn test_deposit_exceeds_cap() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&50_000, &100);
 
@@ -131,11 +171,12 @@ fn test_deposit_multiple_times() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
+    asset_client.mint(&user, &20_000);
 
     let balance1 = client.deposit(&user, &asset, &10_000);
     assert_eq!(balance1, 10_000);
@@ -156,11 +197,12 @@ fn test_deposit_pause_unpause() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
+    asset_client.mint(&user, &20_000);
 
     client.set_deposit_paused(&true);
     let result = client.try_deposit(&user, &asset, &10_000);
@@ -180,11 +222,13 @@ fn test_deposit_overflow_protection() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
 
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+
     client.initialize(&admin, &i128::MAX, &1000);
     client.initialize_deposit_settings(&i128::MAX, &100);
+    asset_client.mint(&user, &i128::MAX);
 
     client.deposit(&user, &asset, &1_000_000);
 
@@ -206,11 +250,13 @@ fn test_deposit_updates_timestamp() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
 
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
+    asset_client.mint(&user, &15_000);
     client.deposit(&user, &asset, &10_000);
 
     let position = client.get_user_collateral_deposit(&user, &asset);
@@ -236,11 +282,14 @@ fn test_deposit_separate_users() {
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
+
+    asset_client.mint(&user1, &10_000);
+    asset_client.mint(&user2, &20_000);
 
     client.deposit(&user1, &asset, &10_000);
     client.deposit(&user2, &asset, &20_000);
@@ -260,11 +309,13 @@ fn test_deposit_cap_boundary() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
 
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&50_000, &100);
+    asset_client.mint(&user, &100_000);
 
     // Exact cap — should succeed
     let balance = client.deposit(&user, &asset, &50_000);

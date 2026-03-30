@@ -1,5 +1,11 @@
 use crate::{borrow::BorrowError, LendingContract, LendingContractClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol, Vec};
+use soroban_sdk::{testutils::Address as _, token, Address, Env, IntoVal, Symbol, Val, Vec};
+
+fn create_token(env: &Env, admin: &Address) -> (Address, token::StellarAssetClient<'static>) {
+    let token_address = env.register_stellar_asset_contract(admin.clone());
+    let token_client = token::StellarAssetClient::new(env, &token_address);
+    (token_address, token_client)
+}
 
 #[test]
 fn test_receive_deposit_success() {
@@ -10,9 +16,9 @@ fn test_receive_deposit_success() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let from = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
 
     let payload = (Symbol::new(&env, "deposit"),).into_val(&env);
@@ -26,6 +32,27 @@ fn test_receive_deposit_success() {
 }
 
 #[test]
+fn test_receive_paused_deposit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let from = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.set_deposit_paused(&true);
+
+    let payload = (Symbol::new(&env, "deposit"),).into_val(&env);
+
+    let result = client.try_receive(&asset, &from, &50_000, &payload);
+    assert_eq!(result, Err(Ok(BorrowError::ProtocolPaused)));
+}
+
+#[test]
 fn test_receive_repay_success() {
     let env = Env::default();
     env.mock_all_auths();
@@ -34,10 +61,10 @@ fn test_receive_repay_success() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let from = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
 
     // Initial borrow to create debt
@@ -61,9 +88,9 @@ fn test_receive_invalid_action() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let from = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
 
     let payload = (Symbol::new(&env, "withdraw"),).into_val(&env);
@@ -94,17 +121,18 @@ fn test_direct_deposit_repay() {
     let client = LendingContractClient::new(&env, &contract_id);
 
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-
     let admin = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (borrow_asset, _) = create_token(&env, &admin);
+
     client.initialize(&admin, &1_000_000_000, &1000);
+    asset_client.mint(&user, &20_000);
 
     // Test direct deposit
     client.deposit_collateral(&user, &asset, &10_000);
     assert_eq!(client.get_user_collateral(&user).amount, 10_000);
 
     // Initial borrow
-    let borrow_asset = Address::generate(&env);
     client.borrow(&user, &borrow_asset, &5_000, &asset, &10_000);
 
     // Test direct repay

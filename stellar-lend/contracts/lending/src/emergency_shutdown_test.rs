@@ -1,8 +1,9 @@
-use super::*;
+use crate::*;
+use crate::testutils::create_token;
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
 use crate::deposit::DepositError;
 use crate::flash_loan::FlashLoanError;
 use crate::withdraw::WithdrawError;
-use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
 fn test_emergency_shutdown_authorization_and_state_flow() {
@@ -48,14 +49,15 @@ fn test_shutdown_blocks_high_risk_ops_and_recovery_allows_unwind_only() {
     let admin = Address::generate(&env);
     let guardian = Address::generate(&env);
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
 
     client.initialize(&admin, &1_000_000_000, &1000);
     client.set_guardian(&admin, &guardian);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&100);
 
+    asset_client.mint(&user, &100_000);
     client.deposit(&user, &asset, &50_000);
     client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
 
@@ -113,8 +115,8 @@ fn test_recovery_transition_edge_cases_and_partial_pause() {
     let admin = Address::generate(&env);
     let guardian = Address::generate(&env);
     let user = Address::generate(&env);
-    let asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let (asset, asset_client) = create_token(&env, &admin);
+    let (collateral_asset, _) = create_token(&env, &admin);
 
     client.initialize(&admin, &1_000_000_000, &1000);
     client.set_guardian(&admin, &guardian);
@@ -127,6 +129,7 @@ fn test_recovery_transition_edge_cases_and_partial_pause() {
         Err(Ok(BorrowError::ProtocolPaused))
     );
 
+    asset_client.mint(&user, &100_000);
     client.deposit(&user, &asset, &50_000);
     client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
 

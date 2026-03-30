@@ -11,6 +11,9 @@ mod deposit;
 mod flash_loan;
 mod oracle;
 mod pause;
+mod reentrancy;
+#[cfg(test)]
+mod testutils;
 mod token_receiver;
 mod withdraw;
 

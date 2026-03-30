@@ -12,6 +12,7 @@ pub enum DepositError {
     AssetNotSupported = 4,
     ExceedsDepositCap = 5,
     Unauthorized = 6,
+    Reentrancy = 7,
 }
 
 /// Storage keys for deposit-related data
@@ -45,6 +46,9 @@ pub struct DepositEvent {
     pub timestamp: u64,
 }
 
+use crate::reentrancy::ReentrancyGuard;
+use soroban_sdk::token;
+
 /// Deposit collateral into the protocol
 ///
 /// # Arguments
@@ -55,18 +59,29 @@ pub struct DepositEvent {
 ///
 /// # Returns
 /// Returns the updated collateral balance on success
+///
+/// # Security
+/// - Requires user authorization to ensure intent and allow token transfer.
+/// - Implements reentrancy protection against synchronous hook callbacks.
+/// - Enforces asset consistency for the user's single-asset position in this module.
 pub fn deposit(
     env: &Env,
     user: Address,
     asset: Address,
     amount: i128,
 ) -> Result<i128, DepositError> {
+    // 1. Authorization: Verify user intent. User must sign to allow transfer_from.
     user.require_auth();
 
+    // 2. State: Check pause status.
     if pause::is_paused(env, PauseType::Deposit) {
         return Err(DepositError::DepositPaused);
     }
 
+    // 3. Security: RAII Reentrancy Guard.
+    let _guard = ReentrancyGuard::new(env).map_err(|_| DepositError::Reentrancy)?;
+
+    // 4. Validation: amount must be positive and meet minimum.
     if amount <= 0 {
         return Err(DepositError::InvalidAmount);
     }
@@ -76,6 +91,7 @@ pub fn deposit(
         return Err(DepositError::InvalidAmount);
     }
 
+    // 5. Validation: Protocol caps.
     let total_deposits = get_total_deposits(env);
     let deposit_cap = get_deposit_cap(env);
     let new_total = total_deposits
@@ -86,7 +102,14 @@ pub fn deposit(
         return Err(DepositError::ExceedsDepositCap);
     }
 
+    // 6. Validating/Updating User Position.
     let mut position = get_deposit_position(env, &user, &asset);
+    
+    // Enforcement: This module's simple position model only supports one primary asset.
+    if position.amount > 0 && position.asset != asset {
+        return Err(DepositError::AssetNotSupported);
+    }
+
     position.amount = position
         .amount
         .checked_add(amount)
@@ -94,6 +117,12 @@ pub fn deposit(
     position.last_deposit_time = env.ledger().timestamp();
     position.asset = asset.clone();
 
+    // 7. Execution: Move the physical tokens (SAC Transfer).
+    // The user has authorized this contract to call transfer on their behalf in the token contract.
+    let token_client = token::Client::new(env, &asset);
+    token_client.transfer(&user, env.current_contract_address(), &amount);
+
+    // 8. Storage: Update accounting.
     save_deposit_position(env, &user, &position);
     set_total_deposits(env, new_total);
     emit_deposit_event(env, user, asset, amount, position.amount);
