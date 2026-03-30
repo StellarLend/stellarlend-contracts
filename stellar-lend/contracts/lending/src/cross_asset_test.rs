@@ -60,8 +60,6 @@
 //! cargo test cross_asset_test --lib
 //! ```
 
-
-
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};

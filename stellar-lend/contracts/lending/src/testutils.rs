@@ -6,8 +6,6 @@ pub fn create_token(env: &Env, admin: &Address) -> (Address, token::StellarAsset
     (token_address, token_client)
 }
 
-
-
 #[allow(dead_code)]
 pub fn create_token_and_mint(
     env: &Env,

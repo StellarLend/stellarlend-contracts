@@ -3,10 +3,7 @@ use crate::flash_loan::FlashLoanError;
 use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
 use crate::*;
-use soroban_sdk::{
-    testutils::Address as _,
-    token, Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
 fn setup_pause_test(
     env: &Env,
