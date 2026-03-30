@@ -1,5 +1,5 @@
 use crate::{borrow::BorrowError, LendingContract, LendingContractClient};
-use soroban_sdk::{testutils::Address as _, token, Address, Env, IntoVal, Symbol, Val, Vec};
+use soroban_sdk::{testutils::Address as _, token, Address, Env, IntoVal, Symbol, Vec};
 
 fn create_token(env: &Env, admin: &Address) -> (Address, token::StellarAssetClient<'static>) {
     let token_address = env.register_stellar_asset_contract(admin.clone());

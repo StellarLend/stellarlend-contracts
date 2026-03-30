@@ -100,7 +100,7 @@ fn test_intra_block_full_lifecycle() {
 fn test_intra_block_multi_user_interaction() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, user1, asset, _collateral_asset, asset_client, _) = setup_race_test(&env);
+    let (client, _admin, user1, asset, _collateral_asset, asset_client, _) = setup_race_test(&env);
     let user2 = Address::generate(&env);
 
     asset_client.mint(&user1, &10_000);

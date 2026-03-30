@@ -4,8 +4,8 @@ use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
 use crate::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events},
-    token, Address, Env, Symbol, TryFromVal,
+    testutils::Address as _,
+    token, Address, Env,
 };
 
 fn setup_pause_test(
@@ -58,7 +58,7 @@ fn test_pause_borrow_granular() {
 fn test_global_pause() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, asset, collateral, asset_client, collateral_client) =
+    let (client, admin, asset, collateral, _asset_client, _collateral_client) =
         setup_pause_test(&env);
     let user = Address::generate(&env);
 
@@ -103,7 +103,7 @@ fn test_all_granular_pauses() {
 fn test_get_pause_state_default_false() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, _, _, _, _) = setup_pause_test(&env);
+    let (client, _admin, _, _, _, _) = setup_pause_test(&env);
 
     assert!(!client.get_pause_state(&PauseType::Deposit));
     assert!(!client.get_pause_state(&PauseType::All));

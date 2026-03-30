@@ -104,7 +104,7 @@ fn test_contention_interleaved_deposits_borrows() {
 fn test_contention_edge_cases_zero_amounts_overflow() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, asset, collateral_asset, asset_client, collateral_client) =
+    let (client, _admin, asset, collateral_asset, asset_client, collateral_client) =
         setup_contention_test(&env);
     let user = Address::generate(&env);
 

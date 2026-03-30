@@ -3,7 +3,7 @@ use crate::flash_loan::FlashLoanError;
 use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
 use crate::*;
-use soroban_sdk::{testutils::Address as _, token, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
 fn test_emergency_shutdown_authorization_and_state_flow() {

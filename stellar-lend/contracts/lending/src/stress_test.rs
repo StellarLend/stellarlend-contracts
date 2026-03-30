@@ -146,7 +146,7 @@ fn test_stress_large_user_count_borrow_positions() {
 fn test_stress_large_user_count_deposit_positions() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, asset, _collateral_asset, asset_client, _) = setup_stress_test(&env);
+    let (client, _admin, asset, _collateral_asset, asset_client, _) = setup_stress_test(&env);
 
     // Initialize deposit settings with high cap
     client.initialize_deposit_settings(&1_000_000_000, &100);

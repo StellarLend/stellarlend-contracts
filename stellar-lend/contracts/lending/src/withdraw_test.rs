@@ -25,7 +25,7 @@ fn setup_with_deposit(
     asset_client: &token::StellarAssetClient,
     deposit_amount: i128,
 ) {
-    client.initialize(&admin, &1_000_000_000, &1000);
+    client.initialize(admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&100);
     asset_client.mint(user, &deposit_amount);
