@@ -293,6 +293,16 @@ pub fn execute_recovery(env: &Env, executor: Address) -> Result<(), GovernanceEr
         .instance()
         .set(&GovernanceDataKey::MultisigConfig, &config);
 
+    // Also update the centralized protocol admin if it was recovered
+    if let Some(current_super_admin) = crate::admin::get_admin(env) {
+        if current_super_admin == recovery.old_admin {
+            // Force update the super admin since this is a recovery
+            env.storage()
+                .persistent()
+                .set(&crate::admin::AdminDataKey::Admin, &recovery.new_admin);
+        }
+    }
+
     env.storage()
         .persistent()
         .remove(&GovernanceDataKey::RecoveryRequest);

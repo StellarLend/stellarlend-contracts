@@ -65,11 +65,6 @@ pub enum DepositDataKey {
     AssetParams(Address),
     /// Legacy operation pause switches: Map<Symbol, bool>
     PauseSwitches,
-    /// Protocol admin address
-    /// Value type: Address
-    Admin,
-    /// User's unified position tracking
-    /// Value type: Position
     Position(Address),
     /// Global protocol analytics (TVL, aggregate borrows/deposits)
     /// Value type: ProtocolAnalytics
@@ -381,11 +376,8 @@ pub fn set_native_asset_address(
     caller: Address,
     native_asset: Address,
 ) -> Result<(), DepositError> {
-    let admin = crate::admin::get_admin(env).ok_or(DepositError::InvalidAsset)?;
-    if caller != admin {
-        return Err(DepositError::InvalidAsset);
-    }
-    caller.require_auth();
+    crate::admin::require_admin(env, &caller).map_err(|_| DepositError::InvalidAsset)?;
+    
     if native_asset == env.current_contract_address() {
         return Err(DepositError::InvalidAsset);
     }

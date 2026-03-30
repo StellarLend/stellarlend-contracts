@@ -8,3 +8,4 @@ target
 # Test snapshots
 test_snapshots/
 **/test_snapshots/
+**/test_snapshots/

@@ -428,27 +428,8 @@ pub fn withdraw_reserve_funds(
     Ok(amount)
 }
 
-/// Helper function to require admin authorization
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `caller` - The caller address to check
-///
-/// # Errors
-/// * `ReserveError::Unauthorized` - If caller is not admin
 fn require_admin(env: &Env, caller: &Address) -> Result<(), ReserveError> {
-    let admin_key = DepositDataKey::Admin;
-    let admin = env
-        .storage()
-        .persistent()
-        .get::<DepositDataKey, Address>(&admin_key)
-        .ok_or(ReserveError::Unauthorized)?;
-
-    if caller != &admin {
-        return Err(ReserveError::Unauthorized);
-    }
-
-    Ok(())
+    crate::admin::require_admin(env, caller).map_err(|_| ReserveError::Unauthorized)
 }
 
 /// Get reserve statistics for an asset

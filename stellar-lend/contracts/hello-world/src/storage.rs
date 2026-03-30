@@ -3,7 +3,6 @@ use soroban_sdk::{contracttype, Address, Env, Map, Vec};
 #[derive(Clone)]
 #[contracttype]
 pub enum GovernanceDataKey {
-    Admin,
     Config,
     NextProposalId,
     MultisigConfig,

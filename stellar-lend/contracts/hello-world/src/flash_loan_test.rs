@@ -31,7 +31,7 @@ fn setup_env() -> (Env, Address, Address, Address, Address) {
 
     // Set admin in contract context
     env.as_contract(&contract_id, || {
-        crate::admin::set_admin(&env, admin.clone(), None).unwrap();
+        crate::admin::set_admin(&env, admin.clone()).unwrap();
     });
 
     (env, contract_id, admin, user, token_address)

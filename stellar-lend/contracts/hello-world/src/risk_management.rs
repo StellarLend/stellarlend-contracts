@@ -64,9 +64,6 @@ pub enum RiskDataKey {
     /// Global risk configuration parameters (MCR, liquidation threshold, etc.)
     /// Value type: RiskConfig
     RiskConfig,
-    /// Protocol admin address authorized for risk management
-    /// Value type: Address
-    Admin,
     /// Global emergency pause flag. If true, all protocol operations are halted.
     /// Value type: bool
     EmergencyPause,
@@ -124,9 +121,9 @@ pub fn initialize_risk_management(env: &Env, admin: Address) -> Result<(), RiskM
         return Ok(());
     }
 
-    // Set admin
-    let admin_key = crate::storage::GovernanceDataKey::Admin;
-    env.storage().persistent().set(&admin_key, &admin);
+    // Admin is already set in the centralized admin module during contract initialize
+    // We don't set it here anymore to maintain a single source of truth.
+
 
     // Initialize default risk config for pause switches
     let default_config = RiskConfig {

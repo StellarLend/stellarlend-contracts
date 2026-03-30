@@ -270,8 +270,7 @@ pub struct CrossAssetRepayEvent {
 // Storage Keys
 // ============================================================================
 
-/// Admin address authorized for protocol management.
-const ADMIN: Symbol = symbol_short!("admin");
+
 
 /// Storage key for the map of asset configurations: `Map<AssetKey, AssetConfig>`.
 const ASSET_CONFIGS: Symbol = symbol_short!("configs");
@@ -304,22 +303,9 @@ const HEALTH_FACTOR_PRECISION: i128 = 10_000;
 // Admin Initialization
 // ============================================================================
 
-/// Initialize the cross-asset lending module admin.
-///
-/// Sets the admin address. Can only be called once; subsequent calls return
-/// `AlreadyInitialized`.
-///
-/// # Arguments
-/// * `env` — The contract environment
-/// * `admin` — The admin address (must authorize the transaction)
-///
-/// # Errors
-/// * `AlreadyInitialized` — Admin is already set
-///
-/// # Security
-/// * Only callable once. The admin address is immutable within this module.
 pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
-    if let Some(existing_admin) = env.storage().persistent().get::<Symbol, Address>(&ADMIN) {
+    if crate::admin::has_admin(env) {
+        let existing_admin = crate::admin::get_admin(env).unwrap();
         if existing_admin == admin {
             return Ok(()); // Already initialized with the same admin
         }
@@ -327,7 +313,7 @@ pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
     }
 
     admin.require_auth();
-    env.storage().persistent().set(&ADMIN, &admin);
+    crate::admin::set_admin(env, admin).unwrap();
 
     Ok(())
 }
@@ -337,10 +323,7 @@ pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
 /// # Errors
 /// * `NotAuthorized` — No admin set or caller is not admin.
 fn require_admin(env: &Env) -> Result<(), CrossAssetError> {
-    let admin: Address = env
-        .storage()
-        .persistent()
-        .get(&ADMIN)
+    let admin: Address = crate::admin::get_admin(env)
         .ok_or(CrossAssetError::NotAuthorized)?;
 
     admin.require_auth();
