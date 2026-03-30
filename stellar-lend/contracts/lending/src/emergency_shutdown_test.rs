@@ -1,9 +1,9 @@
-use crate::*;
-use crate::testutils::create_token;
-use soroban_sdk::{testutils::Address as _, token, Address, Env};
 use crate::deposit::DepositError;
 use crate::flash_loan::FlashLoanError;
+use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
+use crate::*;
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
 #[test]
 fn test_emergency_shutdown_authorization_and_state_flow() {

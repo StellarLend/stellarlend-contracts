@@ -140,19 +140,11 @@ fn test_initialize_reserve_config_success() {
     assert!(result.is_ok());
 
     // Verify reserve factor is set
-    let factor = test_get_reserve_factor(
-        &env,
-        &contract_id,
-        asset.clone(),
-    );
+    let factor = test_get_reserve_factor(&env, &contract_id, asset.clone());
     assert_eq!(factor, DEFAULT_RESERVE_FACTOR_BPS);
 
     // Verify reserve balance is initialized to zero
-    let balance = test_get_reserve_balance(
-        &env,
-        &contract_id,
-        asset,
-    );
+    let balance = test_get_reserve_balance(&env, &contract_id, asset);
     assert_eq!(balance, 0);
 }
 
@@ -512,7 +504,6 @@ fn test_set_treasury_address_by_admin() {
 #[test]
 #[should_panic(expected = "Unauthorized")]
 fn test_set_treasury_address_by_non_admin() {
-
     let (env, contract_id, _admin, user, treasury) = setup_test_env();
 
     // Non-admin tries to set treasury address - should fail

@@ -3,17 +3,17 @@
 //! Simulating many users depositing/borrowing in interleaved order within
 //! the same ledger context to validate security, bounds, and reentrancy protections.
 
-use crate::*;
 use crate::testutils::create_token;
+use crate::*;
 use soroban_sdk::{testutils::Address as _, token, Address, Env, Vec};
 
 fn setup_contention_test(
     env: &Env,
 ) -> (
     LendingContractClient<'_>,
-    Address, // admin
-    Address, // asset (debt)
-    Address, // collateral_asset
+    Address,                       // admin
+    Address,                       // asset (debt)
+    Address,                       // collateral_asset
     token::StellarAssetClient<'_>, // asset_client
     token::StellarAssetClient<'_>, // collateral_client
 ) {
@@ -28,7 +28,14 @@ fn setup_contention_test(
     client.initialize_deposit_settings(&10_000_000_000, &1000);
     client.initialize_withdraw_settings(&100);
 
-    (client, admin, asset, collateral_asset, asset_client, collateral_client)
+    (
+        client,
+        admin,
+        asset,
+        collateral_asset,
+        asset_client,
+        collateral_client,
+    )
 }
 
 fn generate_users(env: &Env, count: u32) -> Vec<Address> {
@@ -43,7 +50,8 @@ fn generate_users(env: &Env, count: u32) -> Vec<Address> {
 fn test_contention_interleaved_deposits_borrows() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, asset, collateral_asset, _, collateral_client) = setup_contention_test(&env);
+    let (client, _admin, asset, collateral_asset, _, collateral_client) =
+        setup_contention_test(&env);
 
     let num_users = 50;
     let users = generate_users(&env, num_users);
@@ -96,7 +104,8 @@ fn test_contention_interleaved_deposits_borrows() {
 fn test_contention_edge_cases_zero_amounts_overflow() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, asset, collateral_asset, asset_client, collateral_client) = setup_contention_test(&env);
+    let (client, admin, asset, collateral_asset, asset_client, collateral_client) =
+        setup_contention_test(&env);
     let user = Address::generate(&env);
 
     // Zero amount deposit
@@ -119,7 +128,8 @@ fn test_contention_edge_cases_zero_amounts_overflow() {
 fn test_contention_paused_operations() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, asset, collateral_asset, _, collateral_client) = setup_contention_test(&env);
+    let (client, admin, asset, collateral_asset, _, collateral_client) =
+        setup_contention_test(&env);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);

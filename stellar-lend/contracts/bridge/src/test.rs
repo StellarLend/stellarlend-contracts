@@ -153,10 +153,7 @@ fn register_bridge_id_with_dash_and_underscore_ok() {
 fn register_bridge_id_mixed_case_ok() {
     let (env, client, admin) = setup();
     client.register_bridge(&admin, &s(&env, "EthMainNet"), &1u32, &10u64, &100i128);
-    assert_eq!(
-        client.get_bridge_config(&s(&env, "EthMainNet")).fee_bps,
-        10
-    );
+    assert_eq!(client.get_bridge_config(&s(&env, "EthMainNet")).fee_bps, 10);
 }
 
 #[test]
@@ -197,10 +194,7 @@ fn set_bridge_fee_to_zero_ok() {
     let (env, client, admin) = setup();
     default_bridge(&client, &env, &admin);
     client.set_bridge_fee(&admin, &s(&env, "eth-mainnet"), &0u64);
-    assert_eq!(
-        client.get_bridge_config(&s(&env, "eth-mainnet")).fee_bps,
-        0
-    );
+    assert_eq!(client.get_bridge_config(&s(&env, "eth-mainnet")).fee_bps, 0);
 }
 
 #[test]

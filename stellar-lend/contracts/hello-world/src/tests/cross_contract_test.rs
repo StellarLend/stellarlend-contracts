@@ -96,7 +96,12 @@ impl MockFlashLoanReceiver {
             // No, `repay_flash_loan` usually transfers FROM the user TO the contract.
 
             // Let's assume we need to call repay_flash_loan
-            token_client.approve(&env.current_contract_address(), &provider, &total_debt, &200);
+            token_client.approve(
+                &env.current_contract_address(),
+                &provider,
+                &total_debt,
+                &200,
+            );
             client.repay_flash_loan(&env.current_contract_address(), &asset, &total_debt);
         }
 

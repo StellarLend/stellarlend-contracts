@@ -250,7 +250,16 @@ fn test_update_asset_config_partial_update() {
     client.initialize_asset(&None, &config);
 
     // Only update can_borrow
-    client.update_asset_config(&None, &None, &None, &None, &None, &None, &Some(false), &None);
+    client.update_asset_config(
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(false),
+        &None,
+    );
 
     let fetched = client.get_asset_config(&None);
     assert_eq!(fetched.can_borrow, false);
@@ -1056,16 +1065,7 @@ fn test_deposit_then_disable_collateral_blocks_new_deposits() {
     client.cross_asset_deposit(&user, &None, &5000_0000000);
 
     // Disable collateral
-    client.update_asset_config(
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
+    client.update_asset_config(&None, &None, &None, &None, &None, &None, &None, &None);
 
     // Existing position still exists
     let pos = client.get_user_asset_position(&user, &None);
@@ -1131,7 +1131,16 @@ fn test_config_update_preserves_price() {
 
     client.update_asset_price(&None, &50_000_000); // $5.00
 
-    client.update_asset_config(&None, &Some(5000), &Some(6000), &None, &None, &None, &None, &None);
+    client.update_asset_config(
+        &None,
+        &Some(5000),
+        &Some(6000),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let fetched = client.get_asset_config(&None);
     assert_eq!(fetched.price, 50_000_000); // Price preserved

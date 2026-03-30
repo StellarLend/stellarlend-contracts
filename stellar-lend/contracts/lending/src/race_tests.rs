@@ -2,18 +2,18 @@
 //!
 //! These tests simulate sequences of operations within a single ledger context.
 
-use crate::*;
 use crate::testutils::create_token;
+use crate::*;
 use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
 fn setup_race_test(
     env: &Env,
 ) -> (
     LendingContractClient<'_>,
-    Address, // admin
-    Address, // user
-    Address, // asset
-    Address, // collateral_asset
+    Address,                       // admin
+    Address,                       // user
+    Address,                       // asset
+    Address,                       // collateral_asset
     token::StellarAssetClient<'_>, // asset_client
     token::StellarAssetClient<'_>, // collateral_client
 ) {
@@ -29,7 +29,15 @@ fn setup_race_test(
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&100);
 
-    (client, admin, user, asset, collateral_asset, asset_client, collateral_client)
+    (
+        client,
+        admin,
+        user,
+        asset,
+        collateral_asset,
+        asset_client,
+        collateral_client,
+    )
 }
 
 #[test]
@@ -51,7 +59,8 @@ fn test_intra_block_deposit_withdraw_same_amount() {
 fn test_intra_block_borrow_repay() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, user, asset, collateral_asset, asset_client, collateral_client) = setup_race_test(&env);
+    let (client, _admin, user, asset, collateral_asset, asset_client, collateral_client) =
+        setup_race_test(&env);
 
     // Initial deposit for collateral
     collateral_client.mint(&user, &50_000);
@@ -70,7 +79,8 @@ fn test_intra_block_borrow_repay() {
 fn test_intra_block_full_lifecycle() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, user, asset, collateral_asset, asset_client, collateral_client) = setup_race_test(&env);
+    let (client, _admin, user, asset, collateral_asset, asset_client, collateral_client) =
+        setup_race_test(&env);
 
     collateral_client.mint(&user, &100_000);
     client.deposit(&user, &collateral_asset, &100_000);
@@ -130,7 +140,8 @@ fn test_intra_block_invalid_ordering_withdraw_first() {
 fn test_intra_block_excessive_borrow_repay_race() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, user, asset, collateral_asset, asset_client, collateral_client) = setup_race_test(&env);
+    let (client, _admin, user, asset, collateral_asset, asset_client, collateral_client) =
+        setup_race_test(&env);
 
     collateral_client.mint(&user, &1_000_000);
     client.deposit(&user, &collateral_asset, &1_000_000);

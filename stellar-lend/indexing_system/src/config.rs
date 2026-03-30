@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(config.blockchain.chain_id, 1);
         assert_eq!(config.indexer.confirmations, 12);
     }
-    
+
     #[test]
     fn test_config_from_env() {
         let config = Config::from_env().unwrap();

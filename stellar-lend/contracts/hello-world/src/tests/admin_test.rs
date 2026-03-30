@@ -175,7 +175,7 @@ fn test_role_management() {
         let result = grant_role(&env, &admin, role.clone(), account.clone());
         assert_eq!(result, Ok(()));
         assert!(has_role(&env, role.clone(), account.clone()));
-        
+
         // Verify registry
         let registry = crate::admin::get_role_registry(&env);
         assert_eq!(registry.len(), 1);
@@ -241,7 +241,10 @@ fn test_require_role_or_admin() {
         grant_role(&env, &admin, role.clone(), roled_account.clone()).unwrap();
 
         // Admin should pass
-        assert_eq!(require_role_or_admin(&env, admin.clone(), role.clone()), Ok(()));
+        assert_eq!(
+            require_role_or_admin(&env, admin.clone(), role.clone()),
+            Ok(())
+        );
 
         // Roled account should pass
         assert_eq!(
@@ -999,15 +1002,15 @@ fn test_set_pause_switches_bulk_by_admin() {
     map.set(Symbol::new(&e, "pause_borrow"), true);
     map.set(Symbol::new(&e, "pause_repay"), false); // explicitly keep unpaused
 
-/*
-    client.set_pause_switches(&admin, &map);
+    /*
+        client.set_pause_switches(&admin, &map);
 
-    assert!(client.is_operation_paused(&Symbol::new(&e, "pause_deposit")));
-    assert!(client.is_operation_paused(&Symbol::new(&e, "pause_borrow")));
-    assert!(!client.is_operation_paused(&Symbol::new(&e, "pause_repay")));
-    // Operations not in the map remain at their prior state.
-    assert!(!client.is_operation_paused(&Symbol::new(&e, "pause_withdraw")));
-*/
+        assert!(client.is_operation_paused(&Symbol::new(&e, "pause_deposit")));
+        assert!(client.is_operation_paused(&Symbol::new(&e, "pause_borrow")));
+        assert!(!client.is_operation_paused(&Symbol::new(&e, "pause_repay")));
+        // Operations not in the map remain at their prior state.
+        assert!(!client.is_operation_paused(&Symbol::new(&e, "pause_withdraw")));
+    */
 }
 
 /// A non-admin caller must be rejected for `set_pause_switches`.

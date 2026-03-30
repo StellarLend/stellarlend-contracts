@@ -152,7 +152,12 @@ pub fn require_admin(env: &Env, claimant: &Address) -> Result<(), AdminError> {
 /// Grant a specific role to an address.
 ///
 /// Only the super admin is authorized to manage roles.
-pub fn grant_role(env: &Env, claimant: &Address, role: Symbol, account: Address) -> Result<(), AdminError> {
+pub fn grant_role(
+    env: &Env,
+    claimant: &Address,
+    role: Symbol,
+    account: Address,
+) -> Result<(), AdminError> {
     require_admin(env, claimant)?;
 
     let key = AdminDataKey::Role(role.clone(), account.clone());
@@ -164,7 +169,7 @@ pub fn grant_role(env: &Env, claimant: &Address, role: Symbol, account: Address)
         .persistent()
         .get(&AdminDataKey::RoleRegistry)
         .unwrap_or_else(|| Vec::new(env));
-    
+
     let mut exists = false;
     for r in registry.iter() {
         if r == role {
@@ -189,7 +194,12 @@ pub fn grant_role(env: &Env, claimant: &Address, role: Symbol, account: Address)
 /// Revoke a specific role from an address.
 ///
 /// Only the super admin is authorized to manage roles.
-pub fn revoke_role(env: &Env, claimant: &Address, role: Symbol, account: Address) -> Result<(), AdminError> {
+pub fn revoke_role(
+    env: &Env,
+    claimant: &Address,
+    role: Symbol,
+    account: Address,
+) -> Result<(), AdminError> {
     require_admin(env, claimant)?;
 
     let key = AdminDataKey::Role(role.clone(), account.clone());
@@ -217,7 +227,11 @@ pub fn get_role_registry(env: &Env) -> Vec<Symbol> {
 }
 
 /// Require that the caller is either the super admin or has the required role.
-pub fn require_role_or_admin(env: &Env, caller: Address, required_role: Symbol) -> Result<(), AdminError> {
+pub fn require_role_or_admin(
+    env: &Env,
+    caller: Address,
+    required_role: Symbol,
+) -> Result<(), AdminError> {
     // Check for super admin first
     if let Some(admin) = get_admin(env) {
         if admin == caller {

@@ -1330,11 +1330,7 @@ pub fn add_amm_protocol(
 }
 
 /// Delete AMM protocol (admin only)
-pub fn delete_amm_protocol(
-    env: &Env,
-    admin: Address,
-    protocol: Address,
-) -> Result<(), AmmError> {
+pub fn delete_amm_protocol(env: &Env, admin: Address, protocol: Address) -> Result<(), AmmError> {
     admin.require_auth();
 
     // Check admin authorization

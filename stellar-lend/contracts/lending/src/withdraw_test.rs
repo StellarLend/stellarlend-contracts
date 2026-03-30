@@ -1,6 +1,6 @@
-use crate::*;
 use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
+use crate::*;
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     token, Address, Env, FromVal, Symbol,

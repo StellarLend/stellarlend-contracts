@@ -60,7 +60,7 @@ fn test_deposit_asset_mismatch() {
     asset2_client.mint(&user, &10_000);
 
     client.deposit(&user, &asset1, &5_000);
-    
+
     // Attempting to deposit asset2 into asset1 position should fail
     let result = client.try_deposit(&user, &asset2, &5_000);
     assert_eq!(result, Err(Ok(DepositError::AssetNotSupported)));

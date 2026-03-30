@@ -10,8 +10,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, 
 
 pub mod admin;
 pub mod amm;
-pub use stellarlend_amm::DebugConfig;
 pub use stellarlend_amm::AmmProtocolConfig;
+pub use stellarlend_amm::DebugConfig;
 pub mod analytics;
 pub mod borrow;
 pub mod bridge;
@@ -69,27 +69,6 @@ use crate::risk_params::{
     can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
     initialize_risk_params, require_min_collateral_ratio, RiskParamsError,
 };
-use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
-use crate::deposit::{DepositDataKey, ProtocolAnalytics};
-use crate::analytics::{
-    generate_protocol_report, generate_user_report, get_recent_activity, get_user_activity_feed,
-    AnalyticsError, ProtocolReport, UserReport,
-};
-use crate::bridge::{BridgeConfig, BridgeError};
-use crate::config::{config_backup, config_get, config_restore, config_set, ConfigError};
-use crate::cross_asset::{
-    get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
-    get_user_asset_position, get_user_position_summary, initialize_asset, update_asset_config,
-    update_asset_price, AssetConfig, AssetKey, AssetPosition, CrossAssetError, UserPositionSummary,
-};
-use crate::flash_loan::{
-    configure_flash_loan, execute_flash_loan, repay_flash_loan, set_flash_loan_fee, FlashLoanConfig,
-};
-use crate::interest_rate::{
-    initialize_interest_rate_config, update_interest_rate_config, InterestRateConfig,
-    InterestRateError,
-};
-use crate::liquidate::liquidate;
 use crate::storage::GuardianConfig;
 use crate::types::{
     GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalStatus, ProposalType,
@@ -122,7 +101,7 @@ impl HelloContract {
         }
 
         crate::admin::set_admin(&env, admin.clone()).unwrap();
-        
+
         initialize_risk_management(&env, admin.clone())?;
         initialize_risk_params(&env).map_err(|_| RiskManagementError::InvalidParameter)?;
         initialize_interest_rate_config(&env, admin.clone()).map_err(|e| {
@@ -237,7 +216,8 @@ impl HelloContract {
         close_factor: Option<i128>,
         liquidation_incentive: Option<i128>,
     ) -> Result<(), RiskManagementError> {
-        crate::admin::require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
+        crate::admin::require_admin(&env, &caller)
+            .map_err(|_| RiskManagementError::Unauthorized)?;
         check_emergency_pause(&env)?;
         risk_params::set_risk_params(
             &env,
@@ -475,7 +455,6 @@ impl HelloContract {
         interest_rate::calculate_supply_rate(&env).unwrap_or(0)
     }
 
-
     /// Set emergency interest-rate adjustment in basis points (admin only).
     pub fn set_emergency_rate_adjustment(
         env: Env,
@@ -574,7 +553,8 @@ impl HelloContract {
         to: Address,
         amount: i128,
     ) -> Result<(), RiskManagementError> {
-        crate::admin::require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
+        crate::admin::require_admin(&env, &caller)
+            .map_err(|_| RiskManagementError::Unauthorized)?;
 
         let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
         let mut reserve_balance = env

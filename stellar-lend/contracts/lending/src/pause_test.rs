@@ -1,14 +1,23 @@
-use crate::*;
-use crate::testutils::create_token;
 use crate::deposit::DepositError;
 use crate::flash_loan::FlashLoanError;
+use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
+use crate::*;
 use soroban_sdk::{
     testutils::{Address as _, Events},
     token, Address, Env, Symbol, TryFromVal,
 };
 
-fn setup_pause_test(env: &Env) -> (LendingContractClient<'_>, Address, Address, Address, token::StellarAssetClient<'_>, token::StellarAssetClient<'_>) {
+fn setup_pause_test(
+    env: &Env,
+) -> (
+    LendingContractClient<'_>,
+    Address,
+    Address,
+    Address,
+    token::StellarAssetClient<'_>,
+    token::StellarAssetClient<'_>,
+) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);
 
@@ -20,7 +29,14 @@ fn setup_pause_test(env: &Env) -> (LendingContractClient<'_>, Address, Address, 
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&100);
 
-    (client, admin, asset, collateral, asset_client, collateral_client)
+    (
+        client,
+        admin,
+        asset,
+        collateral,
+        asset_client,
+        collateral_client,
+    )
 }
 
 #[test]
@@ -42,15 +58,28 @@ fn test_pause_borrow_granular() {
 fn test_global_pause() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, asset, collateral, asset_client, collateral_client) = setup_pause_test(&env);
+    let (client, admin, asset, collateral, asset_client, collateral_client) =
+        setup_pause_test(&env);
     let user = Address::generate(&env);
 
     client.set_pause(&admin, &PauseType::All, &true);
 
-    assert_eq!(client.try_borrow(&user, &asset, &10_000, &collateral, &20_000), Err(Ok(BorrowError::ProtocolPaused)));
-    assert_eq!(client.try_deposit(&user, &asset, &10_000), Err(Ok(DepositError::DepositPaused)));
-    assert_eq!(client.try_repay(&user, &asset, &10_000), Err(Ok(BorrowError::ProtocolPaused)));
-    assert_eq!(client.try_withdraw(&user, &asset, &10_000), Err(Ok(WithdrawError::WithdrawPaused)));
+    assert_eq!(
+        client.try_borrow(&user, &asset, &10_000, &collateral, &20_000),
+        Err(Ok(BorrowError::ProtocolPaused))
+    );
+    assert_eq!(
+        client.try_deposit(&user, &asset, &10_000),
+        Err(Ok(DepositError::DepositPaused))
+    );
+    assert_eq!(
+        client.try_repay(&user, &asset, &10_000),
+        Err(Ok(BorrowError::ProtocolPaused))
+    );
+    assert_eq!(
+        client.try_withdraw(&user, &asset, &10_000),
+        Err(Ok(WithdrawError::WithdrawPaused))
+    );
 }
 
 #[test]
@@ -61,8 +90,11 @@ fn test_all_granular_pauses() {
     let user = Address::generate(&env);
 
     client.set_pause(&admin, &PauseType::Deposit, &true);
-    assert_eq!(client.try_deposit(&user, &asset, &10_000), Err(Ok(DepositError::DepositPaused)));
-    
+    assert_eq!(
+        client.try_deposit(&user, &asset, &10_000),
+        Err(Ok(DepositError::DepositPaused))
+    );
+
     collateral_client.mint(&user, &20_000);
     client.borrow(&user, &asset, &10_000, &collateral, &20_000);
 }
@@ -85,7 +117,10 @@ fn test_set_deposit_paused_blocks_deposit() {
     let user = Address::generate(&env);
 
     client.set_deposit_paused(&true);
-    assert_eq!(client.try_deposit(&user, &asset, &10_000), Err(Ok(DepositError::DepositPaused)));
+    assert_eq!(
+        client.try_deposit(&user, &asset, &10_000),
+        Err(Ok(DepositError::DepositPaused))
+    );
 
     client.set_deposit_paused(&false);
     asset_client.mint(&user, &10_000);
@@ -103,7 +138,10 @@ fn test_set_withdraw_paused_blocks_withdraw() {
     client.deposit(&user, &asset, &10_000);
 
     client.set_withdraw_paused(&true);
-    assert_eq!(client.try_withdraw(&user, &asset, &1_000), Err(Ok(WithdrawError::WithdrawPaused)));
+    assert_eq!(
+        client.try_withdraw(&user, &asset, &1_000),
+        Err(Ok(WithdrawError::WithdrawPaused))
+    );
 
     client.set_withdraw_paused(&false);
     client.withdraw(&user, &asset, &1_000);
@@ -117,5 +155,8 @@ fn test_flash_loan_blocked_by_all_pause() {
     let user = Address::generate(&env);
 
     client.set_pause(&admin, &PauseType::All, &true);
-    assert_eq!(client.try_flash_loan(&user, &asset, &1_000, &soroban_sdk::Bytes::new(&env)), Err(Ok(FlashLoanError::ProtocolPaused)));
+    assert_eq!(
+        client.try_flash_loan(&user, &asset, &1_000, &soroban_sdk::Bytes::new(&env)),
+        Err(Ok(FlashLoanError::ProtocolPaused))
+    );
 }

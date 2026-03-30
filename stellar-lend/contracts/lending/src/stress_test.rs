@@ -4,8 +4,8 @@
 //! and iteration logic under load. Tests cover edge cases at maximum
 //! configured entries and ensure operations remain correct as counts grow.
 
-use crate::*;
 use crate::testutils::create_token;
+use crate::*;
 use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
 // ═══════════════════════════════════════════════════════
@@ -23,7 +23,16 @@ const POSITIONS_PER_USER: u32 = 10;
 // ═══════════════════════════════════════════════════════
 
 /// Setup environment with initialized lending contract
-fn setup_stress_test(env: &Env) -> (LendingContractClient<'_>, Address, Address, Address, token::StellarAssetClient<'_>, token::StellarAssetClient<'_>) {
+fn setup_stress_test(
+    env: &Env,
+) -> (
+    LendingContractClient<'_>,
+    Address,
+    Address,
+    Address,
+    token::StellarAssetClient<'_>,
+    token::StellarAssetClient<'_>,
+) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);
 
@@ -34,7 +43,14 @@ fn setup_stress_test(env: &Env) -> (LendingContractClient<'_>, Address, Address,
     // Initialize with high limits for stress testing
     client.initialize(&admin, &10_000_000_000, &100);
 
-    (client, admin, asset, collateral_asset, asset_client, collateral_client)
+    (
+        client,
+        admin,
+        asset,
+        collateral_asset,
+        asset_client,
+        collateral_client,
+    )
 }
 
 /// Generate multiple user addresses for stress testing
@@ -104,7 +120,15 @@ fn test_stress_large_user_count_borrow_positions() {
     let users = generate_users(&env, STRESS_USER_COUNT);
 
     // Create borrow positions for all users
-    create_user_borrow_positions(&env, &client, &users, &asset, &collateral_asset, &collateral_client, 1);
+    create_user_borrow_positions(
+        &env,
+        &client,
+        &users,
+        &asset,
+        &collateral_asset,
+        &collateral_client,
+        1,
+    );
 
     // Verify all user positions are correctly stored and retrievable
     for (i, user) in users.iter().enumerate() {
@@ -144,7 +168,8 @@ fn test_stress_large_user_count_deposit_positions() {
 fn test_stress_mixed_operations_large_user_base() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, asset, collateral_asset, asset_client, collateral_client) = setup_stress_test(&env);
+    let (client, _admin, asset, collateral_asset, asset_client, collateral_client) =
+        setup_stress_test(&env);
 
     let users = generate_users(&env, STRESS_USER_COUNT);
 
@@ -178,7 +203,8 @@ fn test_stress_mixed_operations_large_user_base() {
 fn test_stress_zero_amount_operations() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, asset, collateral_asset, asset_client, collateral_client) = setup_stress_test(&env);
+    let (client, _admin, asset, collateral_asset, asset_client, collateral_client) =
+        setup_stress_test(&env);
 
     let user = Address::generate(&env);
 

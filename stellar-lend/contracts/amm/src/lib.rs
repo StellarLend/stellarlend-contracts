@@ -23,7 +23,9 @@ pub use crate::amm::{
 };
 
 use stellarlend_common::upgrade;
-pub struct DebugConfig { pub x: i128 }
+pub struct DebugConfig {
+    pub x: i128,
+}
 
 #[contract]
 pub struct AmmContract;

@@ -104,7 +104,7 @@ pub fn deposit(
 
     // 6. Validating/Updating User Position.
     let mut position = get_deposit_position(env, &user, &asset);
-    
+
     // Enforcement: This module's simple position model only supports one primary asset.
     if position.amount > 0 && position.asset != asset {
         return Err(DepositError::AssetNotSupported);

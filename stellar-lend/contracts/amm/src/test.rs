@@ -1159,13 +1159,19 @@ fn test_delete_amm_protocol() {
     contract.add_amm_protocol(&admin, &protocol_config);
 
     // Verify it exists
-    assert!(contract.get_amm_protocols().unwrap().contains_key(protocol_addr.clone()));
+    assert!(contract
+        .get_amm_protocols()
+        .unwrap()
+        .contains_key(protocol_addr.clone()));
 
     // Delete it
     contract.delete_amm_protocol(&admin, &protocol_addr);
 
     // Verify it's gone
-    assert!(!contract.get_amm_protocols().unwrap().contains_key(protocol_addr));
+    assert!(!contract
+        .get_amm_protocols()
+        .unwrap()
+        .contains_key(protocol_addr));
 }
 
 #[test]
@@ -1183,7 +1189,7 @@ fn test_validate_amm_callback_failures() {
     contract.add_amm_protocol(&admin, &protocol_config);
 
     // Get a valid nonce first (simulated by calling execute_swap or manually)
-    // Actually, we can just guess. 
+    // Actually, we can just guess.
     // The contract expects nonce to match current session.
 
     // 1. Wrong Operation
@@ -1194,7 +1200,9 @@ fn test_validate_amm_callback_failures() {
         expected_amounts: Vec::new(&env),
         deadline: env.ledger().timestamp() + 3600,
     };
-    assert!(contract.try_validate_amm_callback(&protocol_addr, &callback_data_wrong_op).is_err());
+    assert!(contract
+        .try_validate_amm_callback(&protocol_addr, &callback_data_wrong_op)
+        .is_err());
 
     // 2. Expired callback
     let callback_data_expired = AmmCallbackData {
@@ -1204,7 +1212,9 @@ fn test_validate_amm_callback_failures() {
         expected_amounts: Vec::new(&env),
         deadline: env.ledger().timestamp() - 1,
     };
-    assert!(contract.try_validate_amm_callback(&protocol_addr, &callback_data_expired).is_err());
+    assert!(contract
+        .try_validate_amm_callback(&protocol_addr, &callback_data_expired)
+        .is_err());
 }
 
 #[test]
@@ -1228,7 +1238,7 @@ fn test_remove_liquidity_edge_cases() {
     let token_b = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
-    
+
     let mut supported_pairs = Vec::new(&env);
     supported_pairs.push_back(TokenPair {
         token_a: None,
@@ -1248,14 +1258,28 @@ fn test_remove_liquidity_edge_cases() {
 
     // 1. Zero LP tokens
     let result = contract.try_remove_liquidity(
-        &user, &protocol_addr, &None, &Some(token_b.clone()), &0, &100, &100, &2000
+        &user,
+        &protocol_addr,
+        &None,
+        &Some(token_b.clone()),
+        &0,
+        &100,
+        &100,
+        &2000,
     );
     assert!(result.is_err());
 
     // 2. Expired deadline
     env.ledger().set_timestamp(1000);
     let result = contract.try_remove_liquidity(
-        &user, &protocol_addr, &None, &Some(token_b.clone()), &1000, &100, &100, &999
+        &user,
+        &protocol_addr,
+        &None,
+        &Some(token_b.clone()),
+        &1000,
+        &100,
+        &100,
+        &999,
     );
     assert!(result.is_err());
 }
@@ -1269,7 +1293,7 @@ fn test_update_amm_settings_individual() {
     let admin = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
-    
+
     let mut settings = contract.get_amm_settings().unwrap();
     settings.default_slippage = 150;
     contract.update_amm_settings(&admin, &settings);

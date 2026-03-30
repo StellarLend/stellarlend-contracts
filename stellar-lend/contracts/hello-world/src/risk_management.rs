@@ -124,7 +124,6 @@ pub fn initialize_risk_management(env: &Env, admin: Address) -> Result<(), RiskM
     // Admin is already set in the centralized admin module during contract initialize
     // We don't set it here anymore to maintain a single source of truth.
 
-
     // Initialize default risk config for pause switches
     let default_config = RiskConfig {
         pause_switches: create_default_pause_switches(env),

@@ -203,7 +203,7 @@ mod tests {
             .with_event_name("Transfer".to_string())
             .with_block_range(100, 200)
             .with_pagination(50, 10);
-            
+
         assert_eq!(query.contract_address.unwrap(), "0x123");
         assert_eq!(query.event_name.unwrap(), "Transfer");
         assert_eq!(query.from_block.unwrap(), 100);
