@@ -425,7 +425,7 @@ pub(crate) fn validate_collateral_ratio(collateral: i128, borrow: i128) -> Resul
 pub fn get_user_debt(env: &Env, user: &Address) -> DebtPosition {
     let mut position = get_debt_position(env, user);
     let accrued = calculate_interest(env, &position);
-    // Intentional saturating add: We use saturating math here instead of checked_add to prevent 
+    // Intentional saturating add: We use saturating math here instead of checked_add to prevent
     // view queries from trapping in extreme edge cases (like a ledger extremely far into the future).
     // Trapping on view functions breaks frontend queries and node telemetry.
     position.interest_accrued = position.interest_accrued.saturating_add(accrued);

@@ -358,7 +358,6 @@ fn test_coverage_extremes() {
     let _ = client.get_liquidation_incentive_amount(&1_000_000);
 }
 
-
 // ── Issue #472: borrow insufficient-collateral error matrix ───────────────
 
 /// User with zero collateral cannot borrow any amount.

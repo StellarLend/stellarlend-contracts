@@ -1054,16 +1054,7 @@ fn test_deposit_then_disable_collateral_blocks_new_deposits() {
     client.cross_asset_deposit(&user, &None, &5000_0000000);
 
     // Disable collateral
-    client.update_asset_config(
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
+    client.update_asset_config(&None, &None, &None, &None, &None, &None, &None, &None);
 
     // Existing position still exists
     let pos = client.get_user_asset_position(&user, &None);
