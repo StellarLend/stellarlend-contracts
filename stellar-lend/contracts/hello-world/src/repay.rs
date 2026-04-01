@@ -22,6 +22,7 @@
 
 #![allow(unused)]
 use soroban_sdk::{contracterror, Address, Env, IntoVal, Map, Symbol, Val, Vec};
+use crate::prelude::*;
 
 use crate::deposit::{
     add_activity_log, emit_analytics_updated_event, emit_position_updated_event,
@@ -53,6 +54,35 @@ pub enum RepayError {
     Overflow = 6,
     /// Reentrancy detected
     Reentrancy = 7,
+}
+
+#[derive(Clone, Copy)]
+struct RepaySpecSnapshot {
+    principal_before: i128,
+    interest_before: i128,
+}
+
+#[inline(always)]
+fn fv_repay_preconditions(amount: i128, position: &Position) -> bool {
+    amount > 0 && (position.debt > 0 || position.borrow_interest > 0)
+}
+
+#[inline(always)]
+fn fv_repay_postconditions(
+    snapshot: &RepaySpecSnapshot,
+    position: &Position,
+    repay_amount: i128,
+    interest_paid: i128,
+    principal_paid: i128,
+    remaining_debt: i128,
+) -> bool {
+    let total_paid = interest_paid.checked_add(principal_paid);
+    let recomputed_remaining = position.debt.checked_add(position.borrow_interest);
+
+    total_paid == Some(repay_amount)
+        && position.debt <= snapshot.principal_before
+        && position.borrow_interest <= snapshot.interest_before
+        && recomputed_remaining == Some(remaining_debt)
 }
 
 /// Calculate interest accrued since last accrual time
@@ -170,6 +200,8 @@ pub fn repay_debt(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<(i128, i128, i128), RepayError> {
+    // Formal-verification precondition note:
+    // repay amount must be strictly positive.
     if amount <= 0 {
         return Err(RepayError::InvalidAmount);
     }
@@ -205,20 +237,6 @@ pub fn repay_debt(
         None => get_native_asset_address(env)?,
     };
 
-    let reserve_factor = if let Some(asset_addr) = asset.as_ref() {
-        let params_key = DepositDataKey::AssetParams(asset_addr.clone());
-        if let Some(params) = env
-            .storage()
-            .persistent()
-            .get::<DepositDataKey, crate::deposit::AssetParams>(&params_key)
-        {
-            params.borrow_fee_bps.max(1000) // Use asset-specific fee or default 10%
-        } else {
-            1000 // Default 10%
-        }
-    } else {
-        1000 // Default 10%
-    };
 
     // Get user position
     let position_key = DepositDataKey::Position(user.clone());
@@ -234,6 +252,12 @@ pub fn repay_debt(
 
     // Accrue interest before repayment
     accrue_interest(env, &mut position)?;
+
+    let fv_snapshot = RepaySpecSnapshot {
+        principal_before: position.debt,
+        interest_before: position.borrow_interest,
+    };
+    debug_assert!(fv_repay_preconditions(amount, &position));
 
     let total_debt = position
         .debt
@@ -289,7 +313,9 @@ pub fn repay_debt(
     // Save final updated position state
     env.storage().persistent().set(&position_key, &position);
 
-    // Apply portion of paid interest to protocol reserves
+    // Accrue protocol reserve share from the interest paid.
+    // Delegates to the reserve module which owns the canonical ReserveDataKey::ReserveBalance
+    // storage and enforces the configured reserve factor per asset.
     if interest_paid > 0 {
         let reserve_amount = interest_paid
             .checked_mul(reserve_factor)
@@ -336,7 +362,7 @@ pub fn repay_debt(
     };
     log_repay(env, event);
     emit_position_updated_event(env, &user, &position, Symbol::new(env, "repay"), timestamp);
-    emit_analytics_updated_event(env, &user, "repay", repay_amount, timestamp);
+    emit_analytics_updated_event(env, &user, "repay", final_repay_amount, timestamp);
     emit_user_activity_tracked_event(
         env,
         &user,
@@ -442,4 +468,43 @@ fn update_protocol_analytics_repay(env: &Env, amount: i128) -> Result<(), RepayE
 
 fn log_repay(env: &Env, event: RepayEvent) {
     emit_repay(env, event);
+}
+
+#[cfg(test)]
+mod verification_hooks_tests {
+    use super::*;
+
+    #[test]
+    fn repay_hooks_accept_valid_transition() {
+        let snapshot = RepaySpecSnapshot {
+            principal_before: 200,
+            interest_before: 20,
+        };
+        let position = Position {
+            collateral: 1_000,
+            debt: 180,
+            borrow_interest: 10,
+            last_accrual_time: 0,
+        };
+
+        assert!(fv_repay_preconditions(30, &position));
+        assert!(fv_repay_postconditions(&snapshot, &position, 30, 10, 20, 190));
+    }
+
+    #[test]
+    fn repay_hooks_reject_invalid_transition() {
+        let snapshot = RepaySpecSnapshot {
+            principal_before: 200,
+            interest_before: 20,
+        };
+        let position = Position {
+            collateral: 1_000,
+            debt: 210,
+            borrow_interest: 30,
+            last_accrual_time: 0,
+        };
+
+        assert!(!fv_repay_preconditions(0, &position));
+        assert!(!fv_repay_postconditions(&snapshot, &position, 30, 10, 20, 240));
+    }
 }

@@ -7,7 +7,6 @@ members = [
   "contracts/common",
   "contracts/hello-world",
   "contracts/lending",
-  "indexing_system",
 ]
 exclude = [
   "contracts/hello-world",
@@ -15,8 +14,8 @@ exclude = [
 ]
 
 [workspace.dependencies]
-soroban-sdk = "23.4.1"
-soroban-token-sdk = { version = "23.4.1" }
+soroban-sdk = "25.3.0"
+soroban-token-sdk = { version = "25.3.0" }
 
 [profile.release]
 opt-level = "z"

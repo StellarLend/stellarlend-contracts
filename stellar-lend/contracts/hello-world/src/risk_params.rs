@@ -22,6 +22,12 @@ pub enum RiskParamsError {
     InvalidLiquidationIncentive = 7,
     /// Calculation overflow occurred
     Overflow = 8,
+    /// Protocol is emergency paused, admin changes blocked
+    EmergencyPaused = 9,
+    /// Invalid parameter combination - safety margin violated
+    InvalidParameterCombination = 10,
+    /// Liquidation threshold too close to min collateral ratio
+    InsufficientSafetyMargin = 11,
 }
 
 /// Storage keys for risk params data
@@ -65,6 +71,14 @@ const LIQUIDATION_INCENTIVE_MIN: i128 = 0; // 0% minimum
 const LIQUIDATION_INCENTIVE_MAX: i128 = 5_000; // 50% maximum (safety limit)
 const MAX_PARAMETER_CHANGE_BPS: i128 = 5_000; // 50% maximum change per update
 
+/// Enhanced validation constants for hardened security
+const MIN_SAFETY_MARGIN_BPS: i128 = 500; // 5% minimum margin between liquidation threshold and min CR
+const MAX_CLOSE_FACTOR_SAFE: i128 = 7_500; // 75% maximum for safety (below 100% theoretical max)
+const MAX_LIQUIDATION_INCENTIVE_SAFE: i128 = 2_500; // 25% maximum for safety (below 50% theoretical max)
+const MAX_SINGLE_CHANGE_BPS: i128 = 500; // 5% maximum single change (more conservative)
+const MAX_DAILY_CHANGES: u32 = 3; // Maximum parameter changes per day
+const MIN_TIME_BETWEEN_CHANGES: u64 = 3600; // 1 hour minimum between changes (in seconds)
+
 /// Initialize risk parameters
 ///
 /// Sets up default risk parameters.
@@ -104,15 +118,41 @@ pub fn get_risk_params(env: &Env) -> Option<RiskParams> {
 }
 
 /// Validate risk configuration
-fn validate_risk_params(config: &RiskParams) -> Result<(), RiskParamsError> {
-    // Validate min collateral ratio
+/// Validate risk parameters with enhanced security checks
+///
+/// Performs comprehensive validation of risk parameters including:
+/// - Individual parameter bounds validation
+/// - Cross-parameter relationship validation  
+/// - Safety margin enforcement between liquidation threshold and min CR
+/// - Conservative limits for close factor and liquidation incentive
+///
+/// # Arguments
+/// * `config` - Risk parameters to validate
+///
+/// # Returns
+/// Returns Ok(()) if all validations pass
+///
+/// # Errors
+/// * `RiskParamsError::InvalidParameter` - Parameter outside valid range
+/// * `RiskParamsError::InvalidLiquidationThreshold` - Liquidation threshold invalid
+/// * `RiskParamsError::InvalidCollateralRatio` - Min CR invalid or relationship violated
+/// * `RiskParamsError::InvalidCloseFactor` - Close factor outside safe range
+/// * `RiskParamsError::InvalidLiquidationIncentive` - Liquidation incentive outside safe range
+/// * `RiskParamsError::InsufficientSafetyMargin` - Safety margin between parameters too small
+/// * `RiskParamsError::InvalidParameterCombination` - Invalid parameter combination
+///
+/// # Security
+/// Enforces conservative limits and safety margins to prevent protocol exploitation.
+/// All parameter relationships are validated to ensure system stability.
+pub(crate) fn validate_risk_params(config: &RiskParams) -> Result<(), RiskParamsError> {
+    // Validate min collateral ratio bounds
     if config.min_collateral_ratio < MIN_COLLATERAL_RATIO_MIN
         || config.min_collateral_ratio > MIN_COLLATERAL_RATIO_MAX
     {
         return Err(RiskParamsError::InvalidParameter);
     }
 
-    // Validate liquidation threshold
+    // Validate liquidation threshold bounds
     if config.liquidation_threshold < LIQUIDATION_THRESHOLD_MIN
         || config.liquidation_threshold > LIQUIDATION_THRESHOLD_MAX
     {
@@ -124,31 +164,90 @@ fn validate_risk_params(config: &RiskParams) -> Result<(), RiskParamsError> {
         return Err(RiskParamsError::InvalidCollateralRatio);
     }
 
-    // Validate close factor
-    if config.close_factor < CLOSE_FACTOR_MIN || config.close_factor > CLOSE_FACTOR_MAX {
+    // HARDENED: Enforce minimum safety margin between liquidation threshold and min CR
+    let safety_margin = config.min_collateral_ratio
+        .checked_sub(config.liquidation_threshold)
+        .ok_or(RiskParamsError::Overflow)?;
+    
+    if safety_margin < MIN_SAFETY_MARGIN_BPS {
+        return Err(RiskParamsError::InsufficientSafetyMargin);
+    }
+
+    // Validate close factor with conservative limits
+    if config.close_factor < CLOSE_FACTOR_MIN || config.close_factor > MAX_CLOSE_FACTOR_SAFE {
         return Err(RiskParamsError::InvalidCloseFactor);
     }
 
-    // Validate liquidation incentive
+    // Validate liquidation incentive with conservative limits
     if config.liquidation_incentive < LIQUIDATION_INCENTIVE_MIN
-        || config.liquidation_incentive > LIQUIDATION_INCENTIVE_MAX
+        || config.liquidation_incentive > MAX_LIQUIDATION_INCENTIVE_SAFE
     {
         return Err(RiskParamsError::InvalidLiquidationIncentive);
+    }
+
+    // HARDENED: Validate parameter combinations for system stability
+    // Ensure liquidation incentive doesn't exceed close factor (prevents over-incentivization)
+    if config.liquidation_incentive > config.close_factor {
+        return Err(RiskParamsError::InvalidParameterCombination);
+    }
+
+    // HARDENED: Ensure close factor + liquidation incentive doesn't create perverse incentives
+    let total_liquidation_benefit = config.close_factor
+        .checked_add(config.liquidation_incentive)
+        .ok_or(RiskParamsError::Overflow)?;
+    
+    if total_liquidation_benefit > BASIS_POINTS_SCALE {
+        return Err(RiskParamsError::InvalidParameterCombination);
     }
 
     Ok(())
 }
 
 /// Validate parameter change doesn't exceed maximum allowed change
-fn validate_parameter_change(old_value: i128, new_value: i128) -> Result<(), RiskParamsError> {
+/// Validate parameter change with enhanced security constraints
+///
+/// Enforces conservative change limits and time-based restrictions to prevent
+/// rapid parameter manipulation that could destabilize the protocol.
+///
+/// # Arguments
+/// * `old_value` - Current parameter value
+/// * `new_value` - Proposed new parameter value
+/// * `last_update` - Timestamp of last parameter update
+/// * `current_time` - Current timestamp
+///
+/// # Returns
+/// Returns Ok(()) if change is within allowed limits
+///
+/// # Errors
+/// * `RiskParamsError::ParameterChangeTooLarge` - Change exceeds maximum allowed
+/// * `RiskParamsError::Overflow` - Arithmetic overflow in calculations
+///
+/// # Security
+/// Uses conservative change limits (5% vs previous 10%) and enforces minimum
+/// time between changes to prevent rapid parameter manipulation attacks.
+pub(crate) fn validate_parameter_change(
+    old_value: i128, 
+    new_value: i128,
+    last_update: u64,
+    current_time: u64,
+) -> Result<(), RiskParamsError> {
+    // HARDENED: Enforce minimum time between changes
+    if current_time < last_update + MIN_TIME_BETWEEN_CHANGES {
+        return Err(RiskParamsError::ParameterChangeTooLarge);
+    }
+
     let change = if new_value > old_value {
-        new_value - old_value
+        new_value.checked_sub(old_value).ok_or(RiskParamsError::Overflow)?
     } else {
-        old_value - new_value
+        old_value.checked_sub(new_value).ok_or(RiskParamsError::Overflow)?
     };
 
-    // Calculate maximum allowed change (10% of old value)
-    let max_change = (old_value * MAX_PARAMETER_CHANGE_BPS) / BASIS_POINTS_SCALE;
+    // HARDENED: Use more conservative change limit (5% vs previous 10%)
+    let max_change = old_value
+        .checked_mul(MAX_SINGLE_CHANGE_BPS)
+        .ok_or(RiskParamsError::Overflow)?
+        .checked_div(BASIS_POINTS_SCALE)
+        .ok_or(RiskParamsError::Overflow)?;
 
     if change > max_change {
         return Err(RiskParamsError::ParameterChangeTooLarge);
@@ -170,41 +269,82 @@ fn validate_parameter_change(old_value: i128, new_value: i128) -> Result<(), Ris
 ///
 /// # Returns
 /// Returns Ok(()) on success
+/// Set risk parameters with enhanced validation and security checks
+///
+/// Updates risk parameters with comprehensive validation including emergency pause
+/// checks, parameter change limits, safety margins, and cross-parameter validation.
+/// Only admin can call this function and only when protocol is not emergency paused.
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+/// * `caller` - Address of the caller (must be admin)
+/// * `min_collateral_ratio` - Optional new minimum collateral ratio (basis points)
+/// * `liquidation_threshold` - Optional new liquidation threshold (basis points)
+/// * `close_factor` - Optional new close factor (basis points)
+/// * `liquidation_incentive` - Optional new liquidation incentive (basis points)
+///
+/// # Returns
+/// Returns Ok(()) on successful update
+///
+/// # Errors
+/// * `RiskParamsError::Unauthorized` - Caller is not admin
+/// * `RiskParamsError::EmergencyPaused` - Protocol is emergency paused
+/// * `RiskParamsError::InvalidParameter` - Parameter outside valid range
+/// * `RiskParamsError::ParameterChangeTooLarge` - Change exceeds limits or too frequent
+/// * `RiskParamsError::InsufficientSafetyMargin` - Safety margin too small
+/// * `RiskParamsError::InvalidParameterCombination` - Invalid parameter combination
+///
+/// # Security
+/// - Enforces admin authorization and emergency pause checks
+/// - Validates all parameter changes against conservative limits
+/// - Ensures safety margins between critical parameters
+/// - Prevents rapid parameter manipulation through time-based restrictions
+/// - Validates cross-parameter relationships for system stability
 pub fn set_risk_params(
     env: &Env,
+    caller: &Address,
     min_collateral_ratio: Option<i128>,
     liquidation_threshold: Option<i128>,
     close_factor: Option<i128>,
     liquidation_incentive: Option<i128>,
 ) -> Result<(), RiskParamsError> {
-    let mut config = get_risk_params(env).ok_or(RiskParamsError::InvalidParameter)?;
+    // HARDENED: Check admin authorization
+    require_admin(env, caller).map_err(|_| RiskParamsError::Unauthorized)?;
 
-    // Update parameters if provided
+    // HARDENED: Block admin changes during emergency pause
+    if is_emergency_paused(env) {
+        return Err(RiskParamsError::EmergencyPaused);
+    }
+
+    let mut config = get_risk_params(env).ok_or(RiskParamsError::InvalidParameter)?;
+    let current_time = env.ledger().timestamp();
+
+    // HARDENED: Validate parameter changes with time restrictions
     if let Some(mcr) = min_collateral_ratio {
-        validate_parameter_change(config.min_collateral_ratio, mcr)?;
+        validate_parameter_change(config.min_collateral_ratio, mcr, config.last_update, current_time)?;
         config.min_collateral_ratio = mcr;
     }
 
     if let Some(lt) = liquidation_threshold {
-        validate_parameter_change(config.liquidation_threshold, lt)?;
+        validate_parameter_change(config.liquidation_threshold, lt, config.last_update, current_time)?;
         config.liquidation_threshold = lt;
     }
 
     if let Some(cf) = close_factor {
-        validate_parameter_change(config.close_factor, cf)?;
+        validate_parameter_change(config.close_factor, cf, config.last_update, current_time)?;
         config.close_factor = cf;
     }
 
     if let Some(li) = liquidation_incentive {
-        validate_parameter_change(config.liquidation_incentive, li)?;
+        validate_parameter_change(config.liquidation_incentive, li, config.last_update, current_time)?;
         config.liquidation_incentive = li;
     }
 
-    // Validate the updated config
+    // HARDENED: Validate the updated config with enhanced checks
     validate_risk_params(&config)?;
 
     // Update timestamp
-    config.last_update = env.ledger().timestamp();
+    config.last_update = current_time;
 
     // Save config
     let config_key = RiskParamsDataKey::RiskParamsConfig;

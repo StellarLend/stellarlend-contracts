@@ -23,11 +23,13 @@
 
 #![allow(unused)]
 use soroban_sdk::{contracterror, contracttype, Address, Env, Map, Symbol, Vec};
+use crate::prelude::*;
 
 use crate::deposit::{
     DepositDataKey, Position, ProtocolAnalytics as DepositProtocolAnalytics,
     UserAnalytics as DepositUserAnalytics,
 };
+use crate::reserve;
 
 /// Errors that can occur during analytics operations.
 #[contracterror]
@@ -83,6 +85,8 @@ pub struct ProtocolMetrics {
     pub total_users: u64,
     /// Total transaction count
     pub total_transactions: u64,
+    /// Cumulative protocol income sourced from reserve accrual.
+    pub protocol_revenue: i128,
     /// Timestamp of last metrics update
     pub last_update: u64,
 }
@@ -272,6 +276,8 @@ pub fn update_protocol_metrics(env: &Env) -> Result<ProtocolMetrics, AnalyticsEr
         .get::<AnalyticsDataKey, u64>(&AnalyticsDataKey::TotalTransactions)
         .unwrap_or(0);
 
+    let protocol_revenue = reserve::get_protocol_revenue(env);
+
     let metrics = ProtocolMetrics {
         total_value_locked: tvl,
         total_deposits: protocol_analytics.total_deposits,
@@ -280,6 +286,7 @@ pub fn update_protocol_metrics(env: &Env) -> Result<ProtocolMetrics, AnalyticsEr
         average_borrow_rate: avg_rate,
         total_users,
         total_transactions,
+        protocol_revenue,
         last_update: env.ledger().timestamp(),
     };
 

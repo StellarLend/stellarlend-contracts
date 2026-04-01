@@ -1,4 +1,3 @@
-#![cfg(not(tarpaulin))]
 
 //! Example: Transaction monitoring with custom options
 //!

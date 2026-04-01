@@ -32,6 +32,7 @@ use soroban_sdk::{
     contracterror, contractevent, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec, I256,
 };
 
+
 /// Errors that can occur during AMM operations
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -643,6 +644,9 @@ pub fn auto_swap_for_collateral(
     target_token: Option<Address>,
     amount: i128,
 ) -> Result<i128, AmmError> {
+    // # Security: require explicit caller authorization before any state read.
+    user.require_auth();
+
     // Check if auto-swap is enabled
     let settings = get_amm_settings(env)?;
     if !settings.swap_enabled {
@@ -890,11 +894,7 @@ fn execute_amm_swap(
     // Prepare arguments for external AMM protocol call
     // Standard AMM interface: swap(executor, token_in, token_out, amount_in, min_amount_out, callback_data)
     let mut args: Vec<Val> = Vec::new(env);
-<<<<<<< HEAD
-    args.push_back(callback_data.user.into_val(env));
-=======
     args.push_back(callback_data.user.to_val());
->>>>>>> 69a1de0 (test(hello-world): reserve module coverage - Issue #437)
     args.push_back(params.token_in.into_val(env));
     args.push_back(params.token_out.into_val(env));
     args.push_back(params.amount_in.into_val(env));
@@ -1330,16 +1330,14 @@ pub fn add_amm_protocol(
 }
 
 /// Delete AMM protocol (admin only)
-pub fn delete_amm_protocol(env: &Env, admin: Address, protocol: Address) -> Result<(), AmmError> {
+pub fn delete_amm_protocol(env: &Env, admin: Address, protocol: &Address) -> Result<(), AmmError> {
     admin.require_auth();
-
-    // Check admin authorization
     require_admin(env, &admin)?;
 
     let protocols_key = AmmDataKey::AmmProtocols;
     let mut protocols = get_amm_protocols(env)?;
 
-    protocols.remove(protocol);
+    protocols.remove(protocol.clone());
     env.storage().persistent().set(&protocols_key, &protocols);
 
     Ok(())
@@ -1525,3 +1523,5 @@ pub fn get_liquidity_history(
 
     Ok(filtered_history)
 }
+
+//

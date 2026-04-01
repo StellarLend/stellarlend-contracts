@@ -39,6 +39,9 @@ base64 = "0.21"
 # URL handling
 url = "2.5"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)', 'cfg(tarpaulin_include)'] }
+
 [dev-dependencies]
 # Testing utilities
 mockito = "1.2"

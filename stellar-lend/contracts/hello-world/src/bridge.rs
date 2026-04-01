@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Map, Symbol};
+use crate::prelude::*;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

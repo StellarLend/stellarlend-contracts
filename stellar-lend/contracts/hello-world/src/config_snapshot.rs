@@ -22,7 +22,17 @@
 use crate::risk_management::RiskDataKey;
 use crate::risk_params::{RiskParams, RiskParamsDataKey};
 use soroban_sdk::{contracttype, Env};
+use crate::prelude::*;
 
+/// Represents a point-in-time snapshot of the protocol's configuration.
+///
+/// Contains key risk parameters and global state variables required by off-chain
+/// tooling, liquidators, and monitoring services.
+///
+/// # Security
+/// - All fields are read-only views of the contract's persistent storage.
+/// - No state mutations occur during the creation of this snapshot.
+/// - Does not expose sensitive user data or admin-only configuration details.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConfigSnapshot {
@@ -35,6 +45,19 @@ pub struct ConfigSnapshot {
     pub snapshot_time: u64,
 }
 
+/// Retrieves the current configuration snapshot of the protocol.
+///
+/// Reads persistent storage to assemble a `ConfigSnapshot` containing risk
+/// parameters, emergency pause status, and the current base borrow rate.
+///
+/// # Returns
+/// - `Some(ConfigSnapshot)` if the protocol has been initialized and risk parameters exist.
+/// - `None` if the protocol is uninitialized.
+///
+/// # Security
+/// - **Authorization:** None required. Safe to call by any address.
+/// - **Reentrancy:** Safe. This function is strictly read-only and makes no external cross-contract calls that could trigger reentrancy.
+/// - **State Mutation:** Guaranteed read-only. Uses only `get` operations on storage.
 pub fn get_config_snapshot(env: &Env) -> Option<ConfigSnapshot> {
     let risk_params = env
         .storage()

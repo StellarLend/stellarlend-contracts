@@ -9,14 +9,13 @@
 //! - Collateral and debt values depend on the oracle; ensure the oracle is correct and trusted.
 //! - Health factor uses the admin-set liquidation threshold consistently.
 
-use soroban_sdk::{contracttype, Address, Env, IntoVal, Symbol, I256};
-
 use crate::borrow::{
     get_close_factor_bps, get_liquidation_incentive_bps, get_liquidation_threshold_bps, get_oracle,
     get_user_collateral, get_user_debt, BorrowCollateral, DebtPosition,
 };
 use crate::constants::BPS_SCALE;
 use crate::oracle;
+use soroban_sdk::{contracttype, Address, Env, IntoVal, Symbol, I256};
 
 /// Scale for oracle price (1e8 = one unit). Value = amount * price / PRICE_SCALE.
 const PRICE_SCALE: i128 = 100_000_000;

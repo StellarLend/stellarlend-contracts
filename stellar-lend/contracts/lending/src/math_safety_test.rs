@@ -146,3 +146,60 @@ fn test_get_user_debt_interest_addition_saturates() {
     let debt = env.as_contract(&contract_id, || crate::borrow::get_user_debt(&env, &user));
     assert_eq!(debt.interest_accrued, i128::MAX);
 }
+
+#[test]
+fn test_borrow_amount_zero_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let coll_asset = Address::generate(&env);
+
+    let res = env.as_contract(&contract_id, || {
+        crate::borrow::borrow(&env, user.clone(), asset.clone(), 0, coll_asset.clone(), 100)
+    });
+    assert_eq!(res, Err(crate::borrow::BorrowError::InvalidAmount));
+    
+    let res2 = env.as_contract(&contract_id, || {
+        crate::borrow::borrow(&env, user.clone(), asset.clone(), 1000, coll_asset.clone(), 0)
+    });
+    assert_eq!(res2, Err(crate::borrow::BorrowError::InvalidAmount));
+}
+
+#[test]
+fn test_borrow_math_exhaustion() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let coll_asset = Address::generate(&env);
+
+    // Initial setup for protocol variables to allow tests
+    env.as_contract(&contract_id, || {
+        crate::borrow::initialize_borrow_settings(&env, i128::MAX, 1).unwrap();
+    });
+
+    // Overflow check on collateral ratio (borrow amount too large)
+    let res = env.as_contract(&contract_id, || {
+        crate::borrow::borrow(&env, user.clone(), asset.clone(), i128::MAX, coll_asset.clone(), 100)
+    });
+    // With i128::MAX borrow, collateral ratio check will overflow and fail early
+    assert_eq!(res, Err(crate::borrow::BorrowError::Overflow));
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_borrow_unauthorized_fails() {
+    let env = Env::default();
+    let contract_id = env.register(LendingContract, ());
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let coll_asset = Address::generate(&env);
+    
+    // Attempting borrow without mocking auth should fail
+    env.as_contract(&contract_id, || {
+        crate::borrow::borrow(&env, user.clone(), asset.clone(), 1000, coll_asset.clone(), 2000).unwrap();
+    });
+}

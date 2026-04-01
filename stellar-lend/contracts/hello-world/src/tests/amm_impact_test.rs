@@ -6,6 +6,7 @@ use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env, Symbol, Vec,
 };
+use stellarlend_amm::TokenPair;
 
 fn create_test_env() -> Env {
     let env = Env::default();

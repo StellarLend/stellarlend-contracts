@@ -3,12 +3,12 @@
 #![allow(clippy::absurd_extreme_comparisons)]
 #![allow(unexpected_cfgs)]
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
-
 mod borrow;
 mod constants;
 mod cross_asset;
 mod deposit;
 mod flash_loan;
+mod liquidate;
 mod oracle;
 mod pause;
 mod reentrancy;
@@ -18,11 +18,14 @@ mod token_receiver;
 mod withdraw;
 
 use borrow::{
-    borrow as borrow_impl, deposit as borrow_deposit, get_admin as get_protocol_admin,
+    borrow as borrow_impl, credit_insurance_fund as credit_insurance_impl,
+    deposit as borrow_deposit, get_admin as get_protocol_admin,
     get_close_factor_bps as get_close_factor_impl,
+    get_insurance_fund_balance as get_insurance_fund_impl,
     get_liquidation_incentive_bps as get_liquidation_incentive_bps_impl,
-    get_user_collateral as get_borrow_collateral, get_user_debt as get_user_debt_impl,
-    initialize_borrow_settings as init_borrow_settings_impl, repay as borrow_repay,
+    get_total_bad_debt as get_bad_debt_impl, get_user_collateral as get_borrow_collateral,
+    get_user_debt as get_user_debt_impl, initialize_borrow_settings as init_borrow_settings_impl,
+    offset_bad_debt as offset_bad_debt_impl, repay as borrow_repay,
     set_admin as set_protocol_admin, set_close_factor_bps as set_close_factor_impl,
     set_liquidation_incentive_bps as set_liquidation_incentive_bps_impl,
     set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
@@ -92,6 +95,8 @@ mod token_receiver_test;
 mod views_test;
 
 #[cfg(test)]
+mod constants_test;
+#[cfg(test)]
 mod data_store_test;
 #[cfg(test)]
 mod math_safety_test;
@@ -105,23 +110,20 @@ mod upgrade_test;
 mod withdraw_test;
 
 #[cfg(test)]
-mod borrow_test_booster;
+mod bad_debt_test;
 #[cfg(test)]
-mod liquidation_boundary_test;
+mod liquidation_boundary_test;#[cfg(test)]
+mod multi_user_contention_test;
 #[cfg(test)]
 mod multi_user_contention_test;
 #[cfg(test)]
 mod oracle_test;
 #[cfg(test)]
 mod stress_test;
-<<<<<<< HEAD
 #[cfg(test)]
 mod test_performance;
-
 #[cfg(test)]
 mod coverage_gap_test;
-=======
->>>>>>> 3c70e89 (style: fix format errors in the contract)
 
 #[contract]
 pub struct LendingContract;
@@ -297,6 +299,38 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Returns the insurance fund balance for an asset.
+    pub fn get_insurance_fund_balance(env: Env, asset: Address) -> i128 {
+        get_insurance_fund_impl(&env, &asset)
+    }
+
+    /// Returns the total bad debt recorded for an asset.
+    pub fn get_total_bad_debt(env: Env, asset: Address) -> i128 {
+        get_bad_debt_impl(&env, &asset)
+    }
+
+    /// Credits the insurance fund for an asset (Admin only).
+    pub fn credit_insurance_fund(
+        env: Env,
+        caller: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), BorrowError> {
+        ensure_admin(&env, &caller)?;
+        credit_insurance_impl(&env, &asset, amount)
+    }
+
+    /// Manually offsets bad debt using the insurance fund (Admin only).
+    pub fn offset_bad_debt(
+        env: Env,
+        caller: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), BorrowError> {
+        ensure_admin(&env, &caller)?;
+        offset_bad_debt_impl(&env, &asset, amount)
+    }
+
     /// Returns gas/performance stats for the current transaction (Issue #391)
     /// [CPU Instructions, Memory Bytes]
     #[cfg(not(tarpaulin_include))]
@@ -319,9 +353,9 @@ impl LendingContract {
         get_borrow_collateral(&env, &user)
     }
 
-    // ═══════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // View functions (read-only; for frontends and liquidations)
-    // ═══════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     /// Returns the user's collateral balance (raw amount).
     pub fn get_collateral_balance(env: Env, user: Address) -> i128 {
@@ -361,8 +395,8 @@ impl LendingContract {
     /// Configure oracle staleness parameters (admin only).
     ///
     /// # Errors
-    /// - `OracleError::Unauthorized` — caller is not the protocol admin.
-    /// - `OracleError::InvalidPrice` — `max_staleness_seconds` is zero.
+    /// - `OracleError::Unauthorized` â€” caller is not the protocol admin.
+    /// - `OracleError::InvalidPrice` â€” `max_staleness_seconds` is zero.
     pub fn configure_oracle(
         env: Env,
         caller: Address,
@@ -374,8 +408,8 @@ impl LendingContract {
     /// Register the primary oracle address for `asset` (admin only).
     ///
     /// # Errors
-    /// - `OracleError::Unauthorized` — caller is not the protocol admin.
-    /// - `OracleError::InvalidOracle` — oracle address is the contract itself.
+    /// - `OracleError::Unauthorized` â€” caller is not the protocol admin.
+    /// - `OracleError::InvalidOracle` â€” oracle address is the contract itself.
     pub fn set_primary_oracle(
         env: Env,
         caller: Address,
@@ -388,8 +422,8 @@ impl LendingContract {
     /// Register the fallback oracle address for `asset` (admin only).
     ///
     /// # Errors
-    /// - `OracleError::Unauthorized` — caller is not the protocol admin.
-    /// - `OracleError::InvalidOracle` — oracle address is the contract itself.
+    /// - `OracleError::Unauthorized` â€” caller is not the protocol admin.
+    /// - `OracleError::InvalidOracle` â€” oracle address is the contract itself.
     pub fn set_fallback_oracle(
         env: Env,
         caller: Address,
@@ -405,9 +439,9 @@ impl LendingContract {
     /// fallback oracle for this asset.
     ///
     /// # Errors
-    /// - `OracleError::OraclePaused` — oracle updates are paused.
-    /// - `OracleError::Unauthorized` — caller is not authorized.
-    /// - `OracleError::InvalidPrice` — price is zero or negative.
+    /// - `OracleError::OraclePaused` â€” oracle updates are paused.
+    /// - `OracleError::Unauthorized` â€” caller is not authorized.
+    /// - `OracleError::InvalidPrice` â€” price is zero or negative.
     pub fn update_price_feed(
         env: Env,
         caller: Address,
@@ -417,11 +451,11 @@ impl LendingContract {
         oracle::update_price_feed(&env, caller, asset, price)
     }
 
-    /// Get the current price for `asset` (primary → fallback → error).
+    /// Get the current price for `asset` (primary â†’ fallback â†’ error).
     ///
     /// # Errors
-    /// - `OracleError::StalePrice` — best available price is stale.
-    /// - `OracleError::NoPriceFeed` — no price has been submitted for this asset.
+    /// - `OracleError::StalePrice` â€” best available price is stale.
+    /// - `OracleError::NoPriceFeed` â€” no price has been submitted for this asset.
     pub fn get_price(env: Env, asset: Address) -> Result<i128, OracleError> {
         oracle::get_price(&env, &asset)
     }
@@ -446,7 +480,7 @@ impl LendingContract {
         get_close_factor_impl(&env)
     }
 
-    /// Sets the close factor in basis points (1–10000). Admin only.
+    /// Sets the close factor in basis points (1â€“10000). Admin only.
     pub fn set_close_factor_bps(env: Env, admin: Address, bps: i128) -> Result<(), BorrowError> {
         set_close_factor_impl(&env, &admin, bps)
     }
@@ -456,7 +490,7 @@ impl LendingContract {
         get_liquidation_incentive_bps_impl(&env)
     }
 
-    /// Sets the liquidation incentive in basis points (0–10000). Admin only.
+    /// Sets the liquidation incentive in basis points (0â€“10000). Admin only.
     pub fn set_liquidation_incentive_bps(
         env: Env,
         admin: Address,
@@ -500,7 +534,8 @@ impl LendingContract {
         init_deposit_settings_impl(&env, deposit_cap, min_deposit_amount)
     }
 
-<<<<<<< HEAD
+    /// Set deposit pause state (admin only)
+    #[cfg(not(tarpaulin_include))]
     /// Set deposit pause state (admin only).
     ///
     /// Convenience wrapper around [`set_pause`] scoped to `PauseType::Deposit`.
@@ -508,10 +543,6 @@ impl LendingContract {
     ///
     /// # Errors
     /// Returns [`DepositError::Unauthorized`] if the caller is not the admin.
-=======
-    /// Set deposit pause state (admin only)
-    #[cfg(not(tarpaulin_include))]
->>>>>>> 4891c92 (chore: fix minimum test coverage)
     pub fn set_deposit_paused(env: Env, paused: bool) -> Result<(), DepositError> {
         let admin = get_protocol_admin(&env).ok_or(DepositError::Unauthorized)?;
         admin.require_auth();
@@ -555,18 +586,16 @@ impl LendingContract {
         set_flash_loan_fee_impl(&env, fee_bps)
     }
 
-    /// Withdraw collateral from the protocol
+    /// Withdraw collateral from the protocol.
+    ///
+    /// Pause, emergency shutdown vs recovery, legacy withdraw flag, and collateral-ratio checks
+    /// are enforced inside [`withdraw::withdraw`] so behavior stays aligned with the pause module.
     pub fn withdraw(
         env: Env,
         user: Address,
         asset: Address,
         amount: i128,
     ) -> Result<i128, WithdrawError> {
-        if is_paused(&env, PauseType::Withdraw)
-            || (!is_recovery(&env) && blocks_high_risk_ops(&env))
-        {
-            return Err(WithdrawError::WithdrawPaused);
-        }
         withdraw_logic(&env, user, asset, amount)
     }
 
@@ -605,9 +634,9 @@ impl LendingContract {
         receive_impl(env, token_asset, from, amount, payload)
     }
 
-    // ───────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Upgrade Management (Governance)
-    // ───────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     pub fn upgrade_init(
         env: Env,
@@ -659,9 +688,9 @@ impl LendingContract {
         upgrade::UpgradeManager::current_version(env)
     }
 
-    // ───────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Data Store Management
-    // ───────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[cfg(not(tarpaulin_include))]
     pub fn data_store_init(env: Env, admin: Address) {
@@ -720,13 +749,13 @@ impl LendingContract {
         data_store::DataStore::key_exists(env, key)
     }
 
-    // ═══════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Cross-Asset Operations
-    // ═══════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     /// Initialize admin for cross-asset operations
-    pub fn initialize_admin(env: Env, admin: Address) {
-        cross_init_admin(&env, admin);
+    pub fn initialize_admin(env: Env, admin: Address) -> Result<(), CrossAssetError> {
+        cross_init_admin(&env, admin)
     }
 
     /// Set parameters for a specific asset (admin only)

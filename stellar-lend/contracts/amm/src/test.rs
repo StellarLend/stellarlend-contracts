@@ -2,6 +2,8 @@ use super::*;
 use crate::amm::{AmmDataKey, *};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Symbol, Vec};
 
+
+
 fn create_amm_contract<'a>(env: &Env) -> AmmContractClient<'a> {
     AmmContractClient::new(env, &env.register(AmmContract {}, ()))
 }
@@ -23,6 +25,29 @@ fn create_test_protocol_config(env: &Env) -> AmmProtocolConfig {
         min_swap_amount: 1000,
         max_swap_amount: 1_000_000_000,
         supported_pairs,
+    }
+}
+
+// Mock AMM contract for testing
+#[contract]
+pub struct MockAmm;
+
+#[contractimpl]
+impl MockAmm {
+    pub fn swap(
+        _env: Env,
+        _executor: Address,
+        _token_in: Option<Address>,
+        _token_out: Option<Address>,
+        amount_in: i128,
+        _min_amount_out: i128,
+        _callback_data: AmmCallbackData,
+    ) -> i128 {
+        // Simulate 1% fee
+        amount_in
+            .checked_mul(9900)
+            .and_then(|v| v.checked_div(10000))
+            .unwrap_or(0)
     }
 }
 
@@ -59,7 +84,7 @@ fn test_add_amm_protocol() {
 
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
+    let _protocol_addr = Address::generate(&env);
 
     // Initialize first
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
@@ -117,6 +142,8 @@ fn test_successful_swap() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
+    contract.initialize_amm_settings(&admin, &100, &1000, &10000);
+
     let protocol_addr = env.register(MockAmm, ());
     let token_b = Address::generate(&env);
     let mut supported_pairs = Vec::new(&env);
@@ -125,6 +152,7 @@ fn test_successful_swap() {
         token_b: Some(token_b.clone()),
         pool_address: Address::generate(&env),
     });
+
     let protocol_config = AmmProtocolConfig {
         protocol_address: protocol_addr.clone(),
         protocol_name: Symbol::new(&env, "TestAMM"),
@@ -148,7 +176,7 @@ fn test_successful_swap() {
     };
 
     let amount_out = contract.execute_swap(&user, &params);
-    assert_eq!(amount_out, 9900); // 10000 * (10000 - 100) / 10000 = 9900 based on mock execute_amm_swap
+    assert_eq!(amount_out, 9900); // 10000 * 99 / 100 = 9900 from MockAmm
 
     // Verify swap history
     let history = contract.get_swap_history(&Some(user), &10).unwrap();
@@ -225,7 +253,7 @@ fn test_swap_failure_paused() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
+    let _protocol_addr = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let mut settings = contract.get_amm_settings().unwrap();
@@ -703,10 +731,10 @@ fn test_swap_failure_zero_amount() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let protocol_config = create_test_protocol_config(&env);
+    let protocol_addr = protocol_config.protocol_address.clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     let params = SwapParams {
@@ -754,10 +782,10 @@ fn test_callback_validation_expired() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let protocol_config = create_test_protocol_config(&env);
+    let protocol_addr = protocol_config.protocol_address.clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     let callback_data = AmmCallbackData {
@@ -782,11 +810,11 @@ fn test_callback_validation_success() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
     let token_b = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
 
+    let protocol_addr = env.register(MockAmm, ());
     let mut supported_pairs = Vec::new(&env);
     supported_pairs.push_back(TokenPair {
         token_a: None,
@@ -836,10 +864,11 @@ fn test_validate_amm_callback_fails_without_caller_auth() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
 
+    env.mock_all_auths();
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let protocol_config = create_test_protocol_config(&env);
+    let protocol_addr = protocol_config.protocol_address.clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     let callback_data = AmmCallbackData {
@@ -862,10 +891,10 @@ fn test_validate_amm_callback_succeeds_with_caller_auth() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let protocol_config = create_test_protocol_config(&env);
+    let protocol_addr = protocol_config.protocol_address.clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     let callback_data = AmmCallbackData {
@@ -890,10 +919,10 @@ fn test_callback_replay_fails() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let protocol_config = create_test_protocol_config(&env);
+    let protocol_addr = protocol_config.protocol_address.clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     let callback_data = AmmCallbackData {
@@ -920,10 +949,10 @@ fn test_callback_disabled_protocol_fails() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let mut protocol_config = create_test_protocol_config(&env);
+    let protocol_addr = protocol_config.protocol_address.clone();
     protocol_config.enabled = false;
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -947,7 +976,6 @@ fn test_callback_unregistered_protocol_fails() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
     let other_protocol = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
@@ -974,10 +1002,10 @@ fn test_callback_nonce_overflow_on_increment() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let protocol_config = create_test_protocol_config(&env);
+    let protocol_addr = protocol_config.protocol_address.clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     env.as_contract(&contract.address, || {
@@ -1005,11 +1033,11 @@ fn test_generate_callback_nonce_overflow_on_swap() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
     let token_b = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
 
+    let protocol_addr = env.register(MockAmm, ());
     let mut supported_pairs = Vec::new(&env);
     supported_pairs.push_back(TokenPair {
         token_a: None,
@@ -1054,7 +1082,7 @@ fn test_edge_case_max_slippage() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let protocol_addr = Address::generate(&env);
+    let protocol_addr = env.register(MockAmm, ());
     let token_b = Address::generate(&env);
 
     contract.initialize_amm_settings(&admin, &100, &2000, &10000); // 20% max slippage allowed
@@ -1205,12 +1233,13 @@ fn test_validate_amm_callback_failures() {
         .is_err());
 
     // 2. Expired callback
+    env.ledger().set_timestamp(10);
     let callback_data_expired = AmmCallbackData {
         nonce: 1,
         operation: Symbol::new(&env, "swap"),
         user: user.clone(),
         expected_amounts: Vec::new(&env),
-        deadline: env.ledger().timestamp() - 1,
+        deadline: 5, // Before current ledger timestamp of 10
     };
     assert!(contract
         .try_validate_amm_callback(&protocol_addr, &callback_data_expired)

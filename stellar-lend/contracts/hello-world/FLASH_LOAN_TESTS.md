@@ -14,11 +14,7 @@ Comprehensive test suite for StellarLend flash loan functionality covering succe
    - Confirms tokens are transferred to user
    - Expected: Returns total repayment amount (principal + fee)
 
-2. **test_flash_loan_repayment_success**
-   - Validates successful flash loan repayment
-   - Tests token approval and transfer_from mechanism
-   - Verifies flash loan record is cleared after repayment
-   - Expected: Repayment succeeds and state is cleaned up
+
 
 ### Fee Calculation Tests (3 tests)
 
@@ -40,19 +36,17 @@ Comprehensive test suite for StellarLend flash loan functionality covering succe
 
 ### Unpaid Loan Revert Tests (3 tests)
 
-6. **test_unpaid_loan_revert**
-   - Tests repayment without initiating flash loan
-   - Expected: FlashLoanError::NotRepaid
+43. **test_unpaid_loan_revert**
+   - Tests callback returning without approving required tokens
+   - Expected: Panic (host-level invalid action / auth failure) ensuring atomicity
 
-7. **test_insufficient_repayment**
-   - Tests repayment with amount less than required
-   - User has tokens but repays insufficient amount
-   - Expected: FlashLoanError::InsufficientRepayment
+47. **test_insufficient_repayment**
+   - Tests callback approving less than the required repayment amount
+   - Expected: Panic (host-level invalid action / auth failure) ensuring atomicity
 
-8. **test_insufficient_user_balance**
-   - Tests repayment when user lacks sufficient tokens
-   - User only has borrowed amount, not enough for fee
-   - Expected: FlashLoanError::InsufficientRepayment
+52. **test_insufficient_user_balance**
+   - Tests repayment when user lacks sufficient tokens but approves anyway
+   - Expected: Panic (host-level insufficient balance failure) ensuring atomicity
 
 ### Callback Validation Tests (2 tests)
 
@@ -135,16 +129,16 @@ test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured
 
 ## Security Assumptions Validated
 
-1. **Reentrancy Protection**: Active flash loan prevents new flash loans for same user/asset
-2. **Authorization**: Only admin can modify fee and configuration
-3. **Pause Mechanism**: Flash loans can be paused by admin
-4. **Amount Validation**: Zero, negative, and out-of-range amounts rejected
-5. **Liquidity Check**: Cannot borrow more than contract balance
-6. **Callback Validation**: Contract cannot be its own callback
-7. **Asset Validation**: Contract cannot be used as asset
-8. **Repayment Enforcement**: Loan must be repaid with correct amount
-9. **Fee Bounds**: Fee limited to 0-10000 bps (0-100%)
-10. **Configuration Validation**: Min/max amounts and fee parameters validated
+1. **Atomicity Guarantee via "Pull" Model**: The flash loan logic explicitly pulls the principal + fee simultaneously after the callback returns. Failure to provide approval triggers a host panic, strictly enforcing atomicity.
+2. **Reentrancy Protection**: Active flash loan markers prevent the same asset from being flash loaned repeatedly from within the callback; moreover, the host intercepts direct contract re-entrancy.
+3. **Authorization**: Only admin can modify fee and configuration.
+4. **Pause Mechanism**: Flash loans can be paused by admin.
+5. **Amount Validation**: Zero, negative, and out-of-range amounts rejected.
+6. **Liquidity Check**: Cannot borrow more than contract balance.
+7. **Callback Validation**: Contract cannot be its own callback.
+8. **Asset Validation**: Contract cannot be used as asset.
+9. **Fee Bounds**: Fee limited to 0-10000 bps (0-100%).
+10. **Configuration Validation**: Min/max amounts and fee parameters validated.
 
 ## Test Execution
 

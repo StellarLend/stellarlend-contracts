@@ -23,7 +23,7 @@ pub enum GovernanceDataKey {
 
 #[derive(Clone)]
 #[contracttype]
-pub enum DepositDataKey {
+pub enum LegacyDepositDataKey {
     Deposit(Address, Option<Address>),
     TotalDeposits,
     UserDeposits(Address),

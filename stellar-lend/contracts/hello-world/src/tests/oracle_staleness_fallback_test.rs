@@ -161,7 +161,7 @@ fn test_staleness_future_timestamp_rejected() {
 #[should_panic(expected = "Oracle error")]
 fn test_stale_price_after_cache_expires() {
     let env = create_env();
-    let (contract_id, admin, client) = setup(&env);
+    let (_contract_id, admin, client) = setup(&env);
     let asset = Address::generate(&env);
     let oracle = Address::generate(&env);
 
@@ -516,13 +516,13 @@ fn test_freshness_boundary_exactly_at_limit_valid() {
 #[should_panic(expected = "Oracle error")]
 fn test_freshness_boundary_one_past_limit_rejected() {
     let env = create_env();
-    let (contract_id, admin, client) = setup(&env);
+    let (_contract_id, admin, client) = setup(&env);
     let asset = Address::generate(&env);
     let oracle = Address::generate(&env);
 
     env.ledger().with_mut(|li| li.timestamp = 100);
     client.update_price_feed(&admin, &asset, &100_000_000, &8, &oracle);
-    clear_cache(&env, &contract_id, &asset);
+    clear_cache(&env, &_contract_id, &asset);
 
     env.ledger().with_mut(|li| li.timestamp = 3701); // age = 3601
     client.get_price(&asset);

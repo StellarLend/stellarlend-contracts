@@ -21,7 +21,7 @@
 //! ```text
 //! Health Factor = (Weighted Collateral Value / Total Debt Value) * 10000
 //! ```
-//! Where Weighted Collateral Value = Sum of (Collateral Amount × Price × LTV) for all assets
+//! Where Weighted Collateral Value = Sum of (Collateral Amount Ã— Price Ã— LTV) for all assets
 //!
 //! ### Asset Configuration
 //! Each asset has configurable parameters:
@@ -84,9 +84,10 @@
 //! assert!(summary.health_factor >= 10000); // >= 1.0
 //! ```
 
-use soroban_sdk::{contracterror, contracttype, Address, Env, Map};
+use soroban_sdk::{contracterror, contractevent, contracttype, token, Address, Env, Map};
 
 use crate::constants::{BPS_SCALE, HEALTH_FACTOR_SCALE};
+use crate::pause::{self, PauseType};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -100,6 +101,48 @@ pub enum CrossAssetError {
     Unauthorized = 6,
     AssetNotSupported = 7,
     PriceUnavailable = 8,
+    AlreadyInitialized = 9,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct AssetParamsSetEvent {
+    pub asset: Address,
+    pub ltv: i128,
+    pub liquidation_threshold: i128,
+    pub debt_ceiling: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct CrossDepositEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct CrossBorrowEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct CrossRepayEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct CrossWithdrawEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
 }
 
 #[contracttype]
@@ -139,6 +182,19 @@ pub struct PositionSummary {
     pub health_factor: i128, // Scaled by 10000
 }
 
+/// Configures parameters for a specific asset.
+///
+/// # Arguments
+/// * `env` - The contract environment.
+/// * `asset` - The address of the asset to configure.
+/// * `params` - The parameters to set for the asset.
+///
+/// # Errors
+/// * `Unauthorized`: If the caller is not the admin.
+///
+/// # Security
+/// * Only the admin can call this function.
+/// * All parameters should be validated before use in other functions.
 pub fn set_asset_params(
     env: &Env,
     asset: Address,
@@ -151,6 +207,23 @@ pub fn set_asset_params(
     Ok(())
 }
 
+/// Deposits an asset as collateral for the user's cross-asset position.
+///
+/// # Arguments
+/// * `env` - The contract environment.
+/// * `user` - The address of the user.
+/// * `asset` - The address of the asset to deposit.
+/// * `amount` - The amount to deposit.
+///
+/// # Errors
+/// * `InvalidAmount`: If the amount is less than or equal to 0.
+/// * `ProtocolPaused`: If deposit operations are paused.
+/// * `AssetNotSupported`: If the asset is not active or not supported.
+/// * `Overflow`: If an arithmetic overflow occurs.
+///
+/// # Security
+/// * The user must authorize the deposit.
+/// * Tokens are transferred from the user to the contract.
 pub fn deposit_collateral_asset(
     env: &Env,
     user: Address,
@@ -158,6 +231,11 @@ pub fn deposit_collateral_asset(
     amount: i128,
 ) -> Result<(), CrossAssetError> {
     user.require_auth();
+
+    if pause::is_paused(env, PauseType::Deposit) {
+        return Err(CrossAssetError::ProtocolPaused);
+    }
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -184,6 +262,26 @@ pub fn deposit_collateral_asset(
     Ok(())
 }
 
+/// Borrows an asset against the user's collateral portfolio.
+///
+/// # Arguments
+/// * `env` - The contract environment.
+/// * `user` - The address of the user.
+/// * `asset` - The address of the asset to borrow.
+/// * `amount` - The amount to borrow.
+///
+/// # Errors
+/// * `InvalidAmount`: If the amount is less than or equal to 0.
+/// * `ProtocolPaused`: If borrow operations are paused.
+/// * `AssetNotSupported`: If the asset is not active or not supported.
+/// * `DebtCeilingReached`: If the borrow would exceed the asset's debt ceiling.
+/// * `InsufficientCollateral`: If the user's health factor would drop below 1.0.
+/// * `Overflow`: If an arithmetic overflow occurs.
+///
+/// # Security
+/// * The user must authorize the borrow.
+/// * Tokens are transferred from the contract to the user.
+/// * The position health is checked before completing the borrow.
 pub fn borrow_asset(
     env: &Env,
     user: Address,
@@ -191,6 +289,11 @@ pub fn borrow_asset(
     amount: i128,
 ) -> Result<(), CrossAssetError> {
     user.require_auth();
+
+    if pause::is_paused(env, PauseType::Borrow) {
+        return Err(CrossAssetError::ProtocolPaused);
+    }
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -243,6 +346,22 @@ pub fn borrow_asset(
     Ok(())
 }
 
+/// Repays a borrowed asset.
+///
+/// # Arguments
+/// * `env` - The contract environment.
+/// * `user` - The address of the user.
+/// * `asset` - The address of the asset to repay.
+/// * `amount` - The amount to repay.
+///
+/// # Errors
+/// * `InvalidAmount`: If the amount is less than or equal to 0.
+/// * `ProtocolPaused`: If repay operations are paused.
+/// * `Overflow`: If an arithmetic overflow occurs.
+///
+/// # Security
+/// * The user must authorize the repayment.
+/// * Tokens are transferred from the user to the contract.
 pub fn repay_asset(
     env: &Env,
     user: Address,
@@ -250,6 +369,11 @@ pub fn repay_asset(
     amount: i128,
 ) -> Result<(), CrossAssetError> {
     user.require_auth();
+
+    if pause::is_paused(env, PauseType::Repay) {
+        return Err(CrossAssetError::ProtocolPaused);
+    }
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -284,6 +408,24 @@ pub fn repay_asset(
     Ok(())
 }
 
+/// Withdraws an asset from the user's collateral portfolio.
+///
+/// # Arguments
+/// * `env` - The contract environment.
+/// * `user` - The address of the user.
+/// * `asset` - The address of the asset to withdraw.
+/// * `amount` - The amount to withdraw.
+///
+/// # Errors
+/// * `InvalidAmount`: If the amount is less than or equal to 0 or exceeds the user's collateral balance.
+/// * `ProtocolPaused`: If withdraw operations are paused.
+/// * `InsufficientCollateral`: If the withdrawal would make the position liquidatable.
+/// * `Overflow`: If an arithmetic overflow occurs.
+///
+/// # Security
+/// * The user must authorize the withdrawal.
+/// * Tokens are transferred from the contract to the user.
+/// * The position health is checked before completing the withdrawal.
 pub fn withdraw_asset(
     env: &Env,
     user: Address,
@@ -291,6 +433,11 @@ pub fn withdraw_asset(
     amount: i128,
 ) -> Result<(), CrossAssetError> {
     user.require_auth();
+
+    if pause::is_paused(env, PauseType::Withdraw) {
+        return Err(CrossAssetError::ProtocolPaused);
+    }
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -319,6 +466,17 @@ pub fn withdraw_asset(
 
     position.collateral_balances = collateral_balances;
     save_user_position(env, &user, &position);
+
+    // Transfer tokens from contract to user
+    let token_client = token::Client::new(env, &asset);
+    token_client.transfer(&env.current_contract_address(), &user, &amount);
+
+    CrossWithdrawEvent {
+        user,
+        asset,
+        amount,
+    }
+    .publish(env);
 
     Ok(())
 }
@@ -441,13 +599,32 @@ fn calculate_position_summary(
     })
 }
 
+/// Fetches the price for a given asset from its oracle price feed.
+///
+/// # Arguments
+/// * `env` - The contract environment.
+/// * `price_feed` - The address of the oracle price feed.
+///
+/// # Returns
+/// The price of the asset (scaled by 10^7).
+///
+/// # Errors
+/// * `PriceUnavailable`: If the oracle price is not available.
+///
+/// # Security
+/// * In a production implementation, this should call a trusted oracle contract.
 fn get_price(_env: &Env, _price_feed: &Address) -> Result<i128, CrossAssetError> {
     // Mock price feed - in real app, call oracle contract
+    // Example: let oracle = oracle::Client::new(env, price_feed); oracle.get_price(...)
     Ok(10000000) // $1.00 with 7 decimals
 }
 
-pub fn initialize_admin(env: &Env, admin: Address) {
+pub fn initialize_admin(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
+    if env.storage().persistent().has(&CrossAssetDataKey::Admin) {
+        return Err(CrossAssetError::AlreadyInitialized);
+    }
     env.storage()
         .persistent()
         .set(&CrossAssetDataKey::Admin, &admin);
+    Ok(())
 }

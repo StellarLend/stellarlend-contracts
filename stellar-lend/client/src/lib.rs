@@ -1,4 +1,3 @@
-#![cfg(not(tarpaulin))]
 
 //! StellarLend Blockchain Integration Layer
 //!

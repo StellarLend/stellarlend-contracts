@@ -24,6 +24,7 @@ use crate::events::{
     FlashLoanRepaidEvent,
 };
 use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
+use crate::prelude::*;
 
 use crate::deposit::DepositDataKey;
 
@@ -174,6 +175,8 @@ fn clear_flash_loan(env: &Env, user: &Address, asset: &Address) {
 ///
 /// Allows users to borrow assets without collateral for a single transaction.
 /// The loan must be repaid (with fee) within the same transaction via callback.
+/// The callback `on_flash_loan(user: Address, asset: Address, amount: i128, fee: i128)`
+/// is systematically invoked on the provided callback address, which enforces atomicity.
 ///
 /// # Arguments
 /// * `env` - The Soroban environment
@@ -193,6 +196,12 @@ fn clear_flash_loan(env: &Env, user: &Address, asset: &Address) {
 /// * `FlashLoanError::Reentrancy` - If flash loan is already active for this user/asset
 /// * `FlashLoanError::InvalidCallback` - If callback address is invalid
 /// * `FlashLoanError::Overflow` - If calculation overflow occurs
+/// * `FlashLoanError::NotRepaid` - If the loan was not successfully repaid during the callback
+///
+/// # Security
+/// - Requires atomicity: the callback is always invoked during execution, and failure to repay reverts the entire operation.
+/// - Requires authorization: users must independently authorize token pull if using a standard transfer loop, though atomicity guarantees safety.
+/// - Reentrancy protected: prevents reentrant calls per (user, asset) combo.
 pub fn execute_flash_loan(
     env: &Env,
     user: Address,
@@ -274,70 +283,33 @@ pub fn execute_flash_loan(
         },
     );
 
-    // Note: In a real implementation, we would call the callback here
-    // For Soroban, the callback would need to be invoked by the user
-    // The repayment check happens when the user calls repay_flash_loan
+    // Invoke the callback contract to facilitate the flash loan actions
+    env.invoke_contract::<()>(
+        &callback,
+        &Symbol::new(env, "on_flash_loan"),
+        soroban_sdk::vec![
+            env,
+            env.current_contract_address().into_val(env),
+            user.into_val(env),
+            asset.into_val(env),
+            amount.into_val(env),
+            fee.into_val(env)
+        ],
+    );
 
-    Ok(total_repayment)
-}
-
-/// Repay flash loan
-///
-/// Must be called within the same transaction as the flash loan.
-/// Validates that the full amount (principal + fee) is repaid.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `user` - The address repaying the flash loan
-/// * `asset` - The address of the asset contract
-/// * `amount` - The amount being repaid (should equal principal + fee)
-///
-/// # Returns
-/// Returns success if repayment is valid
-pub fn repay_flash_loan(
-    env: &Env,
-    user: Address,
-    asset: Address,
-    amount: i128,
-) -> Result<(), FlashLoanError> {
-    // Get active flash loan record
-    let loan_key = FlashLoanDataKey::ActiveFlashLoan(user.clone(), asset.clone());
-    let record = env
-        .storage()
-        .persistent()
-        .get::<FlashLoanDataKey, FlashLoanRecord>(&loan_key)
-        .ok_or(FlashLoanError::NotRepaid)?;
-
-    // Calculate required repayment
-    let required_repayment = record
-        .amount
-        .checked_add(record.fee)
-        .ok_or(FlashLoanError::Overflow)?;
-
-    // Validate repayment amount
-    if amount < required_repayment {
-        return Err(FlashLoanError::InsufficientRepayment);
-    }
-
-    // Transfer tokens from user to contract
-    let token_client = soroban_sdk::token::Client::new(env, &asset);
-
-    // Check user balance
-    let user_balance = token_client.balance(&user);
-    if user_balance < required_repayment {
-        return Err(FlashLoanError::InsufficientRepayment);
-    }
-
+    // Atomicity check: pull the funds from the user.
     // Transfer repayment (user must have approved the contract)
     token_client.transfer_from(
         &env.current_contract_address(), // spender (this contract)
         &user,                           // from (user)
         &env.current_contract_address(), // to (this contract)
-        &required_repayment,
+        &total_repayment,
     );
 
+    use crate::deposit::DepositDataKey;
+
     // Credit fee to protocol reserve
-    if record.fee > 0 {
+    if fee > 0 {
         let reserve_key = DepositDataKey::ProtocolReserve(Some(asset.clone()));
         let current_reserve = env
             .storage()
@@ -347,7 +319,7 @@ pub fn repay_flash_loan(
         env.storage().persistent().set(
             &reserve_key,
             &(current_reserve
-                .checked_add(record.fee)
+                .checked_add(fee)
                 .ok_or(FlashLoanError::Overflow)?),
         );
     }
@@ -361,13 +333,13 @@ pub fn repay_flash_loan(
         FlashLoanRepaidEvent {
             user: user.clone(),
             asset: asset.clone(),
-            amount: record.amount,
-            fee: record.fee,
+            amount: amount,
+            fee: fee,
             timestamp: env.ledger().timestamp(),
         },
     );
 
-    Ok(())
+    Ok(total_repayment)
 }
 
 /// Set flash loan fee
@@ -376,9 +348,16 @@ pub fn repay_flash_loan(
 /// * `env` - The Soroban environment
 /// * `caller` - The address calling this function (must be admin)
 /// * `fee_bps` - The new fee in basis points
+///
+/// # Errors
+/// * `FlashLoanError::InvalidCallback` - If called by unexpected address or unauthorized.
+/// * `FlashLoanError::InvalidAmount` - If the fee basis points parameter is out of bounds.
+///
+/// # Security
+/// - Protects configuration modifications allowing only admin to modify fee basis points.
 pub fn set_flash_loan_fee(env: &Env, caller: Address, fee_bps: i128) -> Result<(), FlashLoanError> {
     // Check authorization
-    crate::admin::require_admin(env, &caller).map_err(|_| FlashLoanError::InvalidCallback)?;
+        crate::admin::require_admin(env, &caller).map_err(|_| FlashLoanError::InvalidCallback)?;
 
     // Validate fee (must be between 0 and 10000 basis points)
     if !(0..=10000).contains(&fee_bps) {
@@ -400,6 +379,13 @@ pub fn set_flash_loan_fee(env: &Env, caller: Address, fee_bps: i128) -> Result<(
 /// * `env` - The Soroban environment
 /// * `caller` - The address calling this function (must be admin)
 /// * `config` - The new flash loan configuration
+///
+/// # Errors
+/// * `FlashLoanError::InvalidCallback` - Used when unauthorized (admin role required).
+/// * `FlashLoanError::InvalidAmount` - Upon malformed boundary config properties.
+///
+/// # Security
+/// - Administrative endpoint restricted to authorized callers checking limits thoroughly.
 pub fn configure_flash_loan(
     env: &Env,
     caller: Address,

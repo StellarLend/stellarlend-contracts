@@ -50,6 +50,7 @@
 //! - `SECONDS_PER_YEAR = 365 × 86_400 = 31_536_000` (no leap seconds).
 
 use soroban_sdk::{contracterror, contracttype, Address, Env};
+use crate::prelude::*;
 
 use crate::deposit::{DepositDataKey, ProtocolAnalytics};
 
@@ -270,7 +271,7 @@ pub fn calculate_utilization(env: &Env) -> Result<i128, InterestRateError> {
         .ok_or(InterestRateError::DivisionByZero)?;
 
     // Cap at 100%
-    Ok(utilization.max(0).min(BASIS_POINTS_SCALE))
+    Ok(utilization.clamp(0, BASIS_POINTS_SCALE))
 }
 
 // =============================================================================
