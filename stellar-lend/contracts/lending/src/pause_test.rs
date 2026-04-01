@@ -1092,7 +1092,7 @@ fn test_oracle_pause_independence() {
 
     // Pause all core operations but not oracle
     client.set_pause(&admin, &PauseType::All, &true);
-    
+
     // Oracle should still work if not paused
     client.update_price_feed(&oracle, &asset, &100_000);
 
