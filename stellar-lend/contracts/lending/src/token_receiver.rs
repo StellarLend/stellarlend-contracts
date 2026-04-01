@@ -104,4 +104,3 @@ fn pull_tokens(
     token_client.transfer_from(&spender, from, &spender, &amount);
     Ok(())
 }
-

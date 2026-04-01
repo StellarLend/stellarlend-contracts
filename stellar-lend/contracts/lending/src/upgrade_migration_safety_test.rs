@@ -743,10 +743,7 @@ fn test_upgrade_with_single_approver_required() {
 
     // Admin proposes — auto-approved (admin is in approvers set)
     let p1 = client.upgrade_propose(&admin, &hash(&env, 2), &1);
-    assert_eq!(
-        client.upgrade_status(&p1).stage,
-        UpgradeStage::Approved
-    );
+    assert_eq!(client.upgrade_status(&p1).stage, UpgradeStage::Approved);
     client.upgrade_execute(&admin, &p1);
     assert_eq!(client.current_version(), 1);
 }

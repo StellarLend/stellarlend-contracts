@@ -120,7 +120,6 @@ use crate::risk_management::{
     check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
     set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
 };
-};
 
 use crate::amm::{SwapParams, AmmError};
 use crate::risk_params::{
@@ -735,7 +734,7 @@ impl HelloContract {
         }
 
         let balance_key = crate::reserve::ReserveDataKey::ReserveBalance(asset.clone());
-        let reserve_balance: i128 = env
+        let mut reserve_balance: i128 = env
             .storage()
             .persistent()
             .get::<crate::reserve::ReserveDataKey, i128>(&balance_key)
@@ -745,23 +744,13 @@ impl HelloContract {
             return Err(RiskManagementError::InvalidParameter);
         }
 
-        if let Some(_asset_addr) = asset {
-            #[cfg(not(test))]
-            {
-                let token_client = soroban_sdk::token::Client::new(&env, &_asset_addr);
-                token_client.transfer(&env.current_contract_address(), &_to, &amount);
-            }
-        }
-
+        // Update state first (CEI pattern)
         reserve_balance -= amount;
         env.storage()
             .persistent()
-            .set(&balance_key, &new_balance);
+            .set(&balance_key, &reserve_balance);
 
-        // INTERACTIONS: transfer tokens to the requested destination
-        // In test builds `to` is only referenced inside this cfg block; the
-        // let-binding below keeps the compiler happy without changing the API.
-        let _ = &to;
+        // Interaction: transfer tokens to the requested destination
         #[cfg(not(test))]
         {
             let effective_addr: Address = match &asset {
@@ -775,6 +764,9 @@ impl HelloContract {
             let token_client = soroban_sdk::token::Client::new(&env, &effective_addr);
             token_client.transfer(&env.current_contract_address(), &to, &amount);
         }
+        
+        // Keep compiler happy in tests if `to` isn't used elsewhere
+        let _ = &to;
 
         Ok(())
     }
@@ -952,8 +944,6 @@ impl HelloContract {
     }
 
     // ============================================================================
-<<<<<<< HEAD
-=======
     // Risk Management Methods
     // ============================================================================
 
@@ -963,7 +953,6 @@ impl HelloContract {
     }
 
     // ============================================================================
->>>>>>> main
     // AMM Methods
     // ============================================================================
 
@@ -1270,16 +1259,17 @@ impl HelloContract {
         proposal_type: ProposalType,
         description: soroban_sdk::String,
         voting_threshold: Option<i128>,
+        multisig_threshold: Option<u32>,
+        execution_delay: Option<u64>,
+        expires_at: Option<u64>,
     ) -> Result<u64, errors::GovernanceError> {
-        let soroban_desc = soroban_sdk::String::from_str(&env, &description.to_string());
         governance::create_proposal(
             &env,
             proposer,
             proposal_type,
-            soroban_desc,
+            description,
             voting_threshold,
-<<<<<<< HEAD
-            None,
+            multisig_threshold,
             execution_delay,
             expires_at,
         )
@@ -1292,6 +1282,7 @@ impl HelloContract {
         proposal_type: ProposalType,
         description: Symbol,
         voting_threshold: Option<i128>,
+        multisig_threshold: Option<u32>,
         execution_delay: Option<u64>,
         expires_at: Option<u64>,
     ) -> Result<u64, errors::GovernanceError> {
@@ -1301,11 +1292,9 @@ impl HelloContract {
             proposal_type,
             soroban_sdk::String::from_str(&env, &description.to_string()),
             voting_threshold,
-            None,
+            multisig_threshold,
             execution_delay,
             expires_at,
-=======
->>>>>>> main
         )
     }
 
@@ -1542,8 +1531,4 @@ mod amm_pause_integration_test;
 // mod governance_test;
 
 // monitor_test references Monitor contract types not present in this crate
-<<<<<<< HEAD
-=======
-// #[cfg(test)]
-// mod monitor_test;
->>>>>>> main
+

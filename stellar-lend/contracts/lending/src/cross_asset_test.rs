@@ -24,6 +24,7 @@ fn setup_test(
     Address,
     Address,
     Address,
+    Address,
 ) {
     let admin = Address::generate(env);
     let user1 = Address::generate(env);
@@ -74,7 +75,6 @@ fn setup_multi_asset_config(
     let eth_params = create_asset_params(env, 7500, 8500, 5000000, true); // 75% LTV, 85% liquidation
     client.set_asset_params(asset_eth, &eth_params);
 }
-}
 
 // ============================================================================
 // 1. Admin Initialization
@@ -93,6 +93,7 @@ fn test_initialize_ca_success() {
     // Verify asset was configured (would need getter in real implementation)
     // This test validates the basic configuration flow
 }
+
 #[test]
 fn test_set_asset_params_multiple_assets() {
     let env = Env::default();
@@ -189,6 +190,7 @@ fn test_asset_deactivation() {
     // New deposits should fail
     client.deposit_collateral_asset(&user1, &asset_usdc, &500);
 }
+
 // ============================================================================
 // MULTI-ASSET DEPOSIT AND COLLATERAL TESTS
 // ============================================================================
@@ -208,7 +210,6 @@ fn test_multi_asset_deposits() {
     assert_eq!(summary.total_collateral_usd, 15000); // $15k total
     assert_eq!(summary.total_debt_usd, 0);
     assert!(summary.health_factor >= 10000);
-}
 }
 
 #[test]
@@ -243,6 +244,7 @@ fn test_deposit_overflow_protection() {
     // Second deposit should cause overflow and fail
     client.deposit_collateral_asset(&user1, &asset_usdc, &2000);
 }
+
 // ============================================================================
 // MULTI-ASSET BORROWING TESTS
 // ============================================================================
@@ -290,11 +292,9 @@ fn test_multi_asset_borrowing() {
     // Health factor = (20000 * 0.9) / 12000 * 10000 = 15000
     assert_eq!(summary.health_factor, 15000);
 }
-}
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_borrow_exceeds_collateral() {
     let env = Env::default();
     let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
@@ -305,18 +305,19 @@ fn test_borrow_exceeds_collateral() {
                                                                   // Max borrow = 10k * 0.9 = 9k
 
     client.borrow_asset(&user1, &asset_usdc, &9500); // Should fail
-=======
+}
+
+#[test]
+#[should_panic]
 fn test_initialize_asset_zero_price() {
     let (env, client, _admin) = setup();
     let mut config = default_config(&env);
     config.price = 0;
     client.initialize_asset(&None, &config);
->>>>>>> main
 }
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_borrow_exceeds_debt_ceiling() {
     let env = Env::default();
     let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
@@ -331,6 +332,7 @@ fn test_borrow_exceeds_debt_ceiling() {
 
     client.borrow_asset(&user1, &asset_usdc, &6000); // Should fail - exceeds ceiling
 }
+
 #[test]
 fn test_sequential_borrows_health_factor() {
     let env = Env::default();
@@ -399,6 +401,7 @@ fn test_full_repayment_single_asset() {
     assert_eq!(summary.total_debt_usd, 8000); // Only USDC debt remains
     assert_eq!(summary.health_factor, 22500); // (20k * 0.9) / 8k * 10000
 }
+
 #[test]
 #[should_panic]
 fn test_repay_zero_amount() {
@@ -439,7 +442,9 @@ fn test_withdraw_with_remaining_collateral() {
     // Health factor = ((15k * 0.9) + (10k * 0.75)) / 10k * 10000 = 21000
     assert_eq!(summary.health_factor, 21000);
 }
-=======
+
+#[test]
+#[should_panic]
 fn test_withdraw_breaks_health_factor() {
     let env = Env::default();
     let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
@@ -451,7 +456,6 @@ fn test_withdraw_breaks_health_factor() {
 
     // Try to withdraw collateral that would break health factor
     client.withdraw_asset(&user1, &asset_usdc, &2000); // Should fail
-}
 }
 
 #[test]
@@ -467,6 +471,7 @@ fn test_initialize_asset_zero_caps_unlimited() {
     assert_eq!(fetched.max_borrow, 0);
 }
 
+#[test]
 fn test_withdraw_all_collateral_no_debt() {
     let env = Env::default();
     let (client, admin, user1, _, asset_usdc, _) = setup_test(&env);
@@ -495,7 +500,6 @@ fn test_withdraw_more_than_deposited() {
 
     // Try to withdraw more than deposited
     client.withdraw_asset(&user1, &asset_usdc, &6000); // Should fail
-}
 }
 
 // ============================================================================
@@ -550,6 +554,7 @@ fn test_concurrent_operations_different_users() {
     assert_eq!(summary1.total_debt_usd, 5000);
     assert_eq!(summary2.total_debt_usd, 8000);
 }
+
 // ============================================================================
 // EDGE CASES AND BOUNDARY CONDITIONS
 // ============================================================================
@@ -613,8 +618,17 @@ fn test_update_asset_config_out_of_bounds_fails() {
     let config = default_config(&env);
     client.initialize_asset(&None, &config);
 
-<<<<<<< HEAD
-    // User1 deposits
+    // Attempt invalid update
+    client.update_asset_config(&None, &Some(10001), &None, &None, &None, &None, &None);
+}
+
+#[test]
+#[should_panic]
+fn test_user_isolation_unauthorized_withdrawal() {
+    let env = Env::default();
+    let (client, admin, user1, user2, asset_usdc, _) = setup_test(&env);
+
+    // Setup user1 with collateral
     let params = create_asset_params(&env, 8000, 8500, 1000000, true);
     env.mock_all_auths();
     client.set_asset_params(&asset_usdc, &params);
@@ -622,8 +636,10 @@ fn test_update_asset_config_out_of_bounds_fails() {
     client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
 
     // User2 should not be able to withdraw user1's collateral
+    // This will panic because user2 didn't deposit anything
     client.withdraw_asset(&user2, &asset_usdc, &5000);
 }
+
 // ============================================================================
 // COMPREHENSIVE INTEGRATION TESTS
 // ============================================================================
@@ -731,8 +747,6 @@ fn test_admin_only_operations() {
 
     env.mock_all_auths();
     client.set_asset_params(&asset_usdc, &params); // Should work with admin auth
-
-    // Non-admin should fail (tested in test_set_asset_params_unauthorized)
 }
 
 #[test]
@@ -742,6 +756,7 @@ fn test_update_asset_config_unconfigured_asset_fails() {
     // Asset not initialized
     client.update_asset_config(&None, &Some(5000), &None, &None, &None, &None, &None);
 }
+
 #[test]
 fn test_borrow_ceiling_multi_user() {
     let env = Env::default();
@@ -761,8 +776,7 @@ fn test_borrow_ceiling_multi_user() {
     client.deposit_collateral_asset(&user2, &asset_usdc, &20000);
     client.borrow_asset(&user2, &asset_usdc, &2000); // Only 2k remaining
 
-    // Additional borrow should fail (testing ceiling enforcement)
-    // In this test we just verify the successful borrows total to the ceiling
-    let summary = client.get_cross_position_summary(&user1).unwrap();
+    // Verify independent positions
+    let summary = client.get_cross_position_summary(&user1);
     assert_eq!(summary.total_debt_usd, 8000);
 }

@@ -153,4 +153,3 @@ fn test_contention_paused_operations() {
     let borrow_res = client.try_borrow(&user1, &asset, &10_000, &collateral_asset, &20_000);
     assert!(borrow_res.is_err());
 }
-

@@ -2,8 +2,6 @@ use super::*;
 use crate::amm::{AmmDataKey, *};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Symbol, Vec};
 
-
-
 fn create_amm_contract<'a>(env: &Env) -> AmmContractClient<'a> {
     AmmContractClient::new(env, &env.register(AmmContract {}, ()))
 }

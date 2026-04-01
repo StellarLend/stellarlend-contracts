@@ -1,14 +1,17 @@
+use crate::borrow::BorrowError;
+use crate::cross_asset::CrossAssetError;
 use crate::deposit::DepositError;
+use crate::emergency::EmergencyState;
 use crate::flash_loan::FlashLoanError;
+use crate::oracle::OracleError;
+use crate::pause::PauseType;
 use crate::testutils::create_token;
 use crate::withdraw::WithdrawError;
-use crate::pause::PauseType;
-use crate::borrow::BorrowError;
-use crate::emergency::EmergencyState;
-use crate::oracle::OracleError;
-use crate::cross_asset::CrossAssetError;
 use crate::*;
-use soroban_sdk::{testutils::{Address as _, Events}, token, Address, Env, Symbol, TryFromVal, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Events},
+    token, Address, Env, Symbol, TryFromVal, Vec,
+};
 
 fn setup_pause_test(
     env: &Env,
@@ -386,7 +389,7 @@ fn test_recovery_allows_unwind_blocks_new_risk() {
     let user = Address::generate(&env);
 
     client.set_guardian(&admin, &guardian);
-    
+
     // Setup initial positions
     client.deposit(&user, &asset, &50_000);
     client.borrow(&user, &asset, &10_000, &collateral, &20_000);
