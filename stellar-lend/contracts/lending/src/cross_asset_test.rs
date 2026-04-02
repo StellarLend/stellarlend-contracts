@@ -14,8 +14,6 @@ use crate::cross_asset::{AssetConfig, CrossAssetError};
 use crate::{HelloContract, HelloContractClient};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env};
 
-}
-
 // ============================================================================
 // 1. Admin Initialization
 // ============================================================================
