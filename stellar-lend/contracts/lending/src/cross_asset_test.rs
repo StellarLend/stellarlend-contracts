@@ -102,7 +102,6 @@ fn test_initialize_asset_ltv_exceeds_liquidation_threshold() {
     config.liquidation_threshold = 8000; // LTV > threshold
     client.initialize_asset(&None, &config);
 }
-}
 
 #[test]
 #[should_panic]
