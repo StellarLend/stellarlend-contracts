@@ -152,7 +152,6 @@ fn test_initialize_asset_zero_caps_unlimited() {
     assert_eq!(fetched.max_borrow, 0);
 }
 
-<<<<<<< HEAD
 #[test]
 fn test_initialize_asset_edge_ltv_equals_threshold() {
     let (env, client, _admin) = setup();
@@ -202,16 +201,6 @@ fn test_update_asset_config_partial_update() {
     let fetched = client.get_asset_config(&None);
     assert!(!fetched.can_borrow);
     assert_eq!(fetched.collateral_factor, 7500); // Unchanged
-=======
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
-
-    // Can withdraw all collateral when no debt
-    client.withdraw_asset(&user1, &asset_usdc, &10000);
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_collateral_usd, 0);
-    assert_eq!(summary.total_debt_usd, 0);
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
@@ -221,7 +210,6 @@ fn test_update_asset_config_ltv_above_threshold_fails() {
     let config = default_config(&env);
     client.initialize_asset(&None, &config);
 
-<<<<<<< HEAD
     // Try to set LTV > current threshold (8000)
     client.update_asset_config(
         &None,
@@ -232,72 +220,6 @@ fn test_update_asset_config_ltv_above_threshold_fails() {
         &None,
         &None,
     );
-=======
-    setup_multi_asset_config(&env, &client, &_admin, &asset_usdc, &asset_usdc);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &5000);
-
-    // Try to withdraw more than deposited
-    client.withdraw_asset(&user1, &asset_usdc, &6000); // Should fail
-}
-
-// ============================================================================
-// MULTI-USER ISOLATION TESTS
-// ============================================================================
-
-#[test]
-fn test_user_position_isolation() {
-    let env = Env::default();
-    let (client, admin, user1, user2, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // User1 operations
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
-    client.borrow_asset(&user1, &asset_usdc, &5000);
-
-    // User2 operations
-    client.deposit_collateral_asset(&user2, &asset_eth, &8000);
-    client.borrow_asset(&user2, &asset_eth, &3000);
-
-    // Check positions are isolated
-    let summary1 = client.get_cross_position_summary(&user1);
-    let summary2 = client.get_cross_position_summary(&user2);
-
-    assert_eq!(summary1.total_collateral_usd, 10000);
-    assert_eq!(summary1.total_debt_usd, 5000);
-
-    assert_eq!(summary2.total_collateral_usd, 8000);
-    assert_eq!(summary2.total_debt_usd, 3000);
-}
-
-#[test]
-fn test_concurrent_operations_different_users() {
-    let env = Env::default();
-    let (client, admin, user1, user2, asset_usdc, _) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_usdc);
-
-    // Both users deposit to same asset
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
-    client.deposit_collateral_asset(&user2, &asset_usdc, &15000);
-
-    // Both users borrow from same asset
-    client.borrow_asset(&user1, &asset_usdc, &5000);
-    client.borrow_asset(&user2, &asset_usdc, &8000);
-
-    // Verify independent positions
-    let summary1 = client.get_cross_position_summary(&user1);
-    let summary2 = client.get_cross_position_summary(&user2);
-
-    assert_eq!(summary1.total_debt_usd, 5000);
-    assert_eq!(summary2.total_debt_usd, 8000);
-}
-// ============================================================================
-// EDGE CASES AND BOUNDARY CONDITIONS
-// ============================================================================
-
-#[test]
 fn test_health_factor_calculation() {
     let env = Env::default();
     let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
@@ -357,7 +279,6 @@ fn test_update_asset_config_out_of_bounds_fails() {
     let config = default_config(&env);
     client.initialize_asset(&None, &config);
 
-<<<<<<< HEAD
     client.update_asset_config(
         &None,
         &Some(10_001), // Out of bounds
@@ -368,16 +289,6 @@ fn test_update_asset_config_out_of_bounds_fails() {
         &None,
         &None,
     );
-=======
-    // User1 deposits
-    let params = create_asset_params(&env, 8000, 8500, 1000000, true);
-    env.mock_all_auths();
-    client.set_asset_params(&asset_usdc, &params);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
-
-    // User2 should not be able to withdraw user1's collateral
-    client.withdraw_asset(&user2, &asset_usdc, &5000);
 }
 // ============================================================================
 // COMPREHENSIVE INTEGRATION TESTS
@@ -488,7 +399,6 @@ fn test_admin_only_operations() {
     client.set_asset_params(&asset_usdc, &params); // Should work with admin auth
 
     // Non-admin should fail (tested in test_set_asset_params_unauthorized)
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
