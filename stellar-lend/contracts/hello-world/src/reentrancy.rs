@@ -13,7 +13,10 @@
 #![cfg(not(tarpaulin_include))]
 #![allow(unexpected_cfgs)]
 
-use soroban_sdk::{contracttype, Env, Symbol};
+use soroban_sdk::contracttype;
+// ...existing code...
+use soroban_sdk::contracttype;
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 
 /// Standardized error code used by operation-specific error enums for reentrancy rejection.
 pub const REENTRANCY_ERROR_CODE: u32 = 7;

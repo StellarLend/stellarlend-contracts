@@ -618,31 +618,39 @@ pub fn cross_asset_deposit(
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
     user.require_auth();
-    require_positive_amount(amount)?;
+    if amount <= 0 {
+        panic!("Deposit amount must be positive");
+    }
 
     let asset_key = AssetKey::from_option(asset.clone());
-    let config = get_asset_config(env, &asset_key)?;
+    let config =
+        get_asset_config(env, &asset_key).unwrap_or_else(|_| panic!("Asset not configured"));
 
-    if !config.can_collateralize {
-        return Err(CrossAssetError::AssetDisabled);
+    if !config.can_collateralize || !config.can_borrow {
+        panic!("Asset is not active");
     }
 
     // Check supply cap
     if config.max_supply > 0 {
         let total_supply = get_total_supply(env, &asset_key);
-        let new_supply = checked_add(total_supply, amount)?;
+        let new_supply = total_supply
+            .checked_add(amount)
+            .expect("Overflow in deposit");
         if new_supply > config.max_supply {
-            return Err(CrossAssetError::SupplyCapExceeded);
+            panic!("Supply cap exceeded");
         }
     }
 
     // Update position
     let mut position = get_user_asset_position(env, &user, asset.clone());
-    position.collateral = checked_add(position.collateral, amount)?;
+    position.collateral = position
+        .collateral
+        .checked_add(amount)
+        .expect("Overflow in deposit");
     position.last_updated = env.ledger().timestamp();
 
     set_user_asset_position(env, &user, asset.clone(), position.clone());
-    update_total_supply(env, &asset_key, amount)?;
+    update_total_supply(env, &asset_key, amount).unwrap();
 
     // Emit event
     CrossAssetDepositEvent {
@@ -690,53 +698,53 @@ pub fn cross_asset_withdraw(
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
     user.require_auth();
-    require_positive_amount(amount)?;
+    if amount <= 0 {
+        panic!("Withdraw amount must be positive");
+    }
 
     let asset_key = AssetKey::from_option(asset.clone());
-    let config = get_asset_config(env, &asset_key)?;
+    let _config =
+        get_asset_config(env, &asset_key).unwrap_or_else(|_| panic!("Asset not configured"));
 
     let mut position = get_user_asset_position(env, &user, asset.clone());
 
     if position.collateral < amount {
-        return Err(CrossAssetError::InsufficientCollateral);
+        panic!("Withdraw more than balance");
     }
 
     // Optimistic update
-    position.collateral = checked_sub(position.collateral, amount)?;
+    position.collateral = position
+        .collateral
+        .checked_sub(amount)
+        .expect("Underflow in withdraw");
     position.last_updated = env.ledger().timestamp();
     set_user_asset_position(env, &user, asset.clone(), position.clone());
 
     // Health check — only required when user has outstanding debt.
-    // If the summary fails due to stale prices but there's no debt, the
-    // withdrawal is safe (health factor is infinite regardless of price).
     match get_user_position_summary(env, &user) {
         Ok(summary) => {
             if summary.total_debt_value > 0 && summary.health_factor < HEALTH_FACTOR_PRECISION {
                 // Rollback
-                position.collateral = checked_add(position.collateral, amount)?;
+                position.collateral = position.collateral.checked_add(amount).unwrap();
                 set_user_asset_position(env, &user, asset, position);
-                return Err(CrossAssetError::UnhealthyPosition);
+                panic!("Withdraw breaks health factor");
             }
         }
         Err(CrossAssetError::PriceStale) => {
-            // If user has any debt at all, stale prices are unacceptable
-            // because we can't verify the health factor. Check cheaply.
             if user_has_any_debt(env, &user) {
-                position.collateral = checked_add(position.collateral, amount)?;
+                position.collateral = position.collateral.checked_add(amount).unwrap();
                 set_user_asset_position(env, &user, asset, position);
-                return Err(CrossAssetError::PriceStale);
+                panic!("Price stale during withdraw");
             }
-            // No debt → health factor is infinite, withdrawal is safe
         }
-        Err(e) => {
-            // Any other error → rollback
-            position.collateral = checked_add(position.collateral, amount)?;
+        Err(_) => {
+            position.collateral = position.collateral.checked_add(amount).unwrap();
             set_user_asset_position(env, &user, asset, position);
-            return Err(e);
+            panic!("Withdraw failed");
         }
     }
 
-    update_total_supply(env, &asset_key, -amount)?;
+    update_total_supply(env, &asset_key, -amount).unwrap();
 
     // Emit event
     CrossAssetWithdrawEvent {
@@ -745,7 +753,8 @@ pub fn cross_asset_withdraw(
         amount,
         remaining_collateral: position.collateral,
         timestamp: env.ledger().timestamp(),
-    }.publish(env);
+    }
+    .publish(env);
     Ok(position)
 }
 
@@ -783,40 +792,48 @@ pub fn cross_asset_borrow(
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
     user.require_auth();
-    require_positive_amount(amount)?;
+    if amount <= 0 {
+        panic!("Borrow amount must be positive");
+    }
 
     let asset_key = AssetKey::from_option(asset.clone());
-    let config = get_asset_config(env, &asset_key)?;
+    let config =
+        get_asset_config(env, &asset_key).unwrap_or_else(|_| panic!("Asset not configured"));
 
     if !config.can_borrow {
-        return Err(CrossAssetError::AssetDisabled);
+        panic!("Asset is not active");
     }
 
     // Check borrow cap
     if config.max_borrow > 0 {
         let total_borrow = get_total_borrow(env, &asset_key);
-        let new_borrow = checked_add(total_borrow, amount)?;
+        let new_borrow = total_borrow
+            .checked_add(amount)
+            .expect("Overflow in borrow");
         if new_borrow > config.max_borrow {
-            return Err(CrossAssetError::BorrowCapExceeded);
+            panic!("Debt ceiling exceeded");
         }
     }
 
     // Optimistic update
     let mut position = get_user_asset_position(env, &user, asset.clone());
-    position.debt_principal = checked_add(position.debt_principal, amount)?;
+    position.debt_principal = position
+        .debt_principal
+        .checked_add(amount)
+        .expect("Overflow in borrow");
     position.last_updated = env.ledger().timestamp();
     set_user_asset_position(env, &user, asset.clone(), position.clone());
 
     // Health check
-    let summary = get_user_position_summary(env, &user)?;
+    let summary = get_user_position_summary(env, &user).unwrap();
     if summary.health_factor < HEALTH_FACTOR_PRECISION {
         // Rollback
-        position.debt_principal = checked_sub(position.debt_principal, amount)?;
+        position.debt_principal = position.debt_principal.checked_sub(amount).unwrap();
         set_user_asset_position(env, &user, asset, position);
-        return Err(CrossAssetError::ExceedsBorrowCapacity);
+        panic!("Borrow amount exceeds allowed limit");
     }
 
-    update_total_borrow(env, &asset_key, amount)?;
+    update_total_borrow(env, &asset_key, amount).unwrap();
 
     // Emit event
     CrossAssetBorrowEvent {
@@ -860,30 +877,46 @@ pub fn cross_asset_repay(
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
     user.require_auth();
-    require_positive_amount(amount)?;
+    if amount <= 0 {
+        panic!("Repay amount must be positive");
+    }
 
     let asset_key = AssetKey::from_option(asset.clone());
 
     let mut position = get_user_asset_position(env, &user, asset.clone());
 
-    let total_debt = checked_add(position.debt_principal, position.accrued_interest)?;
+    let total_debt = position
+        .debt_principal
+        .checked_add(position.accrued_interest)
+        .expect("Overflow in repay");
     let repay_amount = amount.min(total_debt);
 
     // Pay interest first, then principal
     if repay_amount <= position.accrued_interest {
-        position.accrued_interest = checked_sub(position.accrued_interest, repay_amount)?;
+        position.accrued_interest = position
+            .accrued_interest
+            .checked_sub(repay_amount)
+            .expect("Underflow in repay");
     } else {
-        let remaining = checked_sub(repay_amount, position.accrued_interest)?;
+        let remaining = repay_amount
+            .checked_sub(position.accrued_interest)
+            .expect("Underflow in repay");
         position.accrued_interest = 0;
-        position.debt_principal = checked_sub(position.debt_principal, remaining)?;
+        position.debt_principal = position
+            .debt_principal
+            .checked_sub(remaining)
+            .expect("Underflow in repay");
     }
 
     position.last_updated = env.ledger().timestamp();
 
     set_user_asset_position(env, &user, asset.clone(), position.clone());
-    update_total_borrow(env, &asset_key, -repay_amount)?;
+    update_total_borrow(env, &asset_key, -repay_amount).unwrap();
 
-    let remaining_debt = checked_add(position.debt_principal, position.accrued_interest)?;
+    let remaining_debt = position
+        .debt_principal
+        .checked_add(position.accrued_interest)
+        .expect("Overflow in repay");
 
     // Emit event
     CrossAssetRepayEvent {

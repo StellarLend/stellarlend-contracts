@@ -316,6 +316,11 @@ pub fn liquidate(
 
     // 9. EXTERNAL INTERACTIONS (TRANSFERS)
     // Transfers are performed LAST to follow CEI pattern
+<<<<<<< HEAD
+=======
+
+    // (removed unreachable duplicate let debt_addr assignment)
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 
     let debt_addr = match &debt_asset {
         Some(ref addr) => addr.clone(),
@@ -369,6 +374,7 @@ pub fn liquidate(
         &borrower,
         Symbol::new(env, "liquidate"),
         actual_debt_liquidated,
+<<<<<<< HEAD
         debt_asset.clone(),
         position.last_accrual_time,
     )
@@ -454,3 +460,12 @@ mod verification_hooks_tests {
         assert!(!fv_liquidate_postconditions(&snapshot, &position, 1_100, 900));
     }
 }
+=======
+        debt_asset_cloned,
+        position.last_accrual_time,
+    )
+    .ok();
+
+    Ok((actual_debt_liquidated, collateral_seized, incentive_amount))
+}
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)

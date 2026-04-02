@@ -3,10 +3,27 @@
 //! Implements a proposal → approve → execute governance flow
 //! for updating critical StellarLend protocol parameters via multisig approval.
 
+#![allow(unused)]
+use soroban_sdk::{Address, Env, Symbol, Vec};
+
 use crate::errors::GovernanceError;
 use crate::governance::{
-    create_proposal, execute_proposal_action, get_multisig_config, get_proposal,
-    get_proposal_approvals,
+    approve_proposal, create_proposal, emit_approval_event, emit_proposal_executed_event,
+    execute_multisig_proposal, execute_proposal, get_multisig_admins, get_multisig_config,
+    get_multisig_threshold, get_proposal, get_proposal_approvals, set_multisig_admins,
+    set_multisig_threshold,
+};
+// ...existing code...
+#![allow(unused)]
+use soroban_sdk::{Address, Env, Symbol, Vec};
+
+use crate::errors::GovernanceError;
+use crate::governance::{
+    approve_proposal, create_proposal, emit_approval_event, emit_proposal_executed_event,
+    execute_multisig_proposal, execute_proposal, get_multisig_admins, get_multisig_config,
+    get_multisig_threshold, get_proposal, get_proposal_approvals, set_multisig_admins,
+    set_multisig_threshold,
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 };
 use crate::storage::GovernanceDataKey;
 use crate::types::{MultisigConfig, Proposal, ProposalStatus, ProposalType};

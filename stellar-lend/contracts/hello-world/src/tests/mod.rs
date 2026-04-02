@@ -1,4 +1,3 @@
-
 pub mod config_test;
 pub mod governance_test;
 pub mod guardian_threshold_safety_test;
@@ -36,8 +35,28 @@ pub mod config_snapshot_test;
 pub mod cross_contract_test;
 pub mod gov_asset_test;
 pub mod multisig_governance_execution_test;
+=======
+// Only enable analytics-related tests to isolate and verify analytics changes
+pub mod analytics_pagination_test;
+pub mod analytics_test;
+pub mod fuzz_test;
 pub mod multisig_test;
 pub mod oracle_staleness_fallback_test;
 pub mod recovery_test;
+pub mod test_helpers;
+// pub mod fees_test;
+// ...existing code...
+// Only enable analytics-related tests to isolate and verify analytics changes
+pub mod analytics_pagination_test;
+pub mod analytics_test;
+pub mod fuzz_test;
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
+pub mod multisig_test;
+pub mod oracle_staleness_fallback_test;
+pub mod recovery_test;
+<<<<<<< HEAD
 // pub mod fuzz_test;
+=======
+pub mod test_helpers;
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 // pub mod fees_test;

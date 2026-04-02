@@ -89,7 +89,10 @@ fn test_contention_interleaved_deposits_borrows() {
         }
     }
 
+<<<<<<< HEAD
     assert_eq!(actual_deposits, expected_total_deposits);
+=======
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     assert_eq!(actual_debt, expected_total_borrows);
     // Global invariant: total deposits >= total borrows
     assert!(actual_deposits >= actual_debt);

@@ -15,6 +15,7 @@ mod token_receiver;
 mod withdraw;
 
 use borrow::{
+<<<<<<< HEAD
     borrow as borrow_impl, credit_insurance_fund as credit_insurance_impl,
     deposit as borrow_deposit, get_admin as get_protocol_admin,
     get_close_factor_bps as get_close_factor_impl,
@@ -23,6 +24,13 @@ use borrow::{
     get_total_bad_debt as get_bad_debt_impl, get_user_collateral as get_borrow_collateral,
     get_user_debt as get_user_debt_impl, initialize_borrow_settings as init_borrow_settings_impl,
     offset_bad_debt as offset_bad_debt_impl, repay as borrow_repay,
+=======
+    borrow as borrow_impl, deposit as borrow_deposit, get_admin as get_protocol_admin,
+    get_close_factor_bps as get_close_factor_impl,
+    get_liquidation_incentive_bps as get_liquidation_incentive_bps_impl,
+    get_user_collateral as get_borrow_collateral, get_user_debt as get_user_debt_impl,
+    initialize_borrow_settings as init_borrow_settings_impl, repay as borrow_repay,
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     set_admin as set_protocol_admin, set_close_factor_bps as set_close_factor_impl,
     set_liquidation_incentive_bps as set_liquidation_incentive_bps_impl,
     set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
@@ -109,11 +117,20 @@ mod withdraw_test;
 #[cfg(test)]
 mod bad_debt_test;
 #[cfg(test)]
+<<<<<<< HEAD
 mod liquidation_boundary_test;#[cfg(test)]
 mod multi_user_contention_test;
 #[cfg(test)]
 mod multi_user_contention_test;
 #[cfg(test)]
+=======
+mod liquidation_boundary_test;
+#[cfg(test)]
+mod multi_user_contention_test;
+#[cfg(test)]
+mod oracle_test;
+#[cfg(test)]
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 mod stress_test;
 
 #[contract]
@@ -212,208 +229,188 @@ impl LendingContract {
         get_emergency_state_logic(&env)
     }
 
-    /// Query whether a specific operation is currently paused.
-    ///
-    /// Returns `true` if the operation is paused either by its own granular flag
-    /// or by the global `All` flag. This is a read-only function; no authorization
-    /// is required. Frontends and off-chain monitors should use this to surface
-    /// live pause state to users before they attempt a transaction.
-    ///
-    /// # Arguments
-    /// * `pause_type` - The operation type to query (`Deposit`, `Borrow`, `Repay`,
-    ///                  `Withdraw`, `Liquidation`, or `All`)
-    pub fn get_pause_state(env: Env, pause_type: PauseType) -> bool {
-        get_pause_state_logic(&env, pause_type)
-    }
+    #![no_std]
+    #![allow(deprecated)]
+    #![allow(clippy::absurd_extreme_comparisons)]
+    #![allow(unexpected_cfgs)]
+    use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
 
-    /// Repay borrowed assets
-    pub fn repay(env: Env, user: Address, asset: Address, amount: i128) -> Result<(), BorrowError> {
-        user.require_auth();
-        if is_paused(&env, PauseType::Repay) || (!is_recovery(&env) && blocks_high_risk_ops(&env)) {
-            return Err(BorrowError::ProtocolPaused);
+    mod borrow;
+    mod constants;
+    mod cross_asset;
+    mod deposit;
+    mod flash_loan;
+    mod liquidate;
+    mod oracle;
+    mod pause;
+    mod token_receiver;
+    mod withdraw;
+
+    use borrow::{
+        borrow as borrow_impl, deposit as borrow_deposit, get_admin as get_protocol_admin,
+        get_close_factor_bps as get_close_factor_impl,
+        get_liquidation_incentive_bps as get_liquidation_incentive_bps_impl,
+        get_user_collateral as get_borrow_collateral, get_user_debt as get_user_debt_impl,
+        initialize_borrow_settings as init_borrow_settings_impl, repay as borrow_repay,
+        set_admin as set_protocol_admin, set_close_factor_bps as set_close_factor_impl,
+        set_liquidation_incentive_bps as set_liquidation_incentive_bps_impl,
+        set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
+        BorrowCollateral, BorrowError, DebtPosition,
+    };
+    use cross_asset::{
+        borrow_asset as cross_borrow_asset, deposit_collateral_asset as cross_deposit_collateral,
+        get_cross_position_summary as cross_position_summary, initialize_admin as cross_init_admin,
+        repay_asset as cross_repay_asset, set_asset_params as cross_set_asset_params,
+        withdraw_asset as cross_withdraw_asset, AssetParams, CrossAssetError, PositionSummary,
+    };
+    use deposit::{
+        deposit as deposit_impl, get_user_collateral as get_deposit_collateral_impl,
+        initialize_deposit_settings as init_deposit_settings_impl, DepositCollateral, DepositError,
+    };
+    use flash_loan::{
+        flash_loan as flash_loan_impl, set_flash_loan_fee_bps as set_flash_loan_fee_impl,
+        FlashLoanError,
+    };
+    use oracle::{OracleConfig, OracleError};
+    use pause::{
+        blocks_high_risk_ops, complete_recovery as complete_recovery_logic,
+        get_emergency_state as get_emergency_state_logic, get_guardian as get_guardian_logic,
+        get_pause_state as get_pause_state_logic, is_paused, is_recovery,
+        set_guardian as set_guardian_logic, set_pause as set_pause_impl,
+        start_recovery as start_recovery_logic, trigger_shutdown as trigger_shutdown_logic,
+        EmergencyState, PauseType,
+    };
+    use token_receiver::receive as receive_impl;
+
+    mod views;
+    use views::{
+        get_collateral_balance as view_collateral_balance,
+        get_collateral_value as view_collateral_value, get_debt_balance as view_debt_balance,
+        get_debt_value as view_debt_value, get_health_factor as view_health_factor,
+        get_liquidation_incentive_amount as view_liquidation_incentive_amount,
+        get_max_liquidatable_amount as view_max_liquidatable_amount,
+        get_user_position as view_user_position, UserPositionSummary,
+    };
+
+    use withdraw::{
+        initialize_withdraw_settings as initialize_withdraw_logic, withdraw as withdraw_logic,
+        WithdrawError,
+    };
+
+    mod data_store;
+    use stellarlend_common::upgrade;
+    pub use stellarlend_common::upgrade::{UpgradeError, UpgradeStage, UpgradeStatus};
+
+    #[cfg(test)]
+    mod borrow_test;
+    #[cfg(test)]
+    mod cross_asset_test;
+    #[cfg(test)]
+    mod deposit_test;
+    #[cfg(test)]
+    mod emergency_shutdown_test;
+    #[cfg(test)]
+    mod flash_adversarial_test;
+    #[cfg(test)]
+    mod flash_loan_test;
+    #[cfg(test)]
+    mod pause_test;
+    #[cfg(test)]
+    mod token_receiver_test;
+    #[cfg(test)]
+    mod views_test;
+
+    #[cfg(test)]
+    mod constants_test;
+    #[cfg(test)]
+    mod data_store_test;
+    #[cfg(test)]
+    mod math_safety_test;
+    #[cfg(test)]
+    mod race_tests;
+    #[cfg(test)]
+    mod upgrade_migration_safety_test;
+    #[cfg(test)]
+    mod upgrade_test;
+    #[cfg(test)]
+    mod withdraw_test;
+
+    #[cfg(test)]
+    mod bad_debt_test;
+    #[cfg(test)]
+    mod liquidation_boundary_test;
+    #[cfg(test)]
+    mod multi_user_contention_test;
+    #[cfg(test)]
+    mod oracle_test;
+    #[cfg(test)]
+    mod stress_test;
+
+    #[contract]
+    pub struct LendingContract;
+
+    #[contractimpl]
+    impl LendingContract {
+        /// Initialize the protocol with admin and settings
+        pub fn initialize(
+            env: Env,
+            admin: Address,
+            debt_ceiling: i128,
+            min_borrow_amount: i128,
+        ) -> Result<(), BorrowError> {
+            if get_protocol_admin(&env).is_some() {
+                return Err(BorrowError::Unauthorized);
+            }
+            set_protocol_admin(&env, &admin);
+            init_borrow_settings_impl(&env, debt_ceiling, min_borrow_amount)?;
+            Ok(())
         }
-        borrow_repay(&env, user, asset, amount)
-    }
 
-    /// Deposit collateral for a borrow position
-    pub fn deposit_collateral(
-        env: Env,
-        user: Address,
-        asset: Address,
-        amount: i128,
-    ) -> Result<(), BorrowError> {
-        user.require_auth();
-        if is_paused(&env, PauseType::Deposit) || blocks_high_risk_ops(&env) {
-            return Err(BorrowError::ProtocolPaused);
-        }
-        borrow_deposit(&env, user, asset, amount)
-    }
-
-    /// Deposit collateral into the protocol
-    pub fn deposit(
-        env: Env,
-        user: Address,
-        asset: Address,
-        amount: i128,
-    ) -> Result<i128, DepositError> {
-        if is_paused(&env, PauseType::Deposit) || blocks_high_risk_ops(&env) {
-            return Err(DepositError::DepositPaused);
-        }
-        deposit_impl(&env, user, asset, amount)
-    }
-
-    /// Liquidate a position
-    pub fn liquidate(
-        env: Env,
-        liquidator: Address,
-        borrower: Address,
-        debt_asset: Address,
-        collateral_asset: Address,
-        amount: i128,
-    ) -> Result<(), BorrowError> {
-        liquidator.require_auth();
-        if is_paused(&env, PauseType::Liquidation) || blocks_high_risk_ops(&env) {
-            return Err(BorrowError::ProtocolPaused);
+        /// Borrow assets against deposited collateral
+        pub fn borrow(
+            env: Env,
+            user: Address,
+            asset: Address,
+            amount: i128,
+            collateral_asset: Address,
+            collateral_amount: i128,
+        ) -> Result<(), BorrowError> {
+            if blocks_high_risk_ops(&env) {
+                return Err(BorrowError::ProtocolPaused);
+            }
+            borrow_impl(
+                &env,
+                user,
+                asset,
+                amount,
+                collateral_asset,
+                collateral_amount,
+            )
         }
 
-        // Point to the internal liquidation logic in the borrow module
-        borrow::liquidate_position(
-            &env,
-            liquidator,
-            borrower,
-            debt_asset,
-            collateral_asset,
-            amount,
-        )?;
+        /// Set protocol pause state for a specific operation (admin only)
+        pub fn set_pause(
+            env: Env,
+            admin: Address,
+            pause_type: PauseType,
+            paused: bool,
+        ) -> Result<(), BorrowError> {
+            ensure_admin(&env, &admin)?;
+            set_pause_impl(&env, admin, pause_type, paused);
+            Ok(())
+        }
 
-        Ok(())
-    }
+        /// Configure guardian address authorized to trigger emergency shutdown.
+        pub fn set_guardian(env: Env, admin: Address, guardian: Address) -> Result<(), BorrowError> {
+            ensure_admin(&env, &admin)?;
+            set_guardian_logic(&env, admin, guardian);
+            Ok(())
+        }
 
-    /// Returns the insurance fund balance for an asset.
-    pub fn get_insurance_fund_balance(env: Env, asset: Address) -> i128 {
-        get_insurance_fund_impl(&env, &asset)
-    }
-
-    /// Returns the total bad debt recorded for an asset.
-    pub fn get_total_bad_debt(env: Env, asset: Address) -> i128 {
-        get_bad_debt_impl(&env, &asset)
-    }
-
-    /// Credits the insurance fund for an asset (Admin only).
-    pub fn credit_insurance_fund(
-        env: Env,
-        caller: Address,
-        asset: Address,
-        amount: i128,
-    ) -> Result<(), BorrowError> {
-        ensure_admin(&env, &caller)?;
-        credit_insurance_impl(&env, &asset, amount)
-    }
-
-    /// Manually offsets bad debt using the insurance fund (Admin only).
-    pub fn offset_bad_debt(
-        env: Env,
-        caller: Address,
-        asset: Address,
-        amount: i128,
-    ) -> Result<(), BorrowError> {
-        ensure_admin(&env, &caller)?;
-        offset_bad_debt_impl(&env, &asset, amount)
-    }
-
-    /// Returns gas/performance stats for the current transaction (Issue #391)
-    /// [CPU Instructions, Memory Bytes]
-    #[cfg(not(tarpaulin_include))]
-    pub fn get_performance_stats(env: Env) -> Vec<u64> {
-        let mut stats = Vec::new(&env);
-        // Runtime budget counters are only available in testutils.
-        // Keep a stable ABI by returning placeholder values in production builds.
-        stats.push_back(0);
-        stats.push_back(0);
-        stats
-    }
-
-    /// Get user's debt position
-    pub fn get_user_debt(env: Env, user: Address) -> DebtPosition {
-        get_user_debt_impl(&env, &user)
-    }
-
-    /// Get user's collateral position (borrow module)
-    pub fn get_user_collateral(env: Env, user: Address) -> BorrowCollateral {
-        get_borrow_collateral(&env, &user)
-    }
-
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // View functions (read-only; for frontends and liquidations)
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-    /// Returns the user's collateral balance (raw amount).
-    pub fn get_collateral_balance(env: Env, user: Address) -> i128 {
-        view_collateral_balance(&env, &user)
-    }
-
-    /// Returns the user's debt balance (principal + accrued interest).
-    pub fn get_debt_balance(env: Env, user: Address) -> i128 {
-        view_debt_balance(&env, &user)
-    }
-
-    /// Returns the user's collateral value in common unit (e.g. USD 8 decimals). 0 if oracle not set.
-    pub fn get_collateral_value(env: Env, user: Address) -> i128 {
-        view_collateral_value(&env, &user)
-    }
-
-    /// Returns the user's debt value in common unit. 0 if oracle not set.
-    pub fn get_debt_value(env: Env, user: Address) -> i128 {
-        view_debt_value(&env, &user)
-    }
-
-    /// Returns health factor (scaled 10000 = 1.0). Above 10000 = healthy; below = liquidatable.
-    pub fn get_health_factor(env: Env, user: Address) -> i128 {
-        view_health_factor(&env, &user)
-    }
-
-    /// Returns full position summary: collateral/debt balances and values, and health factor.
-    pub fn get_user_position(env: Env, user: Address) -> UserPositionSummary {
-        view_user_position(&env, &user)
-    }
-
-    /// Set oracle address for price feeds (admin only).
-    pub fn set_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), BorrowError> {
-        set_oracle_impl(&env, &admin, oracle)
-    }
-
-    /// Configure oracle staleness parameters (admin only).
-    ///
-    /// # Errors
-    /// - `OracleError::Unauthorized` â€” caller is not the protocol admin.
-    /// - `OracleError::InvalidPrice` â€” `max_staleness_seconds` is zero.
-    pub fn configure_oracle(
-        env: Env,
-        caller: Address,
-        config: OracleConfig,
-    ) -> Result<(), OracleError> {
-        oracle::configure_oracle(&env, caller, config)
-    }
-
-    /// Register the primary oracle address for `asset` (admin only).
-    ///
-    /// # Errors
-    /// - `OracleError::Unauthorized` â€” caller is not the protocol admin.
-    /// - `OracleError::InvalidOracle` â€” oracle address is the contract itself.
-    pub fn set_primary_oracle(
-        env: Env,
-        caller: Address,
-        asset: Address,
-        primary_oracle: Address,
-    ) -> Result<(), OracleError> {
-        oracle::set_primary_oracle(&env, caller, asset, primary_oracle)
-    }
-
-    /// Register the fallback oracle address for `asset` (admin only).
-    ///
-    /// # Errors
-    /// - `OracleError::Unauthorized` â€” caller is not the protocol admin.
-    /// - `OracleError::InvalidOracle` â€” oracle address is the contract itself.
+        /// Return current guardian address if configured.
+        pub fn get_guardian(env: Env) -> Option<Address> {
+            get_guardian_logic(&env)
+        }
     pub fn set_fallback_oracle(
         env: Env,
         caller: Address,

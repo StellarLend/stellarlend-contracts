@@ -398,7 +398,17 @@ pub fn withdraw_collateral(
             timestamp,
         },
     );
+<<<<<<< HEAD
     emit_position_updated_event(env, &user, &position, soroban_sdk::Symbol::new(env, "withdraw"), env.ledger().timestamp());
+=======
+    emit_position_updated_event(
+        env,
+        &user,
+        &position,
+        Symbol::new(env, "withdraw"),
+        timestamp,
+    );
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     emit_analytics_updated_event(env, &user, "withdraw", amount, timestamp);
     emit_user_activity_tracked_event(env, &user, Symbol::new(env, "withdraw"), amount, timestamp);
 

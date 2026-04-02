@@ -1,12 +1,87 @@
-#![allow(deprecated)]
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(clippy::too_many_arguments)]
+use crate::analytics::{
+    generate_protocol_report, generate_user_report, get_recent_activity, AnalyticsError,
+    ProtocolReport, UserReport,
+};
+use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
+use crate::cross_asset::update_asset_config;
+use crate::deposit::DepositDataKey;
+use crate::flash_loan::FlashLoanConfig;
+use crate::interest_rate::InterestRateConfig;
+use crate::interest_rate::{initialize_interest_rate_config, InterestRateError};
+use crate::liquidate::liquidate;
+use crate::risk_management::{check_emergency_pause, initialize_risk_management, RiskConfig};
+use crate::risk_params::{
+    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
+};
+use crate::risk_params::{initialize_risk_params, RiskParamsError};
+use soroban_sdk::I256;
+// Additional imports to resolve missing types and functions (E0425)
+use crate::analytics::get_user_activity_feed;
+use crate::bridge::{BridgeConfig, BridgeError};
+use crate::config::{config_backup, config_get, config_restore, config_set, ConfigError};
+use crate::oracle::OracleConfig;
+use crate::risk_management::RiskManagementError;
+// Imports to resolve missing types and functions (E0425)
+use crate::cross_asset::{
+    get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
+    get_user_asset_position, get_user_position_summary, update_asset_price, AssetConfig, AssetKey,
+    AssetPosition, CrossAssetError, UserPositionSummary,
+};
+use crate::storage::GuardianConfig;
+use crate::types::{
+    GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalType, RecoveryRequest,
+    VoteInfo, VoteType,
+};
 
+#[allow(deprecated)]
+#[allow(unused_imports)]
+#[allow(dead_code)]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Env, Map, Symbol, Vec,
 };
-use soroban_sdk::{contract, contractimpl, Address, Env, Map, Symbol, Vec};
+// ...existing code...
+use crate::analytics::{
+    generate_protocol_report, generate_user_report, get_recent_activity, AnalyticsError,
+    ProtocolReport, UserReport,
+};
+use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
+use crate::cross_asset::update_asset_config;
+use crate::deposit::DepositDataKey;
+use crate::flash_loan::FlashLoanConfig;
+use crate::interest_rate::InterestRateConfig;
+use crate::interest_rate::{initialize_interest_rate_config, InterestRateError};
+use crate::liquidate::liquidate;
+use crate::risk_management::{check_emergency_pause, initialize_risk_management, RiskConfig};
+use crate::risk_params::{
+    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
+};
+use crate::risk_params::{initialize_risk_params, RiskParamsError};
+use soroban_sdk::I256;
+// Additional imports to resolve missing types and functions (E0425)
+use crate::analytics::get_user_activity_feed;
+use crate::bridge::{BridgeConfig, BridgeError};
+use crate::config::{config_backup, config_get, config_restore, config_set, ConfigError};
+use crate::oracle::OracleConfig;
+use crate::risk_management::RiskManagementError;
+// Imports to resolve missing types and functions (E0425)
+use crate::cross_asset::{
+    get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
+    get_user_asset_position, get_user_position_summary, update_asset_price, AssetConfig, AssetKey,
+    AssetPosition, CrossAssetError, UserPositionSummary,
+};
+use crate::storage::GuardianConfig;
+use crate::types::{
+    GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalType, RecoveryRequest,
+    VoteInfo, VoteType,
+};
+
+#[allow(deprecated)]
+#[allow(unused_imports)]
+#[allow(dead_code)]
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, Map, Symbol, Vec,
+};
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 
 pub mod admin;
 pub mod amm;
@@ -46,8 +121,6 @@ mod tests;
 // #[cfg(test)]
 // mod tests;
 
-
-
 /// Helper function to require admin authorization
 fn require_admin(env: &Env, caller: &Address) -> Result<(), RiskManagementError> {
     caller.require_auth();
@@ -64,6 +137,7 @@ fn require_admin(env: &Env, caller: &Address) -> Result<(), RiskManagementError>
     Ok(())
 }
 
+<<<<<<< HEAD
 use borrow::borrow_asset;
 use deposit::deposit_collateral;
 use repay::repay_debt;
@@ -135,6 +209,10 @@ fn require_admin(env: &Env, caller: &Address) -> Result<(), RiskManagementError>
     }
     Ok(())
 }
+=======
+// Use AMM types from stellarlend_amm
+pub use stellarlend_amm::{AmmError, AmmProtocolConfig, SwapParams};
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 
 pub mod reentrancy;
 
@@ -238,7 +316,6 @@ impl HelloContract {
     /// - Prevents unsafe liquidation states — ANY unsafe withdrawal MUST fail.
     /// - State updated before token transfer to guard against reentrancy.
 
-
     /// Set native asset address (admin only).
     pub fn set_native_asset_address(
         env: Env,
@@ -248,6 +325,11 @@ impl HelloContract {
         crate::deposit::set_native_asset_address(&env, caller, native_asset)
     }
 
+<<<<<<< HEAD
+=======
+    /// Withdraw collateral from the protocol.
+
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     /// Set risk parameters (admin only).
     pub fn set_risk_params(
         env: Env,
@@ -370,7 +452,11 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
+<<<<<<< HEAD
         let (repaid, _seized, _fee) = liquidate(
+=======
+        let (repaid, _seized, _fee) = crate::liquidate::liquidate(
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
             &env,
             liquidator,
             borrower,
@@ -430,6 +516,7 @@ impl HelloContract {
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
+<<<<<<< HEAD
     /// Get current borrow rate (in basis points).
     pub fn get_borrow_rate(env: Env) -> i128 {
         interest_rate::calculate_borrow_rate(&env).unwrap_or(0)
@@ -440,6 +527,8 @@ impl HelloContract {
         interest_rate::calculate_supply_rate(&env).unwrap_or(0)
     }
 
+=======
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     /// Configure flash-loan parameters (admin only).
     pub fn configure_flash_loan(
         env: Env,
@@ -458,6 +547,11 @@ impl HelloContract {
         flash_loan::set_flash_loan_fee(&env, caller, fee_bps)
     }
 
+<<<<<<< HEAD
+=======
+    /// Set emergency interest-rate adjustment in basis points (admin only).
+
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     /// Update interest rate model configuration (admin only).
     #[allow(clippy::too_many_arguments)]
     pub fn update_interest_rate_config(
@@ -486,11 +580,29 @@ impl HelloContract {
         .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
+<<<<<<< HEAD
+=======
+    /// Get current protocol utilization in basis points (0–10 000).
+    pub fn get_utilization(env: Env) -> i128 {
+        interest_rate::calculate_utilization(&env).unwrap_or(0)
+    }
+
+    /// Set an emergency rate adjustment (admin only).
+    ///
+    /// The adjustment is added to the calculated borrow rate.
+    /// Bounded to ±10 000 bps (±100%).
+
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     /// Get the current interest rate configuration.
     pub fn get_interest_rate_config(env: Env) -> Option<InterestRateConfig> {
         interest_rate::get_interest_rate_config(&env)
     }
 
+<<<<<<< HEAD
+=======
+    /// Check if a position meets minimum collateral ratio.
+
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     /// Enforce minimum collateral ratio.
     pub fn require_min_collateral_ratio(
         env: Env,
@@ -1162,7 +1274,7 @@ impl HelloContract {
             &env,
             proposer,
             proposal_type,
-            soroban_desc,
+            soroban_desc.to_string(),
             voting_threshold,
         )
     }

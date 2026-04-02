@@ -1,8 +1,8 @@
+use crate::amm::{AmmProtocolConfig, LiquidityParams, SwapParams};
+use soroban_sdk::{Address, Symbol};
 use soroban_sdk::{Env, Vec};
 use std::collections::BTreeMap;
-use stellarlend_amm::{AmmSettings, TokenPair, AmmCallbackData};
-use crate::amm::{AmmProtocolConfig, SwapParams, LiquidityParams};
-use soroban_sdk::{Address, Symbol};
+use stellarlend_amm::{AmmCallbackData, AmmSettings, TokenPair};
 
 pub struct AmmContractClient<'a> {
     pub settings: AmmSettings,
@@ -24,7 +24,13 @@ impl<'a> AmmContractClient<'a> {
             env,
         }
     }
-    pub fn initialize_amm_settings(&mut self, _admin: &Address, _default_slippage: &i128, _max_slippage: &i128, auto_swap_threshold: &i128) {
+    pub fn initialize_amm_settings(
+        &mut self,
+        _admin: &Address,
+        _default_slippage: &i128,
+        _max_slippage: &i128,
+        auto_swap_threshold: &i128,
+    ) {
         self.settings.auto_swap_threshold = *auto_swap_threshold;
     }
     pub fn get_amm_settings(&self) -> Result<AmmSettings, ()> {
@@ -34,12 +40,17 @@ impl<'a> AmmContractClient<'a> {
         self.settings = settings.clone();
     }
     pub fn add_amm_protocol(&mut self, _admin: &Address, cfg: &AmmProtocolConfig) {
-        self.protocols.insert(cfg.protocol_address.clone(), cfg.clone());
+        self.protocols
+            .insert(cfg.protocol_address.clone(), cfg.clone());
     }
     pub fn get_amm_protocols(&self) -> Result<BTreeMap<Address, AmmProtocolConfig>, ()> {
         Ok(self.protocols.clone())
     }
-    pub fn try_update_amm_settings(&mut self, _intruder: &Address, _settings: &AmmSettings) -> Result<(), ()> {
+    pub fn try_update_amm_settings(
+        &mut self,
+        _intruder: &Address,
+        _settings: &AmmSettings,
+    ) -> Result<(), ()> {
         Err(())
     }
     pub fn try_execute_swap(&self, _user: &Address, _params: &SwapParams) -> Result<i128, ()> {
@@ -51,7 +62,12 @@ impl<'a> AmmContractClient<'a> {
     pub fn execute_swap(&self, _user: &Address, _params: &SwapParams) -> i128 {
         1000
     }
-    pub fn try_auto_swap_for_collateral(&self, _user: &Address, _token_b: &Option<Address>, _amount: &i128) -> Result<i128, ()> {
+    pub fn try_auto_swap_for_collateral(
+        &self,
+        _user: &Address,
+        _token_b: &Option<Address>,
+        _amount: &i128,
+    ) -> Result<i128, ()> {
         if !self.settings.swap_enabled {
             return Err(());
         }
@@ -60,16 +76,40 @@ impl<'a> AmmContractClient<'a> {
     pub fn add_liquidity(&self, _user: &Address, _params: &LiquidityParams) -> i128 {
         1000
     }
-    pub fn try_add_liquidity(&self, _user: &Address, _params: &LiquidityParams) -> Result<i128, ()> {
+    pub fn try_add_liquidity(
+        &self,
+        _user: &Address,
+        _params: &LiquidityParams,
+    ) -> Result<i128, ()> {
         if !self.settings.liquidity_enabled {
             return Err(());
         }
         Ok(1000)
     }
-    pub fn remove_liquidity(&self, _user: &Address, _protocol: &Address, _token_a: &Option<Address>, _token_b: &Option<Address>, _lp_tokens: &i128, _min_amount_a: &i128, _min_amount_b: &i128, _deadline: &u64) -> (i128, i128) {
+    pub fn remove_liquidity(
+        &self,
+        _user: &Address,
+        _protocol: &Address,
+        _token_a: &Option<Address>,
+        _token_b: &Option<Address>,
+        _lp_tokens: &i128,
+        _min_amount_a: &i128,
+        _min_amount_b: &i128,
+        _deadline: &u64,
+    ) -> (i128, i128) {
         (1000, 1000)
     }
-    pub fn try_remove_liquidity(&self, _user: &Address, _protocol: &Address, _token_a: &Option<Address>, _token_b: &Option<Address>, _lp_tokens: &i128, _min_amount_a: &i128, _min_amount_b: &i128, _deadline: &u64) -> Result<(i128, i128), ()> {
+    pub fn try_remove_liquidity(
+        &self,
+        _user: &Address,
+        _protocol: &Address,
+        _token_a: &Option<Address>,
+        _token_b: &Option<Address>,
+        _lp_tokens: &i128,
+        _min_amount_a: &i128,
+        _min_amount_b: &i128,
+        _deadline: &u64,
+    ) -> Result<(i128, i128), ()> {
         if !self.settings.liquidity_enabled {
             return Err(());
         }
@@ -639,7 +679,11 @@ fn test_pause_admin_ops_succeed_while_paused() {
     assert!(contract
         .get_amm_protocols()
         .unwrap()
+<<<<<<< HEAD
         .contains_key(cfg.protocol_address.clone()));
+=======
+        .contains_key(&cfg.protocol_address));
+>>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 // ─────────────────────────────────────────────

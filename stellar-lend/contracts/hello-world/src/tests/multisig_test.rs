@@ -23,14 +23,15 @@ fn setup(env: &Env) -> (Address, Address) {
         crate::governance::initialize(
             &env,
             admin.clone(),
-            admin.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ).unwrap();
+            None, // vote_token
+            None, // voting_period
+            None, // execution_delay
+            None, // quorum_bps
+            None, // proposal_threshold
+            None, // timelock_duration
+            None, // default_voting_threshold
+        )
+        .unwrap();
     });
 
     (contract_id, admin)
