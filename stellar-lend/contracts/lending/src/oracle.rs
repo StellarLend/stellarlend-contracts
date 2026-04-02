@@ -297,9 +297,7 @@ pub fn update_price_feed(
             .set(&OracleKey::FallbackFeed(asset), &feed);
     } else {
         // Admin or primary oracle writes to primary slot
-        env.storage()
-            .persistent()
-            .set(&OracleKey::PrimaryFeed(asset), &feed);
+        env.storage().persistent().set(&OracleKey::PrimaryFeed(asset), &feed);
     }
 
     Ok(())
