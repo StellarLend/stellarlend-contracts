@@ -95,73 +95,13 @@ fn test_initialize_asset_negative_ltv() {
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_initialize_asset_ltv_exceeds_liquidation_threshold() {
     let (env, client, _admin) = setup();
     let mut config = default_config(&env);
     config.collateral_factor = 9000;
     config.liquidation_threshold = 8000; // LTV > threshold
     client.initialize_asset(&None, &config);
-=======
-fn test_deposit_overflow_protection() {
-    let env = Env::default();
-    let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &_admin, &asset_usdc, &asset_usdc);
-
-    // First deposit near max
-    client.deposit_collateral_asset(&user1, &asset_usdc, &(i128::MAX - 1000));
-
-    // Second deposit should cause overflow and fail
-    client.deposit_collateral_asset(&user1, &asset_usdc, &2000);
 }
-// ============================================================================
-// MULTI-ASSET BORROWING TESTS
-// ============================================================================
-
-#[test]
-fn test_multi_collateral_single_borrow() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // Deposit multiple collaterals
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000); // $10k USDC (90% LTV)
-    client.deposit_collateral_asset(&user1, &asset_eth, &10000); // $10k ETH (75% LTV)
-
-    // Total weighted collateral = (10k * 0.9) + (10k * 0.75) = 16.5k
-    // Should be able to borrow up to $16.5k
-
-    client.borrow_asset(&user1, &asset_usdc, &15000); // Borrow $15k USDC
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_collateral_usd, 20000);
-    assert_eq!(summary.total_debt_usd, 15000);
-    // Health factor = 16500 / 15000 * 10000 = 11000
-    assert_eq!(summary.health_factor, 11000);
-}
-
-#[test]
-fn test_multi_asset_borrowing() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // Large collateral deposit
-    client.deposit_collateral_asset(&user1, &asset_usdc, &20000); // $20k USDC
-
-    // Borrow multiple assets
-    client.borrow_asset(&user1, &asset_usdc, &8000); // $8k USDC
-    client.borrow_asset(&user1, &asset_eth, &4000); // $4k ETH
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_collateral_usd, 20000);
-    assert_eq!(summary.total_debt_usd, 12000);
-    // Health factor = (20000 * 0.9) / 12000 * 10000 = 15000
-    assert_eq!(summary.health_factor, 15000);
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
