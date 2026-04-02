@@ -74,7 +74,6 @@ fn test_initialize_asset_twice_fails() {
     // Re-initialization should fail
     client.initialize_asset(&None, &config);
 }
-}
 
 #[test]
 #[should_panic]
