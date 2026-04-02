@@ -206,6 +206,7 @@ impl LendingContract {
     }
 
     /// Read current emergency lifecycle state.
+
     pub fn get_emergency_state(env: Env) -> EmergencyState {
         get_emergency_state_logic(&env)
     }
