@@ -209,8 +209,7 @@ impl LendingContract {
     pub fn get_emergency_state(env: Env) -> EmergencyState {
         get_emergency_state_logic(&env)
     }
-
-// ...existing code...
+}
 
 fn ensure_admin(env: &Env, admin: &Address) -> Result<(), BorrowError> {
     let current_admin = get_protocol_admin(env).ok_or(BorrowError::Unauthorized)?;
