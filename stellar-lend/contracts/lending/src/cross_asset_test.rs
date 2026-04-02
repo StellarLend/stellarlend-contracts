@@ -105,205 +105,42 @@ fn test_initialize_asset_ltv_exceeds_liquidation_threshold() {
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_initialize_asset_zero_price() {
     let (env, client, _admin) = setup();
     let mut config = default_config(&env);
     config.price = 0;
     client.initialize_asset(&None, &config);
-=======
-fn test_borrow_exceeds_collateral() {
-    let env = Env::default();
-    let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &_admin, &asset_usdc, &asset_usdc);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000); // $10k USDC (90% LTV)
-                                                                  // Max borrow = 10k * 0.9 = 9k
-
-    client.borrow_asset(&user1, &asset_usdc, &9500); // Should fail
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
+}
 }
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_initialize_asset_negative_price() {
     let (env, client, _admin) = setup();
     let mut config = default_config(&env);
     config.price = -5;
     client.initialize_asset(&None, &config);
-=======
-fn test_borrow_exceeds_debt_ceiling() {
-    let env = Env::default();
-    let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    env.mock_all_auths();
-
-    // Set low debt ceiling
-    let params = create_asset_params(&env, 9000, 9500, 5000, true); // $5k ceiling
-    client.set_asset_params(&asset_usdc, &params);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000); // $10k collateral
-
-    client.borrow_asset(&user1, &asset_usdc, &6000); // Should fail - exceeds ceiling
 }
-#[test]
-fn test_sequential_borrows_health_factor() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &20000); // $20k USDC
-
-    // First borrow
-    client.borrow_asset(&user1, &asset_usdc, &5000);
-    let summary1 = client.get_cross_position_summary(&user1);
-    assert_eq!(summary1.health_factor, 36000); // (20k * 0.9) / 5k * 10000
-
-    // Second borrow
-    client.borrow_asset(&user1, &asset_eth, &3000);
-    let summary2 = client.get_cross_position_summary(&user1);
-    assert_eq!(summary2.health_factor, 22500); // (20k * 0.9) / 8k * 10000
-
-    // Third borrow - approaching limit
-    client.borrow_asset(&user1, &asset_usdc, &9000);
-    let summary3 = client.get_cross_position_summary(&user1);
-    assert_eq!(summary3.health_factor, 10588); // (20k * 0.9) / 17k * 10000
-}
-
-// ============================================================================
-// REPAYMENT TESTS
-// ============================================================================
-
-#[test]
-fn test_partial_repayment_multi_asset() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // Setup position
-    client.deposit_collateral_asset(&user1, &asset_usdc, &20000);
-    client.borrow_asset(&user1, &asset_usdc, &8000);
-    client.borrow_asset(&user1, &asset_eth, &4000);
-
-    // Partial repayment of USDC debt
-    client.repay_asset(&user1, &asset_usdc, &3000);
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_debt_usd, 9000); // 5k USDC + 4k ETH remaining
-    assert_eq!(summary.health_factor, 20000); // (20k * 0.9) / 9k * 10000
-}
-
-#[test]
-fn test_full_repayment_single_asset() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // Setup position
-    client.deposit_collateral_asset(&user1, &asset_usdc, &20000);
-    client.borrow_asset(&user1, &asset_usdc, &8000);
-    client.borrow_asset(&user1, &asset_eth, &4000);
-
-    // Full repayment of ETH debt
-    client.repay_asset(&user1, &asset_eth, &4000);
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_debt_usd, 8000); // Only USDC debt remains
-    assert_eq!(summary.health_factor, 22500); // (20k * 0.9) / 8k * 10000
-}
-#[test]
-fn test_repay_more_than_debt() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_usdc);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
-    client.borrow_asset(&user1, &asset_usdc, &5000);
-
-    // Try to repay more than debt - should only repay actual debt
-    client.repay_asset(&user1, &asset_usdc, &8000);
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_debt_usd, 0); // All debt repaid
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_initialize_asset_negative_max_supply() {
     let (env, client, _admin) = setup();
     let mut config = default_config(&env);
     config.max_supply = -100;
     client.initialize_asset(&None, &config);
-=======
-fn test_repay_zero_amount() {
-    let env = Env::default();
-    let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &_admin, &asset_usdc, &asset_usdc);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
-    client.borrow_asset(&user1, &asset_usdc, &5000);
-
-    // Zero repayment should fail
-    client.repay_asset(&user1, &asset_usdc, &0);
 }
-
-// ============================================================================
-// WITHDRAWAL TESTS
-// ============================================================================
-
-#[test]
-fn test_withdraw_with_remaining_collateral() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // Setup position with multiple collaterals
-    client.deposit_collateral_asset(&user1, &asset_usdc, &20000); // $20k USDC
-    client.deposit_collateral_asset(&user1, &asset_eth, &10000); // $10k ETH
-    client.borrow_asset(&user1, &asset_usdc, &10000); // $10k debt
-
-    // Withdraw some USDC collateral
-    client.withdraw_asset(&user1, &asset_usdc, &5000);
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_collateral_usd, 25000); // 15k USDC + 10k ETH
-    assert_eq!(summary.total_debt_usd, 10000);
-    // Health factor = ((15k * 0.9) + (10k * 0.75)) / 10k * 10000 = 21000
-    assert_eq!(summary.health_factor, 21000);
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_initialize_asset_invalid_reserve_factor() {
     let (env, client, _admin) = setup();
     let mut config = default_config(&env);
     config.reserve_factor = 10_001;
     client.initialize_asset(&None, &config);
-=======
-fn test_withdraw_breaks_health_factor() {
-    let env = Env::default();
-    let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &_admin, &asset_usdc, &asset_usdc);
-
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000);
-    client.borrow_asset(&user1, &asset_usdc, &8000); // Near max borrow
-
-    // Try to withdraw collateral that would break health factor
-    client.withdraw_asset(&user1, &asset_usdc, &2000); // Should fail
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
+}
 }
 
 #[test]
