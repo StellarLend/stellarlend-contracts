@@ -1,66 +1,3 @@
-// # StellarLend Governance Module
-//
-// On-chain governance for the StellarLend lending protocol. Manages the full
-// proposal lifecycle — creation, voting, queuing (timelock), execution, and
-// cancellation — plus multisig approval, guardian management, and social
-// recovery flows.
-//
-// ## Roles & Trust Boundaries
-//
-// | Role       | Powers |
-// |------------|--------|
-// | **Admin**  | Initialize governance, cancel any proposal, manage guardians, set multisig config. |
-// | **Guardian** | Initiate and approve social recovery (admin key rotation). |
-// | **Multisig Admin** | Approve proposals for multisig execution. |
-// | **Proposer** | Any token holder above `proposal_threshold` can create proposals. Can cancel own proposals. |
-// | **Voter** | Any vote-token holder with non-zero balance can vote once per proposal during the voting window. |
-// | **Executor** | Anyone can execute a queued proposal once the timelock elapses (permissionless). |
-//
-// ## Security Assumptions
-//
-// - The vote token contract is trusted and returns correct balances.
-// - `env.ledger().timestamp()` is the canonical time source.
-// - All arithmetic uses checked operations to prevent overflow/underflow.
-// - Reentrancy guard protects `execute_proposal` and `execute_generic_action`.
-// - State transitions are validated: proposals move through a strict state machine
-//   (Pending → Active → Queued → Executed) and may be Cancelled, Defeated, or Expired.
-// - Double-execution is prevented by checking proposal status before and after execution.
-//
-// ## Token Transfer Flows
-
-use crate::storage::GuardianConfig;
-// ...existing code...
-use crate::storage::GuardianConfig;
-// # StellarLend Governance Module
-//
-// On-chain governance for the StellarLend lending protocol. Manages the full
-// proposal lifecycle — creation, voting, queuing (timelock), execution, and
-// cancellation — plus multisig approval, guardian management, and social
-// recovery flows.
-//
-// ## Roles & Trust Boundaries
-//
-// | Role       | Powers |
-// |------------|--------|
-// | **Admin**  | Initialize governance, cancel any proposal, manage guardians, set multisig config. |
-// | **Guardian** | Initiate and approve social recovery (admin key rotation). |
-// | **Multisig Admin** | Approve proposals for multisig execution. |
-// | **Proposer** | Any token holder above `proposal_threshold` can create proposals. Can cancel own proposals. |
-// | **Voter** | Any vote-token holder with non-zero balance can vote once per proposal during the voting window. |
-// | **Executor** | Anyone can execute a queued proposal once the timelock elapses (permissionless). |
-//
-// ## Security Assumptions
-//
-// - The vote token contract is trusted and returns correct balances.
-// - `env.ledger().timestamp()` is the canonical time source.
-// - All arithmetic uses checked operations to prevent overflow/underflow.
-// - Reentrancy guard protects `execute_proposal` and `execute_generic_action`.
-// - State transitions are validated: proposals move through a strict state machine
-//   (Pending → Active → Queued → Executed) and may be Cancelled, Defeated, or Expired.
-// - Double-execution is prevented by checking proposal status before and after execution.
-//
-// ## Token Transfer Flows
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 
 use crate::errors::GovernanceError;
 use crate::events::{
@@ -307,8 +244,8 @@ pub fn create_proposal(
         proposer: proposer.clone(),
         proposal_type,
 <<<<<<< HEAD
-        description: description.clone(),
-        status: ProposalStatus::Active,
+        description: soroban_sdk::String::from_str(env, &description),
+        status: ProposalStatus::Pending,
 =======
         description: soroban_sdk::String::from_str(env, &description),
         status: ProposalStatus::Pending,
