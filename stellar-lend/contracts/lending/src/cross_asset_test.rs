@@ -111,7 +111,6 @@ fn test_initialize_asset_zero_price() {
     config.price = 0;
     client.initialize_asset(&None, &config);
 }
-}
 
 #[test]
 #[should_panic]
@@ -120,7 +119,6 @@ fn test_initialize_asset_negative_price() {
     let mut config = default_config(&env);
     config.price = -5;
     client.initialize_asset(&None, &config);
-}
 }
 
 #[test]
@@ -131,7 +129,6 @@ fn test_initialize_asset_negative_max_supply() {
     config.max_supply = -100;
     client.initialize_asset(&None, &config);
 }
-}
 
 #[test]
 #[should_panic]
@@ -140,7 +137,6 @@ fn test_initialize_asset_invalid_reserve_factor() {
     let mut config = default_config(&env);
     config.reserve_factor = 10_001;
     client.initialize_asset(&None, &config);
-}
 }
 
 #[test]
