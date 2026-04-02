@@ -25,11 +25,6 @@ use borrow::{
     set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
     BorrowCollateral, BorrowError, DebtPosition,
 };
-    set_admin as set_protocol_admin, set_close_factor_bps as set_close_factor_impl,
-    set_liquidation_incentive_bps as set_liquidation_incentive_bps_impl,
-    set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
-    BorrowCollateral, BorrowError, DebtPosition,
-};
 use cross_asset::{
     borrow_asset as cross_borrow_asset, deposit_collateral_asset as cross_deposit_collateral,
     get_cross_position_summary as cross_position_summary, initialize_admin as cross_init_admin,
