@@ -49,3 +49,32 @@ This prevents accidental permanent lockout during rotation.
 - `required_approvals` should reflect operational risk tolerance (single-key vs multi-key).
 - In production, route admin operations through governance/multisig processes to avoid
   single-operator risk.
+
+## Trust boundaries and operator powers
+
+- Upgrade authority boundary: only `admin` can propose upgrades, manage approvers, and roll back
+  executed upgrades.
+- Execution boundary: only currently configured approvers can execute approved proposals.
+- Guardian boundary: guardian operations (pause or emergency flows) are separate from upgrade
+  authority and do not grant upgrade proposal, execution, or rollback rights.
+- Rotation boundary: removing an approver takes effect immediately for future `upgrade_approve`
+  and `upgrade_execute` calls.
+
+## External call and token transfer safety
+
+- Upgrade entrypoints (`upgrade_propose`, `upgrade_approve`, `upgrade_execute`,
+  `upgrade_rollback`) do not perform token transfers.
+- Token transfer paths remain confined to lending operations such as deposit, withdraw, repay,
+  and liquidation modules.
+- Authorization checks (`require_auth()`) are enforced on every mutating upgrade path.
+- Upgrade tests should verify both authorization and invalid-status rejection on each external
+  entrypoint.
+
+## Rollback and failure-path coverage checklist
+
+- Rollback rejects proposals that were never executed (`InvalidStatus`).
+- Execute and rollback reject unknown proposal ids (`ProposalNotFound`).
+- Non-monotonic version proposals are rejected after successful execution
+  (`new_version <= current_version`).
+- Execution by a removed approver is rejected even if they approved earlier during proposal
+  lifecycle.

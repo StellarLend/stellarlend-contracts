@@ -320,7 +320,12 @@ impl BridgeContract {
             min_amount,
         }
         .publish(&env);
-        log!(&env, "register_bridge {} network_id={}", bridge_id, network_id);
+        log!(
+            &env,
+            "register_bridge {} network_id={}",
+            bridge_id,
+            network_id
+        );
         Ok(())
     }
 

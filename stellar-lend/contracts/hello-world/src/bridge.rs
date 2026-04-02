@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Map, Symbol};
+use crate::prelude::*;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,22 +26,10 @@ pub enum BridgeError {
 }
 
 // Storage keys
-const ADMIN: Symbol = symbol_short!("admin");
 const BRIDGES: Symbol = symbol_short!("bridges");
 
 fn require_admin(env: &Env, caller: &Address) -> Result<(), BridgeError> {
-    let admin: Address = env
-        .storage()
-        .persistent()
-        .get(&ADMIN)
-        .ok_or(BridgeError::NotAuthorized)?;
-
-    if caller != &admin {
-        return Err(BridgeError::NotAuthorized);
-    }
-
-    caller.require_auth();
-    Ok(())
+    crate::admin::require_admin(env, caller).map_err(|_| BridgeError::NotAuthorized)
 }
 
 /// List all registered bridges

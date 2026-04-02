@@ -52,6 +52,7 @@
 use soroban_sdk::{
     contracterror, contractevent, contracttype, symbol_short, Address, Env, Map, Symbol, Vec,
 };
+use crate::prelude::*;
 
 // ============================================================================
 // Types
@@ -83,6 +84,9 @@ pub struct AssetConfig {
     pub can_collateralize: bool,
     /// Whether the asset can be borrowed.
     pub can_borrow: bool,
+    /// Borrow factor in basis points (e.g., 8000 = 80%).
+    /// Weights the debt value in health calculations.
+    pub borrow_factor: i128,
     /// Asset price in base units, normalized to 7 decimals.
     /// E.g., $1.00 = 10_000_000.
     pub price: i128,
@@ -205,6 +209,7 @@ pub struct AssetConfigUpdatedEvent {
     pub asset: Option<Address>,
     pub collateral_factor: i128,
     pub liquidation_threshold: i128,
+    pub borrow_factor: i128,
     pub timestamp: u64,
 }
 
@@ -266,8 +271,7 @@ pub struct CrossAssetRepayEvent {
 // Storage Keys
 // ============================================================================
 
-/// Admin address authorized for protocol management.
-const ADMIN: Symbol = symbol_short!("admin");
+
 
 /// Storage key for the map of asset configurations: `Map<AssetKey, AssetConfig>`.
 const ASSET_CONFIGS: Symbol = symbol_short!("configs");
@@ -283,6 +287,18 @@ const TOTAL_BORROWS: Symbol = symbol_short!("borrows");
 
 /// Storage key for the global list of registered assets: `Vec<AssetKey>`.
 const ASSET_LIST: Symbol = symbol_short!("assets");
+
+/// Maximum number of registered assets iterated in a single position summary call.
+///
+/// Bounds the computational work (CPU instructions + memory) in
+/// `get_user_position_summary` so that a contract with many registered assets
+/// cannot exhaust the Soroban resource budget in a single invocation.
+///
+/// # Security
+/// Without this cap, an admin could register enough assets to make the summary
+/// function permanently unusable by any user. 64 assets is conservative; the
+/// realistic upper bound for a lending protocol is far lower.
+pub const MAX_ASSETS_PER_SUMMARY: u32 = 64;
 
 /// Price staleness threshold in seconds (1 hour).
 const PRICE_STALENESS_THRESHOLD: u64 = 3600;
@@ -300,27 +316,17 @@ const HEALTH_FACTOR_PRECISION: i128 = 10_000;
 // Admin Initialization
 // ============================================================================
 
-/// Initialize the cross-asset lending module admin.
-///
-/// Sets the admin address. Can only be called once; subsequent calls return
-/// `AlreadyInitialized`.
-///
-/// # Arguments
-/// * `env` — The contract environment
-/// * `admin` — The admin address (must authorize the transaction)
-///
-/// # Errors
-/// * `AlreadyInitialized` — Admin is already set
-///
-/// # Security
-/// * Only callable once. The admin address is immutable within this module.
 pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
-    if env.storage().persistent().has(&ADMIN) {
+    if crate::admin::has_admin(env) {
+        let existing_admin = crate::admin::get_admin(env).unwrap();
+        if existing_admin == admin {
+            return Ok(()); // Already initialized with the same admin
+        }
         return Err(CrossAssetError::AlreadyInitialized);
     }
 
     admin.require_auth();
-    env.storage().persistent().set(&ADMIN, &admin);
+    crate::admin::set_admin(env, admin).unwrap();
 
     Ok(())
 }
@@ -330,10 +336,7 @@ pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
 /// # Errors
 /// * `NotAuthorized` — No admin set or caller is not admin.
 fn require_admin(env: &Env) -> Result<(), CrossAssetError> {
-    let admin: Address = env
-        .storage()
-        .persistent()
-        .get(&ADMIN)
+    let admin: Address = crate::admin::get_admin(env)
         .ok_or(CrossAssetError::NotAuthorized)?;
 
     admin.require_auth();
@@ -455,6 +458,7 @@ pub fn update_asset_config(
     max_borrow: Option<i128>,
     can_collateralize: Option<bool>,
     can_borrow: Option<bool>,
+    borrow_factor: Option<i128>,
 ) -> Result<(), CrossAssetError> {
     require_admin(env)?;
 
@@ -479,11 +483,15 @@ pub fn update_asset_config(
     if let Some(cb) = can_borrow {
         config.can_borrow = cb;
     }
+    if let Some(bf) = borrow_factor {
+        config.borrow_factor = bf;
+    }
 
     // Validate the *resulting* config holistically
     require_valid_basis_points(config.collateral_factor)?;
     require_valid_basis_points(config.liquidation_threshold)?;
     require_valid_basis_points(config.reserve_factor)?;
+    require_valid_basis_points(config.borrow_factor)?;
 
     if config.liquidation_threshold < config.collateral_factor {
         return Err(CrossAssetError::InvalidConfig);
@@ -504,6 +512,7 @@ pub fn update_asset_config(
         asset,
         collateral_factor: config.collateral_factor,
         liquidation_threshold: config.liquidation_threshold,
+        borrow_factor: config.borrow_factor,
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);
@@ -923,9 +932,10 @@ pub fn get_user_asset_position(env: &Env, user: &Address, asset: Option<Address>
 
 /// Calculate a unified position summary across all registered assets.
 ///
-/// Iterates over all configured assets, aggregates collateral and debt values
-/// weighted by their respective factors, and computes the health factor.
-/// Prices older than 1 hour are rejected for any asset with a non-zero position.
+/// Iterates over up to [`MAX_ASSETS_PER_SUMMARY`] configured assets, aggregates
+/// collateral and debt values weighted by their respective factors, and computes
+/// the health factor. Prices older than 1 hour are rejected for any asset with
+/// a non-zero position.
 ///
 /// # Arguments
 /// * `env` — The contract environment
@@ -941,6 +951,11 @@ pub fn get_user_asset_position(env: &Env, user: &Address, asset: Option<Address>
 /// # Security
 /// * Read-only — does not mutate state.
 /// * Rejects stale prices to prevent stale-price manipulation attacks.
+/// * Iteration is capped at [`MAX_ASSETS_PER_SUMMARY`] (64) to bound CPU and
+///   memory usage per transaction. If more assets are registered only the first
+///   64 are considered; the summary may be partial in that case. This cap
+///   prevents a DoS vector where a large asset registry exhausts the Soroban
+///   per-transaction resource budget for every user who calls this function.
 pub fn get_user_position_summary(
     env: &Env,
     user: &Address,
@@ -962,7 +977,17 @@ pub fn get_user_position_summary(
     let mut total_debt_value: i128 = 0;
     let mut weighted_debt_value: i128 = 0;
 
-    for i in 0..asset_list.len() {
+    // #530: Bound the iteration so that large asset registries cannot exhaust
+    // Soroban's per-transaction CPU/memory budget.
+    //
+    // # Security
+    // If more assets than MAX_ASSETS_PER_SUMMARY are registered, only the first
+    // MAX_ASSETS_PER_SUMMARY are considered. Callers should be aware that the
+    // summary may be partial when the registry is at capacity. This is a
+    // deliberate trade-off between completeness and DoS-resistance.
+    let asset_count = asset_list.len().min(MAX_ASSETS_PER_SUMMARY);
+
+    for i in 0..asset_count {
         let asset_key = asset_list.get(i).unwrap();
 
         if let Some(config) = configs.get(asset_key.clone()) {
@@ -1000,7 +1025,10 @@ pub fn get_user_position_summary(
                 .checked_div(PRICE_PRECISION)
                 .ok_or(CrossAssetError::Overflow)?;
             total_debt_value = checked_add(total_debt_value, debt_value)?;
-            weighted_debt_value = checked_add(weighted_debt_value, debt_value)?;
+            let weighted_debt = checked_mul(debt_value, config.borrow_factor)?
+                .checked_div(BPS_DENOMINATOR)
+                .ok_or(CrossAssetError::Overflow)?;
+            weighted_debt_value = checked_add(weighted_debt_value, weighted_debt)?;
         }
     }
 
@@ -1119,7 +1147,17 @@ fn user_has_any_debt(env: &Env, user: &Address) -> bool {
         .get(&ASSET_LIST)
         .unwrap_or(Vec::new(env));
 
-    for i in 0..asset_list.len() {
+    // #530: Bound the iteration so that large asset registries cannot exhaust
+    // Soroban's per-transaction CPU/memory budget.
+    //
+    // # Security
+    // If more assets than MAX_ASSETS_PER_SUMMARY are registered, only the first
+    // MAX_ASSETS_PER_SUMMARY are considered. Callers should be aware that the
+    // summary may be partial when the registry is at capacity. This is a
+    // deliberate trade-off between completeness and DoS-resistance.
+    let asset_count = asset_list.len().min(MAX_ASSETS_PER_SUMMARY);
+
+    for i in 0..asset_count {
         let asset_key = asset_list.get(i).unwrap();
         let position = get_user_asset_position(env, user, asset_key.to_option());
         if position.debt_principal > 0 || position.accrued_interest > 0 {
@@ -1211,7 +1249,11 @@ fn get_total_supply(env: &Env, asset_key: &AssetKey) -> i128 {
     supplies.get(asset_key.clone()).unwrap_or(0)
 }
 
-fn update_total_supply(env: &Env, asset_key: &AssetKey, delta: i128) -> Result<(), CrossAssetError> {
+fn update_total_supply(
+    env: &Env,
+    asset_key: &AssetKey,
+    delta: i128,
+) -> Result<(), CrossAssetError> {
     let mut supplies: Map<AssetKey, i128> = env
         .storage()
         .persistent()
@@ -1239,7 +1281,11 @@ fn get_total_borrow(env: &Env, asset_key: &AssetKey) -> i128 {
     borrows.get(asset_key.clone()).unwrap_or(0)
 }
 
-fn update_total_borrow(env: &Env, asset_key: &AssetKey, delta: i128) -> Result<(), CrossAssetError> {
+fn update_total_borrow(
+    env: &Env,
+    asset_key: &AssetKey,
+    delta: i128,
+) -> Result<(), CrossAssetError> {
     let mut borrows: Map<AssetKey, i128> = env
         .storage()
         .persistent()

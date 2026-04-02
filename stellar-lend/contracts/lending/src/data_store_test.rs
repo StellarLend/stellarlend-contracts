@@ -1,5 +1,8 @@
 // contracts/data_store/src/data_store_test.rs
 //
+extern crate alloc;
+use alloc::format;
+
 // Comprehensive test suite for the DataStore contract.
 //
 // Coverage targets:
@@ -607,4 +610,83 @@ fn test_backup_then_add_then_restore_removes_new_key() {
     assert_eq!(client.entry_count(), 1);
     assert!(!client.key_exists(&s(&env, "new")));
     assert!(client.key_exists(&s(&env, "old")));
+}
+
+// ═══════════════════════════════════════════════════════
+// 9. Capacity / StoreFull boundary
+// ═══════════════════════════════════════════════════════
+
+#[test]
+#[should_panic]
+fn test_store_full_panics_on_new_key() {
+    let (env, client, admin) = setup_init();
+
+    // Fill the store to MAX_ENTRIES (1 000)
+    for i in 0u32..1_000 {
+        let key = String::from_str(&env, &format!("k{i:04}"));
+        client.data_save(&admin, &key, &b(&env, b"v"));
+    }
+    assert_eq!(client.entry_count(), 1_000);
+
+    // One more new key must panic with StoreFull
+    client.data_save(&admin, &s(&env, "overflow"), &b(&env, b"x"));
+}
+
+#[test]
+fn test_overwrite_at_capacity_does_not_panic() {
+    let (env, client, admin) = setup_init();
+
+    // Fill to MAX_ENTRIES
+    for i in 0u32..1_000 {
+        let key = String::from_str(&env, &format!("k{i:04}"));
+        client.data_save(&admin, &key, &b(&env, b"v"));
+    }
+    assert_eq!(client.entry_count(), 1_000);
+
+    // Overwriting an existing key at capacity must succeed
+    client.data_save(&admin, &s(&env, "k0000"), &b(&env, b"overwrite"));
+    assert_eq!(client.entry_count(), 1_000);
+    assert_eq!(client.data_load(&s(&env, "k0000")), b(&env, b"overwrite"));
+}
+
+// ═══════════════════════════════════════════════════════
+// 10. Multiple independent backups
+// ═══════════════════════════════════════════════════════
+
+#[test]
+fn test_two_backups_are_independent() {
+    let (env, client, admin) = setup_init();
+
+    client.data_save(&admin, &s(&env, "k"), &b(&env, b"v1"));
+    client.data_backup(&admin, &s(&env, "snap_a"));
+
+    client.data_save(&admin, &s(&env, "k"), &b(&env, b"v2"));
+    client.data_backup(&admin, &s(&env, "snap_b"));
+
+    // Restoring snap_a should give v1
+    client.data_restore(&admin, &s(&env, "snap_a"));
+    assert_eq!(client.data_load(&s(&env, "k")), b(&env, b"v1"));
+
+    // Restoring snap_b should give v2
+    client.data_restore(&admin, &s(&env, "snap_b"));
+    assert_eq!(client.data_load(&s(&env, "k")), b(&env, b"v2"));
+}
+
+#[test]
+fn test_restore_then_backup_captures_restored_state() {
+    let (env, client, admin) = setup_init();
+
+    client.data_save(&admin, &s(&env, "x"), &b(&env, b"original"));
+    client.data_backup(&admin, &s(&env, "v1"));
+
+    // Mutate and restore
+    client.data_save(&admin, &s(&env, "x"), &b(&env, b"changed"));
+    client.data_restore(&admin, &s(&env, "v1"));
+
+    // Taking a new backup after restore captures the restored state
+    client.data_backup(&admin, &s(&env, "v2"));
+    client.data_save(&admin, &s(&env, "x"), &b(&env, b"again"));
+    client.data_restore(&admin, &s(&env, "v2"));
+
+    assert_eq!(client.data_load(&s(&env, "x")), b(&env, b"original"));
 }

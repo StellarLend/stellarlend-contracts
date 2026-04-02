@@ -289,7 +289,7 @@ fn test_set_multisig_admins_success() {
         new_admins.push_back(new_admin1.clone());
         new_admins.push_back(new_admin2.clone());
 
-        set_multisig_admins(&env, admin, new_admins).unwrap();
+        set_multisig_admins(&env, admin, new_admins, 2).unwrap();
 
         let stored_admins = get_multisig_admins(&env).unwrap();
         assert_eq!(stored_admins.len(), 2);
@@ -304,7 +304,7 @@ fn test_set_multisig_admins_empty() {
 
     with_contract!(env, &cid, {
         let empty_admins = Vec::new(&env);
-        let result = set_multisig_admins(&env, admin, empty_admins);
+        let result = set_multisig_admins(&env, admin, empty_admins, 2);
         assert_eq!(result, Err(GovernanceError::InvalidMultisigConfig));
     });
 }
@@ -319,7 +319,7 @@ fn test_set_multisig_threshold_success() {
         for _ in 0..2 {
             admins.push_back(Address::generate(&env));
         }
-        set_multisig_admins(&env, admin.clone(), admins).unwrap();
+        set_multisig_admins(&env, admin.clone(), admins, 2).unwrap();
         set_multisig_threshold(&env, admin, 2).unwrap();
         assert_eq!(get_multisig_threshold(&env), 2);
     });
@@ -390,7 +390,7 @@ fn test_approve_proposal_success() {
         let mut admins = Vec::new(&env);
         admins.push_back(admin.clone());
         admins.push_back(admin2.clone());
-        set_multisig_admins(&env, admin.clone(), admins).unwrap();
+        set_multisig_admins(&env, admin.clone(), admins, 2).unwrap();
 
         let proposal_id = propose_set_min_collateral_ratio(&env, admin, 12_000).unwrap();
         approve_proposal(&env, admin2.clone(), proposal_id).unwrap();
@@ -423,7 +423,7 @@ fn test_execute_multisig_proposal_success() {
         let mut admins = Vec::new(&env);
         admins.push_back(admin.clone());
         admins.push_back(admin2.clone());
-        set_multisig_admins(&env, admin.clone(), admins).unwrap();
+        set_multisig_admins(&env, admin.clone(), admins, 2).unwrap();
         set_multisig_threshold(&env, admin.clone(), 2).unwrap();
 
         let proposal_id = propose_set_min_collateral_ratio(&env, admin.clone(), 12_000).unwrap();
@@ -432,7 +432,7 @@ fn test_execute_multisig_proposal_success() {
     });
 
     env.ledger().with_mut(|li| {
-        li.timestamp += 10 * 24 * 60 * 60;
+        li.timestamp += 5 * 24 * 60 * 60;
     });
 
     with_contract!(env, &cid, {
@@ -453,7 +453,7 @@ fn test_execute_multisig_proposal_insufficient_approvals() {
         admins.push_back(admin.clone());
         admins.push_back(admin2.clone());
         admins.push_back(admin3);
-        set_multisig_admins(&env, admin.clone(), admins).unwrap();
+        set_multisig_admins(&env, admin.clone(), admins, 2).unwrap();
         set_multisig_threshold(&env, admin.clone(), 3).unwrap();
 
         let proposal_id = propose_set_min_collateral_ratio(&env, admin.clone(), 12_000).unwrap();
@@ -497,7 +497,7 @@ fn test_full_multisig_flow_3_of_5() {
         admins.push_back(admin3.clone());
         admins.push_back(admin4);
         admins.push_back(admin5);
-        set_multisig_admins(&env, admin1.clone(), admins).unwrap();
+        set_multisig_admins(&env, admin1.clone(), admins, 2).unwrap();
         set_multisig_threshold(&env, admin1.clone(), 3).unwrap();
 
         let proposal_id = propose_set_min_collateral_ratio(&env, admin1.clone(), 12_000).unwrap();
@@ -510,7 +510,7 @@ fn test_full_multisig_flow_3_of_5() {
     });
 
     env.ledger().with_mut(|li| {
-        li.timestamp += 10 * 24 * 60 * 60;
+        li.timestamp += 5 * 24 * 60 * 60;
     });
 
     with_contract!(env, &cid, {
@@ -530,7 +530,7 @@ fn test_admin_rotation() {
         let mut new_admins = Vec::new(&env);
         new_admins.push_back(new_admin1.clone());
         new_admins.push_back(new_admin2.clone());
-        set_multisig_admins(&env, old_admin.clone(), new_admins).unwrap();
+        set_multisig_admins(&env, old_admin.clone(), new_admins, 2).unwrap();
 
         let stored_admins = get_multisig_admins(&env).unwrap();
         assert!(stored_admins.contains(new_admin1.clone()));
@@ -542,5 +542,101 @@ fn test_admin_rotation() {
 
         let proposal_id = propose_set_min_collateral_ratio(&env, new_admin1, 12_000).unwrap();
         assert!(proposal_id > 0);
+    });
+}
+
+#[test]
+fn test_remove_last_guardian_rejected() {
+    let (env, cid, admin) = setup();
+    let guardian = Address::generate(&env);
+
+    with_contract!(env, &cid, {
+        add_guardian(&env, admin.clone(), guardian.clone()).unwrap();
+        let result = remove_guardian(&env, admin, guardian);
+        assert_eq!(result, Err(GovernanceError::InvalidGuardianConfig));
+
+        let guardians = get_guardians(&env).unwrap();
+        assert_eq!(guardians.len(), 1);
+    });
+}
+
+#[test]
+fn test_start_recovery_rejects_same_admin_rotation() {
+    let (env, cid, admin) = setup();
+    let guardian = Address::generate(&env);
+
+    with_contract!(env, &cid, {
+        add_guardian(&env, admin.clone(), guardian.clone()).unwrap();
+        let result = start_recovery(&env, guardian, admin.clone(), admin);
+        assert_eq!(result, Err(GovernanceError::InvalidProposal));
+    });
+}
+
+#[test]
+fn test_start_recovery_rejects_existing_new_admin() {
+    let (env, cid, admin1) = setup();
+    let admin2 = Address::generate(&env);
+    let guardian = Address::generate(&env);
+
+    with_contract!(env, &cid, {
+        let mut admins = Vec::new(&env);
+        admins.push_back(admin1.clone());
+        admins.push_back(admin2.clone());
+        set_multisig_admins(&env, admin1.clone(), admins).unwrap();
+
+        add_guardian(&env, admin1.clone(), guardian.clone()).unwrap();
+        let result = start_recovery(&env, guardian, admin1, admin2);
+        assert_eq!(result, Err(GovernanceError::InvalidProposal));
+    });
+}
+
+#[test]
+fn test_approve_recovery_clears_invalidated_request_after_admin_rotation() {
+    let (env, cid, admin) = setup();
+    let guardian1 = Address::generate(&env);
+    let guardian2 = Address::generate(&env);
+    let replacement_admin = Address::generate(&env);
+    let unrelated_admin = Address::generate(&env);
+
+    with_contract!(env, &cid, {
+        add_guardian(&env, admin.clone(), guardian1.clone()).unwrap();
+        add_guardian(&env, admin.clone(), guardian2.clone()).unwrap();
+        start_recovery(&env, guardian1, admin.clone(), replacement_admin).unwrap();
+
+        let mut admins = Vec::new(&env);
+        admins.push_back(unrelated_admin);
+        set_multisig_admins(&env, admin, admins).unwrap();
+
+        let result = approve_recovery(&env, guardian2);
+        assert_eq!(result, Err(GovernanceError::InvalidProposal));
+        assert!(get_recovery_request(&env).is_none());
+        assert!(get_recovery_approvals(&env).is_none());
+    });
+}
+
+#[test]
+fn test_execute_recovery_clears_invalidated_request_after_admin_rotation() {
+    let (env, cid, admin) = setup();
+    let guardian1 = Address::generate(&env);
+    let guardian2 = Address::generate(&env);
+    let replacement_admin = Address::generate(&env);
+    let unrelated_admin = Address::generate(&env);
+    let executor = Address::generate(&env);
+
+    with_contract!(env, &cid, {
+        add_guardian(&env, admin.clone(), guardian1.clone()).unwrap();
+        add_guardian(&env, admin.clone(), guardian2.clone()).unwrap();
+        set_guardian_threshold(&env, admin.clone(), 2).unwrap();
+        start_recovery(&env, guardian1, admin.clone(), replacement_admin).unwrap();
+        approve_recovery(&env, guardian2).unwrap();
+
+        let mut admins = Vec::new(&env);
+        admins.push_back(unrelated_admin);
+        set_multisig_admins(&env, admin, admins).unwrap();
+
+        let result = execute_recovery(&env, executor);
+        assert_eq!(result, Err(GovernanceError::InvalidProposal));
+        assert!(get_recovery_request(&env).is_none());
+        assert!(get_recovery_approvals(&env).is_none());
     });
 }

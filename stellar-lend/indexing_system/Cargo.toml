@@ -9,11 +9,11 @@ tokio = { version = "1.35", features = ["full"] }
 async-trait = "0.1"
 
 # Web3 and blockchain
-ethers = { version = "2.0", features = ["ws", "rustls"] }
+ethers = { version = "2.0", default-features = false, features = ["ws", "rustls"] }
 alloy-primitives = "0.7"
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "chrono", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "chrono", "uuid"] }
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 
 # Serialization
@@ -47,7 +47,8 @@ mockall = "0.12"
 testcontainers = "0.15"
 tokio-test = "0.4"
 
-
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)', 'cfg(tarpaulin_include)'] }
 
 [lib]
 name = "data_indexing_caching"

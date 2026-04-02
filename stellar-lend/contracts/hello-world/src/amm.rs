@@ -1,5 +1,8 @@
 use soroban_sdk::{Address, Env};
-pub use stellarlend_amm::{AmmError, AmmProtocolConfig, LiquidityParams, SwapParams};
+pub use stellarlend_amm::{
+    AmmCallbackData, AmmError, AmmProtocolConfig, AmmSettings, LiquidityParams, MockAmm, SwapParams,
+    TokenPair, AmmContract, AmmContractClient
+};
 
 /// Initialize AMM settings (admin only)
 pub fn initialize_amm(
@@ -48,6 +51,7 @@ pub fn amm_add_liquidity(
 }
 
 /// Remove liquidity from AMM pool
+#[allow(clippy::too_many_arguments)]
 pub fn amm_remove_liquidity(
     env: Env,
     user: Address,

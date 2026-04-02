@@ -40,12 +40,9 @@
 // | `MAX_METRIC_LEN`   | 64 B  | Metric name (e.g. "cpu_pct")       |
 // | `MAX_UNIT_LEN`     | 16 B  | Unit label (e.g. "ms", "%")        |
 
-#![no_std]
-
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype,
-    panic_with_error, symbol_short,
-    Address, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    Env, String, Vec,
 };
 
 // ═══════════════════════════════════════════════════════
@@ -77,21 +74,21 @@ pub const MAX_REPORTERS: u32 = 50;
 #[repr(u32)]
 pub enum MonitorError {
     /// Contract has already been initialised.
-    AlreadyInitialized   = 1,
+    AlreadyInitialized = 1,
     /// Caller is not the admin or a granted reporter.
-    NotAuthorized        = 2,
+    NotAuthorized = 2,
     /// Target identifier exceeds `MAX_TARGET_LEN`.
-    TargetTooLong        = 3,
+    TargetTooLong = 3,
     /// Message exceeds `MAX_MESSAGE_LEN`.
-    MessageTooLong       = 4,
+    MessageTooLong = 4,
     /// Metric name exceeds `MAX_METRIC_LEN`.
-    MetricNameTooLong    = 5,
+    MetricNameTooLong = 5,
     /// Unit label exceeds `MAX_UNIT_LEN`.
-    UnitTooLong          = 6,
+    UnitTooLong = 6,
     /// No signal found for the requested target and type.
-    SignalNotFound       = 7,
+    SignalNotFound = 7,
     /// Contract has not been initialised yet.
-    NotInitialized       = 8,
+    NotInitialized = 8,
     /// Reporter list is full (`MAX_REPORTERS` reached).
     ReporterLimitReached = 9,
 }
@@ -244,12 +241,12 @@ impl Monitor {
         env.storage().persistent().set(&MonitorKey::Admin, &admin);
 
         let reporters: Vec<Address> = Vec::new(&env);
-        env.storage().persistent().set(&MonitorKey::Reporters, &reporters);
+        env.storage()
+            .persistent()
+            .set(&MonitorKey::Reporters, &reporters);
 
-        env.events().publish(
-            (symbol_short!("mon_init"), admin.clone()),
-            (),
-        );
+        env.events()
+            .publish((symbol_short!("mon_init"), admin.clone()), ());
     }
 
     // ───────────────────────────────────────────────────
@@ -283,12 +280,12 @@ impl Monitor {
         }
 
         reporters.push_back(reporter.clone());
-        env.storage().persistent().set(&MonitorKey::Reporters, &reporters);
+        env.storage()
+            .persistent()
+            .set(&MonitorKey::Reporters, &reporters);
 
-        env.events().publish(
-            (symbol_short!("rep_add"), caller, reporter),
-            (),
-        );
+        env.events()
+            .publish((symbol_short!("rep_add"), caller, reporter), ());
     }
 
     /// Revoke reporter access from `reporter`.
@@ -315,10 +312,8 @@ impl Monitor {
             .persistent()
             .set(&MonitorKey::Reporters, &new_reporters);
 
-        env.events().publish(
-            (symbol_short!("rep_del"), caller, reporter),
-            (),
-        );
+        env.events()
+            .publish((symbol_short!("rep_del"), caller, reporter), ());
     }
 
     // ───────────────────────────────────────────────────
@@ -372,10 +367,8 @@ impl Monitor {
             .persistent()
             .set(&MonitorKey::Health(target.clone()), &signal);
 
-        env.events().publish(
-            (symbol_short!("mon_hlth"), caller, target),
-            status,
-        );
+        env.events()
+            .publish((symbol_short!("mon_hlth"), caller, target), status);
     }
 
     // ───────────────────────────────────────────────────
@@ -436,10 +429,8 @@ impl Monitor {
             .persistent()
             .set(&MonitorKey::Performance(target.clone()), &signal);
 
-        env.events().publish(
-            (symbol_short!("mon_perf"), caller, target),
-            value_scaled,
-        );
+        env.events()
+            .publish((symbol_short!("mon_perf"), caller, target), value_scaled);
     }
 
     // ───────────────────────────────────────────────────
@@ -490,10 +481,8 @@ impl Monitor {
             .persistent()
             .set(&MonitorKey::Security(target.clone()), &signal);
 
-        env.events().publish(
-            (symbol_short!("mon_sec"), caller, target),
-            severity,
-        );
+        env.events()
+            .publish((symbol_short!("mon_sec"), caller, target), severity);
     }
 
     // ───────────────────────────────────────────────────
@@ -583,9 +572,15 @@ impl Monitor {
     pub fn signal_exists(env: Env, target: String, kind: SignalKind) -> bool {
         Self::assert_initialized(&env);
         match kind {
-            SignalKind::Health      => env.storage().persistent().has(&MonitorKey::Health(target)),
-            SignalKind::Performance => env.storage().persistent().has(&MonitorKey::Performance(target)),
-            SignalKind::Security    => env.storage().persistent().has(&MonitorKey::Security(target)),
+            SignalKind::Health => env.storage().persistent().has(&MonitorKey::Health(target)),
+            SignalKind::Performance => env
+                .storage()
+                .persistent()
+                .has(&MonitorKey::Performance(target)),
+            SignalKind::Security => env
+                .storage()
+                .persistent()
+                .has(&MonitorKey::Security(target)),
         }
     }
 

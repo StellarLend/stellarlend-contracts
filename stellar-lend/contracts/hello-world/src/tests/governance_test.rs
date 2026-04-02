@@ -98,6 +98,8 @@ fn test_voting_flow() {
         &ProposalType::EmergencyPause(true),
         &String::from_str(&env, "Emergency pause"),
         &None,
+        &None,
+        &None,
     );
 
     let current_time = env.ledger().timestamp();
@@ -132,7 +134,8 @@ fn test_cancel_proposal_by_proposer() {
     let proposal_type = ProposalType::EmergencyPause(true);
     let description = String::from_str(&env, "Test");
 
-    let proposal_id = client.gov_create_proposal(&proposer, &proposal_type, &description, &None);
+    let proposal_id =
+        client.gov_create_proposal(&proposer, &proposal_type, &description, &None, &None, &None);
 
     client.gov_cancel_proposal(&proposer, &proposal_id);
 
@@ -154,7 +157,8 @@ fn test_cancel_proposal_by_admin() {
     let proposal_type = ProposalType::EmergencyPause(true);
     let description = String::from_str(&env, "Test");
 
-    let proposal_id = client.gov_create_proposal(&proposer, &proposal_type, &description, &None);
+    let proposal_id =
+        client.gov_create_proposal(&proposer, &proposal_type, &description, &None, &None, &None);
 
     client.gov_cancel_proposal(&admin, &proposal_id);
 
@@ -179,7 +183,8 @@ fn test_cannot_approve_twice() {
     let proposal_type = ProposalType::EmergencyPause(true);
     let description = String::from_str(&env, "Test");
 
-    let proposal_id = client.gov_create_proposal(&proposer, &proposal_type, &description, &None);
+    let proposal_id =
+        client.gov_create_proposal(&proposer, &proposal_type, &description, &None, &None, &None);
 
     client.gov_approve_proposal(&admin, &proposal_id);
 

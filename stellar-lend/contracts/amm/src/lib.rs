@@ -16,16 +16,36 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Map};
 
 pub mod amm;
 pub use crate::amm::{
-    add_amm_protocol, add_liquidity, auto_swap_for_collateral, execute_swap,
+    add_amm_protocol, add_liquidity, auto_swap_for_collateral, delete_amm_protocol, execute_swap,
     initialize_amm_settings, remove_liquidity, update_amm_settings, validate_amm_callback,
     AmmCallbackData, AmmError, AmmProtocolConfig, AmmSettings, LiquidityParams, SwapParams,
     TokenPair,
 };
 
 use stellarlend_common::upgrade;
+pub struct DebugConfig { pub x: i128 }
 
 #[contract]
 pub struct AmmContract;
+
+#[contract]
+pub struct MockAmm;
+
+#[contractimpl]
+impl MockAmm {
+    pub fn swap(
+        _env: Env,
+        _executor: Address,
+        _token_in: Option<Address>,
+        _token_out: Option<Address>,
+        amount_in: i128,
+        _min_amount_out: i128,
+        _callback_data: AmmCallbackData,
+    ) -> i128 {
+        // Mock swap: 1% fee (99% return)
+        amount_in * 99 / 100
+    }
+}
 
 #[contractimpl]
 impl AmmContract {
@@ -126,6 +146,24 @@ impl AmmContract {
         protocol_config: AmmProtocolConfig,
     ) -> Result<(), AmmError> {
         add_amm_protocol(&env, admin, protocol_config)
+    }
+
+    /// Delete AMM protocol (admin only)
+    ///
+    /// Removes a registered AMM protocol.
+    ///
+    /// # Arguments
+    /// * `admin` - The admin address
+    /// * `protocol` - The protocol address to remove
+    ///
+    /// # Returns
+    /// Returns Ok(()) on success
+    pub fn delete_amm_protocol(
+        env: Env,
+        admin: Address,
+        protocol: Address,
+    ) -> Result<(), AmmError> {
+        delete_amm_protocol(&env, admin, &protocol)
     }
 
     /// Update AMM settings (admin only)
@@ -367,6 +405,10 @@ mod amm_coverage_booster;
 #[cfg(all(test, feature = "liquidate_integration"))]
 mod liquidate_test;
 #[cfg(test)]
+mod integration_test;
+#[cfg(test)]
 mod math_safety_test;
 #[cfg(test)]
 mod test;
+
+//

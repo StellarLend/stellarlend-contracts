@@ -38,3 +38,4 @@ lerna-debug.log*
 *.wasm.hash
 .soroban/
 
+test_snapshots/

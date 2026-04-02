@@ -23,6 +23,7 @@ use crate::events::{
     PauseStateChangedEvent, RiskParamsUpdatedEvent,
 };
 use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
+use crate::prelude::*;
 
 /// Errors that can occur during risk management operations
 #[contracterror]
@@ -64,9 +65,6 @@ pub enum RiskDataKey {
     /// Global risk configuration parameters (MCR, liquidation threshold, etc.)
     /// Value type: RiskConfig
     RiskConfig,
-    /// Protocol admin address authorized for risk management
-    /// Value type: Address
-    Admin,
     /// Global emergency pause flag. If true, all protocol operations are halted.
     /// Value type: bool
     EmergencyPause,
@@ -124,9 +122,9 @@ pub fn initialize_risk_management(env: &Env, admin: Address) -> Result<(), RiskM
         return Ok(());
     }
 
-    // Set admin
-    let admin_key = crate::storage::GovernanceDataKey::Admin;
-    env.storage().persistent().set(&admin_key, &admin);
+    // Admin is already set in the centralized admin module during contract initialize
+    // We don't set it here anymore to maintain a single source of truth.
+
 
     // Initialize default risk config for pause switches
     let default_config = RiskConfig {
@@ -273,12 +271,37 @@ pub fn is_operation_paused(env: &Env, operation: Symbol) -> bool {
     }
 }
 
-/// Require that an operation is not paused
+/// Require that an operation is not paused.
+///
+/// Checks the **emergency pause first**, then the per-operation switch.
+/// This layering ensures a single `set_emergency_pause(true)` call halts
+/// every operation without having to update every individual switch.
+///
+/// ## Pause precedence matrix
+///
+/// | emergency | per-op | result                        |
+/// |-----------|--------|-------------------------------|
+/// | false     | false  | ✅ allowed                     |
+/// | false     | true   | ❌ `OperationPaused`           |
+/// | true      | false  | ❌ `EmergencyPaused`           |
+/// | true      | true   | ❌ `EmergencyPaused` (wins)    |
+///
+/// # Errors
+/// * [`RiskManagementError::EmergencyPaused`] – global emergency halt is active.
+/// * [`RiskManagementError::OperationPaused`] – this specific operation is paused.
+///
+/// # Security
+/// Always call this at the start of every user-facing entry point before
+/// reading or writing any protocol state.
 pub fn require_operation_not_paused(
     env: &Env,
     operation: Symbol,
 ) -> Result<(), RiskManagementError> {
-    if is_operation_paused(env, operation.clone()) {
+    // Emergency pause takes precedence over per-operation switches.
+    if is_emergency_paused(env) {
+        return Err(RiskManagementError::EmergencyPaused);
+    }
+    if is_operation_paused(env, operation) {
         return Err(RiskManagementError::OperationPaused);
     }
     Ok(())

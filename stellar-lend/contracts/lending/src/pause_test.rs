@@ -1,10 +1,12 @@
 use super::*;
+use crate::cross_asset::CrossAssetError;
 use crate::deposit::DepositError;
 use crate::flash_loan::FlashLoanError;
+use crate::oracle::OracleError;
 use crate::withdraw::WithdrawError;
 use soroban_sdk::{
     testutils::{Address as _, Events},
-    Address, Env, Symbol, TryFromVal,
+    Address, Env, Symbol, TryFromVal, Vec,
 };
 
 #[test]
@@ -902,4 +904,456 @@ fn test_granular_repay_pause_respected_in_recovery() {
 
     client.set_pause(&admin, &PauseType::Repay, &false);
     client.repay(&user, &asset, &1_000);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Cross-Asset Operations Pause Testing
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Cross-asset deposit is blocked by Deposit pause and global All pause.
+#[test]
+fn test_cross_asset_deposit_pause_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.initialize_admin(&admin);
+
+    // Test Deposit pause blocks cross-asset deposit
+    client.set_pause(&admin, &PauseType::Deposit, &true);
+    assert_eq!(
+        client.try_deposit_collateral_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test All pause blocks cross-asset deposit
+    client.set_pause(&admin, &PauseType::Deposit, &false);
+    client.set_pause(&admin, &PauseType::All, &true);
+    assert_eq!(
+        client.try_deposit_collateral_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test unpause allows cross-asset deposit
+    client.set_pause(&admin, &PauseType::All, &false);
+    client.deposit_collateral_asset(&user, &asset, &10_000);
+}
+
+/// Cross-asset borrow is blocked by Borrow pause and global All pause.
+#[test]
+fn test_cross_asset_borrow_pause_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.initialize_admin(&admin);
+
+    // Test Borrow pause blocks cross-asset borrow
+    client.set_pause(&admin, &PauseType::Borrow, &true);
+    assert_eq!(
+        client.try_borrow_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test All pause blocks cross-asset borrow
+    client.set_pause(&admin, &PauseType::Borrow, &false);
+    client.set_pause(&admin, &PauseType::All, &true);
+    assert_eq!(
+        client.try_borrow_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test unpause allows cross-asset borrow
+    client.set_pause(&admin, &PauseType::All, &false);
+    client.borrow_asset(&user, &asset, &10_000);
+}
+
+/// Cross-asset repay is blocked by Repay pause and global All pause (except in Recovery).
+#[test]
+fn test_cross_asset_repay_pause_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.initialize_admin(&admin);
+
+    // Test Repay pause blocks cross-asset repay
+    client.set_pause(&admin, &PauseType::Repay, &true);
+    assert_eq!(
+        client.try_repay_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test All pause blocks cross-asset repay
+    client.set_pause(&admin, &PauseType::Repay, &false);
+    client.set_pause(&admin, &PauseType::All, &true);
+    assert_eq!(
+        client.try_repay_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test unpause allows cross-asset repay
+    client.set_pause(&admin, &PauseType::All, &false);
+    client.repay_asset(&user, &asset, &10_000);
+}
+
+/// Cross-asset withdraw is blocked by Withdraw pause and global All pause (except in Recovery).
+#[test]
+fn test_cross_asset_withdraw_pause_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.initialize_admin(&admin);
+
+    // Test Withdraw pause blocks cross-asset withdraw
+    client.set_pause(&admin, &PauseType::Withdraw, &true);
+    assert_eq!(
+        client.try_withdraw_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test All pause blocks cross-asset withdraw
+    client.set_pause(&admin, &PauseType::Withdraw, &false);
+    client.set_pause(&admin, &PauseType::All, &true);
+    assert_eq!(
+        client.try_withdraw_asset(&user, &asset, &10_000),
+        Err(Ok(CrossAssetError::ProtocolPaused))
+    );
+
+    // Test unpause allows cross-asset withdraw
+    client.set_pause(&admin, &PauseType::All, &false);
+    client.withdraw_asset(&user, &asset, &10_000);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Oracle Operations Pause Testing
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Oracle price updates are blocked by dedicated oracle pause flag.
+#[test]
+fn test_oracle_pause_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.set_oracle(&admin, &oracle);
+
+    // Test oracle pause blocks price updates
+    client.set_oracle_paused(&oracle, &true);
+    assert_eq!(
+        client.try_update_price_feed(&oracle, &asset, &100_000),
+        Err(Ok(OracleError::OraclePaused))
+    );
+
+    // Test unpaused oracle allows price updates
+    client.set_oracle_paused(&oracle, &false);
+    client.update_price_feed(&oracle, &asset, &100_000);
+}
+
+/// Oracle pause is independent of other pause flags.
+#[test]
+fn test_oracle_pause_independence() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.set_oracle(&admin, &oracle);
+
+    // Pause all core operations but not oracle
+    client.set_pause(&admin, &PauseType::All, &true);
+    
+    // Oracle should still work if not paused
+    client.update_price_feed(&oracle, &asset, &100_000);
+
+    // Now pause oracle specifically
+    client.set_oracle_paused(&oracle, &true);
+    assert_eq!(
+        client.try_update_price_feed(&oracle, &asset, &200_000),
+        Err(Ok(OracleError::OraclePaused))
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Edge Cases and Matrix Testing
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Zero amount operations should still be blocked by pause flags.
+#[test]
+fn test_zero_amount_pause_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let collateral = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+
+    // Pause operations
+    client.set_pause(&admin, &PauseType::Deposit, &true);
+    client.set_pause(&admin, &PauseType::Borrow, &true);
+    client.set_pause(&admin, &PauseType::Repay, &true);
+    client.set_pause(&admin, &PauseType::Withdraw, &true);
+
+    // Zero amount operations should still fail with pause errors
+    assert_eq!(
+        client.try_deposit(&user, &asset, &0),
+        Err(Ok(DepositError::DepositPaused))
+    );
+    assert_eq!(
+        client.try_borrow(&user, &asset, &0, &collateral, &0),
+        Err(Ok(BorrowError::ProtocolPaused))
+    );
+    assert_eq!(
+        client.try_repay(&user, &asset, &0),
+        Err(Ok(BorrowError::ProtocolPaused))
+    );
+    assert_eq!(
+        client.try_withdraw(&user, &asset, &0),
+        Err(Ok(WithdrawError::WithdrawPaused))
+    );
+}
+
+/// Unauthorized callers cannot bypass pause by calling admin functions.
+#[test]
+fn test_unauthorized_pause_bypass_attempts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let guardian = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.set_guardian(&admin, &guardian);
+
+    // Pause operations
+    client.set_pause(&admin, &PauseType::Borrow, &true);
+    client.set_pause(&admin, &PauseType::Deposit, &true);
+
+    // Attacker cannot unpause operations
+    assert_eq!(
+        client.try_set_pause(&attacker, &PauseType::Borrow, &false),
+        Err(Ok(BorrowError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_deposit_paused(&false),
+        Err(Ok(DepositError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_withdraw_paused(&false),
+        Err(Ok(WithdrawError::Unauthorized))
+    );
+
+    // Attacker cannot trigger emergency shutdown unless they are guardian
+    assert_eq!(
+        client.try_emergency_shutdown(&attacker),
+        Err(Ok(BorrowError::Unauthorized))
+    );
+
+    // Guardian can trigger shutdown but cannot unpause
+    client.emergency_shutdown(&guardian);
+    assert_eq!(
+        client.try_set_pause(&guardian, &PauseType::Borrow, &false),
+        Err(Ok(BorrowError::Unauthorized))
+    );
+}
+
+/// Comprehensive pause state matrix test.
+#[test]
+fn test_comprehensive_pause_state_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let collateral = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.initialize_deposit_settings(&1_000_000_000, &100);
+    client.initialize_withdraw_settings(&100);
+
+    // Matrix: Test each pause flag individually
+    let pause_types = vec![
+        (PauseType::Deposit, "deposit"),
+        (PauseType::Borrow, "borrow"),
+        (PauseType::Repay, "repay"),
+        (PauseType::Withdraw, "withdraw"),
+        (PauseType::Liquidation, "liquidation"),
+    ];
+
+    for (pause_type, operation) in pause_types {
+        // Pause the specific operation
+        client.set_pause(&admin, &pause_type, &true);
+
+        // Verify get_pause_state reflects the change
+        assert!(client.get_pause_state(&pause_type));
+
+        // Test that other operations are not affected (except by All)
+        match pause_type {
+            PauseType::Deposit => {
+                assert_eq!(
+                    client.try_deposit(&user, &asset, &10_000),
+                    Err(Ok(DepositError::DepositPaused))
+                );
+                // Other operations should work
+                client.borrow(&user, &asset, &10_000, &collateral, &20_000);
+                client.repay(&user, &asset, &1_000);
+                client.withdraw(&user, &asset, &1_000);
+            }
+            PauseType::Borrow => {
+                assert_eq!(
+                    client.try_borrow(&user, &asset, &10_000, &collateral, &20_000),
+                    Err(Ok(BorrowError::ProtocolPaused))
+                );
+                // Other operations should work
+                client.deposit(&user, &asset, &10_000);
+                client.repay(&user, &asset, &1_000);
+                client.withdraw(&user, &asset, &1_000);
+            }
+            PauseType::Repay => {
+                assert_eq!(
+                    client.try_repay(&user, &asset, &10_000),
+                    Err(Ok(BorrowError::ProtocolPaused))
+                );
+                // Other operations should work
+                client.deposit(&user, &asset, &10_000);
+                client.borrow(&user, &asset, &10_000, &collateral, &20_000);
+                client.withdraw(&user, &asset, &1_000);
+            }
+            PauseType::Withdraw => {
+                assert_eq!(
+                    client.try_withdraw(&user, &asset, &10_000),
+                    Err(Ok(WithdrawError::WithdrawPaused))
+                );
+                // Other operations should work
+                client.deposit(&user, &asset, &10_000);
+                client.borrow(&user, &asset, &10_000, &collateral, &20_000);
+                client.repay(&user, &asset, &1_000);
+            }
+            PauseType::Liquidation => {
+                assert_eq!(
+                    client.try_liquidate(&admin, &user, &asset, &collateral, &10_000),
+                    Err(Ok(BorrowError::ProtocolPaused))
+                );
+                // Other operations should work
+                client.deposit(&user, &asset, &10_000);
+                client.borrow(&user, &asset, &10_000, &collateral, &20_000);
+                client.repay(&user, &asset, &1_000);
+                client.withdraw(&user, &asset, &1_000);
+            }
+            _ => {}
+        }
+
+        // Unpause the operation
+        client.set_pause(&admin, &pause_type, &false);
+        assert!(!client.get_pause_state(&pause_type));
+    }
+}
+
+/// Pause behavior during different emergency states.
+#[test]
+fn test_pause_during_emergency_states() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let guardian = Address::generate(&env);
+    let user = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let collateral = Address::generate(&env);
+
+    client.initialize(&admin, &1_000_000_000, &1000);
+    client.set_guardian(&admin, &guardian);
+    client.initialize_deposit_settings(&1_000_000_000, &100);
+    client.initialize_withdraw_settings(&100);
+
+    // Setup user position
+    client.deposit(&user, &asset, &50_000);
+    client.borrow(&user, &asset, &10_000, &collateral, &20_000);
+
+    // Test pause behavior during Shutdown
+    client.emergency_shutdown(&guardian);
+    assert_eq!(client.get_emergency_state(), EmergencyState::Shutdown);
+
+    // All operations should be blocked regardless of pause flags
+    client.set_pause(&admin, &PauseType::Repay, &false); // Try to unpause
+    assert_eq!(
+        client.try_repay(&user, &asset, &1_000),
+        Err(Ok(BorrowError::ProtocolPaused))
+    );
+    assert_eq!(
+        client.try_withdraw(&user, &asset, &1_000),
+        Err(Ok(WithdrawError::WithdrawPaused))
+    );
+
+    // Move to Recovery
+    client.start_recovery(&admin);
+    assert_eq!(client.get_emergency_state(), EmergencyState::Recovery);
+
+    // In Recovery, repay and withdraw should work unless specifically paused
+    client.repay(&user, &asset, &1_000);
+    client.withdraw(&user, &asset, &1_000);
+
+    // But new risk operations should still be blocked
+    assert_eq!(
+        client.try_borrow(&user, &asset, &1_000, &collateral, &2_000),
+        Err(Ok(BorrowError::ProtocolPaused))
+    );
+    assert_eq!(
+        client.try_deposit(&user, &asset, &1_000),
+        Err(Ok(DepositError::DepositPaused))
+    );
+
+    // Granular pause on repay/withdraw should still be respected in Recovery
+    client.set_pause(&admin, &PauseType::Repay, &true);
+    assert_eq!(
+        client.try_repay(&user, &asset, &1_000),
+        Err(Ok(BorrowError::ProtocolPaused))
+    );
+
+    client.set_pause(&admin, &PauseType::Withdraw, &true);
+    assert_eq!(
+        client.try_withdraw(&user, &asset, &1_000),
+        Err(Ok(WithdrawError::WithdrawPaused))
+    );
 }

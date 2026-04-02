@@ -9,13 +9,13 @@
 //! - Collateral and debt values depend on the oracle; ensure the oracle is correct and trusted.
 //! - Health factor uses the admin-set liquidation threshold consistently.
 
-use soroban_sdk::{contracttype, Address, Env, IntoVal, Symbol, I256};
-
 use crate::borrow::{
-    get_close_factor_bps, get_liquidation_incentive_bps, get_liquidation_threshold_bps,
-    get_oracle, get_user_collateral, get_user_debt, BorrowCollateral, DebtPosition,
+    get_close_factor_bps, get_liquidation_incentive_bps, get_liquidation_threshold_bps, get_oracle,
+    get_user_collateral, get_user_debt, BorrowCollateral, DebtPosition,
 };
+use crate::constants::BPS_SCALE;
 use crate::oracle;
+use soroban_sdk::{contracttype, Address, Env, IntoVal, Symbol, I256};
 
 /// Scale for oracle price (1e8 = one unit). Value = amount * price / PRICE_SCALE.
 const PRICE_SCALE: i128 = 100_000_000;
@@ -65,7 +65,11 @@ fn get_asset_price(env: &Env, asset: &Address) -> Option<i128> {
         &Symbol::new(env, "price"),
         (asset.clone(),).into_val(env),
     );
-    if price > 0 { Some(price) } else { None }
+    if price > 0 {
+        Some(price)
+    } else {
+        None
+    }
 }
 
 /// Computes collateral value in common unit (amount * price / PRICE_SCALE).
@@ -138,7 +142,9 @@ pub(crate) fn compute_health_factor(
     let hf_scale_256 = I256::from_i128(env, HEALTH_FACTOR_SCALE);
     let debt_256 = I256::from_i128(env, debt_value);
 
-    let weighted_collateral = collat_256.mul(&bps_256).div(&I256::from_i128(env, BPS_SCALE));
+    let weighted_collateral = collat_256
+        .mul(&bps_256)
+        .div(&I256::from_i128(env, BPS_SCALE));
 
     let hf_256 = weighted_collateral.mul(&hf_scale_256).div(&debt_256);
     hf_256.to_i128().unwrap_or(0)
@@ -279,7 +285,9 @@ pub fn get_liquidation_incentive_amount(env: &Env, repay_amount: i128) -> i128 {
     let incentive_bps = get_liquidation_incentive_bps(env);
     let amount_256 = I256::from_i128(env, repay_amount);
     let scale_256 = I256::from_i128(env, BPS_SCALE + incentive_bps);
-    let result = amount_256.mul(&scale_256).div(&I256::from_i128(env, BPS_SCALE));
+    let result = amount_256
+        .mul(&scale_256)
+        .div(&I256::from_i128(env, BPS_SCALE));
     result.to_i128().unwrap_or(i128::MAX)
 }
 

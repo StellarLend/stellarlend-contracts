@@ -18,16 +18,17 @@
 //! ### Reserve Accrual
 //! - Reserves accrue automatically when interest is calculated during repayment
 //! - Formula: `reserve_amount = total_interest * reserve_factor / 10000`
-//! - Tracked separately per asset in persistent storage
+//! - Tracked separately per asset in persistent storage under `ReserveDataKey::ReserveBalance`
 //!
 //! ### Treasury Withdrawal
-//! - Admin can withdraw accrued reserves to a treasury address
+//! - Admin can withdraw accrued reserves to a pre-configured treasury address
 //! - Withdrawals are bounded by the actual reserve balance
 //! - Cannot withdraw user funds (collateral or principal)
 //! - All withdrawals are logged via events
+//! - Follows checks-effects-interactions: balance updated before token transfer
 //!
 //! ## Storage Layout
-//! - `ReserveBalance(asset)` — accumulated reserve per asset
+//! - `ReserveBalance(asset)` — accumulated reserve per asset (canonical key)
 //! - `ReserveFactor(asset)` — reserve factor per asset (basis points)
 //! - `TreasuryAddress` — destination address for reserve withdrawals
 //!
@@ -36,202 +37,306 @@
 //! - Only admin can modify reserve factors or withdraw reserves
 //! - Withdrawals cannot exceed accrued reserve balance
 //! - User funds (collateral, principal) are never accessible via treasury operations
+//! - Reserve balance is updated before any external token transfer (CEI pattern)
+//! - Withdrawals are blocked when the reserve-withdraw pause switch is active
+//! - Treasury address cannot be the contract itself (prevents self-draining)
 //! - All state changes emit events for transparency and auditability
 
 #![allow(unused)]
 use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
+use crate::prelude::*;
+use crate::prelude::*;
 
-use crate::deposit::DepositDataKey;
+use crate::deposit::{DepositDataKey, ProtocolAnalytics};
 
-/// Maximum allowed reserve factor (50% = 5000 basis points)
-/// This ensures that at least 50% of interest always goes to lenders
+/// Maximum allowed reserve factor (50% = 5000 basis points).
+/// Ensures at least 50% of interest always flows to lenders.
 pub const MAX_RESERVE_FACTOR_BPS: i128 = 5000;
 
-/// Default reserve factor (10% = 1000 basis points)
+/// Default reserve factor (10% = 1000 basis points).
 pub const DEFAULT_RESERVE_FACTOR_BPS: i128 = 1000;
 
-/// Basis points scale (100% = 10000 basis points)
-pub const BASIS_POINTS_SCALE: i128 = 10000;
+/// Basis points scale (100% = 10000 basis points).
+pub const BASIS_POINTS_SCALE: i128 = 10_000;
 
-/// Errors that can occur during reserve and treasury operations
+/// Pause-switch key used to block reserve withdrawals.
+const PAUSE_RESERVE_WITHDRAW: &str = "pause_reserve";
+
+/// Errors that can occur during reserve and treasury operations.
+///
+/// Error codes are stable and must never be renumbered; append new variants at the end.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum ReserveError {
     /// Caller is not authorized (not admin)
     Unauthorized = 1,
-    /// Reserve factor exceeds maximum allowed value
+    /// Reserve factor exceeds maximum allowed value (> 5000 bps)
     InvalidReserveFactor = 2,
     /// Withdrawal amount exceeds available reserve balance
     InsufficientReserve = 3,
-    /// Invalid asset address
+    /// Invalid or unsupported asset address
     InvalidAsset = 4,
-    /// Invalid treasury address
+    /// Treasury address is invalid (e.g. equals the contract itself)
     InvalidTreasury = 5,
     /// Withdrawal amount must be greater than zero
     InvalidAmount = 6,
-    /// Arithmetic overflow occurred
+    /// Arithmetic overflow in reserve calculations
     Overflow = 7,
-    /// Treasury address not configured
+    /// Treasury address not configured before withdrawal
     TreasuryNotSet = 8,
+    /// Reserve withdraw operations are currently paused
+    ReserveWithdrawPaused = 9,
 }
 
-/// Storage keys for reserve and treasury data
+/// Storage keys for reserve and treasury data.
+///
+/// `ReserveBalance` is the **canonical** per-asset reserve counter; all other
+/// modules (repay, lib.rs) must read/write through this module's helpers.
 #[contracttype]
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum ReserveDataKey {
-    /// Reserve balance per asset: ReserveBalance(asset) -> i128
-    /// Tracks accumulated protocol reserves for each asset
+    /// Accumulated protocol reserve per asset → i128
     ReserveBalance(Option<Address>),
-    /// Reserve factor per asset: ReserveFactor(asset) -> i128
-    /// Percentage of interest allocated to reserves (in basis points)
+    /// Reserve factor per asset in basis points → i128
     ReserveFactor(Option<Address>),
-    /// Treasury address: TreasuryAddress -> Address
-    /// Destination for reserve withdrawals
+    /// Destination address for admin reserve withdrawals → Address
     TreasuryAddress,
+    /// Aggregate reserve balance across all assets.
+    /// Value type: i128
+    TotalReservesV1,
+    /// Cumulative protocol revenue sourced from reserve accruals.
+    /// Value type: i128
+    ProtocolRevenueV1,
 }
 
-/// Initialize reserve configuration for an asset
+fn add_to_protocol_tvl(env: &Env, amount: i128) -> Result<(), ReserveError> {
+    let mut analytics = env
+        .storage()
+        .persistent()
+        .get::<DepositDataKey, ProtocolAnalytics>(&DepositDataKey::ProtocolAnalytics)
+        .unwrap_or(ProtocolAnalytics {
+            total_deposits: 0,
+            total_borrows: 0,
+            total_value_locked: 0,
+        });
+
+    analytics.total_value_locked = analytics
+        .total_value_locked
+        .checked_add(amount)
+        .ok_or(ReserveError::Overflow)?;
+
+    env.storage()
+        .persistent()
+        .set(&DepositDataKey::ProtocolAnalytics, &analytics);
+
+    Ok(())
+}
+
+fn sub_from_protocol_tvl(env: &Env, amount: i128) -> Result<(), ReserveError> {
+    let mut analytics = env
+        .storage()
+        .persistent()
+        .get::<DepositDataKey, ProtocolAnalytics>(&DepositDataKey::ProtocolAnalytics)
+        .unwrap_or(ProtocolAnalytics {
+            total_deposits: 0,
+            total_borrows: 0,
+            total_value_locked: 0,
+        });
+
+    analytics.total_value_locked = analytics
+        .total_value_locked
+        .checked_sub(amount)
+        .ok_or(ReserveError::Overflow)?;
+
+    env.storage()
+        .persistent()
+        .set(&DepositDataKey::ProtocolAnalytics, &analytics);
+
+    Ok(())
+}
+
+fn add_to_total_reserves(env: &Env, amount: i128) -> Result<(), ReserveError> {
+    let current_total = env
+        .storage()
+        .persistent()
+        .get::<ReserveDataKey, i128>(&ReserveDataKey::TotalReservesV1)
+        .unwrap_or(0);
+
+    let next_total = current_total
+        .checked_add(amount)
+        .ok_or(ReserveError::Overflow)?;
+
+    env.storage()
+        .persistent()
+        .set(&ReserveDataKey::TotalReservesV1, &next_total);
+
+    Ok(())
+}
+
+fn sub_from_total_reserves(env: &Env, amount: i128) -> Result<(), ReserveError> {
+    let current_total = env
+        .storage()
+        .persistent()
+        .get::<ReserveDataKey, i128>(&ReserveDataKey::TotalReservesV1)
+        .unwrap_or(0);
+
+    let next_total = current_total
+        .checked_sub(amount)
+        .ok_or(ReserveError::Overflow)?;
+
+    env.storage()
+        .persistent()
+        .set(&ReserveDataKey::TotalReservesV1, &next_total);
+
+    Ok(())
+}
+
+fn add_to_protocol_revenue(env: &Env, amount: i128) -> Result<(), ReserveError> {
+    let current_revenue = env
+        .storage()
+        .persistent()
+        .get::<ReserveDataKey, i128>(&ReserveDataKey::ProtocolRevenueV1)
+        .unwrap_or(0);
+
+    let next_revenue = current_revenue
+        .checked_add(amount)
+        .ok_or(ReserveError::Overflow)?;
+
+    env.storage()
+        .persistent()
+        .set(&ReserveDataKey::ProtocolRevenueV1, &next_revenue);
+
+    Ok(())
+}
+
+// ─── Initialisation ──────────────────────────────────────────────────────────
+
+/// Initialize reserve configuration for a new asset.
 ///
-/// Sets the default reserve factor for a new asset. Should be called when
-/// a new asset is added to the protocol.
+/// Sets the initial reserve factor and zeroes the reserve balance. Should be
+/// called once per asset when the asset is registered with the protocol.
 ///
 /// # Arguments
 /// * `env` - The Soroban environment
-/// * `asset` - The asset address (None for native asset)
-/// * `reserve_factor_bps` - Reserve factor in basis points (0-5000)
+/// * `asset` - Asset address (`None` for native XLM)
+/// * `reserve_factor_bps` - Initial reserve factor in basis points (0–5000)
 ///
 /// # Errors
-/// * `ReserveError::InvalidReserveFactor` - If reserve factor > MAX_RESERVE_FACTOR_BPS
-/// * `ReserveError::Overflow` - If arithmetic overflow occurs
+/// * [`ReserveError::InvalidReserveFactor`] — factor outside `[0, MAX_RESERVE_FACTOR_BPS]`
 ///
 /// # Security
-/// * No authorization check - should be called internally during asset initialization
-/// * Validates reserve factor is within acceptable bounds
-#[allow(deprecated)]
+/// No authorization check — intended for internal use during asset registration.
 pub fn initialize_reserve_config(
     env: &Env,
     asset: Option<Address>,
     reserve_factor_bps: i128,
 ) -> Result<(), ReserveError> {
     // Validate reserve factor
-    if reserve_factor_bps < 0 || reserve_factor_bps > MAX_RESERVE_FACTOR_BPS {
+    if !(0..=MAX_RESERVE_FACTOR_BPS).contains(&reserve_factor_bps) {
         return Err(ReserveError::InvalidReserveFactor);
     }
 
-    // Set reserve factor
-    let factor_key = ReserveDataKey::ReserveFactor(asset.clone());
     env.storage()
         .persistent()
-        .set(&factor_key, &reserve_factor_bps);
+        .set(&ReserveDataKey::ReserveFactor(asset.clone()), &reserve_factor_bps);
 
-    // Initialize reserve balance to zero
-    let balance_key = ReserveDataKey::ReserveBalance(asset.clone());
-    env.storage().persistent().set(&balance_key, &0i128);
+    env.storage()
+        .persistent()
+        .set(&ReserveDataKey::ReserveBalance(asset.clone()), &0i128);
 
-    // Emit initialization event
     let topics = (Symbol::new(env, "reserve_initialized"),);
     env.events().publish(topics, (asset, reserve_factor_bps));
 
     Ok(())
 }
 
-/// Set the reserve factor for an asset (admin only)
+// ─── Reserve Factor ───────────────────────────────────────────────────────────
+
+/// Update the reserve factor for an asset (admin only).
 ///
-/// Updates the percentage of interest income allocated to protocol reserves.
-/// This affects future interest accruals but does not retroactively change
-/// existing reserve balances.
+/// The new factor applies only to **future** interest accruals; existing reserve
+/// balances are never modified retroactively.
 ///
 /// # Arguments
 /// * `env` - The Soroban environment
-/// * `caller` - The caller address (must be admin)
-/// * `asset` - The asset address (None for native asset)
-/// * `reserve_factor_bps` - New reserve factor in basis points (0-5000)
+/// * `caller` - Must be the protocol admin
+/// * `asset` - Asset address (`None` for native XLM)
+/// * `reserve_factor_bps` - New factor in basis points (0–5000)
 ///
 /// # Errors
-/// * `ReserveError::Unauthorized` - If caller is not admin
-/// * `ReserveError::InvalidReserveFactor` - If reserve factor > MAX_RESERVE_FACTOR_BPS
+/// * [`ReserveError::Unauthorized`] — caller is not admin
+/// * [`ReserveError::InvalidReserveFactor`] — factor outside valid range
 ///
 /// # Security
-/// * Requires admin authorization
-/// * Validates reserve factor bounds
-/// * Emits event for transparency
-#[allow(deprecated)]
+/// * Requires Soroban `require_auth` + storage admin verification
+/// * Emits `reserve_factor_updated` event for off-chain auditability
 pub fn set_reserve_factor(
     env: &Env,
     caller: Address,
     asset: Option<Address>,
     reserve_factor_bps: i128,
 ) -> Result<(), ReserveError> {
-    // Require admin authorization
     caller.require_auth();
     require_admin(env, &caller)?;
 
     // Validate reserve factor
-    if reserve_factor_bps < 0 || reserve_factor_bps > MAX_RESERVE_FACTOR_BPS {
+    if !(0..=MAX_RESERVE_FACTOR_BPS).contains(&reserve_factor_bps) {
         return Err(ReserveError::InvalidReserveFactor);
     }
 
-    // Update reserve factor
-    let factor_key = ReserveDataKey::ReserveFactor(asset.clone());
     env.storage()
         .persistent()
-        .set(&factor_key, &reserve_factor_bps);
+        .set(&ReserveDataKey::ReserveFactor(asset.clone()), &reserve_factor_bps);
 
-    // Emit event
     let topics = (Symbol::new(env, "reserve_factor_updated"), caller);
     env.events().publish(topics, (asset, reserve_factor_bps));
 
     Ok(())
 }
 
-/// Get the reserve factor for an asset
+/// Return the current reserve factor for an asset.
 ///
-/// Returns the current reserve factor, or the default if not explicitly set.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `asset` - The asset address (None for native asset)
+/// Falls back to [`DEFAULT_RESERVE_FACTOR_BPS`] if no factor has been configured.
 ///
 /// # Returns
-/// Reserve factor in basis points (0-5000)
+/// Reserve factor in basis points (0–5000).
 pub fn get_reserve_factor(env: &Env, asset: Option<Address>) -> i128 {
-    let factor_key = ReserveDataKey::ReserveFactor(asset);
     env.storage()
         .persistent()
-        .get(&factor_key)
+        .get(&ReserveDataKey::ReserveFactor(asset))
         .unwrap_or(DEFAULT_RESERVE_FACTOR_BPS)
 }
 
-/// Accrue reserves from interest payment
+// ─── Accrual ──────────────────────────────────────────────────────────────────
+
+/// Accrue protocol reserves from an interest payment.
 ///
-/// Called internally when interest is paid during repayment. Calculates the
-/// protocol's share of interest based on the reserve factor and adds it to
-/// the reserve balance.
+/// Called by the repay module whenever a borrower pays interest. Splits
+/// `interest_amount` between the protocol reserve and lenders according to the
+/// asset's current reserve factor.
 ///
 /// # Arguments
 /// * `env` - The Soroban environment
-/// * `asset` - The asset address (None for native asset)
-/// * `interest_amount` - Total interest amount paid
+/// * `asset` - Asset address (`None` for native XLM)
+/// * `interest_amount` - Total interest paid in this repayment
 ///
 /// # Returns
-/// Tuple of (reserve_amount, lender_amount) showing the split of interest
+/// `(reserve_amount, lender_amount)` — the interest split.
 ///
 /// # Errors
-/// * `ReserveError::Overflow` - If arithmetic overflow occurs
+/// * [`ReserveError::Overflow`] — arithmetic overflow detected
 ///
 /// # Security
-/// * No authorization check - should be called internally during repayment
-/// * Uses checked arithmetic to prevent overflow
-/// * Emits event for transparency
+/// * No authorization check — internal function, called only from repay module
+/// * All arithmetic is checked; never panics on overflow
 ///
 /// # Formula
 /// ```text
-/// reserve_amount = interest_amount * reserve_factor / 10000
-/// lender_amount = interest_amount - reserve_amount
+/// reserve_amount = interest_amount × reserve_factor ÷ 10_000
+/// lender_amount  = interest_amount − reserve_amount
 /// ```
-#[allow(deprecated)]
 pub fn accrue_reserve(
     env: &Env,
     asset: Option<Address>,
@@ -241,22 +346,18 @@ pub fn accrue_reserve(
         return Ok((0, 0));
     }
 
-    // Get reserve factor
     let reserve_factor = get_reserve_factor(env, asset.clone());
 
-    // Calculate reserve amount: interest * reserve_factor / 10000
     let reserve_amount = interest_amount
         .checked_mul(reserve_factor)
         .ok_or(ReserveError::Overflow)?
         .checked_div(BASIS_POINTS_SCALE)
         .ok_or(ReserveError::Overflow)?;
 
-    // Calculate lender amount
     let lender_amount = interest_amount
         .checked_sub(reserve_amount)
         .ok_or(ReserveError::Overflow)?;
 
-    // Update reserve balance
     let balance_key = ReserveDataKey::ReserveBalance(asset.clone());
     let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
 
@@ -265,8 +366,10 @@ pub fn accrue_reserve(
         .ok_or(ReserveError::Overflow)?;
 
     env.storage().persistent().set(&balance_key, &new_balance);
+    add_to_total_reserves(env, reserve_amount)?;
+    add_to_protocol_revenue(env, reserve_amount)?;
+    add_to_protocol_tvl(env, reserve_amount)?;
 
-    // Emit event
     let topics = (Symbol::new(env, "reserve_accrued"),);
     env.events()
         .publish(topics, (asset, reserve_amount, new_balance));
@@ -274,197 +377,189 @@ pub fn accrue_reserve(
     Ok((reserve_amount, lender_amount))
 }
 
-/// Get the current reserve balance for an asset
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `asset` - The asset address (None for native asset)
+// ─── Balance Query ────────────────────────────────────────────────────────────
+
+/// Return the current reserve balance for an asset.
 ///
 /// # Returns
-/// Current reserve balance
+/// Accumulated reserve balance (0 if never accrued).
 pub fn get_reserve_balance(env: &Env, asset: Option<Address>) -> i128 {
-    let balance_key = ReserveDataKey::ReserveBalance(asset);
-    env.storage().persistent().get(&balance_key).unwrap_or(0)
+    env.storage()
+        .persistent()
+        .get(&ReserveDataKey::ReserveBalance(asset))
+        .unwrap_or(0)
+}
+
+/// Get aggregate reserves across all assets.
+///
+/// # Returns
+/// Total reserves currently held by the protocol.
+pub fn get_total_reserves(env: &Env) -> i128 {
+    env.storage()
+        .persistent()
+        .get::<ReserveDataKey, i128>(&ReserveDataKey::TotalReservesV1)
+        .unwrap_or(0)
+}
+
+/// Get cumulative protocol revenue from reserve accrual.
+///
+/// This is cumulative protocol income and is not decreased by treasury withdrawals.
+///
+/// # Returns
+/// Total protocol revenue from reserve accruals.
+pub fn get_protocol_revenue(env: &Env) -> i128 {
+    env.storage()
+        .persistent()
+        .get::<ReserveDataKey, i128>(&ReserveDataKey::ProtocolRevenueV1)
+        .unwrap_or(0)
 }
 
 /// Set the treasury address (admin only)
 ///
-/// Configures the destination address for reserve withdrawals.
+/// All future `withdraw_reserve_funds` calls transfer tokens to this address.
 ///
 /// # Arguments
 /// * `env` - The Soroban environment
-/// * `caller` - The caller address (must be admin)
-/// * `treasury` - The treasury address
+/// * `caller` - Must be the protocol admin
+/// * `treasury` - New treasury address
 ///
 /// # Errors
-/// * `ReserveError::Unauthorized` - If caller is not admin
-/// * `ReserveError::InvalidTreasury` - If treasury address is invalid
+/// * [`ReserveError::Unauthorized`] — caller is not admin
+/// * [`ReserveError::InvalidTreasury`] — treasury equals the contract address
 ///
 /// # Security
-/// * Requires admin authorization
-/// * Validates treasury address is not the contract itself
-/// * Emits event for transparency
-#[allow(deprecated)]
+/// * Prevents self-draining by rejecting the contract's own address as treasury
 pub fn set_treasury_address(
     env: &Env,
     caller: Address,
     treasury: Address,
 ) -> Result<(), ReserveError> {
-    // Require admin authorization
     caller.require_auth();
     require_admin(env, &caller)?;
 
-    // Validate treasury address
     if treasury == env.current_contract_address() {
         return Err(ReserveError::InvalidTreasury);
     }
 
-    // Set treasury address
     env.storage()
         .persistent()
         .set(&ReserveDataKey::TreasuryAddress, &treasury);
 
-    // Emit event
     let topics = (Symbol::new(env, "treasury_address_set"), caller);
     env.events().publish(topics, treasury);
 
     Ok(())
 }
 
-/// Get the treasury address
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-///
-/// # Returns
-/// Treasury address if set, None otherwise
+/// Return the configured treasury address, if any.
 pub fn get_treasury_address(env: &Env) -> Option<Address> {
     env.storage()
         .persistent()
         .get(&ReserveDataKey::TreasuryAddress)
 }
 
-/// Withdraw reserves to treasury (admin only)
+// ─── Withdrawal ───────────────────────────────────────────────────────────────
+
+/// Transfer accrued reserves to the treasury address (admin only).
 ///
-/// Transfers accrued protocol reserves to the treasury address. The withdrawal
-/// amount is bounded by the available reserve balance and cannot access user funds.
+/// Follows the **checks-effects-interactions** pattern: the reserve balance is
+/// decremented in storage before the external token transfer is initiated, so a
+/// reentrant call would see an already-reduced balance.
 ///
 /// # Arguments
 /// * `env` - The Soroban environment
-/// * `caller` - The caller address (must be admin)
-/// * `asset` - The asset address (None for native asset)
-/// * `amount` - Amount to withdraw
+/// * `caller` - Must be the protocol admin
+/// * `asset` - Asset to withdraw (`None` for native XLM)
+/// * `amount` - Amount to transfer to treasury
 ///
 /// # Returns
-/// Actual amount withdrawn
+/// The amount actually withdrawn.
 ///
 /// # Errors
-/// * `ReserveError::Unauthorized` - If caller is not admin
-/// * `ReserveError::TreasuryNotSet` - If treasury address not configured
-/// * `ReserveError::InvalidAmount` - If amount <= 0
-/// * `ReserveError::InsufficientReserve` - If amount > reserve balance
-/// * `ReserveError::Overflow` - If arithmetic overflow occurs
+/// * [`ReserveError::Unauthorized`] — caller is not admin
+/// * [`ReserveError::ReserveWithdrawPaused`] — withdraw switch is active
+/// * [`ReserveError::TreasuryNotSet`] — no treasury address configured
+/// * [`ReserveError::InvalidAmount`] — amount ≤ 0
+/// * [`ReserveError::InsufficientReserve`] — amount exceeds reserve balance
+/// * [`ReserveError::InvalidAsset`] — native asset address not configured (non-test)
+/// * [`ReserveError::Overflow`] — arithmetic overflow
 ///
 /// # Security
-/// * Requires admin authorization
-/// * Validates treasury address is configured
-/// * Validates withdrawal amount is positive and within bounds
-/// * Updates reserve balance before transfer (checks-effects-interactions)
-/// * Emits event for transparency
-/// * Cannot withdraw user funds (only accrued reserves)
-#[allow(deprecated)]
+/// * Admin auth + storage admin check required
+/// * Pause switch `"pause_reserve"` blocks all withdrawals when active
+/// * Balance updated **before** token transfer (CEI pattern)
+/// * Native asset address resolved from protocol storage (not caller-supplied)
 pub fn withdraw_reserve_funds(
     env: &Env,
     caller: Address,
     asset: Option<Address>,
     amount: i128,
 ) -> Result<i128, ReserveError> {
-    // Require admin authorization
+    // ── CHECKS ────────────────────────────────────────────────────────────────
     caller.require_auth();
     require_admin(env, &caller)?;
 
-    // Validate amount
+    // Respect the reserve-withdraw pause switch.
+    let pause_key = DepositDataKey::PauseSwitches;
+    if let Some(pause_map) = env
+        .storage()
+        .persistent()
+        .get::<DepositDataKey, Map<Symbol, bool>>(&pause_key)
+    {
+        if pause_map
+            .get(Symbol::new(env, PAUSE_RESERVE_WITHDRAW))
+            .unwrap_or(false)
+        {
+            return Err(ReserveError::ReserveWithdrawPaused);
+        }
+    }
+
     if amount <= 0 {
         return Err(ReserveError::InvalidAmount);
     }
 
-    // Get treasury address
     let treasury = get_treasury_address(env).ok_or(ReserveError::TreasuryNotSet)?;
 
-    // Get current reserve balance
     let balance_key = ReserveDataKey::ReserveBalance(asset.clone());
     let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
 
-    // Validate sufficient reserves
     if amount > current_balance {
         return Err(ReserveError::InsufficientReserve);
     }
 
-    // Update reserve balance (checks-effects-interactions pattern)
+    // ── EFFECTS ───────────────────────────────────────────────────────────────
     let new_balance = current_balance
         .checked_sub(amount)
         .ok_or(ReserveError::Overflow)?;
 
     env.storage().persistent().set(&balance_key, &new_balance);
+    sub_from_total_reserves(env, amount)?;
+    sub_from_protocol_tvl(env, amount)?;
 
-    // Transfer tokens to treasury
-    // Note: In production, this would call the token contract's transfer function
-    // For now, we emit an event indicating the transfer should occur
+    // ── INTERACTIONS ──────────────────────────────────────────────────────────
     let topics = (Symbol::new(env, "reserve_withdrawn"), caller);
-    env.events().publish(
-        topics,
-        (asset.clone(), treasury.clone(), amount, new_balance),
-    );
+    env.events()
+        .publish(topics, (asset.clone(), treasury.clone(), amount, new_balance));
 
-    // Transfer tokens to treasury
+    // Resolve the effective token contract address: use the supplied address for
+    // SRC-20 tokens, or fall back to the stored native-asset address for XLM.
     #[cfg(not(test))]
     {
-        if let Some(ref asset_addr) = asset {
-            let token_client = soroban_sdk::token::Client::new(env, asset_addr);
-            token_client.transfer(&env.current_contract_address(), &treasury, &amount);
-        }
+        let effective_addr: Address = match &asset {
+            Some(addr) => addr.clone(),
+            None => env
+                .storage()
+                .persistent()
+                .get::<DepositDataKey, Address>(&DepositDataKey::NativeAssetAddress)
+                .ok_or(ReserveError::InvalidAsset)?,
+        };
+        let token_client = soroban_sdk::token::Client::new(env, &effective_addr);
+        token_client.transfer(&env.current_contract_address(), &treasury, &amount);
     }
 
     Ok(amount)
 }
 
-/// Helper function to require admin authorization
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `caller` - The caller address to check
-///
-/// # Errors
-/// * `ReserveError::Unauthorized` - If caller is not admin
 fn require_admin(env: &Env, caller: &Address) -> Result<(), ReserveError> {
-    let admin_key = DepositDataKey::Admin;
-    let admin = env
-        .storage()
-        .persistent()
-        .get::<DepositDataKey, Address>(&admin_key)
-        .ok_or(ReserveError::Unauthorized)?;
-
-    if caller != &admin {
-        return Err(ReserveError::Unauthorized);
-    }
-
-    Ok(())
-}
-
-/// Get reserve statistics for an asset
-///
-/// Returns comprehensive reserve information for reporting and analytics.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `asset` - The asset address (None for native asset)
-///
-/// # Returns
-/// Tuple of (reserve_balance, reserve_factor_bps, treasury_address)
-pub fn get_reserve_stats(env: &Env, asset: Option<Address>) -> (i128, i128, Option<Address>) {
-    let balance = get_reserve_balance(env, asset.clone());
-    let factor = get_reserve_factor(env, asset);
-    let treasury = get_treasury_address(env);
-
-    (balance, factor, treasury)
+    crate::admin::require_admin(env, caller).map_err(|_| ReserveError::Unauthorized)
 }

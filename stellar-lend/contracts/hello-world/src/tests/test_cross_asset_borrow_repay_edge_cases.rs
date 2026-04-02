@@ -55,10 +55,11 @@ fn make_asset_config(env: &Env, asset: Option<Address>, price: i128) -> AssetCon
         collateral_factor: 7500,
         liquidation_threshold: 8000,
         reserve_factor: 1000,
-        max_supply: 100_000_000_000_000,
-        max_borrow: 80_000_000_000_000,
+        max_supply: 0,
+        max_borrow: 0,
         can_collateralize: true,
         can_borrow: true,
+        borrow_factor: 7000,
         price,
         price_updated_at: env.ledger().timestamp(),
     }

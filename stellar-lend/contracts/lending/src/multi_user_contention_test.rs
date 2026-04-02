@@ -44,33 +44,41 @@ fn test_contention_interleaved_deposits_borrows() {
 
     let num_users = 50;
     let users = generate_users(&env, num_users);
-    
+
     let mut expected_total_deposits = 0;
     let mut expected_total_borrows = 0;
 
     // Interleaved deposit and borrow operations
     for (i, user) in users.iter().enumerate() {
         // Even indices deposit first, odd indices borrow first (if they have collateral)
-        
+
         // Every user deposits collateral
         let deposit_amount = 50_000 + (i as i128 * 100);
         client.deposit(&user, &collateral_asset, &deposit_amount);
-        expected_total_deposits += deposit_amount;
+        _expected_total_deposits += deposit_amount;
 
         // Alternate users borrow
         if i % 2 == 0 {
             let borrow_amount = 10_000 + (i as i128 * 50);
             let collateral_amount = borrow_amount * 2;
-            client.borrow(&user, &asset, &borrow_amount, &collateral_asset, &collateral_amount);
+            client.borrow(
+                &user,
+                &asset,
+                &borrow_amount,
+                &collateral_asset,
+                &collateral_amount,
+            );
             expected_total_borrows += borrow_amount;
         }
     }
 
     // Verify individual positions and global state constraints
     let mut actual_debt = 0i128;
+    let mut actual_deposits = 0i128;
     for (i, user) in users.iter().enumerate() {
         let collat = client.get_user_collateral_deposit(&user, &collateral_asset);
         assert_eq!(collat.amount, 50_000 + (i as i128 * 100));
+        actual_deposits += collat.amount;
 
         let debt = client.get_user_debt(&user);
         if i % 2 == 0 {
@@ -80,8 +88,11 @@ fn test_contention_interleaved_deposits_borrows() {
             assert_eq!(debt.borrowed_amount, 0);
         }
     }
-    
+
+    assert_eq!(actual_deposits, expected_total_deposits);
     assert_eq!(actual_debt, expected_total_borrows);
+    // Global invariant: total deposits >= total borrows
+    assert!(actual_deposits >= actual_debt);
 }
 
 #[test]
@@ -115,10 +126,10 @@ fn test_contention_paused_operations() {
     let user2 = Address::generate(&env);
 
     client.deposit(&user1, &collateral_asset, &50_000);
-    
+
     // Pause deposits
     client.set_deposit_paused(&true);
-    
+
     // Trying to deposit while paused under contention scenario
     let deposit_res = client.try_deposit(&user2, &collateral_asset, &50_000);
     assert!(deposit_res.is_err());

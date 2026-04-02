@@ -50,6 +50,7 @@
 //! - `SECONDS_PER_YEAR = 365 × 86_400 = 31_536_000` (no leap seconds).
 
 use soroban_sdk::{contracterror, contracttype, Address, Env};
+use crate::prelude::*;
 
 use crate::deposit::{DepositDataKey, ProtocolAnalytics};
 
@@ -216,7 +217,11 @@ pub fn initialize_interest_rate_config(
 ) -> Result<(), InterestRateError> {
     let config_key = InterestRateDataKey::InterestRateConfig;
 
-    if env.storage().persistent().has::<InterestRateDataKey>(&config_key) {
+    if env
+        .storage()
+        .persistent()
+        .has::<InterestRateDataKey>(&config_key)
+    {
         return Err(InterestRateError::AlreadyInitialized);
     }
 
@@ -266,7 +271,7 @@ pub fn calculate_utilization(env: &Env) -> Result<i128, InterestRateError> {
         .ok_or(InterestRateError::DivisionByZero)?;
 
     // Cap at 100%
-    Ok(utilization.max(0).min(BASIS_POINTS_SCALE))
+    Ok(utilization.clamp(0, BASIS_POINTS_SCALE))
 }
 
 // =============================================================================
@@ -595,14 +600,14 @@ pub fn update_interest_rate_config(
     }
 
     if let Some(mult) = multiplier_bps {
-        if mult < 0 || mult > MAX_SLOPE_BPS {
+        if !(0..=MAX_SLOPE_BPS).contains(&mult) {
             return Err(InterestRateError::InvalidParameter);
         }
         config.multiplier_bps = mult;
     }
 
     if let Some(jump) = jump_multiplier_bps {
-        if jump < 0 || jump > MAX_SLOPE_BPS {
+        if !(0..=MAX_SLOPE_BPS).contains(&jump) {
             return Err(InterestRateError::InvalidParameter);
         }
         config.jump_multiplier_bps = jump;

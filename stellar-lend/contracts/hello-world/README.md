@@ -25,4 +25,11 @@ Refer to `src/lib.rs` for detailed types and events.
 ## Security Notes
 
 - Reentrancy guarantees and Soroban execution-model assumptions are documented in [`REENTRANCY.md`](./REENTRANCY.md).
+- Formal verification preparation notes for borrow/repay/liquidate are documented in [`docs/formal_verification_prep.md`](./docs/formal_verification_prep.md).
 
+### Oracle Trust Boundaries
+
+- Oracle configuration is admin-controlled: `configure_oracle`, `set_primary_oracle`, and `set_fallback_oracle` are restricted to admin authorization.
+- Price submission is restricted to admin or the configured oracle identities for the target asset.
+- Oracle code paths are price-data only and do not transfer tokens directly; token movement remains in lending/repay/liquidation flow handlers.
+- The protocol assumes external oracle operators provide honest and timely data; stale or invalid prices are rejected by on-chain checks.

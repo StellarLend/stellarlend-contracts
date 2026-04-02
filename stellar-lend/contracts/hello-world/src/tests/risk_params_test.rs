@@ -636,3 +636,325 @@ fn risk_params_pause_all_operations() {
         assert!(!client.is_operation_paused(&sym));
     }
 }
+
+// ============================================================================
+// HARDENED VALIDATION TESTS
+// ============================================================================
+
+#[test]
+fn test_hardened_emergency_pause_blocks_admin_changes() {
+    let (env, client, admin) = setup_test();
+    
+    // Set emergency pause
+    client.set_emergency_pause(&admin, &true);
+    
+    // Try to change risk parameters - should fail
+    let result = client.try_set_risk_params(
+        &admin,
+        &Some(11_100),
+        &None,
+        &None,
+        &None,
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::EmergencyPaused)));
+}
+
+#[test]
+fn test_hardened_insufficient_safety_margin() {
+    let (_env, client, admin) = setup_test();
+    
+    // Try to set liquidation threshold too close to min CR (less than 5% margin)
+    // Default min CR is 11_000, so liquidation threshold of 10_600 would leave only 400 bps margin
+    let result = client.try_set_risk_params(
+        &admin,
+        &Some(11_000),
+        &Some(10_600), // Only 4% margin, need at least 5%
+        &None,
+        &None,
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::InvalidParameter)));
+}
+
+#[test]
+fn test_hardened_conservative_close_factor_limit() {
+    let (_env, client, admin) = setup_test();
+    
+    // Try to set close factor above conservative limit (75%)
+    let result = client.try_set_risk_params(
+        &admin,
+        &None,
+        &None,
+        &Some(8_000), // 80% - above 75% conservative limit
+        &None,
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::InvalidCloseFactor)));
+}
+
+#[test]
+fn test_hardened_conservative_liquidation_incentive_limit() {
+    let (_env, client, admin) = setup_test();
+    
+    // Try to set liquidation incentive above conservative limit (25%)
+    let result = client.try_set_risk_params(
+        &admin,
+        &None,
+        &None,
+        &None,
+        &Some(3_000), // 30% - above 25% conservative limit
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::InvalidLiquidationIncentive)));
+}
+
+#[test]
+fn test_hardened_invalid_parameter_combination_incentive_exceeds_close_factor() {
+    let (_env, client, admin) = setup_test();
+    
+    // Try to set liquidation incentive higher than close factor
+    let result = client.try_set_risk_params(
+        &admin,
+        &None,
+        &None,
+        &Some(1_000), // 10% close factor
+        &Some(1_500), // 15% liquidation incentive - higher than close factor
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::InvalidParameter)));
+}
+
+#[test]
+fn test_hardened_invalid_parameter_combination_total_benefit_exceeds_100() {
+    let (_env, client, admin) = setup_test();
+    
+    // Try to set close factor + liquidation incentive > 100%
+    let result = client.try_set_risk_params(
+        &admin,
+        &None,
+        &None,
+        &Some(7_000), // 70% close factor
+        &Some(4_000), // 40% liquidation incentive - total 110%
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::InvalidParameter)));
+}
+
+#[test]
+fn test_hardened_conservative_change_limit() {
+    let (env, client, admin) = setup_test();
+    
+    // Try to make a change larger than 5% (new conservative limit)
+    // Default min CR is 11_000, 5% change is 550, so 11_600 should fail
+    let result = client.try_set_risk_params(
+        &admin,
+        &Some(11_600), // 5.45% change - above 5% limit
+        &None,
+        &None,
+        &None,
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::ParameterChangeTooLarge)));
+}
+
+#[test]
+fn test_hardened_time_based_change_restriction() {
+    let (env, client, admin) = setup_test();
+    
+    // Make first change
+    client.set_risk_params(
+        &admin,
+        &Some(11_100), // Small change within limits
+        &None,
+        &None,
+        &None,
+    );
+    
+    // Try to make another change immediately - should fail due to time restriction
+    let result = client.try_set_risk_params(
+        &admin,
+        &Some(11_200),
+        &None,
+        &None,
+        &None,
+    );
+    
+    assert_eq!(result, Err(Ok(RiskManagementError::ParameterChangeTooLarge)));
+}
+
+#[test]
+fn test_hardened_time_based_change_restriction_after_delay() {
+    let (env, client, admin) = setup_test();
+    
+    // Make first change
+    client.set_risk_params(
+        &admin,
+        &Some(11_100),
+        &None,
+        &None,
+        &None,
+    );
+    
+    // Advance time by more than minimum delay (1 hour = 3600 seconds)
+    env.ledger().with_mut(|li| {
+        li.timestamp = li.timestamp + 3601;
+    });
+    
+    // Now the change should succeed
+    client.set_risk_params(
+        &admin,
+        &Some(11_200),
+        &None,
+        &None,
+        &None,
+    );
+    
+    assert_eq!(client.get_min_collateral_ratio(), 11_200);
+}
+
+#[test]
+fn test_hardened_valid_safety_margin() {
+    let (_env, client, admin) = setup_test();
+    
+    // Set parameters with exactly 5% safety margin (minimum allowed)
+    client.set_risk_params(
+        &admin,
+        &Some(11_000), // 110%
+        &Some(10_500), // 105% - exactly 5% margin
+        &None,
+        &None,
+    );
+    
+    assert_eq!(client.get_min_collateral_ratio(), 11_000);
+    assert_eq!(client.get_liquidation_threshold(), 10_500);
+}
+
+#[test]
+fn test_hardened_valid_conservative_limits() {
+    let (_env, client, admin) = setup_test();
+    
+    // Set parameters at conservative limits
+    client.set_risk_params(
+        &admin,
+        &None,
+        &None,
+        &Some(7_500), // 75% - at conservative close factor limit
+        &Some(2_500), // 25% - at conservative liquidation incentive limit
+    );
+    
+    assert_eq!(client.get_close_factor(), 7_500);
+    assert_eq!(client.get_liquidation_incentive(), 2_500);
+}
+
+#[test]
+fn test_hardened_valid_parameter_combination() {
+    let (_env, client, admin) = setup_test();
+    
+    // Set valid parameter combination
+    client.set_risk_params(
+        &admin,
+        &None,
+        &None,
+        &Some(5_000), // 50% close factor
+        &Some(1_000), // 10% liquidation incentive - total 60%, incentive < close factor
+    );
+    
+    assert_eq!(client.get_close_factor(), 5_000);
+    assert_eq!(client.get_liquidation_incentive(), 1_000);
+}
+
+#[test]
+fn test_hardened_edge_case_zero_liquidation_incentive() {
+    let (_env, client, admin) = setup_test();
+    
+    // Zero liquidation incentive should be allowed
+    client.set_risk_params(
+        &admin,
+        &None,
+        &None,
+        &None,
+        &Some(0),
+    );
+    
+    assert_eq!(client.get_liquidation_incentive(), 0);
+}
+
+#[test]
+fn test_hardened_edge_case_maximum_safety_margin() {
+    let (_env, client, admin) = setup_test();
+    
+    // Test maximum safety margin scenario
+    client.set_risk_params(
+        &admin,
+        &Some(50_000), // 500% max CR
+        &Some(10_000), // 100% min liquidation threshold - maximum margin
+        &None,
+        &None,
+    );
+    
+    assert_eq!(client.get_min_collateral_ratio(), 50_000);
+    assert_eq!(client.get_liquidation_threshold(), 10_000);
+}
+
+#[test]
+fn test_hardened_sequential_small_changes_within_time_limit() {
+    let (env, client, admin) = setup_test();
+    
+    // Make first small change
+    client.set_risk_params(
+        &admin,
+        &Some(11_100),
+        &None,
+        &None,
+        &None,
+    );
+    
+    // Advance time
+    env.ledger().with_mut(|li| {
+        li.timestamp = li.timestamp + 3601;
+    });
+    
+    // Make second small change
+    client.set_risk_params(
+        &admin,
+        &Some(11_200),
+        &None,
+        &None,
+        &None,
+    );
+    
+    // Advance time again
+    env.ledger().with_mut(|li| {
+        li.timestamp = li.timestamp + 3601;
+    });
+    
+    // Make third small change
+    client.set_risk_params(
+        &admin,
+        &Some(11_300),
+        &None,
+        &None,
+        &None,
+    );
+    
+    assert_eq!(client.get_min_collateral_ratio(), 11_300);
+}
+
+#[test]
+fn test_hardened_overflow_protection() {
+    let (_env, client, admin) = setup_test();
+    
+    // Test with values that could cause overflow in calculations
+    // This should be handled gracefully by the overflow protection
+    let result = client.try_set_risk_params(
+        &admin,
+        &Some(i128::MAX), // This should be rejected by bounds checking
+        &None,
+        &None,
+        &None,
+    );
+    
+    // Should fail due to parameter bounds, not overflow
+    assert!(result.is_err());
+}

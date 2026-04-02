@@ -17,18 +17,31 @@ Admin only function to configure an asset's parameters.
 - `liquidation_threshold`: Point at which the asset becomes eligible for liquidation (basis points).
 - `price_feed`: The oracle address providing the asset's price.
 - `debt_ceiling`: Total system-wide debt allowed for this asset.
+- **Event**: Emits `AssetParamsSetEvent`.
 
 ### `deposit_collateral_asset`
 Users can deposit any supported asset as collateral. This increases their total borrowing power based on the asset's USD value and its specific LTV.
+- **Pause Check**: Blocked if `PauseType::Deposit` or `PauseType::All` is set.
+- **Token Transfer**: Automatically transfers tokens from user to the contract.
+- **Event**: Emits `CrossDepositEvent`.
 
 ### `borrow_asset`
 Users can borrow any supported asset as long as their aggregate Health Factor remains above 1.0 (10000 basis points).
+- **Pause Check**: Blocked if `PauseType::Borrow` or `PauseType::All` is set.
+- **Token Transfer**: Automatically transfers tokens from the contract to the user.
+- **Event**: Emits `CrossBorrowEvent`.
 
 ### `repay_asset`
 Users repay borrowed assets to reduce their total debt and improve their position's Health Factor.
+- **Pause Check**: Blocked if `PauseType::Repay` or `PauseType::All` is set.
+- **Token Transfer**: Automatically transfers tokens from user to the contract.
+- **Event**: Emits `CrossRepayEvent`.
 
 ### `withdraw_asset`
 Collateral withdrawal is allowed only if the remaining position stays healthy (Health Factor > 1.0).
+- **Pause Check**: Blocked if `PauseType::Withdraw` or `PauseType::All` is set.
+- **Token Transfer**: Automatically transfers tokens from the contract to the user.
+- **Event**: Emits `CrossWithdrawEvent`.
 
 ### `get_cross_position_summary`
 Returns a summary of the user's position:

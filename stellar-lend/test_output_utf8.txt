@@ -1,0 +1,393 @@
+﻿cargo :    Compiling 
+bridge v0.0.0 (C:\Users\A
+DMIN\Desktop\midea-drips\
+stellarlend-contracts\ste
+llar-lend\contracts\bridg
+e)
+At line:1 char:1
++ cargo test > 
+test_output.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
+    + CategoryInfo       
+       : NotSpecified: ( 
+  Co    mpiling 
+br...ntracts\br    
+idge):String) [], Remot  
+  eException
+    + 
+FullyQualifiedErrorId    
+ : NativeCommandError
+ 
+error[E0252]: the name 
+`BytesN` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:13
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |     ------  ^^^^^^--
+  |     |       |
+  |     |       `BytesN` 
+reimported here
+  |     |       help: 
+remove unnecessary import
+  |     previous import 
+of the type `BytesN` here
+  |
+  = note: `BytesN` must 
+be defined only once in 
+the type namespace of 
+this module
+
+error[E0252]: the name 
+`Env` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:26
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                     
+---  ^^^--
+  |                     
+|    |
+  |                     
+|    `Env` reimported 
+here
+  |                     
+|    help: remove 
+unnecessary import
+  |                     
+previous import of the 
+type `Env` here
+  |
+  = note: `Env` must be 
+defined only once in the 
+type namespace of this 
+module
+
+error[E0252]: the name 
+`Env` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:31
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                     
+---       ^^^--
+  |                     
+|         |
+  |                     
+|         `Env` 
+reimported here
+  |                     
+|         help: remove 
+unnecessary import
+  |                     
+previous import of the 
+type `Env` here
+  |
+  = note: `Env` must be 
+defined only once in the 
+type namespace of this 
+module
+
+error[E0252]: the name 
+`String` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:44
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                      
+              ------  
+^^^^^^--
+  |                      
+              |       |
+  |                      
+              |       
+`String` reimported here
+  |                      
+              |       
+help: remove unnecessary 
+import
+  |                      
+              previous 
+import of the type 
+`String` here
+  |
+  = note: `String` must 
+be defined only once in 
+the type namespace of 
+this module
+
+error[E0252]: the name 
+`String` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:52
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                      
+              ------     
+     ^^^^^^--
+  |                      
+              |          
+     |
+  |                      
+              |          
+     `String` reimported 
+here
+  |                      
+              |          
+     help: remove 
+unnecessary import
+  |                      
+              previous 
+import of the type 
+`String` here
+  |
+  = note: `String` must 
+be defined only once in 
+the type namespace of 
+this module
+
+error[E0252]: the name 
+`Symbol` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:68
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                      
+                         
+             ------  
+^^^^^^--
+  |                      
+                         
+             |       |
+  |                      
+                         
+             |       
+`Symbol` reimported here
+  |                      
+                         
+             |       
+help: remove unnecessary 
+import
+  |                      
+                         
+             previous 
+import of the type 
+`Symbol` here
+  |
+  = note: `Symbol` must 
+be defined only once in 
+the type namespace of 
+this module
+
+error[E0252]: the name 
+`Symbol` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:76
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                      
+                         
+             ------      
+    ^^^^^^--
+  |                      
+                         
+             |           
+    |
+  |                      
+                         
+             |           
+    `Symbol` reimported 
+here
+  |                      
+                         
+             |           
+    help: remove 
+unnecessary import
+  |                      
+                         
+             previous 
+import of the type 
+`Symbol` here
+  |
+  = note: `Symbol` must 
+be defined only once in 
+the type namespace of 
+this module
+
+error[E0252]: the name 
+`Vec` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:89
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                      
+                         
+                         
+            ---  ^^^--
+  |                      
+                         
+                         
+            |    |
+  |                      
+                         
+                         
+            |    `Vec` 
+reimported here
+  |                      
+                         
+                         
+            |    help: 
+remove unnecessary import
+  |                      
+                         
+                         
+            previous 
+import of the type `Vec` 
+here
+  |
+  = note: `Vec` must be 
+defined only once in the 
+type namespace of this 
+module
+
+error[E0252]: the name 
+`Vec` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:4:94
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |                      
+                         
+                         
+            ---       
+^^^-
+  |                      
+                         
+                         
+            |         |
+  |                      
+                         
+                         
+            |         
+`Vec` reimported here
+  |                      
+                         
+                         
+            |         
+help: remove unnecessary 
+import
+  |                      
+                         
+                         
+            previous 
+import of the type `Vec` 
+here
+  |
+  = note: `Vec` must be 
+defined only once in the 
+type namespace of this 
+module
+
+error[E0252]: the name 
+`I256` is defined 
+multiple times
+ --> contracts\bridge\src
+\bridge.rs:5:11
+  |
+5 |     I256, I256,
+  |     ----  ^^^^-
+  |     |     |
+  |     |     `I256` 
+reimported here
+  |     |     help: 
+remove unnecessary import
+  |     previous import 
+of the type `I256` here
+  |
+  = note: `I256` must be 
+defined only once in the 
+type namespace of this 
+module
+
+warning: unused imports: 
+`BytesN`, `Env`, `Env`, 
+`I256`, `String`, 
+`String`, `Symbol`, 
+`Symbol`, `Vec`, and 
+`Vec`
+ --> contracts\bridge\src
+\bridge.rs:4:13
+  |
+4 |     BytesN, BytesN, 
+Env, Env, Env, String, 
+String, String, Symbol, 
+Symbol, Symbol, Vec, 
+Vec, Vec,
+  |             ^^^^^^   
+    ^^^  ^^^          
+^^^^^^  ^^^^^^          
+^^^^^^  ^^^^^^       ^^^ 
+ ^^^
+5 |     I256, I256,
+  |           ^^^^
+  |
+  = note: `#[warn(unused_
+imports)]` (part of 
+`#[warn(unused)]`) on by 
+default
+
+For more information 
+about this error, try 
+`rustc --explain E0252`.
+warning: `bridge` (lib 
+test) generated 1 warning
+error: could not compile 
+`bridge` (lib test) due 
+to 10 previous errors; 1 
+warning emitted

@@ -1,4 +1,3 @@
-#![cfg(not(tarpaulin))]
 
 //! Example: Simple transaction submission and monitoring
 //!

@@ -638,3 +638,115 @@ fn test_upgrade_preserves_writer_permissions() {
 
     assert_eq!(client.data_entry_count(), 2);
 }
+
+// ═══════════════════════════════════════════════════════
+// 9. Authorization error paths
+// ═══════════════════════════════════════════════════════
+
+#[test]
+#[should_panic]
+fn test_duplicate_approval_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup_with_upgrade_init(&env, 2);
+
+    let approver = Address::generate(&env);
+    client.upgrade_add_approver(&admin, &approver);
+
+    let proposal_id = client.upgrade_propose(&admin, &hash(&env, 2), &1);
+    client.upgrade_approve(&approver, &proposal_id);
+
+    // Second approval from the same approver must be rejected
+    client.upgrade_approve(&approver, &proposal_id);
+}
+
+#[test]
+#[should_panic]
+fn test_rollback_proposed_proposal_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup_with_upgrade_init(&env, 2);
+
+    let approver = Address::generate(&env);
+    client.upgrade_add_approver(&admin, &approver);
+
+    // Proposal never reaches Approved stage
+    let proposal_id = client.upgrade_propose(&admin, &hash(&env, 2), &1);
+    assert_eq!(
+        client.upgrade_status(&proposal_id).stage,
+        UpgradeStage::Proposed
+    );
+
+    // Rolling back a non-executed proposal must fail
+    client.upgrade_rollback(&admin, &proposal_id);
+}
+
+#[test]
+#[should_panic]
+fn test_status_nonexistent_proposal_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup_with_upgrade_init(&env, 1);
+
+    // Proposal id 999 was never created
+    client.upgrade_status(&999u64);
+}
+
+// ═══════════════════════════════════════════════════════
+// 10. Version skipping and multi-step with rollback chain
+// ═══════════════════════════════════════════════════════
+
+#[test]
+fn test_version_skip_then_rollback() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup_with_upgrade_init(&env, 1);
+
+    // Skip from v0 directly to v10
+    let p1 = client.upgrade_propose(&admin, &hash(&env, 2), &10);
+    client.upgrade_execute(&admin, &p1);
+    assert_eq!(client.current_version(), 10);
+
+    // Rollback should restore v0
+    client.upgrade_rollback(&admin, &p1);
+    assert_eq!(client.current_version(), 0);
+    assert_eq!(client.current_wasm_hash(), hash(&env, 1));
+}
+
+#[test]
+fn test_schema_version_independent_of_upgrade_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup_with_upgrade_init(&env, 1);
+
+    client.data_store_init(&admin);
+
+    // Bump schema without upgrading contract
+    let memo = SorobanString::from_str(&env, "standalone_schema_bump");
+    client.data_migrate_bump_version(&admin, &5, &memo);
+    assert_eq!(client.data_schema_version(), 5);
+    assert_eq!(client.current_version(), 0); // contract version unchanged
+
+    // Upgrade contract without bumping schema
+    let p1 = client.upgrade_propose(&admin, &hash(&env, 2), &1);
+    client.upgrade_execute(&admin, &p1);
+    assert_eq!(client.current_version(), 1);
+    assert_eq!(client.data_schema_version(), 5); // schema version unchanged
+}
+
+#[test]
+fn test_upgrade_with_single_approver_required() {
+    let env = Env::default();
+    env.mock_all_auths();
+    // Admin is the only approver and threshold is 1
+    let (client, admin) = setup_with_upgrade_init(&env, 1);
+
+    // Admin proposes — auto-approved (admin is in approvers set)
+    let p1 = client.upgrade_propose(&admin, &hash(&env, 2), &1);
+    assert_eq!(
+        client.upgrade_status(&p1).stage,
+        UpgradeStage::Approved
+    );
+    client.upgrade_execute(&admin, &p1);
+    assert_eq!(client.current_version(), 1);
+}

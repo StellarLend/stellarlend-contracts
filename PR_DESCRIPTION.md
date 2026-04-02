@@ -35,6 +35,8 @@ The note makes the deployment recommendation explicit:
   - its admin helper checks stored admin equality but does not call `require_auth()`
   - swap/liquidity execution helpers are still mock protocol integrations
 - `hello-world` is excluded from the active workspace and should be treated as legacy/reference code rather than the canonical deployment artifact
+- Oracle paths (`configure_oracle`, `set_primary_oracle`, `set_fallback_oracle`, `update_price_feed`, `get_price`) do not perform external token transfers, so they do not introduce a token-transfer reentrancy surface.
+- Oracle inputs are treated as untrusted and validated on-chain with staleness checks and deviation bounds before being accepted.
 
 ## Test Summary
 
@@ -45,10 +47,11 @@ cargo test
 ```
 
 Summarized result for multi-user contention scenarios (`cargo test multi_user_contention_test`):
+
 - Successfully passed `test_contention_interleaved_deposits_borrows` (validated serial mixed-user bounds).
 - Successfully passed `test_contention_edge_cases_zero_amounts_overflow` (validated structured errors on 0 amounts and type bounds).
 - Successfully passed `test_contention_paused_operations` (validated isolation when admin pauses protocol globally).
-All global arithmetic totals (borrows vs collateral deposits) assertions maintained exact parity.
+  All global arithmetic totals (borrows vs collateral deposits) assertions maintained exact parity.
 
 ## Notes
 
@@ -56,3 +59,34 @@ All global arithmetic totals (borrows vs collateral deposits) assertions maintai
 - This change is documentation-only; no Rust modules were materially changed
 - Team review is recommended before merge, especially around the documented AMM auth caveat
 - Re-run `cargo test` after freeing disk space on `C:`
+
+## Test Execution Note
+
+Full `cargo test` is currently blocked by pre-existing compile errors in unrelated modules
+(e.g., repay.rs, risk_params.rs, amm tests).
+
+To validate oracle coverage, tests were executed in isolation:
+
+```bash
+cargo test oracle_test
+```
+
+Validation rationale:
+
+- Compile blockers are unrelated to oracle admin/read logic and originate from legacy/non-oracle modules.
+- Oracle tests are isolated to oracle entrypoints and remain the correct validation target for issue #429.
+
+Current status: isolated oracle test execution is also blocked at compile time by pre-existing crate errors (for example `crate::constants` unresolved in `contracts/lending/src/*` and legacy type/API mismatches in `contracts/hello-world/src/*`).
+
+Current status update:
+
+- `contracts/lending` constants module drift was fixed and isolated oracle tests now execute successfully.
+- `contracts/hello-world` still has unrelated legacy compile failures outside oracle scope.
+
+Observed isolated output (`contracts/lending`):
+
+```text
+running 32 tests
+...
+test result: ok. 32 passed; 0 failed;
+```

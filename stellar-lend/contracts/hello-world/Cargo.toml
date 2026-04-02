@@ -15,5 +15,9 @@ stellarlend-amm = { path = "../amm" }
 stellar-contract-utils = { version = "0.6.0" }
 stellar-macros = { version = "0.6.0" }
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)', 'cfg(tarpaulin_include)'] }
+
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+stellarlend-amm = { path = "../amm", features = ["testutils"] }

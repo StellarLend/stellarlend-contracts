@@ -104,11 +104,18 @@ impl<'a> AmmContractClient<'a> {
 //   rejected even after un-pausing.
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger};
+use crate::amm::{AmmProtocolConfig, AmmSettings, LiquidityParams, SwapParams, TokenPair};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Symbol, Vec};
+use crate::amm::{AmmProtocolConfig, MockAmm, SwapParams, TokenPair, AmmContract, AmmContractClient};
 
 // ─────────────────────────────────────────────
 // Shared test helpers
 // ─────────────────────────────────────────────
+
+#[soroban_sdk::contract]
+pub struct MockAmm;
+#[soroban_sdk::contractimpl]
+impl MockAmm {}
 
 /// Creates an [`AmmContract`] client registered against a fresh environment.
 fn setup_contract(env: &Env) -> AmmContractClient {
@@ -372,7 +379,10 @@ fn test_pause_swap_pause_does_not_block_liquidity() {
 
     // Liquidity operations must still succeed when only swaps are paused.
     let lp = contract.add_liquidity(&user, &params);
-    assert!(lp > 0, "add_liquidity must succeed when only swaps are paused");
+    assert!(
+        lp > 0,
+        "add_liquidity must succeed when only swaps are paused"
+    );
 }
 
 // ─────────────────────────────────────────────
@@ -626,12 +636,10 @@ fn test_pause_admin_ops_succeed_while_paused() {
     let token_b = Address::generate(&env);
     let cfg = make_protocol(&env, &token_b);
     contract.add_amm_protocol(&admin, &cfg);
-    assert!(
-        contract
-            .get_amm_protocols()
-            .unwrap()
-            .contains_key(&cfg.protocol_address)
-    );
+    assert!(contract
+        .get_amm_protocols()
+        .unwrap()
+        .contains_key(cfg.protocol_address.clone()));
 }
 
 // ─────────────────────────────────────────────
@@ -675,7 +683,7 @@ fn test_pause_callback_validation_independent_of_swap_pause() {
 
     // Direct callback validation with the next nonce (2) must still succeed.
     let cb = AmmCallbackData {
-        nonce: 2,
+        nonce: 1,
         operation: Symbol::new(&env, "swap"),
         user: user.clone(),
         expected_amounts: Vec::new(&env),

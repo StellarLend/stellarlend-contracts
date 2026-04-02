@@ -218,11 +218,11 @@ fn test_rate_floor_enforcement() {
     set_protocol_analytics(&env, &contract_id, 10000, 0);
     client.update_interest_rate_config(
         &admin,
-        &Some(10),   // very low base rate
+        &Some(10), // very low base rate
         &None,
         &None,
         &None,
-        &Some(100),  // floor: 1%
+        &Some(100), // floor: 1%
         &None,
         &None,
     );
@@ -304,7 +304,14 @@ fn test_update_config_base_rate() {
     let (contract_id, admin, client) = setup_contract_with_admin(&env);
     set_protocol_analytics(&env, &contract_id, 10000, 0);
     client.update_interest_rate_config(
-        &admin, &Some(200), &None, &None, &None, &None, &None, &None,
+        &admin,
+        &Some(200),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
     assert_eq!(client.get_borrow_rate(), 200);
 }
@@ -315,7 +322,14 @@ fn test_update_config_kink() {
     let (contract_id, admin, client) = setup_contract_with_admin(&env);
     set_protocol_analytics(&env, &contract_id, 10000, 7000);
     client.update_interest_rate_config(
-        &admin, &None, &Some(6000), &None, &None, &None, &None, &None,
+        &admin,
+        &None,
+        &Some(6000),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
     // kink at 60%, util 70% is above kink
     // rate = (100+2000) + (1000/4000)*10000 = 2100 + 2500 = 4600
@@ -328,7 +342,14 @@ fn test_update_config_multiplier() {
     let (contract_id, admin, client) = setup_contract_with_admin(&env);
     set_protocol_analytics(&env, &contract_id, 10000, 4000);
     client.update_interest_rate_config(
-        &admin, &None, &None, &Some(4000), &None, &None, &None, &None,
+        &admin,
+        &None,
+        &None,
+        &Some(4000),
+        &None,
+        &None,
+        &None,
+        &None,
     );
     // rate = 100 + (4000/8000)*4000 = 100 + 2000 = 2100
     assert_eq!(client.get_borrow_rate(), 2100);
@@ -340,7 +361,14 @@ fn test_update_config_jump_multiplier() {
     let (contract_id, admin, client) = setup_contract_with_admin(&env);
     set_protocol_analytics(&env, &contract_id, 10000, 9000);
     client.update_interest_rate_config(
-        &admin, &None, &None, &None, &Some(5000), &None, &None, &None,
+        &admin,
+        &None,
+        &None,
+        &None,
+        &Some(5000),
+        &None,
+        &None,
+        &None,
     );
     // rate = 2100 + (1000/2000)*5000 = 2100 + 2500 = 4600
     assert_eq!(client.get_borrow_rate(), 4600);
@@ -352,7 +380,14 @@ fn test_update_config_spread() {
     let (contract_id, admin, client) = setup_contract_with_admin(&env);
     set_protocol_analytics(&env, &contract_id, 10000, 4000);
     client.update_interest_rate_config(
-        &admin, &None, &None, &None, &None, &None, &None, &Some(500),
+        &admin,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(500),
     );
     let borrow_rate = client.get_borrow_rate();
     let supply_rate = client.get_supply_rate();
@@ -366,7 +401,14 @@ fn test_update_config_unauthorized() {
     let (_contract_id, _admin, client) = setup_contract_with_admin(&env);
     let unauthorized = Address::generate(&env);
     client.update_interest_rate_config(
-        &unauthorized, &Some(200), &None, &None, &None, &None, &None, &None,
+        &unauthorized,
+        &Some(200),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
 }
 
@@ -387,7 +429,14 @@ fn test_get_interest_rate_config_entrypoint() {
 
     // Update and re-read
     client.update_interest_rate_config(
-        &admin, &Some(300), &None, &None, &None, &None, &None, &None,
+        &admin,
+        &Some(300),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
     let config2 = client.get_interest_rate_config().unwrap();
     assert_eq!(config2.base_rate_bps, 300);
@@ -403,7 +452,14 @@ fn test_invalid_base_rate_negative() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &Some(-100), &None, &None, &None, &None, &None, &None,
+        &admin,
+        &Some(-100),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
 }
 
@@ -413,7 +469,14 @@ fn test_invalid_base_rate_too_high() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &Some(15000), &None, &None, &None, &None, &None, &None,
+        &admin,
+        &Some(15000),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
 }
 
@@ -422,9 +485,7 @@ fn test_invalid_base_rate_too_high() {
 fn test_invalid_kink_zero() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
-    client.update_interest_rate_config(
-        &admin, &None, &Some(0), &None, &None, &None, &None, &None,
-    );
+    client.update_interest_rate_config(&admin, &None, &Some(0), &None, &None, &None, &None, &None);
 }
 
 #[test]
@@ -433,7 +494,14 @@ fn test_invalid_kink_100_percent() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &None, &Some(10000), &None, &None, &None, &None, &None,
+        &admin,
+        &None,
+        &Some(10000),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
 }
 
@@ -443,7 +511,14 @@ fn test_invalid_multiplier_negative() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &None, &None, &Some(-100), &None, &None, &None, &None,
+        &admin,
+        &None,
+        &None,
+        &Some(-100),
+        &None,
+        &None,
+        &None,
+        &None,
     );
 }
 
@@ -453,7 +528,14 @@ fn test_invalid_jump_multiplier_negative() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &None, &None, &None, &Some(-100), &None, &None, &None,
+        &admin,
+        &None,
+        &None,
+        &None,
+        &Some(-100),
+        &None,
+        &None,
+        &None,
     );
 }
 
@@ -463,7 +545,14 @@ fn test_invalid_floor_above_ceiling() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &None, &None, &None, &None, &Some(5000), &Some(3000), &None,
+        &admin,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(5000),
+        &Some(3000),
+        &None,
     );
 }
 
@@ -472,9 +561,7 @@ fn test_invalid_floor_above_ceiling() {
 fn test_invalid_spread_negative() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
-    client.update_interest_rate_config(
-        &admin, &None, &None, &None, &None, &None, &None, &Some(-1),
-    );
+    client.update_interest_rate_config(&admin, &None, &None, &None, &None, &None, &None, &Some(-1));
 }
 
 #[test]
@@ -483,7 +570,14 @@ fn test_invalid_spread_above_100() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &None, &None, &None, &None, &None, &None, &Some(10001),
+        &admin,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(10001),
     );
 }
 
@@ -494,7 +588,14 @@ fn test_invalid_multiplier_exceeds_max_slope() {
     let env = create_test_env();
     let (_contract_id, admin, client) = setup_contract_with_admin(&env);
     client.update_interest_rate_config(
-        &admin, &None, &None, &Some(100_001), &None, &None, &None, &None,
+        &admin,
+        &None,
+        &None,
+        &Some(100_001),
+        &None,
+        &None,
+        &None,
+        &None,
     );
 }
 
@@ -504,15 +605,13 @@ fn test_invalid_multiplier_exceeds_max_slope() {
 
 #[test]
 fn test_accrued_interest_one_year_at_10_percent() {
-    let interest =
-        calculate_accrued_interest(1_000_000, 0, SECONDS_PER_YEAR, 1000).unwrap();
+    let interest = calculate_accrued_interest(1_000_000, 0, SECONDS_PER_YEAR, 1000).unwrap();
     assert_eq!(interest, 100_000);
 }
 
 #[test]
 fn test_accrued_interest_partial_year() {
-    let interest =
-        calculate_accrued_interest(1_000_000, 0, SECONDS_PER_YEAR / 2, 1000).unwrap();
+    let interest = calculate_accrued_interest(1_000_000, 0, SECONDS_PER_YEAR / 2, 1000).unwrap();
     assert_eq!(interest, 50_000);
 }
 
@@ -553,8 +652,7 @@ fn test_accrued_interest_extreme_overflow() {
 #[test]
 fn test_compound_interest_one_year() {
     // 1M at 10% for 1 year → simple = 100_000
-    let interest =
-        calculate_compound_interest(1_000_000, 0, SECONDS_PER_YEAR, 1000).unwrap();
+    let interest = calculate_compound_interest(1_000_000, 0, SECONDS_PER_YEAR, 1000).unwrap();
     assert_eq!(interest, 100_000);
 }
 
@@ -564,8 +662,7 @@ fn test_compound_interest_two_years() {
     // Year 1: 1_000_000 * 10% = 100_000 → balance 1_100_000
     // Year 2: 1_100_000 * 10% = 110_000 → balance 1_210_000
     // Interest = 210_000
-    let interest =
-        calculate_compound_interest(1_000_000, 0, 2 * SECONDS_PER_YEAR, 1000).unwrap();
+    let interest = calculate_compound_interest(1_000_000, 0, 2 * SECONDS_PER_YEAR, 1000).unwrap();
     assert_eq!(interest, 210_000);
 }
 
@@ -575,16 +672,14 @@ fn test_compound_interest_three_years() {
     // Year 2: 1.1M → 1.21M (interest 110k)
     // Year 3: 1.21M → 1.331M (interest 121k)
     // Total interest = 331_000
-    let interest =
-        calculate_compound_interest(1_000_000, 0, 3 * SECONDS_PER_YEAR, 1000).unwrap();
+    let interest = calculate_compound_interest(1_000_000, 0, 3 * SECONDS_PER_YEAR, 1000).unwrap();
     assert_eq!(interest, 331_000);
 }
 
 #[test]
 fn test_compound_interest_partial_year() {
     // Half a year at 10%: simple interest on principal
-    let interest =
-        calculate_compound_interest(1_000_000, 0, SECONDS_PER_YEAR / 2, 1000).unwrap();
+    let interest = calculate_compound_interest(1_000_000, 0, SECONDS_PER_YEAR / 2, 1000).unwrap();
     assert_eq!(interest, 50_000);
 }
 
@@ -594,34 +689,27 @@ fn test_compound_interest_year_and_a_half() {
     // Year 1: 1M → 1.1M
     // Half year: 1.1M * 10% * 0.5 = 55_000
     // Total interest = 155_000
-    let interest = calculate_compound_interest(
-        1_000_000,
-        0,
-        SECONDS_PER_YEAR + SECONDS_PER_YEAR / 2,
-        1000,
-    )
-    .unwrap();
+    let interest =
+        calculate_compound_interest(1_000_000, 0, SECONDS_PER_YEAR + SECONDS_PER_YEAR / 2, 1000)
+            .unwrap();
     assert_eq!(interest, 155_000);
 }
 
 #[test]
 fn test_compound_interest_zero_principal() {
-    let interest =
-        calculate_compound_interest(0, 0, SECONDS_PER_YEAR, 1000).unwrap();
+    let interest = calculate_compound_interest(0, 0, SECONDS_PER_YEAR, 1000).unwrap();
     assert_eq!(interest, 0);
 }
 
 #[test]
 fn test_compound_interest_zero_rate() {
-    let interest =
-        calculate_compound_interest(1_000_000, 0, SECONDS_PER_YEAR, 0).unwrap();
+    let interest = calculate_compound_interest(1_000_000, 0, SECONDS_PER_YEAR, 0).unwrap();
     assert_eq!(interest, 0);
 }
 
 #[test]
 fn test_compound_interest_zero_time() {
-    let interest =
-        calculate_compound_interest(1_000_000, 100, 100, 1000).unwrap();
+    let interest = calculate_compound_interest(1_000_000, 100, 100, 1000).unwrap();
     assert_eq!(interest, 0);
 }
 
@@ -739,7 +827,11 @@ fn test_rate_changes_monotonically_with_utilization() {
         let util_bps = (util * 100) as i128;
         set_protocol_analytics(&env, &contract_id, 10000, util_bps);
         let rate = client.get_borrow_rate();
-        assert!(rate >= previous_rate, "Rate decreased at {}% utilization", util);
+        assert!(
+            rate >= previous_rate,
+            "Rate decreased at {}% utilization",
+            util
+        );
         previous_rate = rate;
     }
 }
@@ -759,7 +851,10 @@ fn test_rate_jump_at_kink() {
     // Jump should be significant
     let linear_increase = (rate_below_kink * 200) / 7900;
     let actual_increase = rate_above_kink - rate_below_kink;
-    assert!(actual_increase > linear_increase, "Jump multiplier not taking effect");
+    assert!(
+        actual_increase > linear_increase,
+        "Jump multiplier not taking effect"
+    );
 }
 
 // =============================================================================
@@ -820,7 +915,14 @@ fn test_full_interest_rate_workflow() {
 
     // 3. Update config
     client.update_interest_rate_config(
-        &admin, &Some(200), &None, &None, &None, &None, &None, &None,
+        &admin,
+        &Some(200),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
 
     // 4. Rate changed
@@ -871,7 +973,14 @@ fn test_config_timestamp_updated() {
 
     // The ledger timestamp in test env starts at 0, so we just verify it's set
     client.update_interest_rate_config(
-        &admin, &Some(200), &None, &None, &None, &None, &None, &None,
+        &admin,
+        &Some(200),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
 
     let config_after = get_config(&env, &contract_id).unwrap();
@@ -888,19 +997,40 @@ fn test_sequential_config_updates() {
 
     // Update 1: change base rate
     client.update_interest_rate_config(
-        &admin, &Some(200), &None, &None, &None, &None, &None, &None,
+        &admin,
+        &Some(200),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
     );
     let rate1 = client.get_borrow_rate();
 
     // Update 2: change multiplier
     client.update_interest_rate_config(
-        &admin, &None, &None, &Some(3000), &None, &None, &None, &None,
+        &admin,
+        &None,
+        &None,
+        &Some(3000),
+        &None,
+        &None,
+        &None,
+        &None,
     );
     let rate2 = client.get_borrow_rate();
 
     // Update 3: change spread
     client.update_interest_rate_config(
-        &admin, &None, &None, &None, &None, &None, &None, &Some(100),
+        &admin,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(100),
     );
     let supply_rate = client.get_supply_rate();
     let borrow_rate = client.get_borrow_rate();

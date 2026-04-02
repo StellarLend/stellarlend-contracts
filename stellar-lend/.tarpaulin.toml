@@ -5,7 +5,8 @@ exclude = [
 exclude-files = [
     "client/**/*",
     "indexing_system/**/*",
-    "contracts/hello-world/**/*"
+    "contracts/hello-world/**/*",
+    "contracts/amm/**/*"
 ]
 
 

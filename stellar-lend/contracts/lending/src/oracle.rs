@@ -172,9 +172,7 @@ pub fn configure_oracle(
         return Err(OracleError::InvalidPrice);
     }
 
-    env.storage()
-        .persistent()
-        .set(&OracleKey::Config, &config);
+    env.storage().persistent().set(&OracleKey::Config, &config);
     Ok(())
 }
 
@@ -299,9 +297,7 @@ pub fn update_price_feed(
             .set(&OracleKey::FallbackFeed(asset), &feed);
     } else {
         // Admin or primary oracle writes to primary slot
-        env.storage()
-            .persistent()
-            .set(&OracleKey::PrimaryFeed(asset), &feed);
+        env.storage().persistent().set(&OracleKey::PrimaryFeed(asset), &feed);
     }
 
     Ok(())
@@ -372,8 +368,6 @@ pub fn get_price(env: &Env, asset: &Address) -> Result<i128, OracleError> {
 pub fn set_oracle_paused(env: &Env, caller: Address, paused: bool) -> Result<(), OracleError> {
     require_admin_caller(env, &caller)?;
     caller.require_auth();
-    env.storage()
-        .persistent()
-        .set(&OracleKey::Paused, &paused);
+    env.storage().persistent().set(&OracleKey::Paused, &paused);
     Ok(())
 }

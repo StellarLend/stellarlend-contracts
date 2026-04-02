@@ -127,3 +127,4 @@ fn test_analytics_storage_layout() {
         assert_eq!(log.get(0).unwrap().user, user);
     });
 }
+

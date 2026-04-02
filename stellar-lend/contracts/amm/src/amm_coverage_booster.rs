@@ -1,4 +1,3 @@
-#![cfg(test)]
 use crate::{AmmContract, AmmContractClient, AmmProtocolConfig, AmmSettings};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -9,7 +8,7 @@ fn test_amm_coverage_booster() {
 
     let admin = Address::generate(&env);
     let protocol = Address::generate(&env);
-    let id = env.register_contract(None, AmmContract);
+    let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
 
     // 1. Init (using the positional arguments from lib.rs:97)

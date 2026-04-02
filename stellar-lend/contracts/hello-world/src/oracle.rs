@@ -18,8 +18,9 @@
 #![allow(unused)]
 use crate::deposit::DepositDataKey;
 use crate::events::{emit_price_updated, PriceUpdatedEvent};
-use crate::risk_management::get_admin;
+use crate::admin::get_admin;
 use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
+use crate::prelude::*;
 
 /// Errors that can occur during oracle operations
 #[contracterror]

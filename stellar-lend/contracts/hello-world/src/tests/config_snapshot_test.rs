@@ -108,3 +108,39 @@ fn test_config_snapshot_no_auth_required() {
     let snapshot = client.get_config_snapshot();
     assert!(snapshot.is_some());
 }
+
+#[test]
+fn test_config_snapshot_read_only_guarantees_and_isolation() {
+    let (_env, client, admin) = setup_test();
+
+    // 1. Snapshot initial state
+    let snapshot_before = client.get_config_snapshot().unwrap();
+
+    // 2. Perform a state-mutating operation via an authorized endpoint
+    client.set_emergency_pause(&admin, &true);
+
+    // 3. Snapshot state again
+    let snapshot_after = client.get_config_snapshot().unwrap();
+
+    // 4. Prove that exactly the paused state changed, while other fields remain strictly consistent
+    assert_eq!(snapshot_before.emergency_paused, false);
+    assert_eq!(snapshot_after.emergency_paused, true);
+    assert_eq!(
+        snapshot_before.min_collateral_ratio,
+        snapshot_after.min_collateral_ratio
+    );
+    assert_eq!(
+        snapshot_before.liquidation_threshold,
+        snapshot_after.liquidation_threshold
+    );
+    assert_eq!(snapshot_before.close_factor, snapshot_after.close_factor);
+    assert_eq!(
+        snapshot_before.liquidation_incentive,
+        snapshot_after.liquidation_incentive
+    );
+
+    // 5. Unpause and verify state reversion reflects correctly
+    client.set_emergency_pause(&admin, &false);
+    let snapshot_final = client.get_config_snapshot().unwrap();
+    assert_eq!(snapshot_final.emergency_paused, false);
+}

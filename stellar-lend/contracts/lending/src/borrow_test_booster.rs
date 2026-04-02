@@ -48,7 +48,7 @@ fn test_borrow_coverage_booster() {
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
     let asset = Address::generate(&env);
-    client.liquidate(&liquidator, &borrower, &asset, &asset, &100);
+    let _ = client.try_liquidate(&liquidator, &borrower, &asset, &asset, &100);
 }
 
 #[test]

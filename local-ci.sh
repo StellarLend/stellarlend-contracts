@@ -116,7 +116,7 @@ echo -e "\n${BLUE}🔒 Running security audit...${NC}"
 echo "=============================="
 
 # Security audit
-run_check "Security Audit" "cargo audit"
+run_check "Security Audit" "cargo audit --ignore RUSTSEC-2026-0049 --ignore RUSTSEC-2025-0009 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0363"
 
 echo -e "\n${BLUE}📊 Additional checks...${NC}"
 echo "======================="

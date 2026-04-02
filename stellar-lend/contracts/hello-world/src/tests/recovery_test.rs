@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::errors::GovernanceError;
-use crate::recovery::{get_guardian_threshold, get_guardians, set_guardians};
+use crate::recovery::{get_guardian_threshold, get_guardians, set_guardians, start_recovery};
 use crate::HelloContract;
 use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
@@ -12,7 +12,6 @@ fn setup() -> (Env, Address, Address) {
     let admin = Address::generate(&env);
     env.as_contract(&contract_id, || {
         crate::risk_management::initialize_risk_management(&env, admin.clone()).unwrap();
-        // Bootstrap multisig admins so require_multisig_admin passes
         let mut admins = soroban_sdk::Vec::new(&env);
         admins.push_back(admin.clone());
         crate::multisig::ms_set_admins(&env, admin.clone(), admins, 1).unwrap();
@@ -42,10 +41,14 @@ fn test_set_guardians_replaces_old_set() {
         gs1.push_back(Address::generate(&env));
         gs1.push_back(Address::generate(&env));
         set_guardians(&env, admin.clone(), gs1, 1).unwrap();
+
         let mut gs2 = Vec::new(&env);
         gs2.push_back(Address::generate(&env));
         set_guardians(&env, admin.clone(), gs2, 1).unwrap();
-        assert_eq!(get_guardians(&env).unwrap().len(), 1);
+
+        let guardians = get_guardians(&env).unwrap();
+        assert_eq!(guardians.len(), 1);
+        assert_eq!(get_guardian_threshold(&env), 1);
     });
 }
 
@@ -90,5 +93,25 @@ fn test_set_guardians_non_admin_returns_unauthorized() {
         gs.push_back(Address::generate(&env));
         let result = set_guardians(&env, Address::generate(&env), gs, 1);
         assert_eq!(result, Err(GovernanceError::Unauthorized));
+    });
+}
+
+#[test]
+fn test_set_guardians_rejected_while_recovery_in_progress() {
+    let (env, cid, admin) = setup();
+    env.as_contract(&cid, || {
+        let guardian = Address::generate(&env);
+        let replacement = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        let mut initial = Vec::new(&env);
+        initial.push_back(guardian.clone());
+        set_guardians(&env, admin.clone(), initial, 1).unwrap();
+        start_recovery(&env, guardian, admin.clone(), new_admin).unwrap();
+
+        let mut replacement_set = Vec::new(&env);
+        replacement_set.push_back(replacement);
+        let result = set_guardians(&env, admin, replacement_set, 1);
+        assert_eq!(result, Err(GovernanceError::RecoveryInProgress));
     });
 }

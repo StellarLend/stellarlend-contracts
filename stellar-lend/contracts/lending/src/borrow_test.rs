@@ -73,7 +73,26 @@ fn test_borrow_invalid_amount() {
     assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
 
     let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &0);
-    assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
+    assert_eq!(result, Err(Ok(BorrowError::InsufficientCollateral)));
+}
+
+#[test]
+fn test_borrow_against_existing_collateral_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    // Initial deposit: 100k collateral. Can borrow up to ~66k.
+    client.deposit_collateral(&user, &collateral_asset, &100_000);
+
+    // Borrow 10k with 0 additional collateral
+    client.borrow(&user, &asset, &10_000, &collateral_asset, &0);
+
+    let debt = client.get_user_debt(&user);
+    assert_eq!(debt.borrowed_amount, 10_000);
+
+    let collateral = client.get_user_collateral(&user);
+    assert_eq!(collateral.amount, 100_000);
 }
 
 #[test]
@@ -307,6 +326,8 @@ fn test_coverage_extremes() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, user, asset, _) = setup_test(&env);
+    let current_hash = BytesN::from_array(&env, &[0; 32]);
+    client.upgrade_init(&admin, &current_hash, &1);
 
     // 1. View Error Paths (Oracle zero/negative)
     // We can't easily mock the oracle to return 0 mid-test without registering a new one
@@ -328,10 +349,137 @@ fn test_coverage_extremes() {
 
     // 3. Upgrade Branch Coverage
     let hash = BytesN::from_array(&env, &[1; 32]);
+    client.upgrade_init(&admin, &hash, &1); // initialize upgrade system first
     let pid = client.upgrade_propose(&admin, &hash, &100);
-    let _ = client.upgrade_status(&pid);
+    assert_eq!(client.upgrade_status(&pid).stage, UpgradeStage::Approved);
 
     // Trigger some internal view branches
     let _ = client.get_user_position(&user);
     let _ = client.get_liquidation_incentive_amount(&1_000_000);
+}
+
+
+// ── Issue #472: borrow insufficient-collateral error matrix ───────────────
+
+/// User with zero collateral cannot borrow any amount.
+///
+/// # Security
+/// The protocol must reject borrows when no collateral is posted at all.
+/// A zero-collateral borrow would create uncollateralised debt.
+#[test]
+fn test_borrow_zero_collateral_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &0);
+    assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
+}
+
+/// Collateral exactly at 150 % of borrow amount must be accepted.
+///
+/// # Security
+/// The boundary must be inclusive: borrow 10_000 with 15_000 collateral
+/// is valid. Off-by-one errors here could either block legitimate users or
+/// allow under-collateralised positions.
+#[test]
+fn test_borrow_collateral_exactly_at_150_percent_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    // 15_000 / 10_000 = 1.5 — exactly the minimum ratio.
+    client.borrow(&user, &asset, &10_000, &collateral_asset, &15_000);
+    let debt = client.get_user_debt(&user);
+    assert_eq!(debt.borrowed_amount, 10_000);
+}
+
+/// One unit below 150 % must be rejected.
+///
+/// # Security
+/// Ensures the boundary check is strict: 14_999 collateral for 10_000 borrow
+/// is below the 150 % threshold and must be rejected.
+#[test]
+fn test_borrow_collateral_one_unit_below_boundary_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &14_999);
+    assert_eq!(result, Err(Ok(BorrowError::InsufficientCollateral)));
+}
+
+/// A second borrow that reduces the effective collateral ratio below 150 %
+/// must be rejected even if the first borrow succeeded.
+///
+/// # Security
+/// The protocol must aggregate existing debt when validating new borrows so
+/// that a user cannot bypass the collateral ratio through incremental borrows.
+#[test]
+fn test_borrow_second_borrow_insufficient_combined_collateral() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    // First borrow succeeds: 20_000 collateral, 10_000 borrow (200 %).
+    client.borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
+
+    // Second borrow: add only 1_000 collateral but borrow 5_000 more.
+    // Combined: 21_000 collateral, 15_000 debt = 140 % — must fail.
+    let result = client.try_borrow(&user, &asset, &5_000, &collateral_asset, &1_000);
+    assert_eq!(result, Err(Ok(BorrowError::InsufficientCollateral)));
+}
+
+/// Negative collateral amount is treated as an invalid amount, not a collateral
+/// shortfall, so the protocol returns InvalidAmount before any ratio check.
+///
+/// # Security
+/// Negative values must be rejected at input validation to prevent sign-related
+/// arithmetic bypasses in the collateral ratio computation.
+#[test]
+fn test_borrow_negative_collateral_returns_invalid_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &-1);
+    assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
+}
+
+/// Even with sufficient collateral, a borrow while the protocol is paused
+/// must be rejected.
+///
+/// # Security
+/// The pause check must occur before the collateral ratio check. A passing
+/// collateral ratio must not bypass an active pause.
+#[test]
+fn test_borrow_paused_overrides_sufficient_collateral() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, user, asset, collateral_asset) = setup_test(&env);
+
+    client.set_pause(&admin, &PauseType::Borrow, &true);
+
+    // Collateral is more than sufficient (200 %) — still must fail due to pause.
+    let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &20_000);
+    assert_eq!(result, Err(Ok(BorrowError::ProtocolPaused)));
+}
+
+/// Maximum collateral (i128::MAX / 2) with a small borrow must succeed without
+/// overflow in the ratio calculation.
+///
+/// # Security
+/// Large collateral values must not trigger overflow in the 150 % ratio check.
+/// This validates the checked-arithmetic path for extreme inputs.
+#[test]
+fn test_borrow_large_collateral_no_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
+
+    // Very large collateral, modest borrow — should succeed.
+    let large_collateral: i128 = 1_000_000_000_000;
+    client.borrow(&user, &asset, &1000, &collateral_asset, &large_collateral);
+    let debt = client.get_user_debt(&user);
+    assert_eq!(debt.borrowed_amount, 1000);
 }

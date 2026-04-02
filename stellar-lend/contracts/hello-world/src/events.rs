@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 
 use soroban_sdk::{contractevent, Address, Env, String, Symbol, Vec};
+use crate::prelude::*;
 
 use crate::types::{AssetStatus, ProposalType, VoteType};
 

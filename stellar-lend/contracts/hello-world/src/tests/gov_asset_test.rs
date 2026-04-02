@@ -69,11 +69,12 @@ fn test_governance_asset_config_update() {
         collateral_factor: 7500,
         liquidation_threshold: 8000,
         reserve_factor: 1000,
-        max_supply: 1_000_000,
-        max_borrow: 500_000,
+        max_supply: 1_000_000_000_000,
+        max_borrow: 0,
         can_collateralize: true,
         can_borrow: true,
-        price: 1_0000000,
+        borrow_factor: 7000,
+        price: 10_000_000,
         price_updated_at: env.ledger().timestamp(),
     };
     client.initialize_asset(&Some(usdc.clone()), &initial_config);
@@ -87,12 +88,15 @@ fn test_governance_asset_config_update() {
         Some(600_000), // Change max borrow to 600k
         None,
         None,
+        None,
     );
 
     let proposal_id = client.gov_create_proposal(
         &proposer,
         &proposal_type,
         &String::from_str(&env, "Upgrade USDC LTV and Borrow Cap"),
+        &None,
+        &None,
         &None,
     );
 
@@ -118,7 +122,7 @@ fn test_governance_asset_config_update() {
     assert_eq!(updated_config.max_borrow, 600_000);
     // Unchanged fields
     assert_eq!(updated_config.liquidation_threshold, 8000);
-    assert_eq!(updated_config.max_supply, 1_000_000);
+    assert_eq!(updated_config.max_supply, 1_000_000_000_000);
 }
 
 #[test]
@@ -143,6 +147,8 @@ fn test_governance_pause_unpause() {
         &proposer,
         &proposal_type,
         &String::from_str(&env, "Pause deposits"),
+        &None,
+        &None,
         &None,
     );
 

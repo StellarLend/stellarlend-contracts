@@ -206,6 +206,49 @@ fn test_update_price_feed_malicious_caller() {
     client.update_price_feed(&malicious, &asset, &101_000_000, &8, &malicious);
 }
 
+/// Test authorized oracle for asset A cannot update asset B.
+#[test]
+#[should_panic(expected = "Oracle error")]
+fn test_update_price_feed_cross_asset_oracle_misuse() {
+    let env = create_test_env();
+    let (_contract_id, admin, client) = setup_contract_with_admin(&env);
+    let asset_a = Address::generate(&env);
+    let asset_b = Address::generate(&env);
+    let oracle_a = Address::generate(&env);
+
+    client.set_primary_oracle(&admin, &asset_a, &oracle_a);
+
+    // oracle_a is only authorized for asset_a and must be rejected for asset_b.
+    client.update_price_feed(&oracle_a, &asset_b, &100_000_000, &8, &oracle_a);
+}
+
+/// Test price deviation arithmetic overflow is rejected.
+#[test]
+#[should_panic(expected = "Oracle error")]
+fn test_price_deviation_overflow_rejected() {
+    let env = create_test_env();
+    let (_contract_id, admin, client) = setup_contract_with_admin(&env);
+    let asset = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    client.configure_oracle(
+        &admin,
+        &OracleConfig {
+            max_deviation_bps: 10_000,
+            max_staleness_seconds: 3600,
+            cache_ttl_seconds: 300,
+            min_price: 1,
+            max_price: i128::MAX,
+        },
+    );
+
+    // Seed with small non-zero old price so deviation math is exercised.
+    client.update_price_feed(&admin, &asset, &1, &8, &oracle);
+
+    // diff * 10000 overflows i128 and must be rejected.
+    client.update_price_feed(&admin, &asset, &i128::MAX, &8, &oracle);
+}
+
 // =============================================================================
 // PRICE DEVIATION TESTS
 // =============================================================================
@@ -368,6 +411,22 @@ fn test_set_fallback_oracle_self() {
 
     // Try to set fallback oracle as the contract itself
     client.set_fallback_oracle(&admin, &asset, &contract_id);
+}
+
+/// Test primary and fallback may be configured to the same oracle address.
+#[test]
+fn test_primary_and_fallback_same_address_supported() {
+    let env = create_test_env();
+    let (_contract_id, admin, client) = setup_contract_with_admin(&env);
+    let asset = Address::generate(&env);
+    let shared_oracle = Address::generate(&env);
+
+    client.set_primary_oracle(&admin, &asset, &shared_oracle);
+    client.set_fallback_oracle(&admin, &asset, &shared_oracle);
+
+    let price = 123_000_000i128;
+    client.update_price_feed(&shared_oracle, &asset, &price, &8, &shared_oracle);
+    assert_eq!(client.get_price(&asset), price);
 }
 
 // =============================================================================
@@ -533,6 +592,17 @@ fn test_get_price_stale_no_fallback() {
     env.ledger().with_mut(|li| li.timestamp = 10000);
 
     // Should fail - price is stale and no fallback configured
+    client.get_price(&asset);
+}
+
+/// Test get_price fails when neither primary feed nor fallback oracle is configured.
+#[test]
+#[should_panic(expected = "Oracle error")]
+fn test_get_price_no_feed_no_fallback_configured() {
+    let env = create_test_env();
+    let (_contract_id, _admin, client) = setup_contract_with_admin(&env);
+    let asset = Address::generate(&env);
+
     client.get_price(&asset);
 }
 

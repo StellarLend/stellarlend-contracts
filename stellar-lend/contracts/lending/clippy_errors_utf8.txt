@@ -1,0 +1,157 @@
+﻿cargo :     Checking 
+stellarlend-lending v0.1.0 (
+C:\Users\ADMIN\Desktop\midea
+-drips\stellarlend-contracts
+\stellar-lend\contracts\lend
+ing)
+At line:1 char:1
++ cargo clippy 
+--all-targets -- -D 
+warnings > 
+clippy_errors.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
+    + CategoryInfo          
+    : NotSpecified: (    C  
+  hecking st...tracts\len   
+ ding):String) [], Remot    
+eException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+error: unused import: `get_l
+iquidation_threshold_bps as 
+get_liq_threshold_bps_impl`
+  --> contracts\lending\src\
+lib.rs:19:5
+   |
+19 |     get_liquidation_thr
+eshold_bps as 
+get_liq_threshold_bps_impl,
+   |     ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^
+   |
+   = note: `-D 
+unused-imports` implied by 
+`-D warnings`
+   = help: to override `-D 
+warnings` add 
+`#[allow(unused_imports)]`
+
+error: digits grouped 
+inconsistently by 
+underscores
+  --> contracts\lending\src\
+bad_debt_test.rs:21:36
+   |
+21 |         
+client.initialize(&admin, 
+&1000_000, &10);
+   |                        
+            ^^^^^^^^ help: 
+consider: `1_000_000`
+   |
+   = help: for further 
+information visit https://ru
+st-lang.github.io/rust-clipp
+y/rust-1.93.0/index.html#inc
+onsistent_digit_grouping
+   = note: `-D clippy::incon
+sistent-digit-grouping` 
+implied by `-D warnings`
+   = help: to override `-D 
+warnings` add `#[allow(clipp
+y::inconsistent_digit_groupi
+ng)]`
+
+error: digits grouped 
+inconsistently by 
+underscores
+  --> contracts\lending\src\
+bad_debt_test.rs:63:36
+   |
+63 |         
+client.initialize(&admin, 
+&1000_000, &10);
+   |                        
+            ^^^^^^^^ help: 
+consider: `1_000_000`
+   |
+   = help: for further 
+information visit https://ru
+st-lang.github.io/rust-clipp
+y/rust-1.93.0/index.html#inc
+onsistent_digit_grouping
+
+error: unused variable: 
+`collateral_asset`
+   --> contracts\lending\src
+\borrow.rs:567:5
+    |
+567 |     collateral_asset: 
+Address,
+    |     ^^^^^^^^^^^^^^^^ 
+help: if this is 
+intentional, prefix it with 
+an underscore: 
+`_collateral_asset`
+    |
+    = note: `-D 
+unused-variables` implied 
+by `-D warnings`
+    = help: to override `-D 
+warnings` add 
+`#[allow(unused_variables)]`
+
+error: could not compile 
+`stellarlend-lending` (lib) 
+due to 2 previous errors
+warning: build failed, 
+waiting for other jobs to 
+finish...
+error: variable 
+`expected_total_deposits` 
+is assigned to, but never 
+used
+  --> contracts\lending\src\
+multi_user_contention_test.r
+s:48:9
+   |
+48 |     let mut 
+expected_total_deposits = 0;
+   |         
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: consider using 
+`_expected_total_deposits` 
+instead
+
+error: value assigned to 
+`expected_total_deposits` 
+is never read
+  --> contracts\lending\src\
+multi_user_contention_test.r
+s:58:9
+   |
+58 |         
+expected_total_deposits += 
+deposit_amount;
+   |         ^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: maybe it is 
+overwritten before being 
+read?
+   = note: `-D 
+unused-assignments` implied 
+by `-D warnings`
+   = help: to override `-D 
+warnings` add `#[allow(unuse
+d_assignments)]`
+
+error: could not compile 
+`stellarlend-lending` (lib 
+test) due to 6 previous 
+errors

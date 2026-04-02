@@ -1,7 +1,32 @@
+//! # Withdraw collateral
+//!
+//! Withdrawals reduce a user’s posted collateral while preserving **minimum collateral ratio**
+//! against outstanding debt (same 150% rule as [`crate::borrow::validate_collateral_ratio`]).
+//!
+//! ## Pause & emergency alignment
+//!
+//! Withdraw respects:
+//! - Legacy `WithdrawDataKey::Paused` (storage compatibility),
+//! - Granular [`crate::pause::PauseType::Withdraw`] and global [`crate::pause::PauseType::All`]
+//!   via [`crate::pause::is_paused`],
+//! - Emergency lifecycle: **shutdown** blocks unwind; **recovery** allows `withdraw` and `repay`
+//!   so users can exit (see [`crate::pause::blocks_high_risk_ops`], [`crate::pause::is_recovery`]).
+//!
+//! This matches the public `LendingContract::withdraw` policy: callers get a single consistent
+//! check path through [`withdraw`] without duplicating pause logic in the facade.
+//!
+//! ## Security
+//! - **Authorization**: [`withdraw`] requires `user.require_auth()`.
+//! - **State**: Collateral and totals are updated before publishing events (no external token hook
+//!   in this simplified flow; CEI still applies to storage writes).
+//! - **Arithmetic**: Uses `checked_*` and shared borrow validation to avoid overflow and drift.
+
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env};
 
+use crate::borrow::{validate_collateral_ratio, BorrowDataKey, BorrowError, DebtPosition};
 use crate::constants::BPS_SCALE;
 use crate::deposit::{DepositCollateral, DepositDataKey};
+use crate::pause::{self, PauseType};
 
 /// Errors that can occur during withdraw operations
 #[contracterror]
@@ -35,19 +60,57 @@ pub struct WithdrawEvent {
     pub timestamp: u64,
 }
 
-/// Minimum collateral ratio in basis points (150%)
-const MIN_COLLATERAL_RATIO_BPS: i128 = crate::constants::MIN_COLLATERAL_RATIO_BPS;
+/// Enforce the same pause / emergency rules as `LendingContract::withdraw` used to apply at the
+/// facade layer: granular withdraw pause, global `All`, legacy flag, and shutdown (but not
+/// recovery) blocking.
+fn ensure_withdraw_allowed(env: &Env) -> Result<(), WithdrawError> {
+    if legacy_withdraw_paused(env) {
+        return Err(WithdrawError::WithdrawPaused);
+    }
+    if pause::is_paused(env, PauseType::Withdraw) {
+        return Err(WithdrawError::WithdrawPaused);
+    }
+    // Recovery: allow withdraw/repay unwind; Shutdown: block until governance moves state.
+    if !pause::is_recovery(env) && pause::blocks_high_risk_ops(env) {
+        return Err(WithdrawError::WithdrawPaused);
+    }
+    Ok(())
+}
 
-/// Withdraw collateral from the protocol
+fn legacy_withdraw_paused(env: &Env) -> bool {
+    env.storage()
+        .persistent()
+        .get(&WithdrawDataKey::Paused)
+        .unwrap_or(false)
+}
+
+fn map_borrow_to_withdraw(e: BorrowError) -> WithdrawError {
+    match e {
+        BorrowError::InsufficientCollateral => WithdrawError::InsufficientCollateralRatio,
+        BorrowError::Overflow => WithdrawError::Overflow,
+        BorrowError::InvalidAmount => WithdrawError::InvalidAmount,
+        _ => WithdrawError::InsufficientCollateralRatio,
+    }
+}
+
+/// Withdraw collateral from the protocol.
 ///
 /// # Arguments
-/// * `env` - The contract environment
-/// * `user` - The withdrawer's address
-/// * `asset` - The collateral asset address
-/// * `amount` - The amount to withdraw
+/// * `user` — Position owner; must authorize the call.
+/// * `asset` — Collateral asset account.
+/// * `amount` — Amount to withdraw (≥ min configured, ≤ balance).
 ///
-/// # Returns
-/// Returns the remaining collateral balance on success
+/// # Errors
+/// * [`WithdrawError::WithdrawPaused`] — Legacy pause, `Withdraw` / `All` pause, or emergency
+///   shutdown (not recovery).
+/// * [`WithdrawError::InvalidAmount`] — Non-positive or below minimum withdraw.
+/// * [`WithdrawError::InsufficientCollateral`] — Request exceeds balance.
+/// * [`WithdrawError::InsufficientCollateralRatio`] — Would leave debt under-collateralized.
+/// * [`WithdrawError::Overflow`] — Checked arithmetic overflow.
+///
+/// # Security
+/// User auth is required. Pause checks run before balance/ratio math. Ratio enforcement delegates
+/// to [`validate_collateral_ratio`] so borrow and withdraw stay aligned on the 150% rule.
 pub fn withdraw(
     env: &Env,
     user: Address,
@@ -56,9 +119,7 @@ pub fn withdraw(
 ) -> Result<i128, WithdrawError> {
     user.require_auth();
 
-    if is_paused(env) || crate::pause::is_paused(env, crate::pause::PauseType::Withdraw) {
-        return Err(WithdrawError::WithdrawPaused);
-    }
+    ensure_withdraw_allowed(env)?;
 
     if amount <= 0 {
         return Err(WithdrawError::InvalidAmount);
@@ -106,14 +167,12 @@ pub fn withdraw(
     Ok(new_amount)
 }
 
-/// Validate collateral ratio remains above minimum after withdrawal
+/// Validate collateral ratio remains above minimum after withdrawal (aligned with borrow checks).
 fn validate_collateral_ratio_after_withdraw(
     env: &Env,
     user: &Address,
     remaining_collateral: i128,
 ) -> Result<(), WithdrawError> {
-    use crate::borrow::{BorrowDataKey, DebtPosition};
-
     let debt_position: Option<DebtPosition> = env
         .storage()
         .persistent()
@@ -126,15 +185,7 @@ fn validate_collateral_ratio_after_withdraw(
             .ok_or(WithdrawError::Overflow)?;
 
         if total_debt > 0 {
-            let min_collateral = total_debt
-                .checked_mul(MIN_COLLATERAL_RATIO_BPS)
-                .ok_or(WithdrawError::Overflow)?
-                .checked_div(BPS_SCALE)
-                .ok_or(WithdrawError::Overflow)?;
-
-            if remaining_collateral < min_collateral {
-                return Err(WithdrawError::InsufficientCollateralRatio);
-            }
+            validate_collateral_ratio(remaining_collateral, total_debt).map_err(map_borrow_to_withdraw)?;
         }
     }
 
@@ -204,11 +255,4 @@ fn get_min_withdraw_amount(env: &Env) -> i128 {
         .persistent()
         .get(&WithdrawDataKey::MinWithdrawAmount)
         .unwrap_or(0)
-}
-
-fn is_paused(env: &Env) -> bool {
-    env.storage()
-        .persistent()
-        .get(&WithdrawDataKey::Paused)
-        .unwrap_or(false)
 }

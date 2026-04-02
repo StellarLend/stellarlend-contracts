@@ -1,4 +1,3 @@
-#![cfg(not(tarpaulin))]
 
 //! Integration tests for the blockchain integration layer
 //!
