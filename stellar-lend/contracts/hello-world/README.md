@@ -24,7 +24,7 @@ Refer to `src/lib.rs` for detailed types and events.
 
 ## Security Notes
 
-- Reentrancy guarantees and Soroban execution-model assumptions are documented in [`REENTRANCY.md`](./REENTRANCY.md).
+- Reentrancy guarantees and Soroban execution-model assumptions are documented in [`REENTRANCY.md`](./REENTRANCY.md) and [`REENTRANCY_GUARANTEES.md`](../../docs/REENTRANCY_GUARANTEES.md).
 - Formal verification preparation notes for borrow/repay/liquidate are documented in [`docs/formal_verification_prep.md`](./docs/formal_verification_prep.md).
 
 ### Oracle Trust Boundaries
