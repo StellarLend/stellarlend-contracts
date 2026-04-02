@@ -1773,22 +1773,3 @@ fn test_config_update_preserves_price() {
     assert_eq!(fetched.price, 50_000_000); // Price preserved
     assert_eq!(fetched.collateral_factor, 5000);
 }
-=======
-    env.mock_all_auths();
-
-    // Set low debt ceiling
-    let params = create_asset_params(&env, 9000, 9500, 10000, true); // $10k ceiling
-    client.set_asset_params(&asset_usdc, &params);
-
-    // User1 borrows up to ceiling
-    client.deposit_collateral_asset(&user1, &asset_usdc, &20000);
-    client.borrow_asset(&user1, &asset_usdc, &8000);
-
-    // User2 should be limited by remaining ceiling
-    client.deposit_collateral_asset(&user2, &asset_usdc, &20000);
-    client.borrow_asset(&user2, &asset_usdc, &2000); // Only 2k remaining
-
-    // Additional borrow should fail
-    client.borrow_asset(&user2, &asset_usdc, &1000);
-}
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
