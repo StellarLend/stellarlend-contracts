@@ -27,7 +27,8 @@ fn test_initialize_ca_success() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     // Should succeed first time
-    client.initialize_ca(&admin);
+	client.initialize_ca(&admin);
+}
 
 
 #[test]
