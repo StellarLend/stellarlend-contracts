@@ -2,7 +2,7 @@
 #![allow(deprecated)]
 #![allow(clippy::absurd_extreme_comparisons)]
 #![allow(unexpected_cfgs)]
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env};
 mod borrow;
 mod constants;
 mod cross_asset;
@@ -15,58 +15,22 @@ mod token_receiver;
 mod withdraw;
 
 use borrow::{
-    borrow as borrow_impl, deposit as borrow_deposit, get_admin as get_protocol_admin,
-    get_close_factor_bps as get_close_factor_impl,
-    get_liquidation_incentive_bps as get_liquidation_incentive_bps_impl,
-    get_user_collateral as get_borrow_collateral, get_user_debt as get_user_debt_impl,
-    initialize_borrow_settings as init_borrow_settings_impl, repay as borrow_repay,
-    set_admin as set_protocol_admin, set_close_factor_bps as set_close_factor_impl,
-    set_liquidation_incentive_bps as set_liquidation_incentive_bps_impl,
-    set_liquidation_threshold_bps as set_liq_threshold_impl, set_oracle as set_oracle_impl,
-    BorrowCollateral, BorrowError, DebtPosition,
+    borrow as borrow_impl, get_admin as get_protocol_admin,
+    initialize_borrow_settings as init_borrow_settings_impl,
+    set_admin as set_protocol_admin, BorrowError,
 };
-use cross_asset::{
-    borrow_asset as cross_borrow_asset, deposit_collateral_asset as cross_deposit_collateral,
-    get_cross_position_summary as cross_position_summary, initialize_admin as cross_init_admin,
-    repay_asset as cross_repay_asset, set_asset_params as cross_set_asset_params,
-    withdraw_asset as cross_withdraw_asset, AssetParams, CrossAssetError, PositionSummary,
-};
-use deposit::{
-    deposit as deposit_impl, get_user_collateral as get_deposit_collateral_impl,
-    initialize_deposit_settings as init_deposit_settings_impl, DepositCollateral, DepositError,
-};
-use flash_loan::{
-    flash_loan as flash_loan_impl, set_flash_loan_fee_bps as set_flash_loan_fee_impl,
-    FlashLoanError,
-};
-use oracle::{OracleConfig, OracleError};
 use pause::{
     blocks_high_risk_ops, complete_recovery as complete_recovery_logic,
     get_emergency_state as get_emergency_state_logic, get_guardian as get_guardian_logic,
-    get_pause_state as get_pause_state_logic, is_paused, is_recovery,
     set_guardian as set_guardian_logic, set_pause as set_pause_impl,
     start_recovery as start_recovery_logic, trigger_shutdown as trigger_shutdown_logic,
     EmergencyState, PauseType,
 };
-use token_receiver::receive as receive_impl;
 
 mod views;
-use views::{
-    get_collateral_balance as view_collateral_balance,
-    get_collateral_value as view_collateral_value, get_debt_balance as view_debt_balance,
-    get_debt_value as view_debt_value, get_health_factor as view_health_factor,
-    get_liquidation_incentive_amount as view_liquidation_incentive_amount,
-    get_max_liquidatable_amount as view_max_liquidatable_amount,
-    get_user_position as view_user_position, UserPositionSummary,
-};
 
-use withdraw::{
-    initialize_withdraw_settings as initialize_withdraw_logic, withdraw as withdraw_logic,
-    WithdrawError,
-};
 
 mod data_store;
-use stellarlend_common::upgrade;
 pub use stellarlend_common::upgrade::{UpgradeError, UpgradeStage, UpgradeStatus};
 
 #[cfg(test)]

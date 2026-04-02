@@ -24,7 +24,6 @@
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env};
 
 use crate::borrow::{validate_collateral_ratio, BorrowDataKey, BorrowError, DebtPosition};
-use crate::constants::BPS_SCALE;
 use crate::deposit::{DepositCollateral, DepositDataKey};
 use crate::pause::{self, PauseType};
 
