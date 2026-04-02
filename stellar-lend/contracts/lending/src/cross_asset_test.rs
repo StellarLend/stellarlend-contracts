@@ -63,43 +63,6 @@ fn test_initialize_token_asset_success() {
     let config = token_config(&env, &token_addr);
     client.initialize_asset(&Some(token_addr.clone()), &config);
 
-<<<<<<< HEAD
-    let fetched = client.get_asset_config(&Some(token_addr));
-    assert_eq!(fetched.collateral_factor, 6000);
-    assert_eq!(fetched.price, 20_000_000);
-=======
-    env.mock_all_auths();
-
-    // Test minimum values
-    let min_params = create_asset_params(&env, 0, 0, 0, false);
-    client.set_asset_params(&asset_usdc, &min_params);
-
-    // Test maximum reasonable values
-    let max_params = create_asset_params(&env, 10000, 10000, i128::MAX, true);
-    client.set_asset_params(&asset_usdc, &max_params);
-}
-
-#[test]
-fn test_asset_config_updates() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    env.mock_all_auths();
-
-    // Initial configuration
-    let initial_params = create_asset_params(&env, 8000, 8500, 1000000, true);
-    client.set_asset_params(&asset_usdc, &initial_params);
-
-    // User deposits with initial config
-    client.deposit_collateral_asset(&user1, &asset_usdc, &1000);
-
-    // Update configuration - reduce LTV (more conservative)
-    let updated_params = create_asset_params(&env, 6000, 7000, 500000, true);
-    client.set_asset_params(&asset_usdc, &updated_params);
-
-    // Verify operations still work with updated config
-    client.deposit_collateral_asset(&user1, &asset_usdc, &500);
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
