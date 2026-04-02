@@ -715,7 +715,11 @@ impl LendingContract {
     ///
     /// # Errors
     /// - [`OracleError::Unauthorized`] — caller is not the admin.
-    pub fn set_oracle_paused(env: Env, caller: Address, paused: bool) -> Result<(), OracleError> {
+    pub fn set_oracle_paused(
+        env: Env,
+        caller: Address,
+        paused: bool,
+    ) -> Result<(), OracleError> {
         oracle::set_oracle_paused(&env, caller, paused)
     }
 
