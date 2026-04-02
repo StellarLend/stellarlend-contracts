@@ -288,7 +288,6 @@ fn test_upgrade_invalid_attempts() {
     );
 }
 
-
 // ── Issue #489: upgrade authorization clarity ─────────────────────────────
 
 /// Guardian has no upgrade power — upgrade paths are admin/approver-gated only.
