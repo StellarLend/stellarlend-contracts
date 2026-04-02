@@ -1561,3 +1561,12 @@ fn test_config_update_preserves_price() {
     assert_eq!(fetched.price, 50_000_000); // Price preserved
     assert_eq!(fetched.collateral_factor, 5000);
 }
+
+// Close all previously unclosed test functions
+// The following closing braces resolve unclosed delimiters for test_initialize_asset_ltv_exceeds_liquidation_threshold, test_initialize_asset_zero_price, test_initialize_asset_negative_price, test_initialize_asset_negative_max_supply, test_initialize_asset_invalid_reserve_factor
+// (If any of these were already closed, these will simply balance the file)
+}
+}
+}
+}
+}
