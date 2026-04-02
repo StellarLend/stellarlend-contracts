@@ -67,54 +67,13 @@ fn test_initialize_token_asset_success() {
 
 #[test]
 #[should_panic]
-<<<<<<< HEAD
 fn test_initialize_asset_twice_fails() {
     let (env, client, _admin) = setup();
     let config = default_config(&env);
     client.initialize_asset(&None, &config);
     // Re-initialization should fail
     client.initialize_asset(&None, &config);
-=======
-fn test_asset_deactivation() {
-    let env = Env::default();
-    let (client, _admin, user1, _, asset_usdc, _) = setup_test(&env);
-
-    env.mock_all_auths();
-
-    // Initial active configuration
-    let active_params = create_asset_params(&env, 8000, 8500, 1000000, true);
-    client.set_asset_params(&asset_usdc, &active_params);
-
-    // User can deposit when active
-    client.deposit_collateral_asset(&user1, &asset_usdc, &1000);
-
-    // Deactivate asset
-    let inactive_params = create_asset_params(&env, 8000, 8500, 1000000, false);
-    client.set_asset_params(&asset_usdc, &inactive_params);
-
-    // New deposits should fail
-    client.deposit_collateral_asset(&user1, &asset_usdc, &500);
 }
-// ============================================================================
-// MULTI-ASSET DEPOSIT AND COLLATERAL TESTS
-// ============================================================================
-
-#[test]
-fn test_multi_asset_deposits() {
-    let env = Env::default();
-    let (client, admin, user1, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // Deposit multiple assets
-    client.deposit_collateral_asset(&user1, &asset_usdc, &10000); // $10k USDC
-    client.deposit_collateral_asset(&user1, &asset_eth, &5000); // $5k ETH (at $1 mock price)
-
-    let summary = client.get_cross_position_summary(&user1);
-    assert_eq!(summary.total_collateral_usd, 15000); // $15k total
-    assert_eq!(summary.total_debt_usd, 0);
-    assert!(summary.health_factor >= 10000);
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
