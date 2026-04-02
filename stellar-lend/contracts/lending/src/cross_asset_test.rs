@@ -22,29 +22,13 @@ use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env}
 fn test_initialize_ca_success() {
     let env = Env::default();
     env.mock_all_auths();
-<<<<<<< HEAD
     let contract_id = env.register(HelloContract, ());
     let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin);
     // Should succeed first time
     client.initialize_ca(&admin);
-=======
-    client.set_asset_params(&asset_usdc, &params);
-
-    // Verify asset was configured (would need getter in real implementation)
-    // This test validates the basic configuration flow
 }
-#[test]
-fn test_set_asset_params_multiple_assets() {
-    let env = Env::default();
-    let (client, admin, _, _, asset_usdc, asset_eth) = setup_test(&env);
-
-    setup_multi_asset_config(&env, &client, &admin, &asset_usdc, &asset_eth);
-
-    // Test that multiple assets can be configured with different parameters
-    // In a real implementation, we'd verify the stored parameters
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
 }
 
 #[test]
