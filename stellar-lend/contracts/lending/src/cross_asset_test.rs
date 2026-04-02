@@ -28,8 +28,7 @@ fn test_initialize_ca_success() {
     client.initialize(&admin);
     // Should succeed first time
     client.initialize_ca(&admin);
-}
-}
+
 
 #[test]
 #[should_panic]
