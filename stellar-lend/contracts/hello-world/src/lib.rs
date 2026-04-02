@@ -452,11 +452,7 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
-<<<<<<< HEAD
-        let (repaid, _seized, _fee) = liquidate(
-=======
-        let (repaid, _seized, _fee) = crate::liquidate::liquidate(
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
+    let (repaid, _seized, _fee) = crate::liquidate::liquidate(
             &env,
             liquidator,
             borrower,
@@ -515,8 +511,6 @@ impl HelloContract {
         risk_params::get_liquidation_incentive(&env)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
-
-<<<<<<< HEAD
     /// Get current borrow rate (in basis points).
     pub fn get_borrow_rate(env: Env) -> i128 {
         interest_rate::calculate_borrow_rate(&env).unwrap_or(0)
@@ -526,9 +520,6 @@ impl HelloContract {
     pub fn get_supply_rate(env: Env) -> i128 {
         interest_rate::calculate_supply_rate(&env).unwrap_or(0)
     }
-
-=======
->>>>>>> 8248a02 (chore: apply rustfmt to fix CI formatting issues)
     /// Configure flash-loan parameters (admin only).
     pub fn configure_flash_loan(
         env: Env,
