@@ -48,6 +48,9 @@ mockito = "1.2"
 tokio-test = "0.4"
 wiremock = "0.6"
 test-case = "3.3"
+soroban-sdk = { workspace = true }
+stellarlend-lending = { path = "../contracts/lending" }
+# Ensure you also have basic token imports if your tests require minting mock tokens
 
 # Assertions
 assert_matches = "1.5"

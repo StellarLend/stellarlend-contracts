@@ -278,6 +278,15 @@ async fn main() {
 }
 ```
 
+### Contract Integration Test Harness
+
+The client includes a deterministic, local-only integration test harness (`tests/contract_bindings_test.rs`). This validates that the parameter encoding/decoding remains accurate between the generated client bindings and the actual Soroban contract.
+
+**Running the Integration Harness:**
+```bash
+cargo test --test contract_bindings_test
+```
+
 ## Architecture
 
 The library is organized into the following modules:
