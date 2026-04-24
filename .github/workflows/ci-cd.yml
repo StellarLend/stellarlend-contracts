@@ -22,12 +22,12 @@ jobs:
         
         
       - name: Set toolchain env variable
-        run: echo "toolchain=stable" >> $GITHUB_ENV
+        run: echo "toolchain=1.91.0" >> $GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.91.0"
           components: rustfmt, clippy
 
       - name: Cache cargo registry
