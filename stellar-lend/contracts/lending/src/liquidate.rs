@@ -70,6 +70,7 @@ use crate::views::{
 /// liquidator including the incentive bonus.
 #[contractevent]
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct LiquidationEvent {
     /// Liquidator address
     pub liquidator: Address,
@@ -94,6 +95,7 @@ pub struct LiquidationEvent {
 /// `HEALTH_FACTOR_NO_DEBT` means the debt was fully cleared.
 #[contractevent]
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct PostLiquidationHealthEvent {
     /// Borrower address
     pub borrower: Address,
@@ -144,6 +146,7 @@ pub struct PostLiquidationHealthEvent {
 /// - All arithmetic uses `I256` or `checked_*` / `saturating_*` variants.
 /// - Collateral seizure is capped to the borrower's balance, preventing
 ///   underflow even for deeply insolvent positions.
+#[allow(dead_code)]
 pub fn liquidate_position(
     env: &Env,
     liquidator: Address,

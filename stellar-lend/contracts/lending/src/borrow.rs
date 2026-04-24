@@ -8,7 +8,7 @@
 
 use crate::constants::{
     BPS_SCALE, DEFAULT_CLOSE_FACTOR_BPS, DEFAULT_LIQUIDATION_INCENTIVE_BPS,
-    DEFAULT_LIQUIDATION_THRESHOLD_BPS, MIN_COLLATERAL_RATIO_BPS,
+    DEFAULT_LIQUIDATION_THRESHOLD_BPS,
 };
 use crate::pause::{self, blocks_high_risk_ops, PauseType};
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env, I256};

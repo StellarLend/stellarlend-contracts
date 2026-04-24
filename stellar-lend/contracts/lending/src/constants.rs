@@ -35,6 +35,7 @@ pub const HEALTH_FACTOR_SCALE: i128 = BPS_SCALE;
 pub const MAX_FLASH_LOAN_FEE_BPS: i128 = 1_000;
 
 /// Minimum collateral ratio for single-asset borrows (150 %).
+#[allow(dead_code)]
 pub const MIN_COLLATERAL_RATIO_BPS: i128 = 15_000;
 
 /// Default liquidation threshold (80 %).
