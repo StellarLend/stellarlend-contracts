@@ -115,6 +115,8 @@ mod upgrade_migration_safety_test;
 mod upgrade_test;
 #[cfg(test)]
 mod zero_amount_semantics_test;
+#[cfg(test)]
+mod guardian_scope_test;
 
 #[contract]
 pub struct LendingContract;
