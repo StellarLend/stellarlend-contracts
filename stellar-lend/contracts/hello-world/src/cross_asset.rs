@@ -49,10 +49,10 @@
 //!   repay functions update storage atomically.
 
 #![allow(dead_code)]
+use crate::prelude::*;
 use soroban_sdk::{
     contracterror, contractevent, contracttype, symbol_short, Address, Env, Map, Symbol, Vec,
 };
-use crate::prelude::*;
 
 // ============================================================================
 // Types
@@ -271,8 +271,6 @@ pub struct CrossAssetRepayEvent {
 // Storage Keys
 // ============================================================================
 
-
-
 /// Storage key for the map of asset configurations: `Map<AssetKey, AssetConfig>`.
 const ASSET_CONFIGS: Symbol = symbol_short!("configs");
 
@@ -336,8 +334,7 @@ pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
 /// # Errors
 /// * `NotAuthorized` — No admin set or caller is not admin.
 fn require_admin(env: &Env) -> Result<(), CrossAssetError> {
-    let admin: Address = crate::admin::get_admin(env)
-        .ok_or(CrossAssetError::NotAuthorized)?;
+    let admin: Address = crate::admin::get_admin(env).ok_or(CrossAssetError::NotAuthorized)?;
 
     admin.require_auth();
     Ok(())

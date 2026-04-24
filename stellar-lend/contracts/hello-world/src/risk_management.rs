@@ -22,8 +22,8 @@ use crate::events::{
     emit_admin_action, emit_pause_state_changed, emit_risk_params_updated, AdminActionEvent,
     PauseStateChangedEvent, RiskParamsUpdatedEvent,
 };
-use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 
 /// Errors that can occur during risk management operations
 #[contracterror]
@@ -124,7 +124,6 @@ pub fn initialize_risk_management(env: &Env, admin: Address) -> Result<(), RiskM
 
     // Admin is already set in the centralized admin module during contract initialize
     // We don't set it here anymore to maintain a single source of truth.
-
 
     // Initialize default risk config for pause switches
     let default_config = RiskConfig {

@@ -193,7 +193,7 @@ fn deposit_rejects_callback_reentry_and_releases_lock() {
     });
 }
 
-// --------------------------------------------------------------------------- 
+// ---------------------------------------------------------------------------
 // Extended reentrancy regression tests for repay and withdraw
 // ---------------------------------------------------------------------------
 
@@ -205,7 +205,7 @@ fn repay_reentrancy_with_zero_amount() {
     // Zero amount should fail before reentrancy check
     let result = client.try_repay_debt(&user, &Some(token_id), &0);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -220,7 +220,7 @@ fn repay_reentrancy_with_negative_amount() {
     // Negative amount should fail before reentrancy check
     let result = client.try_repay_debt(&user, &Some(token_id), &-100);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -235,7 +235,7 @@ fn repay_reentrancy_when_no_debt() {
     // Should fail before reentrancy check due to no debt
     let result = client.try_repay_debt(&user, &Some(token_id), &100);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -250,7 +250,7 @@ fn repay_reentrancy_with_max_amount() {
     // Use maximum possible amount
     let result = client.repay_debt(&user, &Some(token_id), &i128::MAX);
     assert!(result.is_ok()); // Should succeed and repay all debt
-    
+
     // Verify lock is released
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -265,7 +265,7 @@ fn withdraw_reentrancy_with_zero_amount() {
     // Zero amount should fail before reentrancy check
     let result = client.try_withdraw_collateral(&user, &Some(token_id), &0);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -280,7 +280,7 @@ fn withdraw_reentrancy_with_negative_amount() {
     // Negative amount should fail before reentrancy check
     let result = client.try_withdraw_collateral(&user, &Some(token_id), &-100);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -295,7 +295,7 @@ fn withdraw_reentrancy_with_insufficient_collateral() {
     // Try to withdraw more than available
     let result = client.try_withdraw_collateral(&user, &Some(token_id), &1_000);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -311,7 +311,7 @@ fn withdraw_reentrancy_with_undercollateralized_position() {
     // Try to withdraw - should fail due to health check before reentrancy
     let result = client.try_withdraw_collateral(&user, &Some(token_id), &100);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -326,7 +326,7 @@ fn withdraw_reentrancy_with_max_amount() {
     // Use maximum possible amount - should fail due to overflow or insufficient balance
     let result = client.try_withdraw_collateral(&user, &Some(token_id), &i128::MAX);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -371,7 +371,7 @@ fn repay_reentrancy_during_token_transfer_callback() {
     // Attempt repay - malicious token callback should be rejected
     let result = client.repay_debt(&user, &Some(malicious_token_id), &500);
     assert!(result.is_ok()); // Original call succeeds
-    
+
     // Verify lock is released after successful operation
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -416,7 +416,7 @@ fn withdraw_reentrancy_during_token_transfer_callback() {
     // Attempt withdraw - malicious token callback should be rejected
     let result = client.withdraw_collateral(&user, &Some(malicious_token_id), &500);
     assert!(result.is_ok()); // Original call succeeds
-    
+
     // Verify lock is released after successful operation
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -440,7 +440,7 @@ fn repay_reentrancy_with_paused_operation() {
     // Should fail before reentrancy check due to pause
     let result = client.try_repay_debt(&user, &Some(token_id), &500);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -464,7 +464,7 @@ fn withdraw_reentrancy_with_paused_operation() {
     // Should fail before reentrancy check due to pause
     let result = client.try_withdraw_collateral(&user, &Some(token_id), &500);
     assert!(result.is_err());
-    
+
     // Verify lock is not set
     env.as_contract(&contract_id, || {
         assert!(!is_locked(&env));
@@ -479,9 +479,10 @@ fn repay_reentrancy_multiple_concurrent_attempts() {
     // Start first repay operation
     env.as_contract(&contract_id, || {
         let _guard = ReentrancyGuard::new(&env).unwrap();
-        
+
         // Attempt second repay operation - should fail
-        let repay_result = crate::repay::repay_debt(&env, user.clone(), Some(token_id.clone()), 100);
+        let repay_result =
+            crate::repay::repay_debt(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(repay_result, Err(RepayError::Reentrancy));
     });
 
@@ -499,9 +500,10 @@ fn withdraw_reentrancy_multiple_concurrent_attempts() {
     // Start first withdraw operation
     env.as_contract(&contract_id, || {
         let _guard = ReentrancyGuard::new(&env).unwrap();
-        
+
         // Attempt second withdraw operation - should fail
-        let withdraw_result = crate::withdraw::withdraw_collateral(&env, user.clone(), Some(token_id.clone()), 100);
+        let withdraw_result =
+            crate::withdraw::withdraw_collateral(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(withdraw_result, Err(WithdrawError::Reentrancy));
     });
 
@@ -519,17 +521,20 @@ fn repay_reentrancy_cross_operation_blocking() {
     // Start repay operation
     env.as_contract(&contract_id, || {
         let _guard = ReentrancyGuard::new(&env).unwrap();
-        
+
         // Attempt withdraw operation - should fail due to reentrancy guard
-        let withdraw_result = crate::withdraw::withdraw_collateral(&env, user.clone(), Some(token_id.clone()), 100);
+        let withdraw_result =
+            crate::withdraw::withdraw_collateral(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(withdraw_result, Err(WithdrawError::Reentrancy));
-        
+
         // Attempt borrow operation - should fail due to reentrancy guard
-        let borrow_result = crate::borrow::borrow_asset(&env, user.clone(), Some(token_id.clone()), 100);
+        let borrow_result =
+            crate::borrow::borrow_asset(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(borrow_result, Err(BorrowError::Reentrancy));
-        
+
         // Attempt deposit operation - should fail due to reentrancy guard
-        let deposit_result = crate::deposit::deposit_collateral(&env, user.clone(), Some(token_id.clone()), 100);
+        let deposit_result =
+            crate::deposit::deposit_collateral(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(deposit_result, Err(DepositError::Reentrancy));
     });
 
@@ -547,17 +552,20 @@ fn withdraw_reentrancy_cross_operation_blocking() {
     // Start withdraw operation
     env.as_contract(&contract_id, || {
         let _guard = ReentrancyGuard::new(&env).unwrap();
-        
+
         // Attempt repay operation - should fail due to reentrancy guard
-        let repay_result = crate::repay::repay_debt(&env, user.clone(), Some(token_id.clone()), 100);
+        let repay_result =
+            crate::repay::repay_debt(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(repay_result, Err(RepayError::Reentrancy));
-        
+
         // Attempt borrow operation - should fail due to reentrancy guard
-        let borrow_result = crate::borrow::borrow_asset(&env, user.clone(), Some(token_id.clone()), 100);
+        let borrow_result =
+            crate::borrow::borrow_asset(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(borrow_result, Err(BorrowError::Reentrancy));
-        
+
         // Attempt deposit operation - should fail due to reentrancy guard
-        let deposit_result = crate::deposit::deposit_collateral(&env, user.clone(), Some(token_id.clone()), 100);
+        let deposit_result =
+            crate::deposit::deposit_collateral(&env, user.clone(), Some(token_id.clone()), 100);
         assert_eq!(deposit_result, Err(DepositError::Reentrancy));
     });
 

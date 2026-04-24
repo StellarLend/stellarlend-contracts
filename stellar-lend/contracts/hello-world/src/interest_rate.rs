@@ -49,8 +49,8 @@
 //! - Checked arithmetic is used throughout — no unchecked ops.
 //! - `SECONDS_PER_YEAR = 365 × 86_400 = 31_536_000` (no leap seconds).
 
-use soroban_sdk::{contracterror, contracttype, Address, Env};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, Address, Env};
 
 use crate::deposit::{DepositDataKey, ProtocolAnalytics};
 

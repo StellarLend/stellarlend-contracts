@@ -22,8 +22,8 @@
 //! | < 1.05        | 5 (Critical) |
 
 #![allow(unused)]
-use soroban_sdk::{contracterror, contracttype, Address, Env, Map, Symbol, Vec};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, Address, Env, Map, Symbol, Vec};
 
 use crate::deposit::{
     DepositDataKey, Position, ProtocolAnalytics as DepositProtocolAnalytics,

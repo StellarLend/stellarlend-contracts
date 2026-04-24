@@ -165,10 +165,11 @@ pub(crate) fn validate_risk_params(config: &RiskParams) -> Result<(), RiskParams
     }
 
     // HARDENED: Enforce minimum safety margin between liquidation threshold and min CR
-    let safety_margin = config.min_collateral_ratio
+    let safety_margin = config
+        .min_collateral_ratio
         .checked_sub(config.liquidation_threshold)
         .ok_or(RiskParamsError::Overflow)?;
-    
+
     if safety_margin < MIN_SAFETY_MARGIN_BPS {
         return Err(RiskParamsError::InsufficientSafetyMargin);
     }
@@ -192,10 +193,11 @@ pub(crate) fn validate_risk_params(config: &RiskParams) -> Result<(), RiskParams
     }
 
     // HARDENED: Ensure close factor + liquidation incentive doesn't create perverse incentives
-    let total_liquidation_benefit = config.close_factor
+    let total_liquidation_benefit = config
+        .close_factor
         .checked_add(config.liquidation_incentive)
         .ok_or(RiskParamsError::Overflow)?;
-    
+
     if total_liquidation_benefit > BASIS_POINTS_SCALE {
         return Err(RiskParamsError::InvalidParameterCombination);
     }
@@ -226,7 +228,7 @@ pub(crate) fn validate_risk_params(config: &RiskParams) -> Result<(), RiskParams
 /// Uses conservative change limits (5% vs previous 10%) and enforces minimum
 /// time between changes to prevent rapid parameter manipulation attacks.
 pub(crate) fn validate_parameter_change(
-    old_value: i128, 
+    old_value: i128,
     new_value: i128,
     last_update: u64,
     current_time: u64,
@@ -237,9 +239,13 @@ pub(crate) fn validate_parameter_change(
     }
 
     let change = if new_value > old_value {
-        new_value.checked_sub(old_value).ok_or(RiskParamsError::Overflow)?
+        new_value
+            .checked_sub(old_value)
+            .ok_or(RiskParamsError::Overflow)?
     } else {
-        old_value.checked_sub(new_value).ok_or(RiskParamsError::Overflow)?
+        old_value
+            .checked_sub(new_value)
+            .ok_or(RiskParamsError::Overflow)?
     };
 
     // HARDENED: Use more conservative change limit (5% vs previous 10%)
@@ -321,12 +327,22 @@ pub fn set_risk_params(
 
     // HARDENED: Validate parameter changes with time restrictions
     if let Some(mcr) = min_collateral_ratio {
-        validate_parameter_change(config.min_collateral_ratio, mcr, config.last_update, current_time)?;
+        validate_parameter_change(
+            config.min_collateral_ratio,
+            mcr,
+            config.last_update,
+            current_time,
+        )?;
         config.min_collateral_ratio = mcr;
     }
 
     if let Some(lt) = liquidation_threshold {
-        validate_parameter_change(config.liquidation_threshold, lt, config.last_update, current_time)?;
+        validate_parameter_change(
+            config.liquidation_threshold,
+            lt,
+            config.last_update,
+            current_time,
+        )?;
         config.liquidation_threshold = lt;
     }
 
@@ -336,7 +352,12 @@ pub fn set_risk_params(
     }
 
     if let Some(li) = liquidation_incentive {
-        validate_parameter_change(config.liquidation_incentive, li, config.last_update, current_time)?;
+        validate_parameter_change(
+            config.liquidation_incentive,
+            li,
+            config.last_update,
+            current_time,
+        )?;
         config.liquidation_incentive = li;
     }
 

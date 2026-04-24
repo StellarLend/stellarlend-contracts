@@ -451,6 +451,8 @@ mod verification_hooks_tests {
         };
 
         assert!(!fv_liquidate_preconditions(0));
-        assert!(!fv_liquidate_postconditions(&snapshot, &position, 1_100, 900));
+        assert!(!fv_liquidate_postconditions(
+            &snapshot, &position, 1_100, 900
+        ));
     }
 }

@@ -16,11 +16,11 @@
 //! - Only the admin or the designated oracle address may submit price updates.
 
 #![allow(unused)]
+use crate::admin::get_admin;
 use crate::deposit::DepositDataKey;
 use crate::events::{emit_price_updated, PriceUpdatedEvent};
-use crate::admin::get_admin;
-use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 
 /// Errors that can occur during oracle operations
 #[contracterror]

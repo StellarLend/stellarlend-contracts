@@ -30,7 +30,8 @@ fn setup(env: &Env) -> (Address, Address) {
             None,
             None,
             None,
-        ).unwrap();
+        )
+        .unwrap();
     });
 
     (contract_id, admin)

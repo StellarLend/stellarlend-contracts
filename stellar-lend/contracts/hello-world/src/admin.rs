@@ -11,8 +11,8 @@
 //!   state management.
 //! - **Event Auditing**: Detailed event emission for all role and admin lifecycle changes.
 
-use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Symbol, Val, Vec};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Symbol, Val, Vec};
 
 /// Errors that can occur during admin operations
 #[contracterror]
@@ -195,7 +195,7 @@ pub fn grant_role(
         .persistent()
         .get(&AdminDataKey::RoleRegistry)
         .unwrap_or_else(|| Vec::new(env));
-    
+
     let mut exists = false;
     for r in registry.iter() {
         if r == role {
@@ -263,7 +263,11 @@ pub fn get_role_registry(env: &Env) -> Vec<Symbol> {
 }
 
 /// Require that the caller is either the super admin or has the required role.
-pub fn require_role_or_admin(env: &Env, caller: Address, required_role: Symbol) -> Result<(), AdminError> {
+pub fn require_role_or_admin(
+    env: &Env,
+    caller: Address,
+    required_role: Symbol,
+) -> Result<(), AdminError> {
     // Check for super admin first
     if let Some(admin) = get_admin(env) {
         if admin == caller {

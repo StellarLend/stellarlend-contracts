@@ -23,8 +23,8 @@ use crate::events::{
     emit_flash_loan_initiated, emit_flash_loan_repaid, FlashLoanInitiatedEvent,
     FlashLoanRepaidEvent,
 };
-use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 
 use crate::deposit::DepositDataKey;
 
@@ -357,7 +357,7 @@ pub fn execute_flash_loan(
 /// - Protects configuration modifications allowing only admin to modify fee basis points.
 pub fn set_flash_loan_fee(env: &Env, caller: Address, fee_bps: i128) -> Result<(), FlashLoanError> {
     // Check authorization
-        crate::admin::require_admin(env, &caller).map_err(|_| FlashLoanError::InvalidCallback)?;
+    crate::admin::require_admin(env, &caller).map_err(|_| FlashLoanError::InvalidCallback)?;
 
     // Validate fee (must be between 0 and 10000 basis points)
     if !(0..=10000).contains(&fee_bps) {

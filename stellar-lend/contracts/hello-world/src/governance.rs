@@ -56,8 +56,8 @@
 
 #![allow(unused_variables)]
 
-use soroban_sdk::{token::TokenClient, Address, Env, String, Symbol, Val, Vec};
 use crate::prelude::*;
+use soroban_sdk::{token::TokenClient, Address, Env, String, Symbol, Val, Vec};
 
 use crate::errors::GovernanceError;
 use crate::storage::{GovernanceDataKey, GuardianConfig};
@@ -1167,7 +1167,11 @@ pub fn remove_guardian(
     }
 
     // Check if recovery is in progress - prevent guardian removal during recovery
-    if env.storage().persistent().has(&GovernanceDataKey::RecoveryRequest) {
+    if env
+        .storage()
+        .persistent()
+        .has(&GovernanceDataKey::RecoveryRequest)
+    {
         return Err(GovernanceError::RecoveryInProgress);
     }
 
@@ -1177,7 +1181,7 @@ pub fn remove_guardian(
         .persistent()
         .get(&GovernanceDataKey::RecoveryApprovals)
         .unwrap_or_else(|| Vec::new(env));
-    
+
     // Count how many current guardians have approved (excluding the one being removed)
     let mut current_guardian_approvals = 0;
     for approval in current_approvals.iter() {
@@ -1185,18 +1189,18 @@ pub fn remove_guardian(
             current_guardian_approvals += 1;
         }
     }
-    
+
     // After removal, we need enough remaining guardians to meet threshold
     let remaining_guardians = guardian_config.guardians.len() - 1;
     let new_threshold = guardian_config.threshold.min(remaining_guardians as u32);
-    
+
     // If we have an active recovery, ensure we can still complete it
     if current_guardian_approvals < new_threshold {
         return Err(GovernanceError::InvalidGuardianConfig);
     }
 
     guardian_config.guardians = new_guardians;
-    
+
     // Auto-adjust threshold downward if needed (after validation)
     if guardian_config.threshold > guardian_config.guardians.len() {
         guardian_config.threshold = guardian_config.guardians.len();
@@ -1250,7 +1254,11 @@ pub fn set_guardian_threshold(
         .ok_or(GovernanceError::GuardianNotFound)?;
 
     // Check if recovery is in progress - prevent threshold changes during recovery
-    if env.storage().persistent().has(&GovernanceDataKey::RecoveryRequest) {
+    if env
+        .storage()
+        .persistent()
+        .has(&GovernanceDataKey::RecoveryRequest)
+    {
         return Err(GovernanceError::RecoveryInProgress);
     }
 
@@ -1638,7 +1646,10 @@ pub fn execute_multisig_proposal(
         return Err(GovernanceError::ProposalAlreadyExecuted);
     }
     match proposal.status {
-        ProposalStatus::Executed | ProposalStatus::Cancelled | ProposalStatus::Defeated | ProposalStatus::Expired => {
+        ProposalStatus::Executed
+        | ProposalStatus::Cancelled
+        | ProposalStatus::Defeated
+        | ProposalStatus::Expired => {
             return Err(GovernanceError::InvalidProposalStatus);
         }
         _ => {}
@@ -1650,7 +1661,8 @@ pub fn execute_multisig_proposal(
         .get(&GovernanceDataKey::Config)
         .ok_or(GovernanceError::NotInitialized)?;
 
-    let execution_time = proposal.start_time
+    let execution_time = proposal
+        .start_time
         .checked_add(config.execution_delay)
         .ok_or(GovernanceError::MathOverflow)?;
 

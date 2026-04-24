@@ -43,9 +43,9 @@
 //! - All state changes emit events for transparency and auditability
 
 #![allow(unused)]
+use crate::prelude::*;
+use crate::prelude::*;
 use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
-use crate::prelude::*;
-use crate::prelude::*;
 
 use crate::deposit::{DepositDataKey, ProtocolAnalytics};
 
@@ -238,9 +238,10 @@ pub fn initialize_reserve_config(
         return Err(ReserveError::InvalidReserveFactor);
     }
 
-    env.storage()
-        .persistent()
-        .set(&ReserveDataKey::ReserveFactor(asset.clone()), &reserve_factor_bps);
+    env.storage().persistent().set(
+        &ReserveDataKey::ReserveFactor(asset.clone()),
+        &reserve_factor_bps,
+    );
 
     env.storage()
         .persistent()
@@ -286,9 +287,10 @@ pub fn set_reserve_factor(
         return Err(ReserveError::InvalidReserveFactor);
     }
 
-    env.storage()
-        .persistent()
-        .set(&ReserveDataKey::ReserveFactor(asset.clone()), &reserve_factor_bps);
+    env.storage().persistent().set(
+        &ReserveDataKey::ReserveFactor(asset.clone()),
+        &reserve_factor_bps,
+    );
 
     let topics = (Symbol::new(env, "reserve_factor_updated"), caller);
     env.events().publish(topics, (asset, reserve_factor_bps));
@@ -538,8 +540,10 @@ pub fn withdraw_reserve_funds(
 
     // ── INTERACTIONS ──────────────────────────────────────────────────────────
     let topics = (Symbol::new(env, "reserve_withdrawn"), caller);
-    env.events()
-        .publish(topics, (asset.clone(), treasury.clone(), amount, new_balance));
+    env.events().publish(
+        topics,
+        (asset.clone(), treasury.clone(), amount, new_balance),
+    );
 
     // Resolve the effective token contract address: use the supplied address for
     // SRC-20 tokens, or fall back to the stored native-asset address for XLM.

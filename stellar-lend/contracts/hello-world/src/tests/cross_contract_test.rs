@@ -96,7 +96,12 @@ impl MockFlashLoanReceiver {
             // No, `repay_flash_loan` usually transfers FROM the user TO the contract.
 
             // Let's assume we need to call repay_flash_loan
-            token_client.approve(&env.current_contract_address(), &provider, &total_debt, &200);
+            token_client.approve(
+                &env.current_contract_address(),
+                &provider,
+                &total_debt,
+                &200,
+            );
             client.repay_flash_loan(&env.current_contract_address(), &asset, &total_debt);
         }
 
@@ -167,10 +172,16 @@ fn setup_protocol<'a>(
     (client, protocol_id, admin, user, token_client)
 }
 
-fn get_user_position(env: &Env, contract_id: &Address, user: &Address) -> Option<crate::deposit::Position> {
+fn get_user_position(
+    env: &Env,
+    contract_id: &Address,
+    user: &Address,
+) -> Option<crate::deposit::Position> {
     env.as_contract(contract_id, || {
         let key = crate::deposit::DepositDataKey::Position(user.clone());
-        env.storage().persistent().get::<_, crate::deposit::Position>(&key)
+        env.storage()
+            .persistent()
+            .get::<_, crate::deposit::Position>(&key)
     })
 }
 

@@ -21,8 +21,8 @@
 //! - Events reflect actual processed amounts, ensuring alignment with final state.
 
 #![allow(unused)]
-use soroban_sdk::{contracterror, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, Address, Env, IntoVal, Map, Symbol, Val, Vec};
 
 use crate::deposit::{
     add_activity_log, emit_analytics_updated_event, emit_position_updated_event,
@@ -236,7 +236,6 @@ pub fn repay_debt(
         }
         None => get_native_asset_address(env)?,
     };
-
 
     // Get user position
     let position_key = DepositDataKey::Position(user.clone());
@@ -488,7 +487,9 @@ mod verification_hooks_tests {
         };
 
         assert!(fv_repay_preconditions(30, &position));
-        assert!(fv_repay_postconditions(&snapshot, &position, 30, 10, 20, 190));
+        assert!(fv_repay_postconditions(
+            &snapshot, &position, 30, 10, 20, 190
+        ));
     }
 
     #[test]
@@ -505,6 +506,8 @@ mod verification_hooks_tests {
         };
 
         assert!(!fv_repay_preconditions(0, &position));
-        assert!(!fv_repay_postconditions(&snapshot, &position, 30, 10, 20, 240));
+        assert!(!fv_repay_postconditions(
+            &snapshot, &position, 30, 10, 20, 240
+        ));
     }
 }

@@ -273,7 +273,10 @@ fn spec_cross_asset_collateral_usd_doubles_when_oracle_price_doubles() {
 
     // At 2× price, weighted collateral is 2×; borrow up to prior max debt USD (now 2× in notional capacity).
     client.cross_asset_borrow(&user, &None, &8000_0000000);
-    assert_eq!(client.get_user_position_summary(&user).health_factor, 10_000);
+    assert_eq!(
+        client.get_user_position_summary(&user).health_factor,
+        10_000
+    );
 }
 
 #[test]

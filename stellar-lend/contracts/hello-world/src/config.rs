@@ -8,9 +8,9 @@
 //! - Backup and restore functions have bounded limits to prevent out-of-gas (OOG) vulnerabilities.
 //! - Emits events for traceability and tamper detection.
 
+use crate::prelude::*;
 use crate::risk_management::require_admin;
 use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol, Val, Vec};
-use crate::prelude::*;
 
 const MAX_BATCH_SIZE: u32 = 50;
 
@@ -150,12 +150,12 @@ mod config_test {
     fn test_batch_size_exceeded() {
         let env = Env::default();
         let caller = Address::generate(&env);
-        
+
         let mut keys = Vec::new(&env);
         for _ in 0..51 {
             keys.push_back(Symbol::new(&env, "key"));
         }
-        
+
         let res = config_backup(&env, caller, keys);
         assert!(res.is_err());
     }

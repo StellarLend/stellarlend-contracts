@@ -36,8 +36,8 @@
 //! - `UserAnalytics(user)` / `ProtocolAnalytics` — updated after transfer.
 //! - `ActivityLog` — bounded append (max 1000 entries, FIFO eviction).
 
-use soroban_sdk::{contracterror, Address, Env, Map, Symbol};
 use crate::prelude::*;
+use soroban_sdk::{contracterror, Address, Env, Map, Symbol};
 
 use crate::deposit::{
     add_activity_log, emit_analytics_updated_event, emit_position_updated_event,
@@ -395,7 +395,13 @@ pub fn withdraw_collateral(
             timestamp,
         },
     );
-    emit_position_updated_event(env, &user, &position, soroban_sdk::Symbol::new(env, "withdraw"), env.ledger().timestamp());
+    emit_position_updated_event(
+        env,
+        &user,
+        &position,
+        soroban_sdk::Symbol::new(env, "withdraw"),
+        env.ledger().timestamp(),
+    );
     emit_analytics_updated_event(env, &user, "withdraw", amount, timestamp);
     emit_user_activity_tracked_event(env, &user, Symbol::new(env, "withdraw"), amount, timestamp);
 
@@ -485,26 +491,27 @@ fn update_protocol_analytics_withdraw(env: &Env, amount: i128) -> Result<(), Wit
     Ok(())
 }
 
-
 // #470 Analytics and Events Update Consistency
 pub fn update_withdraw_analytics(env: &Env, user: &Address, amount: i128) {
     emit_analytics_updated_event(env, user, "withdraw", amount, env.ledger().timestamp());
 }
 
-
 #[cfg(test)]
 mod test_analytics {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Events}, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Events},
+        Env,
+    };
 
     #[test]
     fn test_withdraw_collateral_analytics_updated() {
         let env = Env::default();
         let user = Address::generate(&env);
         let amount: i128 = 500;
-        
+
         update_withdraw_analytics(&env, &user, amount);
-        
+
         // Basic check to ensure an event was pushed to the environment
         assert!(env.events().all().len() > 0, "Analytics event not emitted!");
     }

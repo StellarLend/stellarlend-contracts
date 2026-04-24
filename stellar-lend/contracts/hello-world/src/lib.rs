@@ -612,10 +612,7 @@ impl HelloContract {
     ///
     /// # Returns
     /// `(reserve_balance, reserve_factor_bps, treasury_address)`
-    pub fn get_reserve_stats(
-        env: Env,
-        asset: Option<Address>,
-    ) -> (i128, i128, Option<Address>) {
+    pub fn get_reserve_stats(env: Env, asset: Option<Address>) -> (i128, i128, Option<Address>) {
         crate::reserve::get_reserve_stats(&env, asset)
     }
 
@@ -657,9 +654,7 @@ impl HelloContract {
         }
 
         reserve_balance -= amount;
-        env.storage()
-            .persistent()
-            .set(&balance_key, &new_balance);
+        env.storage().persistent().set(&balance_key, &new_balance);
 
         // INTERACTIONS: transfer tokens to the requested destination
         // In test builds `to` is only referenced inside this cfg block; the
