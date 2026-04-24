@@ -10,8 +10,9 @@
 //! - Edge cases (zero amounts, overflow, re-initialization)
 //! - Read-only queries
 
-use crate::cross_asset::{AssetConfig, CrossAssetError};
-use crate::{HelloContract, HelloContractClient};
+use crate::AssetParams;
+use crate::cross_asset::{CrossAssetError};
+use crate::{LendingContract, LendingContractClient};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env};
 
 // ============================================================================
@@ -19,46 +20,33 @@ use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env}
 // ============================================================================
 
 /// Create a default valid asset config for testing.
-fn default_config(env: &Env) -> AssetConfig {
-    AssetConfig {
-        asset: None,
-        collateral_factor: 7500,       // 75% LTV
-        liquidation_threshold: 8000,   // 80%
-        reserve_factor: 1000,          // 10%
-        max_supply: 1_000_000_0000000, // 1M (7 decimals)
-        max_borrow: 500_000_0000000,   // 500K
-        can_collateralize: true,
-        can_borrow: true,
-        borrow_factor: 10000,
-        price: 10_000_000, // $1.00 (7 decimals)
-        price_updated_at: env.ledger().timestamp(),
+fn default_config(env: &Env) -> AssetParams {
+    AssetParams {
+        ltv: 7500,
+        liquidation_threshold: 8000,
+        price_feed: soroban_sdk::Address::generate(env),
+        debt_ceiling: 1_000_000_0000000,
+        is_active: true,
     }
 }
 
 /// Create a token-backed asset config for testing.
-fn token_config(env: &Env, addr: &Address) -> AssetConfig {
-    let price = 20_000_000;
-    AssetConfig {
-        asset: Some(addr.clone()),
-        collateral_factor: 6000,     // 60% LTV
-        liquidation_threshold: 7000, // 70%
-        reserve_factor: 2000,        // 20%
-        max_supply: 500_000_0000000,
-        max_borrow: 250_000_0000000,
-        can_collateralize: true,
-        can_borrow: true,
-        borrow_factor: 10000,
-        price,
-        price_updated_at: env.ledger().timestamp(),
+fn token_config(env: &Env, addr: &Address) -> AssetParams {
+    AssetParams {
+        ltv: 6000,
+        liquidation_threshold: 7000,
+        price_feed: addr.clone(),
+        debt_ceiling: 500_000_0000000,
+        is_active: true,
     }
 }
 
 /// Set up env + contract + admin, initialize both modules.
-fn setup() -> (Env, HelloContractClient<'static>, Address) {
+fn setup() -> (Env, LendingContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin);
     client.initialize_ca(&admin);
@@ -73,8 +61,8 @@ fn setup() -> (Env, HelloContractClient<'static>, Address) {
 fn test_initialize_ca_success() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(HelloContract, ());
-    let client = HelloContractClient::new(&env, &contract_id);
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin);
     // Should succeed first time
