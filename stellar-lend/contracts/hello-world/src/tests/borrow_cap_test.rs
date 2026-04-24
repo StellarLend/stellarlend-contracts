@@ -410,3 +410,4 @@ fn test_borrow_cap_lowered_below_current_debt_blocks_new_borrows() {
         "borrow should succeed after repayment brings total under new cap"
     );
 }
+}
