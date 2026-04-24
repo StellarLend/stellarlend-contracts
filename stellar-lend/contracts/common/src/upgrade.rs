@@ -742,7 +742,7 @@ mod tests {
                 UpgradeManager::init(env.clone(), admin.clone(), wasm_hash.clone(), 1);
                 env.storage()
                     .persistent()
-                    .set(&UpgradeKey::NextProposalId, &u64::MAX);
+                    .set(&UpgradeKey::UpNextPropId, &u64::MAX);
                 UpgradeManager::upgrade_propose(env.clone(), admin.clone(), wasm_hash.clone(), 1);
             });
         }));
