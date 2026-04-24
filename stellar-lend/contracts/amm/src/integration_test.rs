@@ -103,7 +103,12 @@ fn test_e2e_complete_swap_flow() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "MainAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_out = protocol_config.supported_pairs.get(0).unwrap().token_b.unwrap();
+    let token_out = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .unwrap();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -136,7 +141,12 @@ fn test_e2e_complete_liquidity_flow() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "LiquidityAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -156,7 +166,9 @@ fn test_e2e_complete_liquidity_flow() {
     assert_eq!(lp_tokens, 100_000); // sqrt(100000 * 100000) = 100000
 
     // Verify liquidity history
-    let liq_history = contract.get_liquidity_history(&Some(user.clone()), &10).unwrap();
+    let liq_history = contract
+        .get_liquidity_history(&Some(user.clone()), &10)
+        .unwrap();
     assert_eq!(liq_history.len(), 1);
     assert_eq!(liq_history.get(0).unwrap().lp_tokens, 100_000);
 
@@ -226,7 +238,12 @@ fn test_e2e_callback_replay_protection() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "SecureAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_out = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_out = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -266,7 +283,12 @@ fn test_e2e_proportional_liquidity_shares() {
     let user2 = Address::generate(&env);
     let protocol_config = create_protocol_config(&env, "ProportionalAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -326,7 +348,12 @@ fn test_e2e_swap_then_liquidity_sequence() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "HybridAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -397,7 +424,12 @@ fn test_e2e_multi_user_interactions() {
 
     let protocol_config = create_protocol_config(&env, "MultiUserAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -465,14 +497,14 @@ fn test_e2e_protocol_enable_disable() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_addr = env.register(MockAmm, ());
     let token_b = Address::generate(&env);
-    
+
     let mut supported_pairs = Vec::new(&env);
     supported_pairs.push_back(TokenPair {
         token_a: None,
         token_b: Some(token_b.clone()),
         pool_address: Address::generate(&env),
     });
-    
+
     let mut protocol_config = AmmProtocolConfig {
         protocol_address: protocol_addr.clone(),
         protocol_name: Symbol::new(&env, "ToggleAMM"),
@@ -525,7 +557,12 @@ fn test_e2e_deadline_enforcement() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "DeadlineAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -582,7 +619,12 @@ fn test_e2e_slippage_protection() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "SlippageAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -635,7 +677,12 @@ fn test_e2e_pause_unpause_flow() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "PauseAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -722,13 +769,15 @@ fn test_e2e_authorization_boundaries() {
 
     // Admin can update settings
     contract.update_amm_settings(&admin, &new_settings);
-    assert_eq!(
-        contract.get_amm_settings().unwrap().default_slippage,
-        200
-    );
+    assert_eq!(contract.get_amm_settings().unwrap().default_slippage, 200);
 
     // Users can execute swaps (not admin-only)
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
     let swap_params = SwapParams {
         protocol: protocol_config.protocol_address.clone(),
         token_in: None,
@@ -750,7 +799,12 @@ fn test_e2e_amount_validation() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "BoundsAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -815,7 +869,12 @@ fn test_e2e_token_pair_validation() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "PairAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let supported_token = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let supported_token = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
     let unsupported_token = Some(Address::generate(&env));
 
     contract.add_amm_protocol(&admin, &protocol_config);
@@ -874,7 +933,12 @@ fn test_e2e_callback_nonce_isolation() {
 
     let protocol_config = create_protocol_config(&env, "NonceAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -923,7 +987,12 @@ fn test_e2e_insufficient_liquidity_removal() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "InsufficientAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -976,7 +1045,12 @@ fn test_e2e_auto_swap_threshold() {
 
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "ThresholdAMM", 30);
-    let token_out = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_out = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1002,7 +1076,12 @@ fn test_e2e_history_pagination() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "HistoryAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1041,7 +1120,7 @@ fn test_e2e_concurrent_multi_user_operations() {
 
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
-    
+
     let user0 = Address::generate(&env);
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
@@ -1052,7 +1131,12 @@ fn test_e2e_concurrent_multi_user_operations() {
 
     let protocol_config = create_protocol_config(&env, "ConcurrentAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1188,7 +1272,12 @@ fn test_e2e_protocol_config_updates() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let mut protocol_config = create_protocol_config(&env, "UpdateAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1225,7 +1314,12 @@ fn test_e2e_lp_token_rounding() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "RoundingAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1281,7 +1375,12 @@ fn test_e2e_overflow_protection() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "OverflowAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1314,7 +1413,12 @@ fn test_e2e_settings_validation() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "SettingsAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1405,7 +1509,12 @@ fn test_e2e_callback_deadline_validation() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "DeadlineCallbackAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1447,7 +1556,12 @@ fn test_e2e_liquidity_min_output_constraints() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "MinOutputAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1555,7 +1669,12 @@ fn test_e2e_bootstrap_liquidity() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "BootstrapAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1591,7 +1710,12 @@ fn test_e2e_complete_lifecycle() {
     // Step 2: Add protocol
     let protocol_config = create_protocol_config(&env, "LifecycleAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     let protocols = contract.get_amm_protocols().unwrap();
@@ -1655,7 +1779,12 @@ fn test_e2e_small_liquidity_amounts() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "SmallAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1697,7 +1826,12 @@ fn test_e2e_large_liquidity_amounts() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "LargeAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1739,7 +1873,12 @@ fn test_e2e_history_ordering() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "OrderAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1810,7 +1949,12 @@ fn test_e2e_liquidity_removal_min_not_met() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "MinNotMetAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1850,7 +1994,12 @@ fn test_e2e_negative_amounts() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "NegativeAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -1944,7 +2093,12 @@ fn test_e2e_callback_requires_protocol_auth() {
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
     let protocol_config = create_protocol_config(&env, "AuthCallbackAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
     contract.add_amm_protocol(&admin, &protocol_config);
 
     // Execute a swap which internally validates the callback
@@ -1957,7 +2111,7 @@ fn test_e2e_callback_requires_protocol_auth() {
         slippage_tolerance: 100,
         deadline: env.ledger().timestamp() + 3600,
     };
-    
+
     // This should succeed, demonstrating callback validation works
     contract.execute_swap(&user, &params);
 }
@@ -1970,7 +2124,12 @@ fn test_e2e_settings_affect_operations() {
 
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "SettingsEffectAMM", 30);
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -2077,7 +2236,12 @@ fn test_e2e_pool_state_consistency() {
     let user2 = Address::generate(&env);
     let protocol_config = create_protocol_config(&env, "ConsistencyAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -2152,7 +2316,12 @@ fn test_e2e_event_emission() {
     let user = Address::generate(&env);
     let protocol_config = create_protocol_config(&env, "EventAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -2204,7 +2373,12 @@ fn test_e2e_comprehensive_error_scenarios() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "ErrorAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -2243,7 +2417,9 @@ fn test_e2e_comprehensive_error_scenarios() {
         slippage_tolerance: 5000, // Exceeds max
         deadline: env.ledger().timestamp() + 3600,
     };
-    assert!(contract.try_execute_swap(&user, &excessive_slippage).is_err());
+    assert!(contract
+        .try_execute_swap(&user, &excessive_slippage)
+        .is_err());
 
     // Error 4: Same token in and out
     let same_token = SwapParams {
@@ -2279,7 +2455,12 @@ fn test_e2e_lp_share_accounting() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "AccountingAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -2358,7 +2539,12 @@ fn test_e2e_stress_many_operations() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "StressAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 
@@ -2392,7 +2578,9 @@ fn test_e2e_stress_many_operations() {
     }
 
     // Verify history is capped and ordered
-    let swap_history = contract.get_swap_history(&Some(user.clone()), &100).unwrap();
+    let swap_history = contract
+        .get_swap_history(&Some(user.clone()), &100)
+        .unwrap();
     assert_eq!(swap_history.len(), 20);
 
     let liq_history = contract.get_liquidity_history(&Some(user), &100).unwrap();
@@ -2408,7 +2596,12 @@ fn test_e2e_protocol_update_isolation() {
     let (contract, admin, user) = setup_initialized_contract(&env);
     let protocol_config = create_protocol_config(&env, "IsolationAMM", 30);
     let protocol_addr = protocol_config.protocol_address.clone();
-    let token_b = protocol_config.supported_pairs.get(0).unwrap().token_b.clone();
+    let token_b = protocol_config
+        .supported_pairs
+        .get(0)
+        .unwrap()
+        .token_b
+        .clone();
 
     contract.add_amm_protocol(&admin, &protocol_config);
 

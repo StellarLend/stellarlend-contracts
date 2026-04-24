@@ -161,9 +161,9 @@ fn test_successful_swap() {
     let contract = create_amm_contract(&env);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    
+
     contract.initialize_amm_settings(&admin, &100, &1000, &10000);
-    
+
     let protocol_addr = env.register(MockAmm, ());
     let token_b = Address::generate(&env);
     let mut supported_pairs = Vec::new(&env);
@@ -172,7 +172,7 @@ fn test_successful_swap() {
         token_b: Some(token_b.clone()),
         pool_address: Address::generate(&env),
     });
-    
+
     let protocol_config = AmmProtocolConfig {
         protocol_address: protocol_addr.clone(),
         protocol_name: Symbol::new(&env, "TestAMM"),

@@ -58,18 +58,6 @@ pub fn get_admin(env: &Env) -> Option<Address> {
     env.storage().persistent().get(&AdminDataKey::Admin)
 }
 
-<<<<<<< feature/hello-world-admin-roles
-/// Get the current pending admin address awaiting acceptance
-pub fn get_pending_admin(env: &Env) -> Option<Address> {
-    env.storage().persistent().get(&AdminDataKey::PendingAdmin)
-}
-
-/// Initialize the super admin. Can only be called once when no admin exists.
-/// Used during contract bootstrap.
-pub fn set_admin(env: &Env, new_admin: Address) -> Result<(), AdminError> {
-    if has_admin(env) {
-        return Err(AdminError::AdminAlreadySet);
-=======
 /// Initialize super admin. Can only be called once or by existing admin.
 ///
 /// # Authorization
@@ -91,7 +79,6 @@ pub fn set_admin(env: &Env, new_admin: Address, caller: Option<Address>) -> Resu
         } else {
             return Err(AdminError::Unauthorized);
         }
->>>>>>> main
     }
 
     env.storage()
@@ -157,13 +144,6 @@ pub fn accept_admin(env: &Env, claimant: &Address) -> Result<(), AdminError> {
     Ok(())
 }
 
-<<<<<<< feature/hello-world-admin-roles
-/// Require that the claimant is the current super admin.
-///
-/// Uses both explicit address check and Soroban `require_auth()`.
-/// This ensures security in production and correctness in mock tests.
-pub fn require_admin(env: &Env, claimant: &Address) -> Result<(), AdminError> {
-=======
 /// Require that caller is super admin
 ///
 /// # Authorization
@@ -177,7 +157,6 @@ pub fn require_admin(env: &Env, claimant: &Address) -> Result<(), AdminError> {
 /// This function should be called after the caller has been authenticated
 /// via require_auth() or in contexts where authentication is already verified.
 pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
->>>>>>> main
     let admin = get_admin(env).ok_or(AdminError::Unauthorized)?;
     if admin != *claimant {
         return Err(AdminError::Unauthorized);
@@ -186,17 +165,6 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
     Ok(())
 }
 
-<<<<<<< feature/hello-world-admin-roles
-// ============================================================================
-// Role Registry & Management
-// ============================================================================
-
-/// Grant a specific role to an address.
-///
-/// Only the super admin is authorized to manage roles.
-pub fn grant_role(env: &Env, claimant: &Address, role: Symbol, account: Address) -> Result<(), AdminError> {
-    require_admin(env, claimant)?;
-=======
 /// Grant a specific role to an address (admin only)
 ///
 /// # Authorization
@@ -217,7 +185,6 @@ pub fn grant_role(
     account: Address,
 ) -> Result<(), AdminError> {
     require_admin(env, &caller)?;
->>>>>>> main
 
     let key = AdminDataKey::Role(role.clone(), account.clone());
     env.storage().persistent().set(&key, &true);
@@ -250,13 +217,6 @@ pub fn grant_role(
     Ok(())
 }
 
-<<<<<<< feature/hello-world-admin-roles
-/// Revoke a specific role from an address.
-///
-/// Only the super admin is authorized to manage roles.
-pub fn revoke_role(env: &Env, claimant: &Address, role: Symbol, account: Address) -> Result<(), AdminError> {
-    require_admin(env, claimant)?;
-=======
 /// Revoke a specific role from an address (admin only)
 ///
 /// # Authorization
@@ -277,7 +237,6 @@ pub fn revoke_role(
     account: Address,
 ) -> Result<(), AdminError> {
     require_admin(env, &caller)?;
->>>>>>> main
 
     let key = AdminDataKey::Role(role.clone(), account.clone());
     env.storage().persistent().remove(&key);

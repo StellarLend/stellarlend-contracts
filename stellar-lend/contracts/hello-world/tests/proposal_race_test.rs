@@ -1,7 +1,7 @@
 use hello_world::HelloContractClient;
-use soroban_sdk::{Env, Address};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
+use soroban_sdk::{Address, Env};
 
 mod helpers;
 use helpers::{create_test_token, mint_tokens, setup_governance, submit_emergency_pause_proposal};
@@ -35,10 +35,16 @@ fn test_cancel_then_execute_fails() {
 
     // Execute should fail deterministically (revert/Err)
     let exec_res = client.try_gov_execute_proposal(&admin, &id);
-    assert!(exec_res.is_err(), "execute succeeded after cancel - expected failure");
+    assert!(
+        exec_res.is_err(),
+        "execute succeeded after cancel - expected failure"
+    );
 
     let p = client.gov_get_proposal(&id).unwrap();
-    assert!(matches!(p.status, hello_world::types::ProposalStatus::Cancelled));
+    assert!(matches!(
+        p.status,
+        hello_world::types::ProposalStatus::Cancelled
+    ));
 }
 
 #[test]
@@ -69,10 +75,16 @@ fn test_execute_then_cancel_fails() {
 
     // Now cancel should fail (cannot cancel executed)
     let cancel_res = client.try_gov_cancel_proposal(&admin, &id);
-    assert!(cancel_res.is_err(), "cancel succeeded after execute - expected failure");
+    assert!(
+        cancel_res.is_err(),
+        "cancel succeeded after execute - expected failure"
+    );
 
     let p = client.gov_get_proposal(&id).unwrap();
-    assert!(matches!(p.status, hello_world::types::ProposalStatus::Executed));
+    assert!(matches!(
+        p.status,
+        hello_world::types::ProposalStatus::Executed
+    ));
 }
 
 #[test]
@@ -101,10 +113,16 @@ fn test_approval_does_not_override_cancel() {
     let approve_res = client.try_gov_approve_proposal(&admin, &id);
     // approval may be no-op or error; we assert execute still fails
     let exec_res = client.try_gov_execute_proposal(&admin, &id);
-    assert!(exec_res.is_err(), "execute succeeded after cancel+approve - expected failure");
+    assert!(
+        exec_res.is_err(),
+        "execute succeeded after cancel+approve - expected failure"
+    );
 
     let p = client.gov_get_proposal(&id).unwrap();
-    assert!(matches!(p.status, hello_world::types::ProposalStatus::Cancelled));
+    assert!(matches!(
+        p.status,
+        hello_world::types::ProposalStatus::Cancelled
+    ));
 }
 
 #[test]
@@ -129,7 +147,10 @@ fn test_ordering_stress_small_sequences() {
     let exec_res = client.try_gov_execute_proposal(&admin, &id);
     assert!(exec_res.is_err());
     let p = client.gov_get_proposal(&id).unwrap();
-    assert!(matches!(p.status, hello_world::types::ProposalStatus::Cancelled));
+    assert!(matches!(
+        p.status,
+        hello_world::types::ProposalStatus::Cancelled
+    ));
 
     // Sequence B: approve -> execute -> cancel
     let env2 = Env::default();
@@ -152,5 +173,8 @@ fn test_ordering_stress_small_sequences() {
     let cancel_res = client2.try_gov_cancel_proposal(&proposer2, &id2);
     assert!(cancel_res.is_err());
     let p2 = client2.gov_get_proposal(&id2).unwrap();
-    assert!(matches!(p2.status, hello_world::types::ProposalStatus::Executed));
+    assert!(matches!(
+        p2.status,
+        hello_world::types::ProposalStatus::Executed
+    ));
 }

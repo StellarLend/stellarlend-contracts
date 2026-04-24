@@ -1,5 +1,5 @@
-use hello_world::HelloContractClient;
 use hello_world::test_noop_contract::NoopContract;
+use hello_world::HelloContractClient;
 use soroban_sdk::{Address, Env, String, Symbol, Val, Vec};
 // testutils traits are imported where needed in tests
 use soroban_sdk::token::StellarAssetClient;
@@ -25,7 +25,11 @@ pub fn mint_tokens(env: &Env, token: &Address, to: &Address, amount: i128) {
     sac.mint(to, &amount);
 }
 
-pub fn setup_governance(env: &Env, admin: &Address, vote_token: &Address) -> HelloContractClient<'static> {
+pub fn setup_governance(
+    env: &Env,
+    admin: &Address,
+    vote_token: &Address,
+) -> HelloContractClient<'static> {
     let contract_id = env.register(hello_world::HelloContract, ());
     let client = HelloContractClient::new(env, &contract_id);
     env.mock_all_auths();
@@ -51,7 +55,11 @@ pub fn setup_governance(env: &Env, admin: &Address, vote_token: &Address) -> Hel
     client
 }
 
-pub fn submit_emergency_pause_proposal(env: &Env, client: &HelloContractClient, proposer: &Address) -> u64 {
+pub fn submit_emergency_pause_proposal(
+    env: &Env,
+    client: &HelloContractClient,
+    proposer: &Address,
+) -> u64 {
     // Create a GenericAction that calls a local no-op contract to ensure execution succeeds
     let noop_id = env.register(NoopContract, ());
     let args: Vec<Val> = Vec::new(env);

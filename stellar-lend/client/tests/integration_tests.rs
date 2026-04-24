@@ -1,4 +1,3 @@
-
 //! Integration tests for the blockchain integration layer
 //!
 //! These tests use mock servers to simulate Horizon and Soroban RPC responses.

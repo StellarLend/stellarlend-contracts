@@ -23,7 +23,9 @@ pub use crate::amm::{
 };
 
 use stellarlend_common::upgrade;
-pub struct DebugConfig { pub x: i128 }
+pub struct DebugConfig {
+    pub x: i128,
+}
 
 #[contract]
 pub struct AmmContract;
@@ -402,10 +404,10 @@ impl AmmContract {
 // when lending is available as a dependency.
 #[cfg(test)]
 mod amm_coverage_booster;
-#[cfg(all(test, feature = "liquidate_integration"))]
-mod liquidate_test;
 #[cfg(test)]
 mod integration_test;
+#[cfg(all(test, feature = "liquidate_integration"))]
+mod liquidate_test;
 #[cfg(test)]
 mod math_safety_test;
 #[cfg(test)]
