@@ -92,28 +92,27 @@ mod token_receiver_test;
 mod views_test;
 
 #[cfg(test)]
+// mod withdraw_test; // temporarily disabled - pre-existing ContractEvents API mismatch
+#[cfg(test)]
+mod bad_debt_test;
+#[cfg(test)]
 mod constants_test;
 #[cfg(test)]
 mod data_store_test;
 #[cfg(test)]
+mod liquidation_boundary_test;
+#[cfg(test)]
 mod math_safety_test;
 #[cfg(test)]
+mod multi_user_contention_test;
+#[cfg(test)]
 mod race_tests;
+#[cfg(test)]
+mod stress_test;
 #[cfg(test)]
 mod upgrade_migration_safety_test;
 #[cfg(test)]
 mod upgrade_test;
-#[cfg(test)]
-// mod withdraw_test; // temporarily disabled - pre-existing ContractEvents API mismatch
-
-#[cfg(test)]
-mod bad_debt_test;
-#[cfg(test)]
-mod liquidation_boundary_test;
-#[cfg(test)]
-mod multi_user_contention_test;
-#[cfg(test)]
-mod stress_test;
 #[cfg(test)]
 mod zero_amount_semantics_test;
 

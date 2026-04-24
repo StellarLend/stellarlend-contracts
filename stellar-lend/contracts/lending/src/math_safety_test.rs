@@ -157,12 +157,26 @@ fn test_borrow_amount_zero_fails() {
     let coll_asset = Address::generate(&env);
 
     let res = env.as_contract(&contract_id, || {
-        crate::borrow::borrow(&env, user.clone(), asset.clone(), 0, coll_asset.clone(), 100)
+        crate::borrow::borrow(
+            &env,
+            user.clone(),
+            asset.clone(),
+            0,
+            coll_asset.clone(),
+            100,
+        )
     });
     assert_eq!(res, Err(crate::borrow::BorrowError::InvalidAmount));
-    
+
     let res2 = env.as_contract(&contract_id, || {
-        crate::borrow::borrow(&env, user.clone(), asset.clone(), 1000, coll_asset.clone(), 0)
+        crate::borrow::borrow(
+            &env,
+            user.clone(),
+            asset.clone(),
+            1000,
+            coll_asset.clone(),
+            0,
+        )
     });
     assert_eq!(res2, Err(crate::borrow::BorrowError::InvalidAmount));
 }
@@ -183,7 +197,14 @@ fn test_borrow_math_exhaustion() {
 
     // Overflow check on collateral ratio (borrow amount too large)
     let res = env.as_contract(&contract_id, || {
-        crate::borrow::borrow(&env, user.clone(), asset.clone(), i128::MAX, coll_asset.clone(), 100)
+        crate::borrow::borrow(
+            &env,
+            user.clone(),
+            asset.clone(),
+            i128::MAX,
+            coll_asset.clone(),
+            100,
+        )
     });
     // With i128::MAX borrow, collateral ratio check will overflow and fail early
     assert_eq!(res, Err(crate::borrow::BorrowError::Overflow));
@@ -197,9 +218,17 @@ fn test_borrow_unauthorized_fails() {
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
     let coll_asset = Address::generate(&env);
-    
+
     // Attempting borrow without mocking auth should fail
     env.as_contract(&contract_id, || {
-        crate::borrow::borrow(&env, user.clone(), asset.clone(), 1000, coll_asset.clone(), 2000).unwrap();
+        crate::borrow::borrow(
+            &env,
+            user.clone(),
+            asset.clone(),
+            1000,
+            coll_asset.clone(),
+            2000,
+        )
+        .unwrap();
     });
 }

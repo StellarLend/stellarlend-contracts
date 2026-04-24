@@ -185,7 +185,8 @@ fn validate_collateral_ratio_after_withdraw(
             .ok_or(WithdrawError::Overflow)?;
 
         if total_debt > 0 {
-            validate_collateral_ratio(remaining_collateral, total_debt).map_err(map_borrow_to_withdraw)?;
+            validate_collateral_ratio(remaining_collateral, total_debt)
+                .map_err(map_borrow_to_withdraw)?;
         }
     }
 

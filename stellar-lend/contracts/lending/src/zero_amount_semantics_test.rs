@@ -11,16 +11,21 @@
 //! Reference: docs/ZERO_AMOUNT_SEMANTICS.md
 
 use super::*;
-use soroban_sdk::{
-    testutils::{Address as _},
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared setup helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn setup(env: &Env) -> (LendingContractClient<'_>, Address, Address, Address, Address) {
+fn setup(
+    env: &Env,
+) -> (
+    LendingContractClient<'_>,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);
 
@@ -36,9 +41,7 @@ fn setup(env: &Env) -> (LendingContractClient<'_>, Address, Address, Address, Ad
     (client, admin, user, asset, collateral_asset)
 }
 
-fn setup_cross(
-    env: &Env,
-) -> (LendingContractClient<'_>, Address, Address, Address) {
+fn setup_cross(env: &Env) -> (LendingContractClient<'_>, Address, Address, Address) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);
 
@@ -97,7 +100,10 @@ fn test_deposit_zero_does_not_mutate_state() {
     let _ = client.try_deposit(&user, &asset, &0);
 
     let after = client.get_user_collateral_deposit(&user, &asset);
-    assert_eq!(before.amount, after.amount, "state must not change on zero deposit");
+    assert_eq!(
+        before.amount, after.amount,
+        "state must not change on zero deposit"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -136,7 +142,10 @@ fn test_deposit_collateral_zero_does_not_mutate_state() {
     let _ = client.try_deposit_collateral(&user, &collateral_asset, &0);
 
     let after = client.get_user_collateral(&user);
-    assert_eq!(before.amount, after.amount, "state must not change on zero deposit_collateral");
+    assert_eq!(
+        before.amount, after.amount,
+        "state must not change on zero deposit_collateral"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -179,7 +188,10 @@ fn test_withdraw_zero_does_not_mutate_state() {
     let _ = client.try_withdraw(&user, &asset, &0);
 
     let after = client.get_user_collateral_deposit(&user, &asset);
-    assert_eq!(before.amount, after.amount, "state must not change on zero withdraw");
+    assert_eq!(
+        before.amount, after.amount,
+        "state must not change on zero withdraw"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -217,7 +229,10 @@ fn test_borrow_zero_does_not_mutate_state() {
     let _ = client.try_borrow(&user, &asset, &0, &collateral_asset, &20_000);
 
     let after = client.get_user_debt(&user);
-    assert_eq!(before.borrowed_amount, after.borrowed_amount, "debt must not change on zero borrow");
+    assert_eq!(
+        before.borrowed_amount, after.borrowed_amount,
+        "debt must not change on zero borrow"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -260,7 +275,10 @@ fn test_repay_zero_does_not_mutate_state() {
     let _ = client.try_repay(&user, &asset, &0);
 
     let after = client.get_user_debt(&user);
-    assert_eq!(before.borrowed_amount, after.borrowed_amount, "debt must not change on zero repay");
+    assert_eq!(
+        before.borrowed_amount, after.borrowed_amount,
+        "debt must not change on zero repay"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -306,7 +324,10 @@ fn test_liquidate_zero_does_not_mutate_state() {
     let _ = client.try_liquidate(&liquidator, &user, &asset, &collateral_asset, &0);
 
     let after = client.get_user_debt(&user);
-    assert_eq!(before.borrowed_amount, after.borrowed_amount, "debt must not change on zero liquidate");
+    assert_eq!(
+        before.borrowed_amount, after.borrowed_amount,
+        "debt must not change on zero liquidate"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -345,7 +366,10 @@ fn test_credit_insurance_fund_zero_does_not_mutate_state() {
     let _ = client.try_credit_insurance_fund(&admin, &asset, &0);
 
     let after = client.get_insurance_fund_balance(&asset);
-    assert_eq!(before, after, "insurance fund must not change on zero credit");
+    assert_eq!(
+        before, after,
+        "insurance fund must not change on zero credit"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -408,8 +432,10 @@ fn test_cross_deposit_collateral_asset_zero_does_not_mutate_state() {
     let _ = client.try_deposit_collateral_asset(&user, &asset, &0);
 
     let after = client.get_cross_position_summary(&user);
-    assert_eq!(before.total_collateral_usd, after.total_collateral_usd,
-        "cross collateral must not change on zero deposit");
+    assert_eq!(
+        before.total_collateral_usd, after.total_collateral_usd,
+        "cross collateral must not change on zero deposit"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -452,8 +478,10 @@ fn test_cross_borrow_asset_zero_does_not_mutate_state() {
     let _ = client.try_borrow_asset(&user, &asset, &0);
 
     let after = client.get_cross_position_summary(&user);
-    assert_eq!(before.total_debt_usd, after.total_debt_usd,
-        "cross debt must not change on zero borrow");
+    assert_eq!(
+        before.total_debt_usd, after.total_debt_usd,
+        "cross debt must not change on zero borrow"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -499,8 +527,10 @@ fn test_cross_repay_asset_zero_does_not_mutate_state() {
     let _ = client.try_repay_asset(&user, &asset, &0);
 
     let after = client.get_cross_position_summary(&user);
-    assert_eq!(before.total_debt_usd, after.total_debt_usd,
-        "cross debt must not change on zero repay");
+    assert_eq!(
+        before.total_debt_usd, after.total_debt_usd,
+        "cross debt must not change on zero repay"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -543,8 +573,10 @@ fn test_cross_withdraw_asset_zero_does_not_mutate_state() {
     let _ = client.try_withdraw_asset(&user, &asset, &0);
 
     let after = client.get_cross_position_summary(&user);
-    assert_eq!(before.total_collateral_usd, after.total_collateral_usd,
-        "cross collateral must not change on zero withdraw");
+    assert_eq!(
+        before.total_collateral_usd, after.total_collateral_usd,
+        "cross collateral must not change on zero withdraw"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -606,7 +638,10 @@ fn test_set_flash_loan_fee_bps_zero_is_valid() {
     let (client, _admin, _user, _asset, _col) = setup(&env);
 
     let result = client.try_set_flash_loan_fee_bps(&0);
-    assert!(result.is_ok(), "zero fee_bps must be accepted for flash loans");
+    assert!(
+        result.is_ok(),
+        "zero fee_bps must be accepted for flash loans"
+    );
 }
 
 #[test]
