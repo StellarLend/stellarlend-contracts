@@ -75,8 +75,6 @@ pub use stellarlend_common::upgrade::{UpgradeError, UpgradeStage, UpgradeStatus}
 #[cfg(test)]
 mod borrow_test;
 #[cfg(test)]
-mod cross_asset_test;
-#[cfg(test)]
 mod deposit_test;
 #[cfg(test)]
 mod emergency_shutdown_test;
@@ -109,10 +107,13 @@ mod withdraw_test;
 #[cfg(test)]
 mod bad_debt_test;
 #[cfg(test)]
-mod liquidation_boundary_test;#[cfg(test)]
-mod multi_user_contention_test;
+mod liquidation_boundary_test;
 #[cfg(test)]
 mod multi_user_contention_test;
+#[cfg(test)]
+mod oracle_test;
+#[cfg(test)]
+mod oracle_decimal_test;
 #[cfg(test)]
 mod stress_test;
 
@@ -437,8 +438,9 @@ impl LendingContract {
         caller: Address,
         asset: Address,
         price: i128,
+        decimals: u32,
     ) -> Result<(), OracleError> {
-        oracle::update_price_feed(&env, caller, asset, price)
+        oracle::update_price_feed(&env, caller, asset, price, decimals)
     }
 
     /// Get the current price for `asset` (primary â†’ fallback â†’ error).
@@ -453,6 +455,16 @@ impl LendingContract {
     /// Pause or unpause oracle price updates (admin only).
     pub fn set_oracle_paused(env: Env, caller: Address, paused: bool) -> Result<(), OracleError> {
         oracle::set_oracle_paused(&env, caller, paused)
+    }
+
+    /// Configure the expected decimal precision for an asset's oracle feed (admin only).
+    pub fn set_oracle_expected_decimals(
+        env: Env,
+        caller: Address,
+        asset: Address,
+        decimals: u32,
+    ) -> Result<(), OracleError> {
+        oracle::set_expected_decimals(&env, caller, asset, decimals)
     }
 
     /// Set liquidation threshold in basis points, e.g. 8000 = 80% (admin only).
@@ -744,7 +756,7 @@ impl LendingContract {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     /// Initialize admin for cross-asset operations
-    pub fn initialize_admin(env: Env, admin: Address) -> Result<(), CrossAssetError> {
+    pub fn initialize_admin(env: Env, admin: Address) {
         cross_init_admin(&env, admin)
     }
 

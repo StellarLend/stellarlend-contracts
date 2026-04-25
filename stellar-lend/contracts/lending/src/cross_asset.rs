@@ -553,7 +553,7 @@ fn calculate_position_summary(
         let value_usd = amount
             .checked_mul(price)
             .ok_or(CrossAssetError::Overflow)?
-            .checked_div(10000000)
+            .checked_div(crate::constants::ORACLE_PRICE_SCALE)
             .ok_or(CrossAssetError::Overflow)?;
         total_collateral_usd = total_collateral_usd
             .checked_add(value_usd)
@@ -575,7 +575,7 @@ fn calculate_position_summary(
         let value_usd = amount
             .checked_mul(price)
             .ok_or(CrossAssetError::Overflow)?
-            .checked_div(10000000)
+            .checked_div(crate::constants::ORACLE_PRICE_SCALE)
             .ok_or(CrossAssetError::Overflow)?;
         total_debt_usd = total_debt_usd
             .checked_add(value_usd)
@@ -616,7 +616,7 @@ fn calculate_position_summary(
 fn get_price(_env: &Env, _price_feed: &Address) -> Result<i128, CrossAssetError> {
     // Mock price feed - in real app, call oracle contract
     // Example: let oracle = oracle::Client::new(env, price_feed); oracle.get_price(...)
-    Ok(10000000) // $1.00 with 7 decimals
+    Ok(crate::constants::ORACLE_PRICE_SCALE) // $1.00 with 8 decimals (standard)
 }
 
 pub fn initialize_admin(env: &Env, admin: Address) {

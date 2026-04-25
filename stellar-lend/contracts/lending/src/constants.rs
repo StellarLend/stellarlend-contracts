@@ -45,3 +45,9 @@ pub const DEFAULT_CLOSE_FACTOR_BPS: i128 = 5_000;
 
 /// Default liquidation incentive (10 %).
 pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 1_000;
+
+/// Standard protocol decimal precision for oracle prices (8 decimals).
+pub const ORACLE_PRICE_DECIMALS: u32 = 8;
+
+/// Scaling factor for oracle prices (10^8).
+pub const ORACLE_PRICE_SCALE: i128 = 100_000_000;

@@ -53,6 +53,8 @@ pub enum OracleError {
     InvalidOracle = 5,
     /// Oracle updates are paused.
     OraclePaused = 6,
+    /// Mismatched decimals during price update.
+    InvalidDecimals = 7,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,14 +79,18 @@ pub enum OracleKey {
     FallbackFeed(Address),
     /// Pause flag for oracle updates.
     Paused,
+    /// Expected decimal precision for an asset's oracle feed.
+    ExpectedDecimals(Address),
 }
 
 /// A price feed entry stored on-chain.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PriceFeed {
-    /// Price with 8 decimals (e.g. 100_000_000 = 1.0 USD).
+    /// Price with its native decimals.
     pub price: i128,
+    /// Decimal precision of the price.
+    pub decimals: u32,
     /// Ledger timestamp when this price was last written.
     pub last_updated: u64,
     /// Address of the oracle that submitted this price.
@@ -146,6 +152,13 @@ fn require_admin_caller(env: &Env, caller: &Address) -> Result<(), OracleError> 
         return Err(OracleError::Unauthorized);
     }
     Ok(())
+}
+
+fn get_expected_decimals(env: &Env, asset: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<OracleKey, u32>(&OracleKey::ExpectedDecimals(asset.clone()))
+        .unwrap_or(crate::constants::ORACLE_PRICE_DECIMALS)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -251,6 +264,7 @@ pub fn update_price_feed(
     caller: Address,
     asset: Address,
     price: i128,
+    decimals: u32,
 ) -> Result<(), OracleError> {
     // Pause check
     if env
@@ -284,8 +298,14 @@ pub fn update_price_feed(
         return Err(OracleError::Unauthorized);
     }
 
+    // Decimal validation
+    if decimals != get_expected_decimals(env, &asset) {
+        return Err(OracleError::InvalidDecimals);
+    }
+
     let feed = PriceFeed {
         price,
+        decimals,
         last_updated: env.ledger().timestamp(),
         oracle: caller.clone(),
     };
@@ -369,5 +389,21 @@ pub fn set_oracle_paused(env: &Env, caller: Address, paused: bool) -> Result<(),
     require_admin_caller(env, &caller)?;
     caller.require_auth();
     env.storage().persistent().set(&OracleKey::Paused, &paused);
+    Ok(())
+}
+
+/// Configure the expected decimal precision for an asset's oracle feed. Admin only.
+pub fn set_expected_decimals(
+    env: &Env,
+    caller: Address,
+    asset: Address,
+    decimals: u32,
+) -> Result<(), OracleError> {
+    require_admin_caller(env, &caller)?;
+    caller.require_auth();
+
+    env.storage()
+        .persistent()
+        .set(&OracleKey::ExpectedDecimals(asset), &decimals);
     Ok(())
 }

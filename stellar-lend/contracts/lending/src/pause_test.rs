@@ -1,12 +1,13 @@
 use super::*;
-use crate::cross_asset::CrossAssetError;
-use crate::deposit::DepositError;
+use crate::cross_asset::{AssetParams as AssetConfig, CrossAssetError};
+use crate::{LendingContract as HelloContract, LendingContractClient as HelloContractClient};
 use crate::flash_loan::FlashLoanError;
 use crate::oracle::OracleError;
 use crate::withdraw::WithdrawError;
 use soroban_sdk::{
     testutils::{Address as _, Events},
-    Address, Env, Symbol, TryFromVal, Vec,
+    Address, Env, FromVal, Symbol,
+    TryFromVal,
 };
 
 #[test]
@@ -14,8 +15,8 @@ fn test_pause_borrow_granular() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
@@ -47,8 +48,8 @@ fn test_global_pause() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
@@ -96,8 +97,8 @@ fn test_set_pause_unauthorized_address() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
@@ -113,8 +114,8 @@ fn test_all_granular_pauses() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
@@ -162,8 +163,8 @@ fn test_pause_events() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
@@ -171,7 +172,7 @@ fn test_pause_events() {
     client.set_pause(&admin, &PauseType::Borrow, &true);
 
     let events = env.events().all();
-    let last_event = events.last().unwrap();
+    let last_event = events.get(events.len() - 1).unwrap();
 
     assert_eq!(last_event.0, contract_id);
     let topic: Symbol = Symbol::try_from_val(&env, &last_event.1.get(0).unwrap()).unwrap();
@@ -187,8 +188,8 @@ fn test_pause_events() {
 fn test_get_pause_state_default_false() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -205,8 +206,8 @@ fn test_get_pause_state_default_false() {
 fn test_get_pause_state_reflects_set_pause() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -223,8 +224,8 @@ fn test_get_pause_state_reflects_set_pause() {
 fn test_get_pause_state_global_all_returns_true_for_all_types() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -248,8 +249,8 @@ fn test_get_pause_state_global_all_returns_true_for_all_types() {
 fn test_borrow_pause_does_not_block_repay() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -276,8 +277,8 @@ fn test_borrow_pause_does_not_block_repay() {
 fn test_repay_pause_does_not_block_borrow() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -301,8 +302,8 @@ fn test_repay_pause_does_not_block_borrow() {
 fn test_liquidation_pause_is_independent() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -332,8 +333,8 @@ fn test_liquidation_pause_is_independent() {
 fn test_deposit_pause_blocks_deposit_collateral() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -360,8 +361,8 @@ fn test_deposit_pause_blocks_deposit_collateral() {
 fn test_multiple_simultaneous_pauses() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -398,8 +399,8 @@ fn test_multiple_simultaneous_pauses() {
 fn test_global_pause_overrides_individual_unpause() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -443,8 +444,8 @@ fn test_global_pause_overrides_individual_unpause() {
 fn test_pause_toggle_multiple_times() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -471,15 +472,15 @@ fn test_pause_toggle_multiple_times() {
 fn test_set_deposit_paused_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
     client.set_deposit_paused(&true);
 
     let events = env.events().all();
-    let last = events.last().unwrap();
+    let last = events.get(events.len() - 1).unwrap();
     let topic: Symbol = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
     assert_eq!(topic, Symbol::new(&env, "pause_event"));
 
@@ -492,15 +493,15 @@ fn test_set_deposit_paused_emits_event() {
 fn test_set_withdraw_paused_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
     client.set_withdraw_paused(&true);
 
     let events = env.events().all();
-    let last = events.last().unwrap();
+    let last = events.get(events.len() - 1).unwrap();
     let topic: Symbol = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
     assert_eq!(topic, Symbol::new(&env, "pause_event"));
 
@@ -512,8 +513,8 @@ fn test_set_withdraw_paused_emits_event() {
 fn test_set_deposit_paused_blocks_deposit() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -535,8 +536,8 @@ fn test_set_deposit_paused_blocks_deposit() {
 fn test_set_withdraw_paused_blocks_withdraw() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -565,8 +566,8 @@ fn test_set_withdraw_paused_blocks_withdraw() {
 fn test_flash_loan_blocked_by_all_pause() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -585,8 +586,8 @@ fn test_flash_loan_blocked_by_all_pause() {
 fn test_flash_loan_not_blocked_by_specific_pauses() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -614,8 +615,8 @@ fn test_flash_loan_not_blocked_by_specific_pauses() {
 fn test_get_guardian_initially_none() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -627,8 +628,8 @@ fn test_get_guardian_initially_none() {
 fn test_set_guardian_and_get_guardian() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let guardian = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
@@ -647,8 +648,8 @@ fn test_set_guardian_and_get_guardian() {
 fn test_set_guardian_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let guardian = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
@@ -656,7 +657,7 @@ fn test_set_guardian_emits_event() {
     client.set_guardian(&admin, &guardian);
 
     let events = env.events().all();
-    let last = events.last().unwrap();
+    let last = events.get(events.len() - 1).unwrap();
     let topic: Symbol = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
     assert_eq!(topic, Symbol::new(&env, "guardian_set_event"));
 }
@@ -667,8 +668,8 @@ fn test_set_guardian_emits_event() {
 fn test_non_admin_cannot_set_guardian() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
@@ -685,8 +686,8 @@ fn test_non_admin_cannot_set_guardian() {
 fn test_admin_can_trigger_shutdown_without_guardian() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -699,8 +700,8 @@ fn test_admin_can_trigger_shutdown_without_guardian() {
 fn test_random_address_cannot_trigger_shutdown() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let attacker = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
@@ -718,8 +719,8 @@ fn test_random_address_cannot_trigger_shutdown() {
 fn test_guardian_cannot_set_pause() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let guardian = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
@@ -741,8 +742,8 @@ fn test_guardian_cannot_set_pause() {
 fn test_start_recovery_fails_when_not_in_shutdown() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -758,8 +759,8 @@ fn test_start_recovery_fails_when_not_in_shutdown() {
 fn test_complete_recovery_from_shutdown_state() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -776,15 +777,15 @@ fn test_complete_recovery_from_shutdown_state() {
 fn test_emergency_shutdown_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
     client.emergency_shutdown(&admin);
 
     let events = env.events().all();
-    let last = events.last().unwrap();
+    let last = events.get(events.len() - 1).unwrap();
     let topic: Symbol = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
     assert_eq!(topic, Symbol::new(&env, "emergency_state_event"));
 }
@@ -796,8 +797,8 @@ fn test_emergency_shutdown_emits_event() {
 fn test_full_emergency_lifecycle_events() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &1_000_000_000, &1000);
 
@@ -806,7 +807,7 @@ fn test_full_emergency_lifecycle_events() {
     client.emergency_shutdown(&admin);
     {
         let events = env.events().all();
-        let last = events.last().unwrap();
+        let last = events.get(events.len() - 1).unwrap();
         let topic: Symbol = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
         assert_eq!(topic, Symbol::new(&env, "emergency_state_event"));
     }
@@ -815,7 +816,7 @@ fn test_full_emergency_lifecycle_events() {
     client.start_recovery(&admin);
     {
         let events = env.events().all();
-        let last = events.last().unwrap();
+        let last = events.get(events.len() - 1).unwrap();
         let topic: Symbol = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
         assert_eq!(topic, Symbol::new(&env, "emergency_state_event"));
     }
@@ -824,7 +825,7 @@ fn test_full_emergency_lifecycle_events() {
     client.complete_recovery(&admin);
     {
         let events = env.events().all();
-        let last = events.last().unwrap();
+        let last = events.get(events.len() - 1).unwrap();
         let topic: Symbol = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
         assert_eq!(topic, Symbol::new(&env, "emergency_state_event"));
     }
@@ -839,8 +840,8 @@ fn test_full_emergency_lifecycle_events() {
 fn test_recovery_allows_unwind_blocks_new_risk() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let guardian = Address::generate(&env);
     let user = Address::generate(&env);
@@ -879,8 +880,8 @@ fn test_recovery_allows_unwind_blocks_new_risk() {
 fn test_granular_repay_pause_respected_in_recovery() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -915,8 +916,8 @@ fn test_granular_repay_pause_respected_in_recovery() {
 fn test_cross_asset_deposit_pause_matrix() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -949,8 +950,8 @@ fn test_cross_asset_deposit_pause_matrix() {
 fn test_cross_asset_borrow_pause_matrix() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -983,8 +984,8 @@ fn test_cross_asset_borrow_pause_matrix() {
 fn test_cross_asset_repay_pause_matrix() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -1017,8 +1018,8 @@ fn test_cross_asset_repay_pause_matrix() {
 fn test_cross_asset_withdraw_pause_matrix() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -1055,8 +1056,8 @@ fn test_cross_asset_withdraw_pause_matrix() {
 fn test_oracle_pause_matrix() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -1067,13 +1068,13 @@ fn test_oracle_pause_matrix() {
     // Test oracle pause blocks price updates
     client.set_oracle_paused(&oracle, &true);
     assert_eq!(
-        client.try_update_price_feed(&oracle, &asset, &100_000),
+        client.try_update_price_feed(&oracle, &asset, &100_000, &8),
         Err(Ok(OracleError::OraclePaused))
     );
 
     // Test unpaused oracle allows price updates
     client.set_oracle_paused(&oracle, &false);
-    client.update_price_feed(&oracle, &asset, &100_000);
+    client.update_price_feed(&oracle, &asset, &100_000, &8);
 }
 
 /// Oracle pause is independent of other pause flags.
@@ -1081,8 +1082,8 @@ fn test_oracle_pause_matrix() {
 fn test_oracle_pause_independence() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -1094,12 +1095,12 @@ fn test_oracle_pause_independence() {
     client.set_pause(&admin, &PauseType::All, &true);
     
     // Oracle should still work if not paused
-    client.update_price_feed(&oracle, &asset, &100_000);
+    client.update_price_feed(&oracle, &asset, &100_000, &8);
 
     // Now pause oracle specifically
     client.set_oracle_paused(&oracle, &true);
     assert_eq!(
-        client.try_update_price_feed(&oracle, &asset, &200_000),
+        client.try_update_price_feed(&oracle, &asset, &200_000, &8),
         Err(Ok(OracleError::OraclePaused))
     );
 }
@@ -1113,8 +1114,8 @@ fn test_oracle_pause_independence() {
 fn test_zero_amount_pause_matrix() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -1152,8 +1153,8 @@ fn test_zero_amount_pause_matrix() {
 fn test_unauthorized_pause_bypass_attempts() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let attacker = Address::generate(&env);
     let user = Address::generate(&env);
@@ -1200,8 +1201,8 @@ fn test_unauthorized_pause_bypass_attempts() {
 fn test_comprehensive_pause_state_matrix() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let contract_id = env.register(HelloContract, ());
+    let client = HelloContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
@@ -1212,12 +1213,12 @@ fn test_comprehensive_pause_state_matrix() {
     client.initialize_withdraw_settings(&100);
 
     // Matrix: Test each pause flag individually
-    let pause_types = vec![
-        (PauseType::Deposit, "deposit"),
-        (PauseType::Borrow, "borrow"),
-        (PauseType::Repay, "repay"),
-        (PauseType::Withdraw, "withdraw"),
-        (PauseType::Liquidation, "liquidation"),
+    let pause_types = soroban_sdk::vec![&env,
+        (PauseType::Deposit, Symbol::new(&env, "deposit")),
+        (PauseType::Borrow, Symbol::new(&env, "borrow")),
+        (PauseType::Repay, Symbol::new(&env, "repay")),
+        (PauseType::Withdraw, Symbol::new(&env, "withdraw")),
+        (PauseType::Liquidation, Symbol::new(&env, "liquidation")),
     ];
 
     for (pause_type, operation) in pause_types {

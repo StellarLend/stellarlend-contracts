@@ -392,7 +392,7 @@ fn test_withdraw_emits_event() {
     client.withdraw(&user, &asset, &20_000);
 
     let events = env.events().all();
-    let last_event = events.last().unwrap();
+    let last_event = events.get(events.len() - 1).unwrap();
 
     let topic: Symbol = Symbol::from_val(&env, &last_event.1.get(0).unwrap());
     assert_eq!(topic, Symbol::new(&env, "withdraw_event"));
