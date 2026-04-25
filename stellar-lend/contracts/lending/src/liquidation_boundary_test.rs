@@ -252,13 +252,13 @@ fn test_incentive_amount_zero_incentive_returns_same() {
 }
 
 #[test]
-fn test_incentive_amount_max_incentive_100_pct() {
-    // Incentive 10000 bps (100%): 10_000 * 20000 / 10000 = 20_000.
+fn test_incentive_amount_max_incentive_20_pct() {
+    // Incentive 2000 bps (20%): 10_000 * 12000 / 10000 = 12_000.
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
-    client.set_liquidation_incentive_bps(&admin, &10000);
-    assert_eq!(client.get_liquidation_incentive_amount(&10_000), 20_000);
+    client.set_liquidation_incentive_bps(&admin, &2000);
+    assert_eq!(client.get_liquidation_incentive_amount(&10_000), 12_000);
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn test_set_close_factor_invalid_zero() {
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
     assert_eq!(
         client.try_set_close_factor_bps(&admin, &0),
-        Err(Ok(BorrowError::InvalidAmount))
+        Err(Ok(BorrowError::InvalidParameterRange))
     );
 }
 
@@ -324,7 +324,7 @@ fn test_set_close_factor_invalid_above_10000() {
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
     assert_eq!(
         client.try_set_close_factor_bps(&admin, &10001),
-        Err(Ok(BorrowError::InvalidAmount))
+        Err(Ok(BorrowError::InvalidParameterRange))
     );
 }
 
@@ -351,13 +351,13 @@ fn test_set_liquidation_incentive_bps_unauthorized() {
 }
 
 #[test]
-fn test_set_liquidation_incentive_bps_invalid_above_10000() {
+fn test_set_liquidation_incentive_bps_invalid_above_2000() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
     assert_eq!(
-        client.try_set_liquidation_incentive_bps(&admin, &10001),
-        Err(Ok(BorrowError::InvalidAmount))
+        client.try_set_liquidation_incentive_bps(&admin, &2001),
+        Err(Ok(BorrowError::InvalidParameterRange))
     );
 }
 
@@ -368,7 +368,7 @@ fn test_set_liquidation_incentive_bps_invalid_negative() {
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
     assert_eq!(
         client.try_set_liquidation_incentive_bps(&admin, &-1),
-        Err(Ok(BorrowError::InvalidAmount))
+        Err(Ok(BorrowError::InvalidParameterRange))
     );
 }
 
@@ -379,7 +379,7 @@ fn test_set_close_factor_bps_invalid_negative() {
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
     assert_eq!(
         client.try_set_close_factor_bps(&admin, &-1),
-        Err(Ok(BorrowError::InvalidAmount))
+        Err(Ok(BorrowError::InvalidParameterRange))
     );
 }
 
@@ -398,8 +398,8 @@ fn test_set_liquidation_incentive_bps_valid_max() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
-    client.set_liquidation_incentive_bps(&admin, &10000);
-    assert_eq!(client.get_liquidation_incentive_bps(), 10000);
+    client.set_liquidation_incentive_bps(&admin, &2000);
+    assert_eq!(client.get_liquidation_incentive_bps(), 2000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

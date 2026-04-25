@@ -37,7 +37,7 @@ pub enum EmergencyState {
 #[derive(Clone)]
 pub enum PauseDataKey {
     /// Pause state for a specific operation type
-    State(PauseType),
+    State(u32),
     /// Optional guardian address authorized to trigger emergency shutdown.
     Guardian,
     /// Current emergency lifecycle state.
@@ -96,8 +96,8 @@ pub struct EmergencyStateEvent {
 pub fn set_pause(env: &Env, admin: Address, pause_type: PauseType, paused: bool) {
     // Store the pause state
     env.storage()
-        .persistent()
-        .set(&PauseDataKey::State(pause_type), &paused);
+        .instance()
+        .set(&PauseDataKey::State(pause_type as u32), &paused);
 
     // Emit event
     PauseEvent {
@@ -149,8 +149,8 @@ pub fn is_paused(env: &Env, pause_type: PauseType) -> bool {
     // Check global pause first
     if env
         .storage()
-        .persistent()
-        .get(&PauseDataKey::State(PauseType::All))
+        .instance()
+        .get(&PauseDataKey::State(PauseType::All as u32))
         .unwrap_or(false)
     {
         return true;
@@ -160,8 +160,8 @@ pub fn is_paused(env: &Env, pause_type: PauseType) -> bool {
     if pause_type != PauseType::All {
         return env
             .storage()
-            .persistent()
-            .get(&PauseDataKey::State(pause_type))
+            .instance()
+            .get(&PauseDataKey::State(pause_type as u32))
             .unwrap_or(false);
     }
 
@@ -185,7 +185,7 @@ pub fn is_paused(env: &Env, pause_type: PauseType) -> bool {
 /// a high-trust multisig.
 pub fn set_guardian(env: &Env, admin: Address, guardian: Address) {
     env.storage()
-        .persistent()
+        .instance()
         .set(&PauseDataKey::Guardian, &guardian);
     GuardianSetEvent { guardian, admin }.publish(env);
 }
@@ -195,7 +195,7 @@ pub fn set_guardian(env: &Env, admin: Address, guardian: Address) {
 /// Returns `None` when no guardian has been set, in which case only the admin
 /// can trigger emergency shutdown.
 pub fn get_guardian(env: &Env) -> Option<Address> {
-    env.storage().persistent().get(&PauseDataKey::Guardian)
+    env.storage().instance().get(&PauseDataKey::Guardian)
 }
 
 /// Return the current emergency lifecycle state.
@@ -204,7 +204,7 @@ pub fn get_guardian(env: &Env) -> Option<Address> {
 /// (i.e., before any emergency event has occurred).
 pub fn get_emergency_state(env: &Env) -> EmergencyState {
     env.storage()
-        .persistent()
+        .instance()
         .get(&PauseDataKey::EmergencyState)
         .unwrap_or(EmergencyState::Normal)
 }
@@ -272,7 +272,7 @@ pub fn complete_recovery(env: &Env, caller: Address) {
 fn set_emergency_state(env: &Env, caller: Address, to: EmergencyState) {
     let from = get_emergency_state(env);
     env.storage()
-        .persistent()
+        .instance()
         .set(&PauseDataKey::EmergencyState, &to);
     EmergencyStateEvent { from, to, caller }.publish(env);
 }

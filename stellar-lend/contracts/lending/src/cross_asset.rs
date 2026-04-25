@@ -88,6 +88,7 @@ use soroban_sdk::{contracterror, contractevent, contracttype, token, Address, En
 
 use crate::constants::{BPS_SCALE, HEALTH_FACTOR_SCALE};
 use crate::pause::{self, PauseType};
+use crate::validation;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -102,6 +103,7 @@ pub enum CrossAssetError {
     AssetNotSupported = 7,
     PriceUnavailable = 8,
     AlreadyInitialized = 9,
+    InvalidParameterRange = 10,
 }
 
 #[contractevent]
@@ -197,10 +199,21 @@ pub struct PositionSummary {
 /// * All parameters should be validated before use in other functions.
 pub fn set_asset_params(
     env: &Env,
+    admin: Address,
     asset: Address,
     params: AssetParams,
 ) -> Result<(), CrossAssetError> {
-    check_admin(env)?;
+    check_admin(env, &admin)?;
+
+    if !validation::is_valid_ltv(params.ltv) {
+        return Err(CrossAssetError::InvalidParameterRange);
+    }
+    if !validation::is_valid_threshold(params.liquidation_threshold, params.ltv) {
+        return Err(CrossAssetError::InvalidParameterRange);
+    }
+    if !validation::is_valid_cap(params.debt_ceiling) {
+        return Err(CrossAssetError::InvalidParameterRange);
+    }
     env.storage()
         .persistent()
         .set(&CrossAssetDataKey::AssetParams(asset), &params);
@@ -491,12 +504,15 @@ pub fn get_cross_position_summary(
 
 // Internal helpers
 
-fn check_admin(env: &Env) -> Result<(), CrossAssetError> {
-    let admin: Address = env
+fn check_admin(env: &Env, admin: &Address) -> Result<(), CrossAssetError> {
+    let stored_admin: Address = env
         .storage()
         .persistent()
         .get(&CrossAssetDataKey::Admin)
         .ok_or(CrossAssetError::Unauthorized)?;
+    if admin != &stored_admin {
+        return Err(CrossAssetError::Unauthorized);
+    }
     admin.require_auth();
     Ok(())
 }

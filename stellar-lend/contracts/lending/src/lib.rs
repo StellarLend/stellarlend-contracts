@@ -12,7 +12,10 @@ mod liquidate;
 mod oracle;
 mod pause;
 mod token_receiver;
+mod validation;
 mod withdraw;
+#[cfg(test)]
+mod param_validation_test;
 
 use borrow::{
     borrow as borrow_impl, credit_insurance_fund as credit_insurance_impl,
@@ -109,8 +112,7 @@ mod withdraw_test;
 #[cfg(test)]
 mod bad_debt_test;
 #[cfg(test)]
-mod liquidation_boundary_test;#[cfg(test)]
-mod multi_user_contention_test;
+mod liquidation_boundary_test;
 #[cfg(test)]
 mod multi_user_contention_test;
 #[cfg(test)]
@@ -132,6 +134,7 @@ impl LendingContract {
             return Err(BorrowError::Unauthorized);
         }
         set_protocol_admin(&env, &admin);
+        cross_init_admin(&env, admin);
         init_borrow_settings_impl(&env, debt_ceiling, min_borrow_amount)?;
         Ok(())
     }
@@ -745,16 +748,18 @@ impl LendingContract {
 
     /// Initialize admin for cross-asset operations
     pub fn initialize_admin(env: Env, admin: Address) -> Result<(), CrossAssetError> {
-        cross_init_admin(&env, admin)
+        cross_init_admin(&env, admin);
+        Ok(())
     }
 
     /// Set parameters for a specific asset (admin only)
     pub fn set_asset_params(
         env: Env,
+        admin: Address,
         asset: Address,
         params: AssetParams,
     ) -> Result<(), CrossAssetError> {
-        cross_set_asset_params(&env, asset, params)
+        cross_set_asset_params(&env, admin, asset, params)
     }
 
     /// Deposit collateral for a specific asset

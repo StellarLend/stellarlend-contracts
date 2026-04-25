@@ -279,11 +279,11 @@ fn test_set_liquidation_threshold_bps_invalid() {
     let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
     assert_eq!(
         client.try_set_liquidation_threshold_bps(&admin, &0),
-        Err(Ok(BorrowError::InvalidAmount))
+        Err(Ok(BorrowError::InvalidParameterRange))
     );
     assert_eq!(
         client.try_set_liquidation_threshold_bps(&admin, &10001),
-        Err(Ok(BorrowError::InvalidAmount))
+        Err(Ok(BorrowError::InvalidParameterRange))
     );
 }
 

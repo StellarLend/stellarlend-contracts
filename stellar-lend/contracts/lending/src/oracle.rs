@@ -28,6 +28,7 @@
 use soroban_sdk::{contracterror, contracttype, Address, Env};
 
 use crate::borrow::get_admin;
+use crate::validation;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Errors
@@ -53,6 +54,7 @@ pub enum OracleError {
     InvalidOracle = 5,
     /// Oracle updates are paused.
     OraclePaused = 6,
+    InvalidParameterRange = 7,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,8 +170,8 @@ pub fn configure_oracle(
     require_admin_caller(env, &caller)?;
     caller.require_auth();
 
-    if config.max_staleness_seconds == 0 {
-        return Err(OracleError::InvalidPrice);
+    if !validation::is_valid_staleness(config.max_staleness_seconds) {
+        return Err(OracleError::InvalidParameterRange);
     }
 
     env.storage().persistent().set(&OracleKey::Config, &config);

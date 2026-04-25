@@ -1,5 +1,6 @@
 use crate::pause::{self, PauseType};
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env};
+use crate::validation;
 
 /// Errors that can occur during deposit operations
 #[contracterror]
@@ -12,6 +13,7 @@ pub enum DepositError {
     AssetNotSupported = 4,
     ExceedsDepositCap = 5,
     Unauthorized = 6,
+    InvalidParameterRange = 7,
 }
 
 /// Storage keys for deposit-related data
@@ -107,6 +109,9 @@ pub fn initialize_deposit_settings(
     deposit_cap: i128,
     min_deposit_amount: i128,
 ) -> Result<(), DepositError> {
+    if !validation::is_valid_cap(deposit_cap) || !validation::is_valid_cap(min_deposit_amount) {
+        return Err(DepositError::InvalidParameterRange);
+    }
     env.storage()
         .persistent()
         .set(&DepositDataKey::CapAmount, &deposit_cap);

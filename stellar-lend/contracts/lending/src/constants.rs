@@ -45,3 +45,30 @@ pub const DEFAULT_CLOSE_FACTOR_BPS: i128 = 5_000;
 
 /// Default liquidation incentive (10 %).
 pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 1_000;
+
+/// Maximum allowed liquidation incentive (20 %).
+pub const MAX_LIQUIDATION_INCENTIVE_BPS: i128 = 2_000;
+
+/// Maximum allowed close factor (100 %).
+pub const MAX_CLOSE_FACTOR_BPS: i128 = BPS_SCALE;
+
+/// Maximum allowed LTV in basis points (99.99 %).
+///
+/// Must be strictly less than `BPS_SCALE` so that a valid
+/// `liquidation_threshold > ltv` can always be set at 100 %.
+pub const MAX_LTV_BPS: i128 = 9_999;
+
+/// Minimum non-zero LTV in basis points.
+pub const MIN_LTV_BPS: i128 = 1;
+
+/// Maximum oracle staleness window in seconds (24 hours).
+///
+/// Beyond this bound a governance misconfiguration could make stale
+/// prices appear permanently fresh, enabling bad-debt attacks.
+pub const MAX_ORACLE_STALENESS_SECONDS: u64 = 86_400;
+
+/// Minimum oracle staleness window in seconds (1 minute).
+///
+/// Values below this risk legitimate feeds being rejected due to
+/// normal block-time variance on Stellar (≈5 s per ledger).
+pub const MIN_ORACLE_STALENESS_SECONDS: u64 = 60;

@@ -164,7 +164,7 @@ fn test_borrow_amount_zero_fails() {
     let res2 = env.as_contract(&contract_id, || {
         crate::borrow::borrow(&env, user.clone(), asset.clone(), 1000, coll_asset.clone(), 0)
     });
-    assert_eq!(res2, Err(crate::borrow::BorrowError::InvalidAmount));
+    assert_eq!(res2, Err(crate::borrow::BorrowError::InsufficientCollateral));
 }
 
 #[test]

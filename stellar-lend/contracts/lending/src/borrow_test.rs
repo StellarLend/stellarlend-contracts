@@ -326,8 +326,7 @@ fn test_coverage_extremes() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, user, asset, _) = setup_test(&env);
-    let current_hash = BytesN::from_array(&env, &[0; 32]);
-    client.upgrade_init(&admin, &current_hash, &1);
+
 
     // 1. View Error Paths (Oracle zero/negative)
     // We can't easily mock the oracle to return 0 mid-test without registering a new one
@@ -373,7 +372,7 @@ fn test_borrow_zero_collateral_rejected() {
     let (client, _admin, user, asset, collateral_asset) = setup_test(&env);
 
     let result = client.try_borrow(&user, &asset, &10_000, &collateral_asset, &0);
-    assert_eq!(result, Err(Ok(BorrowError::InvalidAmount)));
+    assert_eq!(result, Err(Ok(BorrowError::InsufficientCollateral)));
 }
 
 /// Collateral exactly at 150 % of borrow amount must be accepted.

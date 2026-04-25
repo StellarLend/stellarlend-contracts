@@ -24,9 +24,9 @@
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env};
 
 use crate::borrow::{validate_collateral_ratio, BorrowDataKey, BorrowError, DebtPosition};
-use crate::constants::BPS_SCALE;
 use crate::deposit::{DepositCollateral, DepositDataKey};
 use crate::pause::{self, PauseType};
+use crate::validation;
 
 /// Errors that can occur during withdraw operations
 #[contracterror]
@@ -39,6 +39,7 @@ pub enum WithdrawError {
     InsufficientCollateral = 4,
     InsufficientCollateralRatio = 5,
     Unauthorized = 6,
+    InvalidParameterRange = 7,
 }
 
 /// Storage keys for withdraw-related data
@@ -197,6 +198,9 @@ pub fn initialize_withdraw_settings(
     env: &Env,
     min_withdraw_amount: i128,
 ) -> Result<(), WithdrawError> {
+    if !validation::is_valid_cap(min_withdraw_amount) {
+        return Err(WithdrawError::InvalidParameterRange);
+    }
     env.storage()
         .persistent()
         .set(&WithdrawDataKey::MinWithdrawAmount, &min_withdraw_amount);

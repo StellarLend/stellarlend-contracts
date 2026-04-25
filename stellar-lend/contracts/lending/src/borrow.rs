@@ -11,6 +11,7 @@ use crate::constants::{
     DEFAULT_LIQUIDATION_THRESHOLD_BPS, MIN_COLLATERAL_RATIO_BPS,
 };
 use crate::pause::{self, blocks_high_risk_ops, PauseType};
+use crate::validation;
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env, I256};
 
 #[contracterror]
@@ -26,6 +27,7 @@ pub enum BorrowError {
     AssetNotSupported = 7,
     BelowMinimumBorrow = 8,
     RepayAmountTooHigh = 9,
+    InvalidParameterRange = 10,
 }
 
 #[contracttype]
@@ -99,7 +101,6 @@ pub struct InsuranceFundEvent {
     pub timestamp: u64,
 }
 
-const COLLATERAL_RATIO_MIN: i128 = 15000; // 150%
 const INTEREST_RATE_PER_YEAR: i128 = 500; // 5%
 const SECONDS_PER_YEAR: u64 = 31536000;
 
@@ -257,8 +258,8 @@ pub fn set_liquidation_threshold_bps(
         return Err(BorrowError::Unauthorized);
     }
     admin.require_auth();
-    if bps <= 0 || bps > BPS_SCALE {
-        return Err(BorrowError::InvalidAmount);
+    if !validation::is_valid_bps(bps) || bps == 0 {
+        return Err(BorrowError::InvalidParameterRange);
     }
     env.storage()
         .instance()
@@ -282,8 +283,8 @@ pub fn set_close_factor_bps(env: &Env, admin: &Address, bps: i128) -> Result<(),
         return Err(BorrowError::Unauthorized);
     }
     admin.require_auth();
-    if !(1..=BPS_SCALE).contains(&bps) {
-        return Err(BorrowError::InvalidAmount);
+    if !validation::is_valid_close_factor(bps) {
+        return Err(BorrowError::InvalidParameterRange);
     }
     env.storage()
         .instance()
@@ -311,8 +312,8 @@ pub fn set_liquidation_incentive_bps(
         return Err(BorrowError::Unauthorized);
     }
     admin.require_auth();
-    if !(0..=BPS_SCALE).contains(&bps) {
-        return Err(BorrowError::InvalidAmount);
+    if !validation::is_valid_liquidation_incentive(bps) {
+        return Err(BorrowError::InvalidParameterRange);
     }
     env.storage()
         .instance()
@@ -390,6 +391,9 @@ pub fn initialize_borrow_settings(
     debt_ceiling: i128,
     min_borrow_amount: i128,
 ) -> Result<(), BorrowError> {
+    if !validation::is_valid_cap(debt_ceiling) || !validation::is_valid_cap(min_borrow_amount) {
+        return Err(BorrowError::InvalidParameterRange);
+    }
     env.storage()
         .instance()
         .set(&BorrowDataKey::BorrowDebtCeiling, &debt_ceiling);
@@ -412,7 +416,7 @@ fn emit_borrow_event(env: &Env, user: Address, asset: Address, amount: i128, col
 
 pub(crate) fn validate_collateral_ratio(collateral: i128, borrow: i128) -> Result<(), BorrowError> {
     let min_collateral = borrow
-        .checked_mul(COLLATERAL_RATIO_MIN)
+        .checked_mul(MIN_COLLATERAL_RATIO_BPS)
         .ok_or(BorrowError::Overflow)?
         .checked_div(BPS_SCALE)
         .ok_or(BorrowError::InvalidAmount)?;

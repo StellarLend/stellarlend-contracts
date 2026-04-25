@@ -1,4 +1,5 @@
 use soroban_sdk::{contracterror, contracttype, token, Address, Bytes, Env, IntoVal, Symbol};
+use crate::validation;
 
 use crate::constants::{BPS_SCALE, MAX_FLASH_LOAN_FEE_BPS};
 
@@ -100,7 +101,7 @@ fn calculate_fee(env: &Env, amount: i128) -> i128 {
 
 /// Set the flash loan fee in basis points
 pub fn set_flash_loan_fee_bps(env: &Env, fee_bps: i128) -> Result<(), FlashLoanError> {
-    if !(0..=MAX_FEE_BPS).contains(&fee_bps) {
+    if !validation::is_valid_flash_loan_fee(fee_bps) {
         return Err(FlashLoanError::InvalidFee);
     }
     env.storage()
