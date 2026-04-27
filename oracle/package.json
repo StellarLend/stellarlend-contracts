@@ -1,0 +1,46 @@
+{
+  "name": "stellarlend-oracle",
+  "version": "1.0.0",
+  "description": "Off-chain Oracle Integration Service for StellarLend Protocol",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/ tests/",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.0.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "ioredis": "^5.3.0",
+    "winston": "^3.11.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "eslint": "^8.55.0",
+    "prettier": "^3.1.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "oracle",
+    "defi",
+    "price-feed"
+  ],
+  "author": "StellarLend Team",
+  "license": "MIT"
+}

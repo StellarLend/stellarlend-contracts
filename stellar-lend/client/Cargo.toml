@@ -1,0 +1,65 @@
+[package]
+name = "stellarlend-client"
+version = "0.1.0"
+edition = "2021"
+authors = ["StellarLend Contributors"]
+description = "Blockchain integration layer for StellarLend protocol"
+license = "MIT"
+
+[dependencies]
+# HTTP client for API calls
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1.35", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Async utilities
+async-trait = "0.1"
+futures = "0.3"
+
+# Retry logic
+backoff = { version = "0.4", features = ["tokio"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time utilities
+chrono = { version = "0.4", features = ["serde"] }
+
+# Base64 encoding/decoding
+base64 = "0.21"
+
+# URL handling
+url = "2.5"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)', 'cfg(tarpaulin_include)'] }
+
+[dev-dependencies]
+# Testing utilities
+mockito = "1.2"
+tokio-test = "0.4"
+wiremock = "0.6"
+test-case = "3.3"
+
+# Assertions
+assert_matches = "1.5"
+
+[lib]
+name = "stellarlend_client"
+path = "src/lib.rs"
+
+[[example]]
+name = "simple_transaction"
+path = "examples/simple_transaction.rs"
+
+[[example]]
+name = "monitor_transaction"
+path = "examples/monitor_transaction.rs"

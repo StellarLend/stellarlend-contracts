@@ -1,0 +1,24 @@
+[advisories]
+# Ignore advisories for dependencies we cannot control (Soroban SDK transitive deps)
+ignore = [
+    "RUSTSEC-2026-0007",  # bytes - Integer overflow (Soroban SDK dependency)
+    "RUSTSEC-2026-0009",  # time - DoS via stack exhaustion (Soroban SDK dependency)
+    "RUSTSEC-2026-0012",  # keccak - Unsoundness in ARMv8 assembly (Soroban SDK dependency)
+    "RUSTSEC-2025-0012",  # backoff - unmaintained (client dependency)
+    "RUSTSEC-2024-0388",  # derivative - unmaintained (Soroban SDK dependency)
+    "RUSTSEC-2024-0384",  # instant - unmaintained (client dependency)
+    "RUSTSEC-2024-0436",  # paste - unmaintained (Soroban SDK dependency)
+    "RUSTSEC-2025-0134",  # rustls-pemfile - unmaintained (client dependency)
+    "RUSTSEC-2022-0054",  # wee_alloc - unmaintained (contract dependency)
+    "RUSTSEC-2025-0009",  # ring - panics on AES (indexing_system ethers-rs dependency)
+    "RUSTSEC-2025-0010",  # ring - unmaintained (indexing_system ethers-rs dependency)
+    "RUSTSEC-2025-0057",  # fxhash - unmaintained (indexing_system ethers-rs dependency)
+    "RUSTSEC-2023-0071",  # rsa - Marvin Attack (no fixed upgrade available for 0.9.x)
+]
+
+[yanked]
+enabled = false
+
+[database]
+fetch = true
+stale = false

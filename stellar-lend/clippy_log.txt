@@ -1,0 +1,126 @@
+    Checking stellarlend-lending v0.1.0 (/home/knights/Documents/Project/Drips/stellarlend-contracts/stellar-lend/contracts/lending)
+warning: unused import: `Ledger`
+  --> contracts/lending/src/race_tests.rs:20:31
+   |
+20 |     testutils::{Address as _, Ledger},
+   |                               ^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/data_store.rs:164:14
+    |
+164 | ...   .publish((symbol_short!("ds_i...
+    |        ^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/data_store.rs:192:14
+    |
+192 | ...   .publish((symbol_short!("writ...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/data_store.rs:220:14
+    |
+220 | ...   .publish((symbol_short!("writ...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/data_store.rs:293:14
+    |
+293 | ...   .publish((symbol_short!("ds_s...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/data_store.rs:380:22
+    |
+380 |         env.events().publish(
+    |                      ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/data_store.rs:457:14
+    |
+457 | ...   .publish((symbol_short!("ds_r...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/data_store.rs:515:14
+    |
+515 | ...   .publish((symbol_short!("ds_m...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/upgrade.rs:101:14
+    |
+101 | ...   .publish((symbol_short!("up_i...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/upgrade.rs:119:14
+    |
+119 | ...   .publish((symbol_short!("up_a...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/upgrade.rs:172:14
+    |
+172 | ...   .publish((symbol_short!("up_p...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/upgrade.rs:200:14
+    |
+200 | ...   .publish((symbol_short!("up_a...
+    |        ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/upgrade.rs:234:22
+    |
+234 |         env.events().publish(
+    |                      ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::events::Events::publish`: use the #[contractevent] macro on a contract event type
+   --> contracts/lending/src/upgrade.rs:271:22
+    |
+271 |         env.events().publish(
+    |                      ^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::Env::register_contract`: use `register`
+  --> contracts/lending/src/data_store_test.rs:26:18
+   |
+26 | ...d = env.register_contract(None, D...
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::Env::register_contract`: use `register`
+  --> contracts/lending/src/upgrade_test.rs:10:27
+   |
+10 | ...d = env.register_contract(None, U...
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::Env::register_contract`: use `register`
+  --> contracts/lending/src/upgrade_test.rs:41:27
+   |
+41 | ...d = env.register_contract(None, U...
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `soroban_sdk::Env::register_contract`: use `register`
+   --> contracts/lending/src/upgrade_test.rs:239:27
+    |
+239 | ... = env.register_contract(None, U...
+    |           ^^^^^^^^^^^^^^^^^
+
+warning: `stellarlend-lending` (lib) generated 13 warnings
+error: this comparison involving the minimum or maximum element for this type contains a case that is always true or always false
+  --> contracts/lending/src/math_safety_test.rs:25:13
+   |
+25 |     assert!(interest <= i128::MAX);
+   |             ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: because `i128::MAX` is the maximum value for this type, this comparison is always true
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#absurd_extreme_comparisons
+   = note: `#[deny(clippy::absurd_extreme_comparisons)]` on by default
+
+warning: `stellarlend-lending` (lib test) generated 18 warnings (13 duplicates)
+error: could not compile `stellarlend-lending` (lib test) due to 1 previous error; 18 warnings emitted

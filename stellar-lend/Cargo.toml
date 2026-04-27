@@ -1,21 +1,31 @@
 [workspace]
 resolver = "2"
 members = [
-  "contracts/*",
+  "client",
+  "contracts/amm",
+  "contracts/bridge",
+  "contracts/common",
+  "contracts/hello-world",
+  "contracts/lending",
+]
+exclude = [
+  "contracts/hello-world",
+  "indexing_system"
 ]
 
 [workspace.dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "25.3.0"
+soroban-token-sdk = { version = "25.3.0" }
 
 [profile.release]
 opt-level = "z"
-overflow-checks = true
 debug = 0
 strip = "symbols"
 debug-assertions = false
+overflow-checks = true
+lto = true
 panic = "abort"
 codegen-units = 1
-lto = true
 
 # For more information about this profile see https://soroban.stellar.org/docs/basic-tutorials/logging#cargotoml-profile
 [profile.release-with-logs]

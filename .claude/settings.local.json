@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(rustup target:*)",
+      "Bash(cargo test:*)",
+      "Bash(find:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(cargo tarpaulin:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo check:*)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "disabledMcpjsonServers": [
+    "supabase"
+  ]
+}

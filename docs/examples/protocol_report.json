@@ -1,0 +1,36 @@
+{
+  "protocol_metrics": {
+    "total_value_locked": 1200000,
+    "total_deposits": 1200000,
+    "total_borrows": 400000,
+    "total_withdrawals": 150000,
+    "total_repayments": 320000,
+    "total_liquidations": 3,
+    "total_fees_collected": 8500,
+    "active_users": 2,
+    "total_users": 4,
+    "avg_utilization_rate": 333333,
+    "total_volume": 1600000,
+    "last_update": 1200,
+    "health_score": 670000
+  },
+  "risk_analytics": {
+    "protocol_risk_score": 420000,
+    "undercollateralized_positions": 1,
+    "value_at_risk": 125000,
+    "liquidation_threshold_prox": 180000,
+    "concentration_risk": 250000,
+    "last_assessment": 1200
+  },
+  "performance_metrics": {
+    "uptime_percentage": 999500,
+    "avg_processing_time": 280,
+    "success_rate": 975000,
+    "error_rate": 25000,
+    "throughput": 42,
+    "last_update": 1195
+  },
+  "total_users": 4,
+  "active_users": 2,
+  "generated_at": 1200
+}

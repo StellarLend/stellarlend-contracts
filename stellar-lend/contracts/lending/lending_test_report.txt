@@ -1,0 +1,214 @@
+
+running 204 tests
+test borrow_test::test_borrow_below_minimum ... ok
+test borrow_test::test_borrow_debt_ceiling ... ok
+test borrow_test::test_borrow_insufficient_collateral ... ok
+test borrow_test::test_borrow_invalid_amount ... ok
+test borrow_test::test_borrow_protocol_paused ... ok
+test borrow_test::test_collateral_ratio_validation ... ok
+test borrow_test::test_borrow_interest_accrual ... ok
+test borrow_test::test_borrow_success ... ok
+test borrow_test::test_overflow_protection ... ok
+test data_store_test::test_admin_can_save ... ok
+test data_store_test::test_admin_is_always_a_writer ... ok
+test borrow_test::test_borrow_multiple_times ... ok
+test data_store_test::test_data_save_before_init_panics - should panic ... ok
+test borrow_test::test_pause_unpause ... ok
+test data_store_test::test_backup_name_too_long_panics - should panic ... ok
+test data_store_test::test_backup_empty_store ... ok
+test data_store_test::test_backup_max_name_allowed ... ok
+test data_store_test::test_init_entry_count_zero ... ok
+test data_store_test::test_grant_writer_allows_write ... ok
+test data_store_test::test_init_sets_schema_version_zero ... ok
+test data_store_test::test_init_twice_panics - should panic ... ok
+test data_store_test::test_init_sets_admin ... ok
+test data_store_test::test_backup_captures_all_entries ... ok
+test data_store_test::test_key_exists_returns_false_before_save ... ok
+test data_store_test::test_grant_writer_idempotent ... ok
+test data_store_test::test_backup_then_add_then_restore_removes_new_key ... ok
+test data_store_test::test_backup_preserved_after_restore ... ok
+test data_store_test::test_backup_overwrites_previous_snapshot ... ok
+test data_store_test::test_load_missing_key_panics - should panic ... ok
+test data_store_test::test_key_exists_returns_true_after_save ... ok
+test data_store_test::test_load_is_public_no_auth_needed ... ok
+test data_store_test::test_migrate_bumps_version ... ok
+test data_store_test::test_migrate_can_skip_versions ... ok
+test data_store_test::test_load_returns_correct_value ... ok
+test data_store_test::test_migrate_lower_version_panics - should panic ... ok
+test data_store_test::test_full_lifecycle_save_backup_migrate_restore ... ok
+test data_store_test::test_migrate_same_version_panics - should panic ... ok
+test data_store_test::test_migrate_memo_too_long_panics - should panic ... ok
+test data_store_test::test_load_reflects_latest_overwrite ... ok
+test data_store_test::test_migrate_with_memo ... ok
+test data_store_test::test_migrate_sequential_bumps ... ok
+test data_store_test::test_restore_missing_backup_panics - should panic ... ok
+test data_store_test::test_overwrite_does_not_increment_count ... ok
+test data_store_test::test_revoke_nonexistent_writer_is_noop ... ok
+test data_store_test::test_revoke_writer_removes_write_access ... ok
+test data_store_test::test_revoked_writer_cannot_save - should panic ... ok
+test data_store_test::test_save_empty_value_allowed ... ok
+test data_store_test::test_restore_to_empty_backup_clears_store ... ok
+test data_store_test::test_save_key_too_long_panics - should panic ... ok
+test data_store_test::test_restore_is_idempotent ... ok
+test data_store_test::test_multiple_writers_independent ... ok
+test data_store_test::test_save_increments_entry_count ... ok
+test data_store_test::test_save_max_key_length_allowed ... ok
+test data_store_test::test_restore_replaces_all_entries ... ok
+test data_store_test::test_save_value_too_large_panics - should panic ... ok
+test data_store_test::test_stranger_cannot_migrate - should panic ... ok
+test data_store_test::test_stranger_cannot_grant_writer - should panic ... ok
+test data_store_test::test_stranger_cannot_backup - should panic ... ok
+test data_store_test::test_stranger_cannot_save - should panic ... ok
+test data_store_test::test_stranger_cannot_restore - should panic ... ok
+test deposit_test::test_deposit_below_minimum ... ok
+test deposit_test::test_deposit_exceeds_cap ... ok
+test data_store_test::test_writer_can_save ... ok
+test deposit_test::test_deposit_invalid_amount_negative ... ok
+test data_store_test::test_writer_cannot_migrate - should panic ... ok
+test deposit_test::test_deposit_invalid_amount_zero ... ok
+test deposit_test::test_deposit_cap_boundary ... ok
+test data_store_test::test_writer_can_backup ... ok
+test data_store_test::test_writer_cannot_restore - should panic ... ok
+test deposit_test::test_deposit_multiple_times ... ok
+test deposit_test::test_deposit_overflow_protection ... ok
+test deposit_test::test_deposit_paused ... ok
+test deposit_test::test_deposit_success ... ok
+test emergency_shutdown_test::test_emergency_shutdown_authorization_and_state_flow ... ok
+test deposit_test::test_deposit_updates_timestamp ... ok
+test deposit_test::test_deposit_separate_users ... ok
+test deposit_test::test_deposit_pause_unpause ... ok
+test flash_loan_test::test_flash_loan_callback_false ... ok
+test flash_loan_test::test_set_flash_loan_fee_bps ... ok
+test math_safety_test::test_collateral_ratio_overflow ... ok
+test flash_loan_test::test_flash_loan_callback_revert - should panic ... ok
+test math_safety_test::test_interest_calculation_extreme_values ... ok
+test math_safety_test::test_interest_monotonic_for_large_ledger_jumps ... ok
+test math_safety_test::test_interest_saturates_to_i128_max_at_extreme_horizon ... ok
+test flash_loan_test::test_flash_loan_exceed_balance - should panic ... ok
+test math_safety_test::test_views_math_safety ... ok
+test flash_loan_test::test_set_flash_loan_fee_too_high - should panic ... ok
+test math_safety_test::test_get_user_debt_interest_addition_saturates ... ok
+test flash_loan_test::test_flash_loan_insufficient_repayment - should panic ... ok
+test data_store_test::test_save_max_value_size_allowed ... ok
+test flash_loan_test::test_flash_loan_reentrancy - should panic ... ok
+test pause_test::test_set_pause_unauthorized_address - should panic ... ok
+test flash_loan_test::test_flash_loan_minimal_fee ... ok
+test pause_test::test_pause_events ... ok
+test flash_loan_test::test_flash_loan_max_fee ... ok
+test emergency_shutdown_test::test_shutdown_blocks_high_risk_ops_and_recovery_allows_unwind_only ... ok
+test flash_loan_test::test_flash_loan_success ... ok
+test emergency_shutdown_test::test_recovery_transition_edge_cases_and_partial_pause ... ok
+test race_tests::test_intra_block_deposit_withdraw_same_amount ... ok
+test pause_test::test_global_pause ... ok
+test pause_test::test_pause_borrow_granular ... ok
+test pause_test::test_all_granular_pauses ... ok
+test race_tests::test_intra_block_invalid_ordering_withdraw_first ... ok
+test race_tests::test_intra_block_borrow_repay ... ok
+test race_tests::test_intra_block_multi_user_interaction ... ok
+test race_tests::test_intra_block_full_lifecycle ... ok
+test race_tests::test_intra_block_excessive_borrow_repay_race ... ok
+test token_receiver_test::test_direct_deposit_repay ... ok
+test token_receiver_test::test_receive_deposit_success ... ok
+test token_receiver_test::test_receive_invalid_action ... ok
+test stress_test::test_stress_zero_amount_operations ... ok
+test stress_test::test_stress_multiple_positions_per_user ... ok
+test token_receiver_test::test_receive_repay_success ... ok
+test upgrade_migration_safety_test::test_execute_already_executed_proposal_fails - should panic ... ok
+test upgrade_migration_safety_test::test_backup_restore_across_upgrade ... ok
+test upgrade_migration_safety_test::test_approver_permissions_preserved_across_upgrade ... ok
+test upgrade_migration_safety_test::test_execute_without_approval_fails - should panic ... ok
+test stress_test::test_stress_alternating_borrow_repay_cycles ... ok
+test upgrade_migration_safety_test::test_non_admin_cannot_rollback - should panic ... ok
+test upgrade_migration_safety_test::test_multiple_pending_proposals ... ok
+test upgrade_migration_safety_test::test_non_approver_cannot_execute - should panic ... ok
+test upgrade_migration_safety_test::test_propose_lower_version_fails - should panic ... ok
+test upgrade_migration_safety_test::test_propose_same_version_fails - should panic ... ok
+test upgrade_migration_safety_test::test_rollback_cannot_be_repeated - should panic ... ok
+test upgrade_migration_safety_test::test_rollback_preserves_user_state ... ok
+test upgrade_migration_safety_test::test_rollback_restores_previous_version ... ok
+test upgrade_migration_safety_test::test_rollback_then_new_upgrade ... ok
+test upgrade_migration_safety_test::test_schema_version_bump_during_upgrade ... ok
+test upgrade_migration_safety_test::test_rapid_version_increments ... ok
+test upgrade_migration_safety_test::test_state_modifications_during_proposal_phase ... ok
+test upgrade_migration_safety_test::test_sequential_upgrades_preserve_state ... ok
+test upgrade_migration_safety_test::test_upgrade_preserves_admin_and_version ... ok
+test upgrade_migration_safety_test::test_upgrade_preserves_data_store_entries ... ok
+test stress_test::test_stress_maximum_single_user_positions ... ok
+test upgrade_migration_safety_test::test_upgrade_preserves_multiple_user_states ... ok
+test upgrade_migration_safety_test::test_upgrade_preserves_writer_permissions ... ok
+test upgrade_migration_safety_test::test_upgrade_with_empty_data_store ... ok
+test upgrade_test::test_init_rejects_zero_threshold ... ok
+test upgrade_test::test_add_approver_admin_only ... ok
+test upgrade_test::test_init_sets_defaults ... ok
+test upgrade_migration_safety_test::test_migration_with_large_dataset ... ok
+test upgrade_test::test_upgrade_execute_updates_current_version_and_hash ... ok
+test upgrade_test::test_upgrade_approve_flow ... ok
+test upgrade_migration_safety_test::test_upgrade_with_state_modifications_between_versions ... ok
+test upgrade_migration_safety_test::test_upgrade_with_max_approvers ... ok
+test upgrade_test::test_upgrade_remove_approver_enforces_threshold ... ok
+test upgrade_test::test_upgrade_propose_sets_initial_status ... ok
+test upgrade_test::test_upgrade_invalid_attempts ... ok
+test upgrade_test::test_upgrade_rejects_unauthorized_approve_and_execute ... ok
+test views_test::test_get_collateral_balance_zero_when_no_position ... ok
+test upgrade_test::test_upgrade_status_missing_proposal_errors ... ok
+test views_test::test_get_collateral_balance_returns_amount_after_borrow ... ok
+test views_test::test_get_collateral_value_zero_collateral ... ok
+test upgrade_test::test_upgrade_rollback_restores_previous ... ok
+test views_test::test_get_collateral_value_zero_when_oracle_not_set ... ok
+test views_test::test_get_collateral_value_with_oracle ... ok
+test views_test::test_get_debt_balance_zero_when_no_debt ... ok
+test views_test::test_get_debt_balance_returns_principal_plus_interest ... ok
+test views_test::test_get_debt_value_zero_debt ... ok
+test upgrade_test::test_upgrade_rotation_revokes_old_approver ... ok
+test views_test::test_get_debt_value_zero_when_oracle_not_set ... ok
+test views_test::test_get_debt_value_with_oracle ... ok
+test views_test::test_get_health_factor_no_debt_returns_sentinel ... ok
+test views_test::test_get_health_factor_boundary_at_one ... ok
+test views_test::test_get_health_factor_healthy_above_threshold ... ok
+test views_test::test_get_health_factor_zero_when_oracle_not_set ... ok
+test views_test::test_get_user_position_empty ... ok
+test views_test::test_set_liquidation_threshold_bps_invalid ... ok
+test views_test::test_get_health_factor_liquidatable_below_threshold ... ok
+test views_test::test_set_liquidation_threshold_bps_unauthorized ... ok
+test views_test::test_set_oracle_unauthorized ... ok
+test views_test::test_get_user_position_matches_individual_getters ... ok
+test views_test::test_views_do_not_modify_state ... ok
+test views_test::test_set_liquidation_threshold_bps_valid ... ok
+test withdraw_test::test_withdraw_below_minimum ... ok
+test withdraw_test::test_withdraw_after_multiple_deposits ... ok
+test withdraw_test::test_withdraw_deposit_withdraw_cycle ... ok
+test withdraw_test::test_withdraw_full_balance ... ok
+test withdraw_test::test_withdraw_emits_event ... ok
+test withdraw_test::test_withdraw_insufficient_collateral ... ok
+test withdraw_test::test_withdraw_invalid_amount_negative ... ok
+test withdraw_test::test_withdraw_invalid_amount_zero ... ok
+test withdraw_test::test_withdraw_minimum_amount_boundary ... ok
+test withdraw_test::test_withdraw_max_with_debt ... ok
+test withdraw_test::test_withdraw_no_deposit ... ok
+test withdraw_test::test_withdraw_no_debt_allows_full_withdrawal ... ok
+test withdraw_test::test_withdraw_multiple_times ... ok
+test withdraw_test::test_withdraw_paused ... ok
+test withdraw_test::test_withdraw_preserves_deposit_timestamp ... ok
+test withdraw_test::test_withdraw_pause_unpause ... ok
+test withdraw_test::test_withdraw_ratio_boundary_just_below ... ok
+test withdraw_test::test_withdraw_ratio_boundary_exact_150_percent ... ok
+test withdraw_test::test_withdraw_separate_users ... ok
+test withdraw_test::test_withdraw_ratio_violation_with_debt ... ok
+test withdraw_test::test_withdraw_success ... ok
+test withdraw_test::test_withdraw_ratio_valid_with_debt ... ok
+test withdraw_test::test_withdraw_updates_total_deposits ... ok
+test stress_test::test_stress_concurrent_operations_simulation ... ok
+test stress_test::test_stress_mixed_operations_large_user_base ... ok
+test stress_test::test_stress_mixed_operations_large_user_base_concurrent ... ok
+test stress_test::test_stress_large_user_count_deposit_positions ... ok
+test stress_test::test_stress_memory_usage_large_positions ... ok
+test stress_test::test_stress_large_user_count_borrow_positions ... ok
+test stress_test::test_stress_mixed_operations_large_user_base_with_additional_operations ... ok
+
+test result: ok. 204 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.77s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
