@@ -1,9 +1,10 @@
-#[cfg(test)]
-mod math_safety_test;
 #![no_std]
 #![allow(deprecated)]
 #![allow(clippy::absurd_extreme_comparisons)]
 #![allow(unexpected_cfgs)]
+
+#[cfg(test)]
+mod math_safety_test;
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
 mod borrow;
 mod constants;
@@ -142,6 +143,8 @@ mod race_tests;
 mod proposal_race_test;
 #[cfg(test)]
 mod upgrade_migration_safety_test;
+#[cfg(test)]
+mod view_upgrade_consistency_test;
 // #[cfg(test)]
 // mod upgrade_test;
 // #[cfg(test)]
@@ -516,12 +519,12 @@ impl LendingContract {
     }
 
     /// Get user's debt position
-   pub fn get_user_debt(env: &Env, user: &Address) -> DebtPosition {
-    let mut position = get_debt_position(env, user);
-    let accrued = calculate_interest(env, &position);
-    position.interest_accrued = position.interest_accrued.saturating_add(accrued);
-    position
-}
+    pub fn get_user_debt(env: &Env, user: &Address) -> DebtPosition {
+        let mut position = get_debt_position(env, user);
+        let accrued = calculate_interest(env, &position);
+        position.interest_accrued = position.interest_accrued.saturating_add(accrued);
+        position
+    }
 pub(crate) fn calculate_interest(env: &Env, position: &DebtPosition) -> i128 {
     if position.borrowed_amount == 0 {
         return 0;
@@ -551,8 +554,6 @@ pub(crate) fn calculate_interest(env: &Env, position: &DebtPosition) -> i128 {
 
     interest_256.to_i128().unwrap_or(i128::MAX)
 }
-
-    }
 
     /// Get user's collateral position (borrow module)
     pub fn get_user_collateral(env: Env, user: Address) -> BorrowCollateral {

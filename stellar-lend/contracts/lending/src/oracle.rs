@@ -130,6 +130,7 @@ fn is_stale(env: &Env, asset: &Address, last_updated: u64) -> bool {
     age > effective_max_staleness(env, asset)
 }
 
+impl MarketState {
     /// Solvency invariant: net assets must never be negative.
     /// net_assets = reserves + total_deposits - total_borrows - bad_debt
     pub fn check_solvency_invariant(&self) -> bool {
