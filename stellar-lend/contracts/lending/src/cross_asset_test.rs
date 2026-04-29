@@ -93,7 +93,6 @@ fn setup() -> (Env, LendingContractClient<'static>, Address) {
     client.initialize(&admin);
     client.initialize_ca(&admin);
     (env, client, admin)
->>>>>>> origin
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,7 +360,6 @@ fn test_set_asset_params_stores_and_allows_deposit() {
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
 
->>>>>>> origin
     let asset = Address::generate(&env);
     client.set_asset_params(&asset, &asset_params(&env, 7500));
 
