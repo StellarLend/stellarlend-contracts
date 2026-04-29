@@ -10,15 +10,9 @@
 //! transfer that requires a deployed token contract. Those scenarios live in
 //! integration tests that set up a mock token.
 
-<<<<<<< HEAD
 use crate::cross_asset::{AssetParams, CrossAssetError};
 use crate::{LendingContract, LendingContractClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
-=======
-use crate::cross_asset::AssetParams;
-use crate::{LendingContract, LendingContractClient};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env};
->>>>>>> origin
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants that mirror cross_asset.rs internals
@@ -33,7 +27,6 @@ const HF_NO_DEBT: i128 = 1_000_000;
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
 fn setup(env: &Env) -> (LendingContractClient<'_>, Address) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);
@@ -55,21 +48,6 @@ fn asset_params(env: &Env, ltv: i128) -> AssetParams {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. Admin initialisation
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn test_initialize_admin_stores_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, _admin) = setup(&env);
-    // Verify that admin is stored by confirming we can call a protected function.
-    let asset = Address::generate(&env);
-    let params = asset_params(&env, 7500);
-    // If admin were not set, set_asset_params would return Unauthorized.
-    client.set_asset_params(&asset, &params);
-=======
 /// Create a default valid asset config for testing.
 fn default_config(env: &Env) -> AssetParams {
     AssetParams {
@@ -126,20 +104,11 @@ fn setup() -> (Env, LendingContractClient<'static>, Address) {
 fn test_set_asset_params_success() {
     let env = Env::default();
     env.mock_all_auths();
-<<<<<<< HEAD
-    let (client, _admin) = setup(&env);
+let (client, _admin) = setup(&env);
 
     let asset = Address::generate(&env);
     let params = asset_params(&env, 7500);
     client.set_asset_params(&asset, &params);
-=======
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
-    // Should succeed first time
-    client.initialize_ca(&admin);
->>>>>>> origin
 }
 
 #[test]
@@ -148,8 +117,11 @@ fn test_set_asset_params_stores_and_allows_deposit() {
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
 
-<<<<<<< HEAD
-=======
+    let asset = Address::generate(&env);
+    let params = asset_params(&env, 7500);
+    client.set_asset_params(&asset, &params);
+}
+
 // ============================================================================
 // 2. Asset Initialization
 // ============================================================================
@@ -619,21 +591,9 @@ fn test_summary_empty_position_has_zero_totals() {
     let user = Address::generate(&env);
     let summary = client.get_cross_position_summary(&user);
 
-<<<<<<< HEAD
     assert_eq!(summary.total_collateral_usd, 0);
     assert_eq!(summary.total_debt_usd, 0);
     assert_eq!(summary.health_factor, HF_NO_DEBT);
-=======
-    let user = Address::generate(&env);
-    client.cross_asset_deposit(&user, &None, &5000_0000000);
-
-    // Disable collateral
-    client.update_asset_config(&None, &None, &None, &None, &None, &None, &None, &None);
-
-    // Existing position still exists
-    let pos = client.get_user_asset_position(&user, &None);
-    assert_eq!(pos.collateral, 5000_0000000);
->>>>>>> origin
 }
 
 #[test]
@@ -681,8 +641,6 @@ fn test_summary_debt_only_position_reflects_uncollateralised_state() {
     // weighted = 1 * 10_000 / 10_000 = 1; HF = 1 * 10_000 / 1 = 10_000
     assert_eq!(summary.health_factor, HF_HEALTHY);
 }
-<<<<<<< HEAD
-=======
 
 #[test]
 fn test_config_update_preserves_price() {
@@ -698,4 +656,3 @@ fn test_config_update_preserves_price() {
     assert_eq!(fetched.price, 50_000_000); // Price preserved
     assert_eq!(fetched.collateral_factor, 5000);
 }
->>>>>>> origin

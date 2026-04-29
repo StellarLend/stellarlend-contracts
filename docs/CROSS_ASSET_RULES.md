@@ -119,6 +119,7 @@ When repaying debt with accrued interest:
 ```
 
 Example:
+
 - Debt Principal: 1000
 - Accrued Interest: 50
 - Repay 75: Interest becomes 0, Principal becomes 975
@@ -209,7 +210,7 @@ The protocol enforces deterministic withdrawal limits precisely at the collatera
 3. **Price Move Boundary**
    - **Position**: 1 ETH @ $2000 (80% LTV). Weighted = $1600. Debt = $1500.
    - **Event**: ETH price drops to $1875.
-   - **New Weighted**: $1875 * 0.8 = $1500.
+   - **New Weighted**: $1875 \* 0.8 = $1500.
    - **Result**: Position hits the withdrawal boundary. All further withdrawals are blocked until debt is repaid or price recovers.
 
 ### Security Notes
@@ -358,7 +359,6 @@ Result:
 
 ## View Guarantees
 
-<<<<<<< HEAD
 The following guarantees hold for `get_cross_position_summary` and all other read-only view functions. These are verified by the invariant test suite in `cross_asset_view_invariants_test.rs`.
 
 ### G-1 — Read-only (no state mutation)
@@ -417,6 +417,7 @@ Depositing assets in any order produces the same `total_collateral_usd` and `hea
 ### G-9 — Rounding is conservative (floor division)
 
 All LTV weighting and USD-value conversions use integer floor division. This means:
+
 - `weighted_collateral` can only be less than or equal to the real-valued result.
 - A borrow is only permitted when the floor-divided health factor is **strictly above 1.0** (> `BPS_SCALE`).
 - Borrowers cannot extract more value than the floor-rounded weighted collateral.
@@ -424,26 +425,20 @@ All LTV weighting and USD-value conversions use integer floor division. This mea
 ### G-10 — No view-based exploitation
 
 Because view functions are read-only and deterministic, there is no mechanism through which a caller can:
+
 - Manipulate another user's health factor by calling the view.
 - Gain assets or reduce debt through repeated view calls.
 - Trigger liquidation thresholds without an actual price or balance change.
 
 ### Boundary conditions
 
-| Condition | Guaranteed behaviour |
-|-----------|----------------------|
-| No collateral, no debt | `total_collateral_usd = 0`, `total_debt_usd = 0`, `health_factor = HF_NO_DEBT` |
-| Collateral but no debt | `total_collateral_usd ≥ 0`, `total_debt_usd = 0`, `health_factor = HF_NO_DEBT` |
-| LTV = 0 | `weighted_collateral = 0`; borrow rejected by health check |
-| Overpayment of debt | Capped at outstanding balance; `total_debt_usd` goes to 0 |
-| Same asset in collateral and debt | Counted independently in both totals (no netting) |
-=======
-Read-only methods that surface position state — `get_user_position`,
-`get_collateral_balance`, `get_debt_balance`, `get_collateral_value`,
-`get_debt_value`, `get_health_factor`, `get_max_liquidatable_amount`, and
-`get_liquidation_incentive_amount` — are pinned by the invariant test suite
-in `stellar-lend/contracts/lending/src/views_test.rs`. The properties below
-hold for every user, asset configuration, and ordering of view calls.
+| Condition                         | Guaranteed behaviour                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| No collateral, no debt            | `total_collateral_usd = 0`, `total_debt_usd = 0`, `health_factor = HF_NO_DEBT` |
+| Collateral but no debt            | `total_collateral_usd ≥ 0`, `total_debt_usd = 0`, `health_factor = HF_NO_DEBT` |
+| LTV = 0                           | `weighted_collateral = 0`; borrow rejected by health check                     |
+| Overpayment of debt               | Capped at outstanding balance; `total_debt_usd` goes to 0                      |
+| Same asset in collateral and debt | Counted independently in both totals (no netting)                              |
 
 ### Consistency
 
@@ -471,7 +466,7 @@ The first four are functions of raw state and oracle output only.
 ### Rounding and ordering
 
 - Health-factor division truncates toward zero. `health_factor ==
-  HEALTH_FACTOR_SCALE` (exactly 1.0) is treated as healthy.
+HEALTH_FACTOR_SCALE` (exactly 1.0) is treated as healthy.
 - `get_liquidation_incentive_amount(repay)` is monotonic non-decreasing in
   `repay`. Negative or zero amounts return `0`.
 
@@ -481,7 +476,8 @@ Views never mutate state, never charge fees, and trigger only the read-only
 oracle lookup. Integrators MUST NOT rely on a view's value beyond the ledger
 height at which it was observed — oracle prices and risk parameters can
 change.
->>>>>>> origin
+
+> > > > > > > origin
 
 ## Conclusion
 
