@@ -181,3 +181,79 @@ api/src/
 ## License
 
 MIT
+
+## API Endpoints
+## Lending Activity
+# GET /api/lending/activity
+Returns recent lending activity (borrows, repays, deposits, withdrawals, liquidations) with stable cursor-based pagination.
+
+Query Parameters:
+| Parameter | Type   | Required | Default | Description                                     |
+| --------- | ------ | -------- | ------- | ----------------------------------------------- |
+| `cursor`  | string | No       | —       | Opaque pagination cursor from previous response |
+| `limit`   | number | No       | 20      | Page size (1-100)                               |
+
+
+Response:
+{
+  "data": [
+    {
+      "id": "evt-123",
+      "type": "borrow",
+      "user": "GABC...",
+      "amount": "1000000000",
+      "asset": "USDC",
+      "ledgerSequence": 5000000,
+      "eventIndex": 12,
+      "timestamp": "2026-06-01T12:00:00Z",
+      "txHash": "abc123..."
+    }
+  ],
+  "pagination": {
+    "hasNextPage": true,
+    "nextCursor": "NTAwMDAwMDoxMw",
+    "pageSize": 20,
+    "totalCount": null
+  }
+}
+
+Cursor Format:
+The cursor is an opaque base64url-encoded string containing ledger_sequence:event_index.
+ledger_sequence: The Stellar ledger sequence number (monotonically increasing)
+event_index: Position within the ledger (0-based, stable within a ledger)
+
+Example:
+cursor = base64url("5000000:13") = "NTAwMDAwMDoxMw"
+
+## Ordering Guarantees:
+Events are ordered by (ledgerSequence ASC, eventIndex ASC)
+The cursor captures the exact position of the last returned item
+New events in future ledgers do not affect pagination of past cursors
+No duplicate or missed entries when new events arrive between calls
+Cursors are stable across API restarts (derived from immutable ledger data)
+
+# Pagination Flow:
+# Page 1
+GET /api/lending/activity?limit=20
+→ Returns data[0..19], nextCursor = "..."
+
+# Page 2
+GET /api/lending/activity?cursor=<nextCursor>&limit=20
+→ Returns data[20..39], nextCursor = "..." or null
+
+# Done
+GET /api/lending/activity?cursor=<nextCursor>&limit=20
+→ Returns data[40..42], hasNextPage = false, nextCursor = null
+
+
+# Error Responses:
+| Status | Code              | Description                                  |
+| ------ | ----------------- | -------------------------------------------- |
+| 400    | `INVALID_CURSOR`  | Cursor is malformed or contains invalid data |
+| 400    | `INVALID_ADDRESS` | User address is missing or invalid           |
+| 500    | `INTERNAL_ERROR`  | RPC failure or unexpected error              |
+
+
+# GET /api/lending/activity/:userAddress
+Same pagination semantics as above, filtered to events for the specified user.
+GET /api/lending/activity/GABC...?cursor=NTAwMDAwMDoxMw&limit=20
