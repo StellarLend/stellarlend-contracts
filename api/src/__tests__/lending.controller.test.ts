@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { LendingController, ActivityResponse } from '../controllers/lending.controller';
 import { StellarService } from '../services/stellar.service';
-<<<<<<< HEAD
 import { encodeCursor } from '../utils/cursor';
 
 // Mock StellarService
@@ -30,7 +29,6 @@ describe('LendingController', () => {
   });
 
   afterEach(() => {
-=======
 /**
  * Lending Controller Tests
  *
@@ -235,13 +233,11 @@ describe('LendingController', () => {
   let mockStellarService: StellarService;
 
   beforeEach(() => {
->>>>>>> b57e31797308da1f17c64939b7da693d28d55d85
     jest.clearAllMocks();
     mockStellarService = new StellarService('https://rpc.test', 'CONTRACT_ID');
     controller = new LendingController(mockStellarService);
   });
 
-<<<<<<< HEAD
   describe('getActivity', () => {
     const mockActivities = [
       {
@@ -278,7 +274,6 @@ describe('LendingController', () => {
         txHash: 'TX3',
       },
     ];
-=======
   describe('GET /api/lending/activity', () => {
     it('should return first page without cursor', async () => {
       const events = [
@@ -581,7 +576,6 @@ describe('Activity Ordering Guarantees', () => {
     it('should successfully process a deposit', async () => {
       const mockTxXdr = 'mock_tx_xdr';
       const mockTxHash = 'mock_tx_hash';
->>>>>>> b57e31797308da1f17c64939b7da693d28d55d85
 
     it('returns activities with pagination metadata', async () => {
       mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
@@ -751,8 +745,6 @@ describe('Activity Ordering Guarantees', () => {
       );
     });
   });
-<<<<<<< HEAD
-=======
 
   describe('POST /api/lending/borrow', () => {
     it('should successfully process a borrow', async () => {
@@ -928,5 +920,4 @@ describe('Activity Ordering Guarantees', () => {
       expect(response.body.status).toBe('unhealthy');
     });
   });
->>>>>>> b57e31797308da1f17c64939b7da693d28d55d85
 });

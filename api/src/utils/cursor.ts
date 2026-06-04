@@ -1,5 +1,4 @@
 /**
-<<<<<<< HEAD
  * Cursor encoding/decoding utilities for ledger-sequence based pagination.
  * 
  * Cursor format: base64(ledger_sequence:event_index)
@@ -55,7 +54,6 @@ export function decodeCursor(cursor: string): { ledgerSequence: number; eventInd
       throw new Error(`Cursor decode failed: ${error.message}`);
     }
     throw new Error('Cursor decode failed: unknown error');
-=======
  * Cursor utilities for ledger-sequence-backed pagination
  * 
  * Cursor format: base64(ledger_sequence:event_index)
@@ -199,18 +197,15 @@ export class CursorError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CursorError';
->>>>>>> b57e31797308da1f17c64939b7da693d28d55d85
   }
 }
 
 /**
-<<<<<<< HEAD
  * Checks if a cursor is valid without throwing.
  */
 export function isValidCursor(cursor: string): boolean {
   try {
     decodeCursor(cursor);
-=======
  * Check if a value is a valid cursor string
  * 
  * @param value - Value to check
@@ -222,12 +217,10 @@ export function isValidCursor(value: unknown): value is string {
   }
   try {
     decodeCursor(value);
->>>>>>> b57e31797308da1f17c64939b7da693d28d55d85
     return true;
   } catch {
     return false;
   }
-<<<<<<< HEAD
 }
 
 /**
@@ -253,6 +246,4 @@ export function compareCursors(a: string, b: string): number {
     return decodedA.ledgerSequence - decodedB.ledgerSequence;
   }
   return decodedA.eventIndex - decodedB.eventIndex;
-=======
->>>>>>> b57e31797308da1f17c64939b7da693d28d55d85
 }

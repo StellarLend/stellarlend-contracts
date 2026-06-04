@@ -93,7 +93,6 @@ above:
 | `test_pagination_large_offset_no_panic` | No overflow on large offset |
 
 
-<<<<<<< HEAD
 # Activity Ordering Guarantees
 
 This document describes the ordering and pagination guarantees for StellarLend activity feeds.
@@ -176,7 +175,6 @@ The server may change the cursor encoding without breaking clients
 Clients should persist the nextCursor for resumable pagination
 The limit parameter is advisory; the server may return fewer items
 
-=======
 Activity Ordering Guarantees
 
 Overview
@@ -331,4 +329,3 @@ References
 Stellar Ledger Concepts
 Soroban Events
 API Pagination Best Practices
->>>>>>> b57e31797308da1f17c64939b7da693d28d55d85
