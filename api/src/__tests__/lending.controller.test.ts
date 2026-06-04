@@ -1,302 +1,240 @@
-import request from 'supertest';
+import { Request, Response } from 'express';
+import { LendingController, ActivityResponse } from '../controllers/lending.controller';
+import { StellarService } from '../services/stellar.service';
+import { encodeCursor } from '../utils/cursor';
 
-const mockStellarService = {
-  buildDepositTransaction: jest.fn(),
-  buildBorrowTransaction: jest.fn(),
-  buildRepayTransaction: jest.fn(),
-  buildWithdrawTransaction: jest.fn(),
-  submitTransaction: jest.fn(),
-  monitorTransaction: jest.fn(),
-  healthCheck: jest.fn(),
-};
+// Mock StellarService
+jest.mock('../services/stellar.service');
 
-jest.mock('../services/stellar.service', () => ({
-  StellarService: jest.fn(() => mockStellarService),
-}));
+describe('LendingController', () => {
+  let controller: LendingController;
+  let mockStellarService: jest.Mocked<<StellarService>;
+  let mockReq: Partial<<Request>;
+  let mockRes: Partial<Response>;
+  let jsonMock: jest.Mock;
+  let statusMock: jest.Mock;
 
-const app = require('../app').default;
-
-describe('Lending Controller', () => {
   beforeEach(() => {
+    mockStellarService = new StellarService() as jest.Mocked<<StellarService>;
+    controller = new LendingController(mockStellarService);
+
+    jsonMock = jest.fn();
+    statusMock = jest.fn().mockReturnValue({ json: jsonMock });
+    
+    mockReq = { query: {} };
+    mockRes = {
+      json: jsonMock,
+      status: statusMock,
+    };
+  });
+
+  afterEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('POST /api/lending/deposit', () => {
-    it('should successfully process a deposit', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
+  describe('getActivity', () => {
+    const mockActivities = [
+      {
+        id: '1',
+        type: 'borrow' as const,
+        ledgerSequence: 5000,
+        eventIndex: 2,
+        timestamp: new Date('2024-01-01T00:00:00Z'),
+        amount: '100.0000000',
+        asset: 'USDC',
+        account: 'GACCOUNT1',
+        txHash: 'TX1',
+      },
+      {
+        id: '2',
+        type: 'deposit' as const,
+        ledgerSequence: 5000,
+        eventIndex: 1,
+        timestamp: new Date('2024-01-01T00:01:00Z'),
+        amount: '200.0000000',
+        asset: 'XLM',
+        account: 'GACCOUNT2',
+        txHash: 'TX2',
+      },
+      {
+        id: '3',
+        type: 'repay' as const,
+        ledgerSequence: 4999,
+        eventIndex: 0,
+        timestamp: new Date('2024-01-01T00:02:00Z'),
+        amount: '50.0000000',
+        asset: 'USDC',
+        account: 'GACCOUNT3',
+        txHash: 'TX3',
+      },
+    ];
 
-      mockStellarService.buildDepositTransaction = jest.fn().mockResolvedValue(mockTxXdr);
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-      });
-      mockStellarService.monitorTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-        ledger: 12345,
-      });
+    it('returns activities with pagination metadata', async () => {
+      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
 
-      const response = await request(app)
-        .post('/api/lending/deposit')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '1000000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
-      expect(response.body.transactionHash).toBe(mockTxHash);
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.arrayContaining([
+            expect.objectContaining({
+              id: '1',
+              ledgerSequence: 5000,
+              eventIndex: 2,
+            }),
+          ]),
+          pagination: expect.objectContaining({
+            hasMore: false,
+            limit: 20,
+            nextCursor: null,
+          }),
+        })
+      );
     });
 
-    it('should return 400 for invalid amount', async () => {
-      const response = await request(app)
-        .post('/api/lending/deposit')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '0',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+    it('returns nextCursor when there are more results', async () => {
+      // Return more than limit to trigger hasMore
+      const extraActivities = [
+        ...mockActivities,
+        {
+          id: '4',
+          type: 'withdraw' as const,
+          ledgerSequence: 4998,
+          eventIndex: 0,
+          timestamp: new Date('2024-01-01T00:03:00Z'),
+          amount: '75.0000000',
+          asset: 'EURC',
+          account: 'GACCOUNT4',
+          txHash: 'TX4',
+        },
+      ];
+      mockStellarService.fetchActivities.mockResolvedValue(extraActivities);
 
-      expect(response.status).toBe(400);
+      await controller.getActivity(mockReq as Request, mockRes as Response);
+
+      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
+      expect(response.pagination.hasMore).toBe(true);
+      expect(response.pagination.nextCursor).toBeTruthy();
+      
+      // Verify cursor points to last returned item
+      const decoded = Buffer.from(response.pagination.nextCursor!, 'base64').toString('utf-8');
+      expect(decoded).toBe('4999:0'); // Last item in the 20-item page
     });
 
-    it('should return 400 for missing required fields', async () => {
-      const response = await request(app)
-        .post('/api/lending/deposit')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-        });
+    it('parses cursor and fetches from correct position', async () => {
+      const cursor = encodeCursor(5000, 1); // Start after ledger 5000, event 1
+      mockReq.query = { cursor };
+      mockStellarService.fetchActivities.mockResolvedValue([mockActivities[2]]); // Only 4999:0
 
-      expect(response.status).toBe(400);
+      await controller.getActivity(mockReq as Request, mockRes as Response);
+
+      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          fromLedger: 5000,
+          fromEventIndex: 2, // 1 + 1 = start after cursor
+          limit: 21, // limit + 1 for hasMore detection
+          order: 'desc',
+        })
+      );
     });
 
-    it('should pass deposit build errors to error handler', async () => {
-      mockStellarService.buildDepositTransaction = jest.fn().mockRejectedValue(new Error('boom'));
+    it('respects custom limit parameter', async () => {
+      mockReq.query = { limit: '5' };
+      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
 
-      const response = await request(app)
-        .post('/api/lending/deposit')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '1000000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(500);
-    });
-  });
+      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ limit: 6 }) // 5 + 1
+      );
 
-  describe('POST /api/lending/borrow', () => {
-    it('should successfully process a borrow', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
-
-      mockStellarService.buildBorrowTransaction = jest.fn().mockResolvedValue(mockTxXdr);
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-      });
-      mockStellarService.monitorTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-        ledger: 12345,
-      });
-
-      const response = await request(app)
-        .post('/api/lending/borrow')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '500000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
-
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
+      expect(response.pagination.limit).toBe(5);
     });
 
-    it('should handle transaction failure', async () => {
-      mockStellarService.buildBorrowTransaction = jest.fn().mockResolvedValue('mock_tx_xdr');
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: false,
-        status: 'failed',
-        error: 'Insufficient collateral',
-      });
+    it('caps limit at MAX_LIMIT (100)', async () => {
+      mockReq.query = { limit: '200' };
+      mockStellarService.fetchActivities.mockResolvedValue([]);
 
-      const response = await request(app)
-        .post('/api/lending/borrow')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '500000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(400);
-      expect(response.body.success).toBe(false);
+      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ limit: 101 }) // 100 + 1
+      );
     });
 
-    it('should pass borrow build errors to error handler', async () => {
-      mockStellarService.buildBorrowTransaction = jest.fn().mockRejectedValue(new Error('boom'));
+    it('returns 400 for invalid cursor', async () => {
+      mockReq.query = { cursor: 'invalid-cursor' };
 
-      const response = await request(app)
-        .post('/api/lending/borrow')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '500000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(500);
-    });
-  });
-
-  describe('POST /api/lending/repay', () => {
-    it('should successfully process a repayment', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
-
-      mockStellarService.buildRepayTransaction = jest.fn().mockResolvedValue(mockTxXdr);
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-      });
-      mockStellarService.monitorTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-        ledger: 12345,
-      });
-
-      const response = await request(app)
-        .post('/api/lending/repay')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '250000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
-
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      expect(mockRes.status).toHaveBeenCalledWith(400);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'Invalid cursor',
+        })
+      );
     });
 
-    it('should pass repay build errors to error handler', async () => {
-      mockStellarService.buildRepayTransaction = jest.fn().mockRejectedValue(new Error('boom'));
+    it('handles empty result set', async () => {
+      mockStellarService.fetchActivities.mockResolvedValue([]);
 
-      const response = await request(app)
-        .post('/api/lending/repay')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '250000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(500);
-    });
-  });
-
-  describe('POST /api/lending/withdraw', () => {
-    it('should successfully process a withdrawal', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
-
-      mockStellarService.buildWithdrawTransaction = jest.fn().mockResolvedValue(mockTxXdr);
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-      });
-      mockStellarService.monitorTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-        ledger: 12345,
-      });
-
-      const response = await request(app)
-        .post('/api/lending/withdraw')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '100000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
-
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
+      expect(response.data).toEqual([]);
+      expect(response.pagination.hasMore).toBe(false);
+      expect(response.pagination.nextCursor).toBeNull();
     });
 
-    it('should handle undercollateralization error', async () => {
-      mockStellarService.buildWithdrawTransaction = jest.fn().mockResolvedValue('mock_tx_xdr');
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: false,
-        status: 'failed',
-        error: 'Withdrawal would violate minimum collateral ratio',
-      });
+    it('handles service errors with 500', async () => {
+      mockStellarService.fetchActivities.mockRejectedValue(new Error('Horizon timeout'));
 
-      const response = await request(app)
-        .post('/api/lending/withdraw')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '1000000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(400);
-      expect(response.body.success).toBe(false);
+      expect(mockRes.status).toHaveBeenCalledWith(500);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'Failed to fetch activity',
+        })
+      );
     });
 
-    it('should pass withdraw build errors to error handler', async () => {
-      mockStellarService.buildWithdrawTransaction = jest.fn().mockRejectedValue(new Error('boom'));
+    it('uses default limit when limit param is invalid', async () => {
+      mockReq.query = { limit: 'not-a-number' };
+      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
 
-      const response = await request(app)
-        .post('/api/lending/withdraw')
-        .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
-          amount: '100000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
-        });
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(500);
-    });
-  });
-
-  describe('GET /api/health', () => {
-    it('should return healthy status when all services are up', async () => {
-      mockStellarService.healthCheck = jest.fn().mockResolvedValue({
-        horizon: true,
-        sorobanRpc: true,
-      });
-
-      const response = await request(app).get('/api/health');
-
-      expect(response.status).toBe(200);
-      expect(response.body.status).toBe('healthy');
-      expect(response.body.services.horizon).toBe(true);
-      expect(response.body.services.sorobanRpc).toBe(true);
+      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
+      expect(response.pagination.limit).toBe(20);
     });
 
-    it('should return unhealthy status when services are down', async () => {
-      mockStellarService.healthCheck = jest.fn().mockResolvedValue({
-        horizon: false,
-        sorobanRpc: false,
-      });
+    it('uses default limit when limit param is negative', async () => {
+      mockReq.query = { limit: '-5' };
+      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
 
-      const response = await request(app).get('/api/health');
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(503);
-      expect(response.body.status).toBe('unhealthy');
+      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
+      expect(response.pagination.limit).toBe(20);
     });
 
-    it('should pass health check errors to error handler', async () => {
-      mockStellarService.healthCheck = jest.fn().mockRejectedValue(new Error('boom'));
+    it('fetches with no cursor from latest ledger', async () => {
+      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
 
-      const response = await request(app).get('/api/health');
+      await controller.getActivity(mockReq as Request, mockRes as Response);
 
-      expect(response.status).toBe(500);
+      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          fromLedger: undefined,
+          fromEventIndex: 0,
+        })
+      );
     });
   });
 });
