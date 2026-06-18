@@ -130,7 +130,9 @@ mod test {
             rate_ceiling_bps: 5_000,
             ..Default::default()
         };
-        let rate = compute_borrow_rate(10_000, &p);
+        // At util=40_000 the raw rate far exceeds 5_000; ceiling must clamp it.
+        // raw: base(100) + kink_slope(1600) + jump((40000-8000)*10000/10000=32000) = 33700
+        let rate = compute_borrow_rate(40_000, &p);
         assert_eq!(rate, 5_000);
     }
 
@@ -168,7 +170,7 @@ mod test {
         use proptest::prelude::*;
 
         proptest! {
-            #![proptest_config = proptest::test_runner::Config::with_cases(256)]
+            #![proptest_config(proptest::test_runner::Config::with_cases(256))]
 
             #[test]
             fn borrow_rate_monotonic_in_utilization(
@@ -189,7 +191,7 @@ mod test {
         }
 
         proptest! {
-            #![proptest_config = proptest::test_runner::Config::with_cases(256)]
+            #![proptest_config(proptest::test_runner::Config::with_cases(256))]
 
             #[test]
             fn borrow_rate_always_between_floor_and_ceiling(
@@ -213,7 +215,7 @@ mod test {
         }
 
         proptest! {
-            #![proptest_config = proptest::test_runner::Config::with_cases(256)]
+            #![proptest_config(proptest::test_runner::Config::with_cases(256))]
 
             #[test]
             fn borrow_rate_non_negative(
@@ -226,7 +228,7 @@ mod test {
         }
 
         proptest! {
-            #![proptest_config = proptest::test_runner::Config::with_cases(256)]
+            #![proptest_config(proptest::test_runner::Config::with_cases(256))]
 
             #[test]
             fn borrow_rate_value_stable_across_same_utilization(

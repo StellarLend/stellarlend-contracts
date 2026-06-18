@@ -10,14 +10,14 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk = { workspace = true, features = ["hazmat-address"] }
 stellar-lend-common = { path = "../common" }
 
 [dev-dependencies]
-soroban-sdk = { workspace = true, features = ["testutils"] }
+soroban-sdk = { workspace = true, features = ["testutils", "hazmat-address"] }
 proptest = "1.5"
 ed25519-dalek = { version = "1.0.1", features = ["std"] }
-rand = "0.8"
+rand = "0.7"
 
 # Re-export modules for integration tests
 [features]

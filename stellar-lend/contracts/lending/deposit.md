@@ -1,172 +1,96 @@
-# Deposit Collateral Function Documentation
+# Deposit Collateral
 
 ## Overview
 
-The deposit function allows users to deposit assets as collateral into the StellarLend protocol. The system enforces minimum deposit amounts, tracks total deposits against a protocol-wide cap, and supports pause functionality for emergency situations.
+`deposit` lets users deposit assets as collateral into the StellarLend protocol. It enforces a protocol-wide cap on total deposits and maintains the `TotalDeposits` accounting invariant.
 
 ## Function Signature
 
 ```rust
-pub fn deposit(
-    env: Env,
-    user: Address,
-    asset: Address,
-    amount: i128,
-) -> Result<i128, DepositError>
+pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError>
 ```
 
 ## Parameters
 
-- `env`: The contract environment
-- `user`: The depositor's address (must authorize the transaction)
-- `asset`: The address of the collateral asset (XLM, USDC, etc.)
-- `amount`: The amount to deposit (must be positive and above minimum)
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `env` | `Env` | Contract environment |
+| `user` | `Address` | Depositor (must authorize via `require_auth`) |
+| `amount` | `i128` | Deposit amount, must be > 0 |
 
 ## Returns
 
-- `Ok(i128)` — updated collateral balance for the user
-- `Err(DepositError)` on failure
+`Ok(i128)` — user's updated collateral balance  
+`Err(LendingError)` — on any validation or cap failure
 
 ## Error Types
 
-| Error | Description |
-|-------|-------------|
-| `InvalidAmount` | Amount is zero, negative, or below minimum deposit |
-| `DepositPaused` | Deposit operations are currently paused |
-| `Overflow` | Arithmetic overflow occurred during calculation |
-| `AssetNotSupported` | The specified asset is not supported |
-| `ExceedsDepositCap` | Protocol's total deposit cap would be exceeded |
+| Error | Code | Description |
+|-------|------|-------------|
+| `InvalidAmount` | 1004 | `amount <= 0` |
+| `DepositCapExceeded` | 2002 | `TotalDeposits + amount > DepositCap` |
+| `Overflow` | 2003 | Arithmetic overflow in checked_add |
 
-## Security Assumptions
+## Deposit Cap
 
-### Authorization
-- User must authorize the transaction via `require_auth()`
-- Prevents unauthorized deposits on behalf of other users
+The protocol keeps a single `TotalDeposits: i128` counter in persistent storage. On every deposit:
 
-### Overflow Protection
-- All arithmetic operations use `checked_add`
-- Returns `DepositError::Overflow` if any calculation would overflow
-- Prevents integer overflow attacks
-
-### Deposit Cap
-- Protocol enforces a maximum total deposit limit per asset.
-- Each deposit (via `deposit`, `deposit_collateral`, or `token_receiver`) checks if the new total would exceed the cap.
-- Ensures consistent risk exposure management across all protocol entry points.
-- Protects the protocol from excessive exposure.
-
-### Pause Mechanism
-- Admin can pause all deposit operations
-- Useful for emergency situations or upgrades
-- Does not affect existing positions, only new deposits
-
-## Usage Examples
-
-### Basic Deposit
-
-```rust
-let user = Address::from_string("GUSER...");
-let usdc = Address::from_string("GUSDC...");
-
-// Deposit 10,000 USDC as collateral
-let new_balance = contract.deposit(user.clone(), usdc, 10_000)?;
+```
+new_total = TotalDeposits + amount
+if new_total > deposit_cap → Err(DepositCapExceeded)
 ```
 
-### Check Collateral Position
+The cap defaults to `DEFAULT_DEPOSIT_CAP = 1_000_000_000_000` and can be overridden via `DataKey::DepositCap` in persistent storage.
 
-```rust
-let position = contract.get_user_collateral_deposit(user.clone(), usdc.clone());
-println!("Collateral: {}", position.amount);
-println!("Last deposit: {}", position.last_deposit_time);
+The check is **strict** (`>`): depositing exactly up to the cap is allowed; depositing 1 unit over is rejected.
+
+## TotalDeposits Invariant
+
+```
+TotalDeposits = Σ collateral(user) for all users
 ```
 
-### Initialize Protocol
+Both `deposit` and `withdraw` maintain this invariant atomically:
 
-```rust
-// Set deposit cap to 1 billion and minimum deposit to 100
-contract.initialize_deposit_settings(1_000_000_000, 100)?;
-```
+- `deposit`: `TotalDeposits += amount` (after cap check)
+- `withdraw`: `TotalDeposits -= amount` (after balance check)
 
-### Pause/Unpause
+## Storage Keys
 
-```rust
-// Pause deposits
-contract.set_deposit_paused(true)?;
+| Key | Durability | Description |
+|-----|-----------|-------------|
+| `DataKey::Collateral(Address)` | Persistent | Per-user collateral balance |
+| `DataKey::TotalDeposits` | Persistent | Protocol-wide total deposits |
+| `DataKey::DepositCap` | Persistent | Maximum allowed total deposits |
 
-// Resume deposits
-contract.set_deposit_paused(false)?;
-```
+## Deposit Cap Test Coverage
 
-## Data Structures
+Tests live in `src/deposit_accounting_test.rs` and cover the following scenarios:
 
-### CollateralPosition
+| Test | Scenario |
+|------|----------|
+| `test_deposit_exactly_at_cap_is_allowed` | Cap boundary: `total + amount == cap` is allowed |
+| `test_deposit_one_over_cap_is_rejected` | Cap boundary: `total + amount == cap + 1` is rejected |
+| `test_deposit_exactly_one_over_cap_after_partial_fill_is_rejected` | Partial fill to 999/1000 then +2 rejected |
+| `test_two_users_deposits_sum_to_cap` | Two users fill cap; both blocked on next deposit |
+| `test_withdraw_restores_headroom_for_new_deposit` | Withdraw frees room; new deposit fits again |
+| `test_withdraw_to_zero_resets_total_deposits` | Full withdrawal sets TotalDeposits back to 0 |
+| `test_withdraw_more_than_deposited_is_rejected` | Over-withdraw rejected; TotalDeposits unchanged |
+| `test_total_deposits_conserved_across_interleaved_ops` | Three users interleaved deposit/withdraw cycle ends at 0 |
+| `test_default_cap_allows_large_deposit` | Single deposit of exactly DEFAULT_DEPOSIT_CAP succeeds |
+| `test_default_cap_blocks_deposit_exceeding_cap` | DEFAULT_DEPOSIT_CAP + 1 rejected |
 
-```rust
-pub struct CollateralPosition {
-    pub amount: i128,             // Total collateral deposited
-    pub asset: Address,           // Collateral asset
-    pub last_deposit_time: u64,   // Last deposit timestamp
-}
-```
+### Key Invariants Verified
 
-### DepositEvent
-
-```rust
-pub struct DepositEvent {
-    pub user: Address,
-    pub asset: Address,
-    pub amount: i128,
-    pub new_balance: i128,
-    pub timestamp: u64,
-}
-```
-
-## Events
-
-The deposit function emits a `DepositEvent` on successful execution:
-
-```rust
-env.events().publish((Symbol::new(env, "deposit"),), event);
-```
-
-This event can be monitored off-chain for indexing and analytics.
-
-## Storage
-
-The contract uses persistent storage for:
-
-- `UserCollateral(Address)`: Individual user collateral positions
-- `TotalDeposits`: Protocol-wide total deposits
-- `DepositCap`: Maximum allowed total deposits
-- `MinDepositAmount`: Minimum deposit amount
-- `Paused`: Deposit pause state
-
-## Testing
-
-Comprehensive tests cover:
-
-- Successful deposit with valid amount
-- Zero amount rejection
-- Negative amount rejection
-- Below minimum deposit rejection
-- Deposit pause enforcement
-- Deposit cap enforcement
-- Multiple deposits accumulation
-- Pause/unpause functionality
-- Overflow protection
-- Timestamp updates on deposit
-- Separate user positions
-- Deposit cap boundary (exact cap and cap+1)
-
-Run tests with:
-```bash
-cargo test
-```
+1. **Strict cap check**: `new_total > cap` rejects; `new_total == cap` allows.
+2. **No partial write**: a rejected deposit leaves `TotalDeposits` unchanged.
+3. **Withdraw headroom**: `withdraw(amount)` reduces `TotalDeposits` by exactly `amount`, re-opening deposit capacity.
+4. **Conservation**: after a full deposit/withdraw round-trip across N users, `TotalDeposits == 0`.
 
 ## Security Considerations
 
-1. **Authorization**: User must authorize via `require_auth()`
-2. **Amount Validation**: Rejects zero, negative, and below-minimum amounts
-3. **Overflow Protection**: All arithmetic uses checked operations
-4. **Deposit Cap**: Prevents protocol over-exposure
-5. **Pause Mechanism**: Emergency stop functionality
-6. **Storage Isolation**: User positions stored separately
+1. **Authorization**: `user.require_auth()` prevents unauthorized deposits.
+2. **Overflow protection**: `checked_add` / `checked_sub` used throughout.
+3. **Atomic accounting**: cap check and balance update happen in the same contract invocation; no partial state.
+4. **Reentrancy guard**: `FlashActive` flag blocks deposits during active flash loans.
+5. **Emergency state**: `check_emergency_status` blocks deposits during `Shutdown` or `Recovery`.
