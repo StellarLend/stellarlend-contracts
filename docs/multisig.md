@@ -132,7 +132,7 @@ Removes expired, unexecuted proposal records and their approval vectors from con
 | `get_ms_threshold(env)` | `u32` | Approval threshold (default `1`) |
 | `get_ms_proposal(env, id)` | `Option<Proposal>` | Proposal by ID |
 | `get_ms_approvals(env, id)` | `Option<Vec<Address>>` | Approvals for a proposal |
-| `get_default_proposal_expiry_ledgers(env)` | `u32` | Default proposal lifetime used by the multisig crate |
+| `get_default_expiry_ledgers(env)` | `u32` | Default proposal lifetime used by the multisig crate |
 
 ---
 
