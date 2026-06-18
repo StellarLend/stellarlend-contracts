@@ -539,16 +539,21 @@ mod tests {
         assert_eq!(result, Err(Ok(MultisigError::InvalidThreshold)));
     }
 
+    /// Verifies that queue_threshold_change panics when the admin's auth is not provided.
+    /// In Soroban, require_auth() enforces auth at the host level; the contract does not
+    /// return MultisigError::Unauthorized — the host aborts the invocation.
     #[test]
+    #[should_panic]
     fn test_queue_threshold_change_unauthorized() {
-        let (env, _admin, contract_id) = setup_initialized(3);
-        let other = Address::generate(&env);
+        // Fresh env WITHOUT mock_all_auths so require_auth() aborts at the host level.
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, MultisigContract);
         let client = MultisigContractClient::new(&env, &contract_id);
-
-        // Disable mock_all_auths to enforce auth check
-        env.mock_all_auths_allow_last();
-        let result = client.queue_threshold_change(&5);
-        assert_eq!(result, Err(Ok(MultisigError::Unauthorized)));
+        // initialize() has no require_auth() call, so it succeeds without auth mocking.
+        client.initialize(&admin, &3).unwrap();
+        // queue_threshold_change calls admin.require_auth() — panics without an auth mock.
+        let _ = client.queue_threshold_change(&5);
     }
 
     #[test]
@@ -597,21 +602,18 @@ mod tests {
         assert_eq!(result, Err(Ok(MultisigError::NoQueuedChange)));
     }
 
+    /// Verifies that apply_threshold_change panics when the admin's auth is not provided.
     #[test]
+    #[should_panic]
     fn test_apply_threshold_change_unauthorized() {
-        let (env, admin, contract_id) = setup_initialized(3);
+        // Fresh env WITHOUT mock_all_auths so require_auth() aborts at the host level.
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, MultisigContract);
         let client = MultisigContractClient::new(&env, &contract_id);
-
-        client.queue_threshold_change(&5).unwrap();
-        let initial_ledger = env.ledger().sequence();
-        env.ledger()
-            .set_sequence_number(initial_ledger + MIN_THRESHOLD_DELAY_LEDGERS);
-
-        // Disable mock_all_auths to enforce auth check
-        env.mock_all_auths_allow_last();
-        let other = Address::generate(&env);
-        let result = client.apply_threshold_change();
-        assert_eq!(result, Err(Ok(MultisigError::Unauthorized)));
+        client.initialize(&admin, &3).unwrap();
+        // apply_threshold_change calls admin.require_auth() — panics without an auth mock.
+        let _ = client.apply_threshold_change();
     }
 
     #[test]
@@ -881,6 +883,209 @@ mod tests {
         assert_eq!(
             client.create_proposal(&5, &expires_too_soon),
             Err(Ok(MultisigError::InvalidProposal))
+        );
+    }
+
+    /// ProposalAlreadyExecuted: a second execute_proposal call on an already-executed
+    /// proposal must be rejected — stale quorums cannot replay governance actions.
+    #[test]
+    fn test_execute_proposal_double_execution() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let current_ledger = env.ledger().sequence();
+        let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10;
+        let proposal_id = client.create_proposal(&5, &expires_at).unwrap();
+
+        // Advance to eta so execution is permitted.
+        env.ledger()
+            .set_sequence_number(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS);
+
+        // First execution succeeds.
+        assert_eq!(client.execute_proposal(&proposal_id), Ok(()));
+        assert_eq!(client.get_threshold().unwrap(), 5);
+
+        // Second execution on the same proposal must be rejected.
+        assert_eq!(
+            client.execute_proposal(&proposal_id),
+            Err(Ok(MultisigError::ProposalAlreadyExecuted))
+        );
+
+        // Threshold must not have regressed.
+        assert_eq!(client.get_threshold().unwrap(), 5);
+    }
+
+    /// ProposalNotFound: executing a non-existent proposal id returns an error.
+    #[test]
+    fn test_execute_proposal_not_found() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let nonexistent_id: u64 = 9999;
+        assert_eq!(
+            client.execute_proposal(&nonexistent_id),
+            Err(Ok(MultisigError::ProposalNotFound))
+        );
+    }
+
+    /// create_proposal_with_default_expiry: convenience wrapper must set expires_at_ledger
+    /// at exactly current_ledger + DEFAULT_PROPOSAL_EXPIRY_LEDGERS and respect the timelock.
+    #[test]
+    fn test_create_proposal_with_default_expiry() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let current_ledger = env.ledger().sequence();
+        let proposal_id = client
+            .create_proposal_with_default_expiry(&5)
+            .unwrap();
+
+        let proposal = client.get_proposal(&proposal_id).unwrap();
+        assert_eq!(
+            proposal.expires_at_ledger,
+            current_ledger + DEFAULT_PROPOSAL_EXPIRY_LEDGERS
+        );
+        assert_eq!(proposal.new_threshold, 5);
+        assert!(!proposal.executed);
+
+        // Execute after delay — still within the default expiry window.
+        env.ledger()
+            .set_sequence_number(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS);
+        assert_eq!(client.execute_proposal(&proposal_id), Ok(()));
+        assert_eq!(client.get_threshold().unwrap(), 5);
+    }
+
+    /// InvalidThreshold: create_proposal with threshold 0 must be rejected.
+    #[test]
+    fn test_create_proposal_invalid_threshold() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let current_ledger = env.ledger().sequence();
+        let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 1;
+
+        assert_eq!(
+            client.create_proposal(&0, &expires_at),
+            Err(Ok(MultisigError::InvalidThreshold))
+        );
+    }
+
+    /// cleanup_expired must keep executed proposals; only unexecuted expired ones are removed.
+    #[test]
+    fn test_cleanup_retains_executed_proposals() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let current_ledger = env.ledger().sequence();
+        let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS;
+        let proposal_id = client.create_proposal(&5, &expires_at).unwrap();
+
+        // Execute at ETA.
+        env.ledger().set_sequence_number(expires_at);
+        client.execute_proposal(&proposal_id).unwrap();
+
+        // Advance past expiry so cleanup might try to remove it.
+        env.ledger().set_sequence_number(expires_at + 1);
+
+        let mut ids = Vec::new(&env);
+        ids.push_back(proposal_id);
+        // Executed proposals are never removed, regardless of ledger position.
+        assert_eq!(client.cleanup_expired(&ids), Ok(0));
+        assert!(client.get_proposal(&proposal_id).is_some());
+    }
+
+    /// Monotonic counter: each new proposal receives a strictly-increasing id.
+    #[test]
+    fn test_proposal_counter_increments() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let current_ledger = env.ledger().sequence();
+        let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10;
+
+        let id1 = client.create_proposal(&5, &expires_at).unwrap();
+        let id2 = client.create_proposal(&7, &expires_at).unwrap();
+        let id3 = client.create_proposal(&9, &expires_at).unwrap();
+
+        assert!(id1 < id2 && id2 < id3);
+    }
+
+    /// Applying a threshold change at exactly MIN_THRESHOLD_DELAY_LEDGERS (boundary).
+    #[test]
+    fn test_apply_at_exact_min_delay_boundary() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let queue_ledger = env.ledger().sequence();
+        client.queue_threshold_change(&5).unwrap();
+
+        // One ledger before the boundary — must fail.
+        env.ledger()
+            .set_sequence_number(queue_ledger + MIN_THRESHOLD_DELAY_LEDGERS - 1);
+        assert_eq!(
+            client.apply_threshold_change(),
+            Err(Ok(MultisigError::DelayNotElapsed))
+        );
+
+        // Exactly at the boundary — must succeed.
+        env.ledger()
+            .set_sequence_number(queue_ledger + MIN_THRESHOLD_DELAY_LEDGERS);
+        assert_eq!(client.apply_threshold_change(), Ok(()));
+        assert_eq!(client.get_threshold().unwrap(), 5);
+    }
+
+    /// Executing a proposal at exactly eta_ledger (the boundary between NotReady and Ready).
+    #[test]
+    fn test_execute_at_exact_eta_boundary() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let current_ledger = env.ledger().sequence();
+        let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10;
+        let proposal_id = client.create_proposal(&7, &expires_at).unwrap();
+
+        let eta = client.get_proposal(&proposal_id).unwrap().eta_ledger;
+
+        // One ledger before eta — ProposalNotReady.
+        env.ledger().set_sequence_number(eta - 1);
+        assert_eq!(
+            client.execute_proposal(&proposal_id),
+            Err(Ok(MultisigError::ProposalNotReady))
+        );
+
+        // Exactly at eta — must succeed.
+        env.ledger().set_sequence_number(eta);
+        assert_eq!(client.execute_proposal(&proposal_id), Ok(()));
+        assert_eq!(client.get_threshold().unwrap(), 7);
+    }
+
+    /// Expiry boundary: proposal is valid at exactly expires_at_ledger, expired one ledger later.
+    ///
+    /// Both proposals are created upfront at the same ledger so that advancing time
+    /// for the first execution does not invalidate the second proposal's creation check.
+    #[test]
+    fn test_execute_at_expiry_boundary() {
+        let (env, _admin, contract_id) = setup_initialized(3);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let current_ledger = env.ledger().sequence();
+        // expires_at == eta (minimum valid expiry)
+        let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS;
+
+        // Create both proposals before advancing the ledger.
+        let proposal_id = client.create_proposal(&9, &expires_at).unwrap();
+        let proposal_id2 = client.create_proposal(&11, &expires_at).unwrap();
+
+        // At exactly expires_at — still valid (contract uses strict >).
+        env.ledger().set_sequence_number(expires_at);
+        assert_eq!(client.execute_proposal(&proposal_id), Ok(()));
+        assert_eq!(client.get_threshold().unwrap(), 9);
+
+        // One ledger past expiry — second proposal is rejected.
+        env.ledger().set_sequence_number(expires_at + 1);
+        assert_eq!(
+            client.execute_proposal(&proposal_id2),
+            Err(Ok(MultisigError::ProposalExpired))
         );
     }
 }

@@ -451,6 +451,46 @@ For all queued actions:
    - Use guardian to stabilize protocol
    - Follow full recovery procedures in Emergency Response Procedures
 
+## Timelock Test Coverage
+
+The multisig crate (`stellarlend-multisig`) includes a `#[cfg(test)]` module that exercises every timing-sensitive transition in the threshold-change and proposal-lifecycle flows. All tests advance the ledger sequence to cross timelock boundaries rather than relying on wall-clock time.
+
+### Threshold-Change Timelock
+
+| Test | Ledger position | Expected outcome |
+|------|----------------|-----------------|
+| `test_queue_threshold_change_success` | at queue ledger | change queued, eta = queue + 600 000 |
+| `test_apply_threshold_change_before_delay` | queue + (MIN − 1) | `DelayNotElapsed` |
+| `test_apply_at_exact_min_delay_boundary` | queue + MIN − 1 then queue + MIN | first `DelayNotElapsed`; second succeeds |
+| `test_apply_threshold_change_after_delay` | queue + MIN | threshold updated, pending cleared |
+| `test_apply_at_exact_eta` | exactly `eta_ledger` | succeeds |
+| `test_apply_after_eta` | queue + MIN × 2 | succeeds (no upper bound on application) |
+| `test_same_ledger_protection` | same ledger as queue | `DelayNotElapsed` |
+
+**Timing boundary**: `MIN_THRESHOLD_DELAY_LEDGERS = 600 000` (≈ 7 days at 5 s/ledger).  
+Apply is valid for `current_ledger >= eta_ledger`.
+
+### Proposal Lifecycle
+
+| Test | Ledger position | Expected outcome |
+|------|----------------|-----------------|
+| `test_execute_proposal_before_eta_rejected` | before eta | `ProposalNotReady` |
+| `test_execute_at_exact_eta_boundary` | eta − 1 then eta | first `ProposalNotReady`; second succeeds |
+| `test_execute_fresh_proposal_ok` | at eta | threshold updated, `executed = true` |
+| `test_execute_proposal_double_execution` | at eta, twice | second call → `ProposalAlreadyExecuted` |
+| `test_execute_proposal_not_found` | any | `ProposalNotFound` |
+| `test_execute_expired_proposal_rejected` | expires_at + 1 | `ProposalExpired` |
+| `test_execute_proposal_at_exact_expiry_ok` | exactly `expires_at` | succeeds (boundary is inclusive) |
+| `test_execute_at_expiry_boundary` | exactly `expires_at` then +1 | first succeeds; second `ProposalExpired` |
+
+**Expiry boundary**: `current_ledger > expires_at_ledger` rejects; `current_ledger == expires_at_ledger` succeeds.
+
+### Authorization and Validation
+
+- `test_queue_threshold_change_unauthorized` / `test_apply_threshold_change_unauthorized` — `require_auth()` causes a host-level abort when auth is not mocked; tests use `#[should_panic]`.
+- `test_queue_threshold_change_zero_threshold` / `test_create_proposal_invalid_threshold` — zero threshold returns `InvalidThreshold`.
+- `test_initialize_already_initialized` — second init returns `AlreadyInitialized`.
+
 ## Integration Checklist
 
 ### Pre-deployment
