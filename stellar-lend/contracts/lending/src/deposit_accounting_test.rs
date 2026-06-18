@@ -31,9 +31,7 @@ fn test_deposit_exactly_at_cap_is_allowed() {
     // Set a small custom cap via storage directly before any deposits
     let cap: i128 = 500;
     env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::DepositCap, &cap);
+        env.storage().persistent().set(&DataKey::DepositCap, &cap);
     });
 
     // Depositing exactly the cap should succeed
@@ -47,9 +45,7 @@ fn test_deposit_one_over_cap_is_rejected() {
     let (env, client, _admin, user) = setup();
     let cap: i128 = 500;
     env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::DepositCap, &cap);
+        env.storage().persistent().set(&DataKey::DepositCap, &cap);
     });
 
     // 501 exceeds the cap of 500
@@ -68,9 +64,7 @@ fn test_deposit_exactly_one_over_cap_after_partial_fill_is_rejected() {
     let (env, client, _admin, user) = setup();
     let cap: i128 = 1_000;
     env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::DepositCap, &cap);
+        env.storage().persistent().set(&DataKey::DepositCap, &cap);
     });
 
     // Fill 999 → OK
@@ -98,9 +92,7 @@ fn test_two_users_deposits_sum_to_cap() {
     let user2 = Address::generate(&env);
     let cap: i128 = 1_000;
     env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::DepositCap, &cap);
+        env.storage().persistent().set(&DataKey::DepositCap, &cap);
     });
 
     client.deposit(&user1, &400);
@@ -127,9 +119,7 @@ fn test_withdraw_restores_headroom_for_new_deposit() {
     let (env, client, _admin, user) = setup();
     let cap: i128 = 1_000;
     env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::DepositCap, &cap);
+        env.storage().persistent().set(&DataKey::DepositCap, &cap);
     });
 
     // Fill the cap

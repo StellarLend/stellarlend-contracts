@@ -1,14 +1,14 @@
 #![no_std]
 
 mod debt;
+pub mod math;
 pub mod rate_model;
 pub mod rounding_strategy;
-pub mod math;
 
 #[cfg(test)]
-mod interest_drift_regression_test;
-#[cfg(test)]
 mod deposit_accounting_test;
+#[cfg(test)]
+mod interest_drift_regression_test;
 
 use debt::{
     borrow_amount, effective_debt, load_debt, repay_amount, save_debt, DebtPosition,
@@ -176,7 +176,9 @@ impl LendingContract {
     pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) {
         let admin = Self::get_admin(env.clone());
         admin.require_auth();
-        env.storage().instance().set(&DataKey::OraclePubKey, &pubkey);
+        env.storage()
+            .instance()
+            .set(&DataKey::OraclePubKey, &pubkey);
     }
 
     /// Returns the currently configured oracle pubkey, if set.
@@ -217,11 +219,13 @@ impl LendingContract {
             .try_into()
             .expect("oracle signature must be 64 bytes");
         // ed25519_verify traps (panics) on bad signature in soroban-sdk 25.x
-        env.crypto().ed25519_verify(&oracle_pubkey, &payload, &sig_64);
+        env.crypto()
+            .ed25519_verify(&oracle_pubkey, &payload, &sig_64);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::OraclePrice(asset), &PriceRecord { price, timestamp });
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset),
+            &PriceRecord { price, timestamp },
+        );
         Ok(())
     }
 
@@ -451,11 +455,10 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
-        let updated =
-            borrow_amount(position, now, amount, rate).map_err(|e| match e {
-                debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-                debt::DebtError::Overflow => LendingError::Overflow,
-            })?;
+        let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
+            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::Overflow => LendingError::Overflow,
+        })?;
         save_debt(&env, &user, &updated);
         // Track protocol-level total debt
         let total_debt: i128 = env
@@ -554,11 +557,10 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
-        let updated =
-            repay_amount(position, now, amount, rate).map_err(|e| match e {
-                debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-                debt::DebtError::Overflow => LendingError::Overflow,
-            })?;
+        let updated = repay_amount(position, now, amount, rate).map_err(|e| match e {
+            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::Overflow => LendingError::Overflow,
+        })?;
         save_debt(&env, &user, &updated);
         // Track protocol-level total debt
         let total_debt: i128 = env
@@ -678,8 +680,8 @@ impl LendingContract {
             extend_debt_ttl(&env, &user);
         }
         let rate = current_borrow_rate(&env);
-        let debt = effective_debt(&position, env.ledger().timestamp(), rate)
-            .unwrap_or(position.principal);
+        let debt =
+            effective_debt(&position, env.ledger().timestamp(), rate).unwrap_or(position.principal);
 
         let health_factor = if debt > 0 {
             col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
@@ -724,7 +726,11 @@ impl LendingContract {
     }
 
     pub fn get_protocol_metrics(env: Env) -> ProtocolMetrics {
-        let total_borrow: i128 = env.storage().persistent().get(&DataKey::TotalDebt).unwrap_or(0);
+        let total_borrow: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDebt)
+            .unwrap_or(0);
         let total_supply: i128 = env
             .storage()
             .persistent()
@@ -872,32 +878,48 @@ fn current_borrow_rate(env: &Env) -> i128 {
     }
 }
 
-    #[contract]
-    pub struct MockAmm;
-    #[contractimpl]
-    impl MockAmm {
-        pub fn swap(_env: Env, _caller: Address, _in: Address, _out: Address, amount_in: i128, min_out: i128, _dead: u64) -> i128 {
-            let out = amount_in * 2;
-            if out < min_out {
-                panic!("SlippageExceeded");
-            }
-            out
+#[contract]
+pub struct MockAmm;
+#[contractimpl]
+impl MockAmm {
+    pub fn swap(
+        _env: Env,
+        _caller: Address,
+        _in: Address,
+        _out: Address,
+        amount_in: i128,
+        min_out: i128,
+        _dead: u64,
+    ) -> i128 {
+        let out = amount_in * 2;
+        if out < min_out {
+            panic!("SlippageExceeded");
         }
+        out
     }
+}
 
-    #[contract]
-    pub struct BadAmm;
-    #[contractimpl]
-    impl BadAmm {
-        pub fn swap(_env: Env, _caller: Address, _in: Address, _out: Address, amount_in: i128, _min: i128, _dead: u64) -> i128 {
-            amount_in / 4
-        }
+#[contract]
+pub struct BadAmm;
+#[contractimpl]
+impl BadAmm {
+    pub fn swap(
+        _env: Env,
+        _caller: Address,
+        _in: Address,
+        _out: Address,
+        amount_in: i128,
+        _min: i128,
+        _dead: u64,
+    ) -> i128 {
+        amount_in / 4
     }
+}
 
-    #[contract]
-    pub struct MockAsset;
-    #[contractimpl]
-    impl MockAsset {}
+#[contract]
+pub struct MockAsset;
+#[contractimpl]
+impl MockAsset {}
 
 #[cfg(test)]
 mod test {
@@ -1068,7 +1090,9 @@ mod test {
         let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
 
         client.set_price(&admin, &asset, &price, &timestamp, &signature);
-        let record = client.get_price_record(&asset).expect("price record stored");
+        let record = client
+            .get_price_record(&asset)
+            .expect("price record stored");
         assert_eq!(record.price, price);
         assert_eq!(record.timestamp, timestamp);
     }
@@ -1100,7 +1124,10 @@ mod test {
 
         advance_time(&env, DEFAULT_ORACLE_MAX_AGE_SECS + 10);
         let asset = env.register(MockAsset, ());
-        let timestamp = env.ledger().timestamp().saturating_sub(DEFAULT_ORACLE_MAX_AGE_SECS + 1);
+        let timestamp = env
+            .ledger()
+            .timestamp()
+            .saturating_sub(DEFAULT_ORACLE_MAX_AGE_SECS + 1);
         let price = 1_000_000_000i128;
         let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
 
