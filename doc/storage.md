@@ -1,90 +1,71 @@
-# StellarLend Storage Tier Documentation
+# StellarLend Storage Tier Reference
 
-## Soroban Storage Tiers Overview
+This reference documents the current storage tiers for the lending contract's
+canonical `DataKey` enum in
+[`stellar-lend/contracts/lending/src/lib.rs`](../stellar-lend/contracts/lending/src/lib.rs#L37-L57).
 
-Soroban provides three storage tiers with different persistence guarantees and cost characteristics:
+## Soroban Storage Tiers
 
-| Tier | Persistence | TTL (Time-To-Live) | Cost | Use Case |
-|------|------------|-------------------|------|----------|
-| **Persistent** | Survives contract deletion | Requires explicit bump | Higher rent | Protocol config, user positions, critical state |
-| **Temporary** | Dropped when TTL expires | Auto-expires | Lower rent | Cached prices, session data, transient state |
-| **Instance** | Bound to contract instance | Bumped with instance | Medium | Small config, flags, counters |
+| Tier | Persistence model | Current lending-contract use |
+|------|-------------------|------------------------------|
+| `persistent()` | Independent entries that require rent/TTL management. | User positions, protocol accounting totals, flash-loan balances, treasury liquidity, deposit cap, and oracle price records. |
+| `instance()` | Contract-instance state bumped with the instance. | Admin state, oracle public key, pause/emergency state, fee/minimum/rate configuration, and transient flash-loan guard. |
+| `temporary()` | Ledger-scoped or short-lived entries. | Only the currently unused internal `reent_l` helper lock uses temporary storage; no `DataKey` variant is temporary. |
 
-&gt; **Reference**: [Soroban Storage Documentation](https://soroban.stellar.org/docs/fundamentals/state-expiration)
+## Lending `DataKey` Decision Table
 
----
+Every current `DataKey` variant appears exactly once in this table.
 
-## DataKey Storage Tier Decision Table
-
-### Lending Contract (`stellar-lend/contracts/lending/src/lib.rs`)
-
-| DataKey Variant | Storage Tier | Lifetime | Bump Frequency | Rationale |
-|-----------------|-------------|----------|----------------|-----------|
-| `Admin` | **Persistent** | Indefinite | On admin change | Critical protocol governance; must survive all conditions |
-| `Collateral(Address)` | **Persistent** | Indefinite | On deposit/withdraw/liquidate | User funds; loss of data = loss of deposits |
-| `Debt(Address)` | **Persistent** | Indefinite | On borrow/repay/liquidate | User debt tracking; must persist for liquidation |
-| `Paused` | **Instance** | Bound to instance | On toggle | Small bool (1 byte); changes frequently; cheap to bump with instance |
-| `AssetParams(Address)` | **Persistent** | Indefinite | On admin update | Risk parameters; must persist across upgrades |
-| `DepositCap(Address)` | **Persistent** | Indefinite | On deposit/withdraw | Protocol safety limit; must survive for invariant checks |
-| `ReservedForFlashLoan(Address)` | **Temporary** | 1 ledger | Auto-expire | In-flight flash loan balance; ledger-scoped by design |
-| `InterestIndex` | **Persistent** | Indefinite | On borrow/repay | Cumulative interest; critical for debt calculation |
-| `LastAccrualTime` | **Instance** | Bound to instance | On accrual | Small u64; frequent updates; instance bump is sufficient |
-| `TotalBorrows` | **Persistent** | Indefinite | On borrow/repay | Protocol TVL metric; required for interest model |
-| `TotalReserves` | **Persistent** | Indefinite | On borrow/repay/withdraw | Protocol revenue; must persist for accounting |
-| `OracleAddress` | **Instance** | Bound to instance | On admin update | Small Address; changes rarely; instance storage sufficient |
-| `RiskConfig` | **Instance** | Bound to instance | On admin update | Small struct (close_factor + liquidation_incentive); instance OK |
-| `RateModelParams` | **Instance** | Bound to instance | On admin update | Small config struct; instance storage sufficient |
-| `AMMHookAddress` | **Instance** | Bound to instance | On admin update | Small Address; optional feature flag |
-| `FlashLoanFee` | **Instance** | Bound to instance | On admin update | Small u32 (BPS); instance storage sufficient |
-| `UserNonce(Address)` | **Persistent** | Indefinite | On increment | Replay protection; must persist permanently |
-
-### Hello-World Contract (`stellar-lend/contracts/hello-world/src/lib.rs`)
-
-| DataKey Variant | Storage Tier | Lifetime | Bump Frequency | Rationale |
-|-----------------|-------------|----------|----------------|-----------|
-| `Admin` | **Instance** | Bound to instance | On init | Demo contract; minimal state; instance is sufficient |
-| `Message` | **Temporary** | Short TTL | Auto-expire | Demo greeting; ephemeral by design |
-| `Counter` | **Instance** | Bound to instance | On increment | Demo state; small u64; instance bump is cheap |
-
----
+| `DataKey` variant | Tier | Stored value | TTL / lifetime policy |
+|-------------------|------|--------------|-----------------------|
+| `Collateral(Address)` | `persistent()` | `i128` collateral balance | Explicitly extended by collateral write/read helpers to `min(max_ttl, 1_000_000)` ledgers with threshold `extend_to / 2 + 1`. |
+| `Debt(Address)` | `persistent()` | `DebtPosition` | Explicitly extended by debt read/repay helpers to `min(max_ttl, 1_000_000)` ledgers with threshold `extend_to / 2 + 1`. |
+| `Balance(Address, Address)` | `persistent()` | `i128` per-asset account balance used by flash-loan repayment flow | No dedicated TTL helper. |
+| `Treasury(Address)` | `persistent()` | `i128` per-asset protocol liquidity | No dedicated TTL helper. |
+| `TotalDebt` | `persistent()` | `i128` aggregate debt principal | No dedicated TTL helper. |
+| `TotalDeposits` | `persistent()` | `i128` aggregate collateral deposits | No dedicated TTL helper. |
+| `DebtCeiling` | `instance()` | `i128` admin-configured debt ceiling | Instance lifetime. |
+| `DepositCap` | `persistent()` | `i128` protocol deposit cap | No dedicated TTL helper; `deposit` defaults to `DEFAULT_DEPOSIT_CAP` when absent. |
+| `FlashActive` | `instance()` | `bool` flash-loan reentrancy guard | Instance lifetime; set during `flash_loan` callback flow and cleared afterward. |
+| `FlashFeeBps` | `instance()` | `i128` flash-loan fee in basis points | Instance lifetime. |
+| `BorrowMinAmount` | `instance()` | `i128` minimum borrow amount | Instance lifetime; defaults to `0` when absent. |
+| `Admin` | `instance()` | `Address` current admin | Instance lifetime. |
+| `PendingAdmin` | `instance()` | `Address` pending admin handoff target | Instance lifetime; removed after `accept_admin`. |
+| `OraclePubKey` | `instance()` | `BytesN<32>` oracle signing public key | Instance lifetime. |
+| `OraclePrice(Address)` | `persistent()` | `PriceRecord` | No dedicated TTL helper; freshness is enforced by timestamp validation policy. |
+| `EmergencyState` | `instance()` | `EmergencyState` | Instance lifetime; defaults to `Normal` when absent. |
+| `Guardian` | `instance()` | `Address` shutdown guardian | Instance lifetime. |
+| `PauseState(PauseType)` | `instance()` | `PauseState` per operation | Instance lifetime plus logical expiry through `expires_at_ledger`. |
+| `RateParams` | `instance()` | `rate_model::RateParams` | Instance lifetime; `current_borrow_rate` falls back to `DEFAULT_APR_BPS` when absent. |
 
 ## TTL Bump Cadence
 
-| Tier | Bump Trigger | Recommended TTL | Notes |
-|------|-------------|-----------------|-------|
-| **Persistent** | Every state-mutating entrypoint | 31 days (default) | Bump on every write to prevent expiration |
-| **Instance** | Every entrypoint (auto-bumped) | 31 days (default) | Soroban auto-bumps instance storage on invocation |
-| **Temporary** | N/A (auto-expire) | 1 ledger | Designed for single-ledger scope; no bump needed |
+`PERSISTENT_TTL_LEDGERS` is `1_000_000`. The current helpers compute:
 
-### Cadence Rationale
+```text
+extend_to = min(env.storage().max_ttl(), PERSISTENT_TTL_LEDGERS)
+threshold = extend_to / 2 + 1
+```
 
-- **Persistent keys** are bumped explicitly in every state-mutating function via `env.storage().persistent().extend_ttl()`. This ensures user funds and protocol state never expire unexpectedly.
-- **Instance keys** rely on Soroban's automatic instance bump on every contract invocation. Since instance storage is small and bounded, this is cost-effective.
-- **Temporary keys** are never bumped. They are designed to expire automatically at ledger close, making them ideal for in-flight operations like flash loans where the state only matters within a single transaction.
+The contract extends only existing position entries:
 
----
+- `extend_collateral_ttl`: `Collateral(user)`
+- `extend_debt_ttl`: `Debt(user)`
 
-## Cross-References
+Current trigger points:
 
-- **Typed Keys Refactor**: See `stellar-lend/contracts/lending/src/typed_keys.rs` (introduces strongly-typed `DataKey` enum)
-- **Keys Audit**: See `KEYS_AUDIT.md` for security review of key derivation and collision resistance
-- **Interest Numeric Assumptions**: See `docs/INTEREST_NUMERIC_ASSUMPTIONS.md` for precision and rounding rules affecting stored values
+- `deposit`, `withdraw`: extend collateral after writing it.
+- `repay`: extends debt after writing it.
+- `get_position`, `get_health_factor`: extend existing collateral and debt.
+- `get_debt_position`: extends existing debt.
 
----
-
-## Security Considerations
-
-1. **Never store user funds in Temporary storage** — TTL expiration = permanent loss.
-2. **Instance storage is capped** — Keep instance data under 64KB to avoid eviction.
-3. **Bump Persistent storage on every write** — Missing bumps cause state expiration.
-4. **Validate TTL before critical operations** — Check `env.storage().persistent().has()` before reads.
-5. **Reserved flash loan counters** — Must be Temporary to avoid double-counting across ledgers.
-
----
+`borrow` writes debt through `save_debt`, but does not currently call
+`extend_debt_ttl`.
 
 ## Migration Notes
 
-When upgrading the contract:
-- Persistent storage is preserved (new contract reads old state).
-- Instance storage is reset (must re-initialize).
-- Temporary storage is lost (expected; re-created per-ledger).
+- Treat `DataKey` as append-only. Do not reorder or reuse variants for a new
+  value type.
+- Update both `docs/storage.md` and this compact reference whenever a storage
+  tier, key, or TTL policy changes.
+- Add or update tests when new storage keys are introduced.
