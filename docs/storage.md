@@ -94,98 +94,6 @@ Notes:
 - New lending keys must be appended to `DataKey`; never reuse an existing
   variant for a different value type.
 
-### 2. Cross-Asset Core (`cross_asset.rs`)
-
-| Key (Symbol/Type) | Value Type | Description |
-|-------------------|------------|-------------|
-| `admin` | `Address` | Protocol admin address authorized to manage assets. |
-| `configs` | `Map<AssetKey, AssetConfig>` | Configuration for each supported asset (factors, caps, prices). |
-| `positions` | `Map<UserAssetKey, AssetPosition>` | Per-user, per-asset collateral and debt balances. |
-| `supplies` | `Map<AssetKey, i128>` | Total supply (deposits) for each asset. |
-| `borrows` | `Map<AssetKey, i128>` | Total borrows (debt) for each asset. |
-| `assets` | `Vec<AssetKey>` | List of all registered assets in the protocol. |
-
-### 3. Risk Management (`risk_management.rs`)
-
-| Key (`RiskDataKey`) | Value Type | Description |
-|---------------------|------------|-------------|
-| `RiskConfig` | `RiskConfig` | Global risk parameters (MCR, liquidation threshold, close factor). |
-| `Admin` | `Address` | Admin address for risk management operations. |
-| `EmergencyPause` | `bool` | Global flag to halt all protocol operations. |
-
-### 4. Deposit Module (`deposit.rs`)
-
-| Key (`DepositDataKey`) | Value Type | Description |
-|------------------------|------------|-------------|
-| `CollateralBalance(Address)` | `i128` | Per-user cumulative collateral balance (deprecated in favor of `cross_asset` positions). |
-| `AssetParams(Address)` | `AssetParams` | Legacy asset parameters. |
-| `Position(Address)` | `Position` | User's unified position (legacy module). |
-| `ProtocolAnalytics` | `ProtocolAnalytics` | Aggregate protocol metrics (deposits, borrows, TVL). |
-| `UserAnalytics(Address)` | `UserAnalytics` | Detailed per-user activity and risk metrics. |
-
-### 5. Interest Rate Module (`interest_rate.rs`)
-
-| Key (`InterestRateDataKey`) | Value Type | Description |
-|-----------------------------|------------|-------------|
-| `InterestRateConfig` | `InterestRateConfig` | Kink-based model parameters (base rate, kink, multipliers). |
-| `Admin` | `Address` | Admin address for interest rate adjustments. |
-
-### 6. Oracle Module (`oracle.rs`)
-
-| Key (`OracleDataKey`) | Value Type | Description |
-|-----------------------|------------|-------------|
-| `PriceFeed(Address)` | `PriceFeed` | Latest price, timestamp, and provider for an asset. |
-| `FallbackOracle(Address)` | `Address` | Designated fallback price provider for an asset. |
-| `PriceCache(Address)` | `CachedPrice` | TTL-bounded price cache for gas efficiency. |
-| `OracleConfig` | `OracleConfig` | Global oracle safety parameters (deviation, staleness). |
-
-### 7. Flash Loan Module (`flash_loan.rs`)
-
-| Key (`FlashLoanDataKey`) | Value Type | Description |
-|--------------------------|------------|-------------|
-| `FlashLoanConfig` | `FlashLoanConfig` | Fee basis points and amount limits. |
-| `ActiveFlashLoan(Addr, Addr)` | `FlashLoanRecord` | Reentrancy guard and transient loan record. |
-
-### 8. Analytics Module (`analytics.rs`)
-
-| Key (`AnalyticsDataKey`) | Value Type | Description |
-|--------------------------|------------|-------------|
-| `ProtocolMetrics` | `ProtocolMetrics` | Cached protocol-wide stats snapshot. |
-| `UserMetrics(Address)` | `UserMetrics` | Cached per-user stats snapshot. |
-| `ActivityLog` | `Vec<ActivityEntry>` | Global activity history (max 10,000 entries). |
-| `TotalUsers` | `u64` | Total number of unique users. |
-| `TotalTransactions` | `u64` | Global transaction counter. |
-
----
-
-## Type Definitions
-
-### Core Structs
-
-#### `AssetPosition`
-```rust
-pub struct AssetPosition {
-    pub collateral: i128,        // Asset's native units
-    pub debt_principal: i128,    // Principal borrowed
-    pub accrued_interest: i128,  // Accumulated interest
-    pub last_updated: u64,       // Timestamp of last update
-}
-```
-
-#### `RiskConfig`
-```rust
-pub struct RiskConfig {
-    pub min_collateral_ratio: i128,  // Basis points (11000 = 110%)
-    pub liquidation_threshold: i128, // Basis points
-    pub close_factor: i128,          // Basis points
-    pub liquidation_incentive: i128, // Basis points
-    pub pause_switches: Map<Symbol, bool>,
-    pub last_update: u64,
-}
-```
-
----
-
 ## Upgrade and Migration Strategy
 
 ### Wasm Upgrades
@@ -216,9 +124,9 @@ If a storage layout change is unavoidable (e.g., merging two maps into one), fol
 
 ### Validation Checklist
 - [ ] All `contracttype` enums have unique variants.
-- [ ] No `temporary()` or `instance()` storage is used for critical state.
-- [ ] `AssetKey` correctly handles both Native (XLM) and Token assets.
-- [ ] Key collisions between modules are avoided by using unique Enum types for keys.
+- [ ] Critical per-user position and accounting state uses `persistent()` storage.
+- [ ] No current `DataKey` variant uses `temporary()` storage.
+- [ ] Lending storage keys stay isolated through the single canonical `DataKey` enum.
 
 ---
 
