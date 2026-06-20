@@ -35,11 +35,11 @@
 
 | Function | Signature | Auth Required | Returns |
 |---|---|---|---|
-| `deposit` | `(user: Address, amount: i128)` | `user` | `i128` — new collateral balance |
-| `withdraw` | `(user: Address, amount: i128)` | `user` | `i128` — new collateral balance |
+| `deposit` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — new collateral balance |
+| `withdraw` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — new collateral balance |
 | `borrow` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — debt principal |
-| `repay` | `(user: Address, amount: i128)` | `user` | `i128` — remaining debt principal |
-| `liquidate` | `(liquidator: Address, borrower: Address, amount: i128)` | `liquidator` | `Result<i128, Error>` — debt actually repaid |
+| `repay` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — remaining debt principal |
+| `liquidate` | `(liquidator: Address, borrower: Address, amount: i128)` | `liquidator` | `Result<i128, LendingError>` — debt actually repaid |
 
 ### Flash Loans
 
@@ -53,7 +53,7 @@
 | Function | Signature | Returns |
 |---|---|---|
 | `get_position` | `(user: Address)` | `PositionSummary { collateral: i128, debt: i128, health_factor: i128 }` |
-| `get_debt_position` | `(user: Address)` | `DebtPosition { principal: i128, last_accrual: u64 }` |
+| `get_debt_position` | `(user: Address)` | `DebtPosition { principal: i128, last_update: u64 }` |
 | `get_min_borrow` | `()` | `i128` |
 | `get_health_factor` | `(user: Address)` | `i128` |
 | `get_protocol_metrics` | `()` | `ProtocolMetrics { total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` |
@@ -74,7 +74,7 @@
 | `set_min_borrow` | `(min_borrow: i128)` | admin | `Result<(), LendingError>` |
 | `set_debt_ceiling` | `(ceiling: i128)` | admin | `Result<(), LendingError>` |
 | `set_flash_fee` | `(fee_bps: i128)` | admin | `Result<(), LendingError>` |
-| `set_emergency_state` | `(new_state: EmergencyState)` | admin or guardian | `()` |
+| `set_emergency_state` | `(new_state: EmergencyState)` | admin; guardian may set `Shutdown` | `()` |
 
 ---
 
@@ -86,7 +86,7 @@
 pub struct PositionSummary {
     pub collateral: i128,    // Raw collateral balance
     pub debt: i128,          // Effective debt (principal + accrued interest)
-    pub health_factor: i128, // (collateral * 8000) / debt; 1_000_000 if debt == 0
+    pub health_factor: i128, // (collateral * 8000) / debt; 100_000_000 if debt == 0
 }
 ```
 
@@ -95,7 +95,7 @@ pub struct PositionSummary {
 ```rust
 pub struct DebtPosition {
     pub principal: i128,    // Borrowed principal (before interest)
-    pub last_accrual: u64,  // Timestamp of last interest calculation
+    pub last_update: u64,   // Timestamp of last interest calculation
 }
 ```
 

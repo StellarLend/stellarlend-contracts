@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # docs/scripts/check_interface_sync.sh
 #
-# Asserts that every documented "implemented" function name is present as a
-# `pub fn` in stellar-lend/contracts/lending/src/lib.rs.
+# Asserts that documented "implemented" function names exactly match the
+# public `impl LendingContract` surface in stellar-lend/contracts/lending/src/lib.rs.
 #
 # Usage:
 #   bash docs/scripts/check_interface_sync.sh
 #
-# Returns exit code 0 if all documented functions are found, 1 otherwise.
+# Returns exit code 0 if docs and source match, 1 otherwise.
 # Run this in CI or locally after editing README.md / interface_quick_reference.md.
 
 set -euo pipefail
@@ -48,29 +48,45 @@ DOCUMENTED_FUNCTIONS=(
 )
 
 # ----------------------------------------------------------------------------
-# Check each function exists as a pub fn in lib.rs
+# Compare docs against the public contract surface.
 # ----------------------------------------------------------------------------
-FAILURES=()
+mapfile -t ACTUAL_FUNCTIONS < <(
+  awk '
+    /impl LendingContract[[:space:]]*\{/ { in_impl = 1; next }
+    in_impl && /^}/ { exit }
+    in_impl { print }
+  ' "$LIB" |
+    sed -nE 's/^[[:space:]]*pub fn ([A-Za-z0-9_]+).*/\1/p' |
+    sort -u
+)
 
-for FN in "${DOCUMENTED_FUNCTIONS[@]}"; do
-  if ! grep -qE "pub fn ${FN}\b" "$LIB"; then
-    FAILURES+=("$FN")
-  fi
-done
+mapfile -t DOCUMENTED_SORTED < <(printf '%s\n' "${DOCUMENTED_FUNCTIONS[@]}" | sort -u)
+mapfile -t MISSING_IN_SOURCE < <(comm -23 <(printf '%s\n' "${DOCUMENTED_SORTED[@]}") <(printf '%s\n' "${ACTUAL_FUNCTIONS[@]}"))
+mapfile -t MISSING_IN_DOCS < <(comm -13 <(printf '%s\n' "${DOCUMENTED_SORTED[@]}") <(printf '%s\n' "${ACTUAL_FUNCTIONS[@]}"))
 
 # ----------------------------------------------------------------------------
 # Report
 # ----------------------------------------------------------------------------
-if [ ${#FAILURES[@]} -eq 0 ]; then
-  echo "✅  All ${#DOCUMENTED_FUNCTIONS[@]} documented functions found in src/lib.rs"
+if [[ ${#MISSING_IN_SOURCE[@]} -eq 0 && ${#MISSING_IN_DOCS[@]} -eq 0 ]]; then
+  echo "All ${#ACTUAL_FUNCTIONS[@]} public lending functions are documented"
   exit 0
-else
-  echo "❌  The following documented functions were NOT found in src/lib.rs:"
-  for F in "${FAILURES[@]}"; do
-    echo "    • pub fn $F"
-  done
-  echo ""
-  echo "Either add the missing implementations or move the function to the"
-  echo "'🔮 Planned' section in README.md and interface_quick_reference.md."
-  exit 1
 fi
+
+if [[ ${#MISSING_IN_SOURCE[@]} -gt 0 ]]; then
+  echo "Documented functions not found in src/lib.rs:"
+  for F in "${MISSING_IN_SOURCE[@]}"; do
+    echo "  - pub fn $F"
+  done
+fi
+
+if [[ ${#MISSING_IN_DOCS[@]} -gt 0 ]]; then
+  echo ""
+  echo "Public functions missing from implemented interface docs:"
+  for F in "${MISSING_IN_DOCS[@]}"; do
+    echo "  - pub fn $F"
+  done
+fi
+
+echo ""
+echo "Update README.md, docs/interface_quick_reference.md, and DOCUMENTED_FUNCTIONS together."
+exit 1
