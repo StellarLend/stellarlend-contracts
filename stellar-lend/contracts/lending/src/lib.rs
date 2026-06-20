@@ -458,14 +458,20 @@ impl LendingContract {
         }
 
         const LIQUIDATION_THRESHOLD: i128 = 8000;
-        let hf = (collateral * LIQUIDATION_THRESHOLD) / debt;
+        let hf = collateral
+            .checked_mul(LIQUIDATION_THRESHOLD)
+            .and_then(|v| v.checked_div(debt))
+            .ok_or(LendingError::Overflow)?;
 
         if hf >= 10000 {
             return Err(LendingError::PositionHealthy);
         }
 
         const CLOSE_FACTOR: i128 = 5000;
-        let max_repay = (debt * CLOSE_FACTOR) / 10000;
+        let max_repay = debt
+            .checked_mul(CLOSE_FACTOR)
+            .and_then(|v| v.checked_div(10000))
+            .ok_or(LendingError::Overflow)?;
         let actual_repay = if amount > max_repay {
             max_repay
         } else {
@@ -473,7 +479,10 @@ impl LendingContract {
         };
 
         const INCENTIVE_BPS: i128 = 1000;
-        let seized_collateral = (actual_repay * (10000 + INCENTIVE_BPS)) / 10000;
+        let seized_collateral = actual_repay
+            .checked_mul(10000 + INCENTIVE_BPS)
+            .and_then(|v| v.checked_div(10000))
+            .ok_or(LendingError::Overflow)?;
 
         // Ensure we don't seize more than available
         let final_seized = if seized_collateral > collateral {
