@@ -67,9 +67,7 @@ pub fn compute_compound_interest(
     let seconds_per_year: i128 = 31_536_000; // 365 * 24 * 3600
 
     // Step 1: principal * rate_bps (checked)
-    let step1 = principal
-        .checked_mul(rate_bps)
-        .ok_or(MathError::Overflow)?;
+    let step1 = principal.checked_mul(rate_bps).ok_or(MathError::Overflow)?;
 
     // Step 2: step1 * elapsed (checked)
     let step2 = step1
@@ -190,26 +188,31 @@ pub fn compute_borrow_rate(
             util.checked_mul(mult)
                 .ok_or(MathError::Overflow)?
                 .checked_div(scale)
-                .ok_or(MathError::DivisionByZero)?
-        ).ok_or(MathError::Overflow)?
+                .ok_or(MathError::DivisionByZero)?,
+        )
+        .ok_or(MathError::Overflow)?
     } else {
         // rate = base + kink * multiplier / SCALE + (util - kink) * jump_multiplier / SCALE
-        let base_plus_kink = base.checked_add(
-            kink.checked_mul(mult)
-                .ok_or(MathError::Overflow)?
-                .checked_div(scale)
-                .ok_or(MathError::DivisionByZero)?
-        ).ok_or(MathError::Overflow)?;
+        let base_plus_kink = base
+            .checked_add(
+                kink.checked_mul(mult)
+                    .ok_or(MathError::Overflow)?
+                    .checked_div(scale)
+                    .ok_or(MathError::DivisionByZero)?,
+            )
+            .ok_or(MathError::Overflow)?;
 
-        let excess_util = util.checked_sub(kink)
-            .ok_or(MathError::NegativeResult)?;
+        let excess_util = util.checked_sub(kink).ok_or(MathError::NegativeResult)?;
 
-        base_plus_kink.checked_add(
-            excess_util.checked_mul(jump_mult)
-                .ok_or(MathError::Overflow)?
-                .checked_div(scale)
-                .ok_or(MathError::DivisionByZero)?
-        ).ok_or(MathError::Overflow)?
+        base_plus_kink
+            .checked_add(
+                excess_util
+                    .checked_mul(jump_mult)
+                    .ok_or(MathError::Overflow)?
+                    .checked_div(scale)
+                    .ok_or(MathError::DivisionByZero)?,
+            )
+            .ok_or(MathError::Overflow)?
     };
 
     // Clamp to MAX_RATE_BPS
@@ -256,7 +259,8 @@ pub fn compute_supply_rate(
         .ok_or(MathError::DivisionByZero)?;
 
     // (1 - reserve_factor) = (SCALE - reserve) / SCALE
-    let one_minus_reserve = scale.checked_sub(reserve)
+    let one_minus_reserve = scale
+        .checked_sub(reserve)
         .ok_or(MathError::NegativeResult)?;
 
     // rate_util * one_minus_reserve / SCALE
@@ -312,10 +316,7 @@ pub fn compute_liquidation_bonus(
 /// # Returns
 /// * `Ok(max_borrow)` - Maximum borrowable amount
 /// * `Err(MathError)` - On overflow or invalid input
-pub fn compute_max_borrow(
-    collateral_value: i128,
-    ltv_bps: u32,
-) -> Result<i128, MathError> {
+pub fn compute_max_borrow(collateral_value: i128, ltv_bps: u32) -> Result<i128, MathError> {
     if collateral_value < 0 {
         return Err(MathError::OutOfRange);
     }
@@ -354,10 +355,7 @@ pub fn is_liquidatable(health_factor: i128) -> bool {
 /// # Returns
 /// * `Ok(utilization_bps)` - Utilization in basis points
 /// * `Err(MathError)` - On overflow or invalid input
-pub fn compute_utilization(
-    total_borrows: i128,
-    total_deposits: i128,
-) -> Result<u32, MathError> {
+pub fn compute_utilization(total_borrows: i128, total_deposits: i128) -> Result<u32, MathError> {
     if total_borrows < 0 || total_deposits < 0 {
         return Err(MathError::OutOfRange);
     }

@@ -8,19 +8,19 @@ pub mod rounding_strategy;
 #[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
-mod interest_drift_regression_test;
-#[cfg(test)]
 mod error_codes_test;
+#[cfg(test)]
+mod interest_drift_regression_test;
 
 use debt::{
     borrow_amount, effective_debt, load_debt, repay_amount, save_debt, DebtPosition,
     DEFAULT_APR_BPS,
 };
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
     Env, IntoVal, Symbol, Val,
 };
-use soroban_sdk::xdr::ToXdr;
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
 const DEFAULT_DEPOSIT_CAP: i128 = 1_000_000_000_000;
@@ -574,7 +574,9 @@ impl LendingContract {
         if fee_bps < 0 || fee_bps > 1000 {
             return Err(LendingError::InvalidFeeBps);
         }
-        env.storage().instance().set(&DataKey::FlashFeeBps, &fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::FlashFeeBps, &fee_bps);
         Ok(())
     }
 
@@ -972,7 +974,7 @@ mod test {
         let mut payload_bytes = [0u8; 1024];
         let len = payload.len() as usize;
         payload.copy_into_slice(&mut payload_bytes[..len]);
-        
+
         let signature = keypair.sign(&payload_bytes[..len]);
         BytesN::from_array(env, &signature.to_bytes())
     }
@@ -1081,7 +1083,9 @@ mod test {
         let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
 
         client.set_price(&admin, &asset, &price, &timestamp, &signature);
-        let record = client.get_price_record(&asset).expect("price record stored");
+        let record = client
+            .get_price_record(&asset)
+            .expect("price record stored");
         assert_eq!(record.price, price);
         assert_eq!(record.timestamp, timestamp);
     }
@@ -1095,8 +1099,11 @@ mod test {
         let bad_seed = [43u8; 32];
         let bad_secret = ed25519_dalek::SecretKey::from_bytes(&bad_seed).unwrap();
         let bad_public = ed25519_dalek::PublicKey::from(&bad_secret);
-        let bad_keypair = Keypair { secret: bad_secret, public: bad_public };
-        
+        let bad_keypair = Keypair {
+            secret: bad_secret,
+            public: bad_public,
+        };
+
         let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
         client.set_oracle_pubkey(&pubkey);
 
