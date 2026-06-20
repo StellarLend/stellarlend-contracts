@@ -12,7 +12,7 @@
 | Parameter | Scale | Description |
 |-----------|-------|-------------|
 | Amounts | raw `i128` | No automatic decimal shifting. Callers supply and receive raw integer amounts. |
-| Health Factor | 10^4 base | `1.0 = 10000`. Values `< 10000` are eligible for liquidation. `1_000_000` is the sentinel for a debt-free position. |
+| Health Factor | 10^4 base | `1.0 = 10000`. Values `< 10000` are eligible for liquidation. `100_000_000` is the sentinel for a debt-free position. |
 | Basis Points (BPS) | 10^4 | `1% = 100 BPS`. Used for interest rates, fees, and risk thresholds. |
 | Timestamps | Seconds | Unix epoch seconds from `env.ledger().timestamp()`. |
 
