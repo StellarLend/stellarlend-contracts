@@ -418,18 +418,28 @@ impl LendingContract {
         let now = env.ledger().timestamp();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
-        let rate = current_borrow_rate(&env);
-        let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::Overflow => LendingError::Overflow,
-        })?;
-        save_debt(&env, &user, &updated);
-        // Track protocol-level total debt
+        // Load protocol totals once for rate + accounting, avoiding duplicate
+        // persistent reads (previously read here and again in current_borrow_rate).
         let total_debt: i128 = env
             .storage()
             .persistent()
             .get(&DataKey::TotalDebt)
             .unwrap_or(0);
+        let total_deposits: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDeposits)
+            .unwrap_or(0);
+        let params = env
+            .storage()
+            .instance()
+            .get::<DataKey, rate_model::RateParams>(&DataKey::RateParams);
+        let rate = current_borrow_rate_from_params(params, total_debt, total_deposits);
+        let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
+            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::Overflow => LendingError::Overflow,
+        })?;
+        save_debt(&env, &user, &updated);
         let delta = updated
             .principal
             .checked_sub(prev_principal)
@@ -529,18 +539,28 @@ impl LendingContract {
         let now = env.ledger().timestamp();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
-        let rate = current_borrow_rate(&env);
-        let updated = repay_amount(position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::Overflow => LendingError::Overflow,
-        })?;
-        save_debt(&env, &user, &updated);
-        // Track protocol-level total debt
+        // Load protocol totals once for rate + accounting, avoiding duplicate
+        // persistent reads (previously read here and again in current_borrow_rate).
         let total_debt: i128 = env
             .storage()
             .persistent()
             .get(&DataKey::TotalDebt)
             .unwrap_or(0);
+        let total_deposits: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDeposits)
+            .unwrap_or(0);
+        let params = env
+            .storage()
+            .instance()
+            .get::<DataKey, rate_model::RateParams>(&DataKey::RateParams);
+        let rate = current_borrow_rate_from_params(params, total_debt, total_deposits);
+        let updated = repay_amount(position, now, amount, rate).map_err(|e| match e {
+            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::Overflow => LendingError::Overflow,
+        })?;
+        save_debt(&env, &user, &updated);
         let repaid = prev_principal.checked_sub(updated.principal).unwrap_or(0);
         let new_total_debt = total_debt.saturating_sub(repaid);
         env.storage()
@@ -853,19 +873,29 @@ fn current_borrow_rate(env: &Env) -> i128 {
         .storage()
         .instance()
         .get::<DataKey, rate_model::RateParams>(&DataKey::RateParams);
+    let total_debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDebt)
+        .unwrap_or(0);
+    let total_supply: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDeposits)
+        .unwrap_or(0);
+    current_borrow_rate_from_params(params, total_debt, total_supply)
+}
 
+/// Compute the borrow rate from already-loaded parameters and totals.
+/// Callers that already have TotalDebt / TotalDeposits in scope (e.g. `borrow`,
+/// `repay`) can use this to avoid duplicate persistent storage reads.
+fn current_borrow_rate_from_params(
+    params: Option<rate_model::RateParams>,
+    total_debt: i128,
+    total_supply: i128,
+) -> i128 {
     match params {
         Some(p) => {
-            let total_debt: i128 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::TotalDebt)
-                .unwrap_or(0);
-            let total_supply: i128 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::TotalDeposits)
-                .unwrap_or(0);
             let utilization_bps = if total_supply > 0 {
                 total_debt.saturating_mul(10_000) / total_supply
             } else {
