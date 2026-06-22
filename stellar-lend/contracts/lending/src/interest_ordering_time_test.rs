@@ -461,8 +461,9 @@ mod interest_ordering_time_tests {
         let now = 1000 + SECONDS_PER_YEAR;
 
         // Call repay_amount directly
-        let updated = repay_amount(initial_position, now, 1_000, DEFAULT_APR_BPS)
+        let (updated, reserve_share) = repay_amount(initial_position, now, 1_000, DEFAULT_APR_BPS, 0)
             .expect("repay should succeed");
+        assert_eq!(reserve_share, 0);
 
         // Expected interest: 10,000 * 5% = 500
         let expected_interest = calculate_expected_interest(10_000, SECONDS_PER_YEAR, DEFAULT_APR_BPS);
@@ -487,17 +488,20 @@ mod interest_ordering_time_tests {
         };
 
         // Borrow 5,000 at t=1000
-        let after_borrow = borrow_amount(initial, 1000, 5_000, DEFAULT_APR_BPS)
+        let (after_borrow, reserve_share) = borrow_amount(initial, 1000, 5_000, DEFAULT_APR_BPS, 0)
             .expect("borrow should succeed");
         assert_eq!(after_borrow.principal, 5_000);
+        assert_eq!(reserve_share, 0);
 
         // Wait 6 months
         let six_months = SECONDS_PER_YEAR / 2;
         let repay_time = 1000 + six_months;
 
         // Repay 1,000
-        let after_repay = repay_amount(after_borrow, repay_time, 1_000, DEFAULT_APR_BPS)
+        let (after_repay, reserve_share) =
+            repay_amount(after_borrow, repay_time, 1_000, DEFAULT_APR_BPS, 0)
             .expect("repay should succeed");
+        assert_eq!(reserve_share, 0);
 
         // Expected interest: 5,000 * 2.5% = 125
         let interest = calculate_expected_interest(5_000, six_months, DEFAULT_APR_BPS);

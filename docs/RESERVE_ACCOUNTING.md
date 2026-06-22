@@ -2,15 +2,17 @@
 
 ## Overview
 
-The reserve factor determines what fraction of borrower interest is retained by
-the protocol. The remainder flows to lenders.
+The reserve factor determines what fraction of borrower interest is retained by the
+protocol when lending debt is settled. The borrower still owes the full accrued
+interest. The reserve share is credited to protocol reserves, and the remainder
+compounds into borrower principal.
 
 ```
-reserve_amount = interest_amount × reserve_factor_bps ÷ 10_000   (integer division)
-lender_amount  = interest_amount − reserve_amount
+reserve_amount = ceil(interest_amount * reserve_factor_bps / 10_000)
+lender_amount  = interest_amount - reserve_amount
 ```
 
-**Range:** 0–5000 bps (0%–50%). Default: 1000 bps (10%).
+**Range:** 0-5000 bps (0%-50%). Default: 0 bps.
 
 ---
 
@@ -18,28 +20,28 @@ lender_amount  = interest_amount − reserve_amount
 
 | Key | Type | Description |
 |---|---|---|
-| `ReserveDataKey::ReserveBalance(asset)` | `i128` | Accumulated reserve per asset (interest accrual path) |
-| `ReserveDataKey::ReserveFactor(asset)` | `i128` | Reserve factor in bps |
-| `ReserveDataKey::TotalReservesV1` | `i128` | Aggregate across all assets |
-| `ReserveDataKey::ProtocolRevenueV1` | `i128` | Cumulative revenue (never decremented) |
+| `DataKey::ReserveFactorBps` | `i128` | Admin-configured reserve factor in bps |
+| `DataKey::TotalReserve` | `i128` | Aggregate reserve accrued from lending interest |
+| `DataKey::Debt(user)` | `DebtPosition` | Borrower principal after the non-reserve interest share compounds |
 | `DepositDataKey::ProtocolReserve(asset)` | `i128` | Flash-loan fee bucket (separate from above) |
 
 > **Important:** Flash-loan fees are credited to `DepositDataKey::ProtocolReserve`,
-> not to `ReserveDataKey::ReserveBalance`. `get_total_reserves()` and
-> `get_reserve_balance()` do **not** include flash-loan fees.
+> not to `DataKey::TotalReserve`. `get_total_reserve()` does **not** include
+> flash-loan fees.
 
 ---
 
 ## Interest Accrual Path
 
-Called by the repay module on each repayment:
+Called by borrow and repay when an existing position is settled:
 
 ```
-accrue_reserve(env, asset, interest_amount)
-  → reserve_amount = interest_amount * factor / 10_000
-  → ReserveBalance += reserve_amount
-  → TotalReservesV1 += reserve_amount
-  → ProtocolRevenueV1 += reserve_amount   (monotonically non-decreasing)
+settle_accrual_with_reserve(position, now, rate, factor)
+  -> interest = accrue_interest(position.principal, elapsed, rate)
+  -> reserve_amount = ceil(interest * factor / 10_000)
+  -> compounded_interest = interest - reserve_amount
+  -> position.principal += compounded_interest
+  -> TotalReserve += reserve_amount
 ```
 
 ---
@@ -54,31 +56,29 @@ DepositDataKey::ProtocolReserve(asset) += fee
 ```
 
 Flash-loan fees are **not** routed through `accrue_reserve` and therefore do
-not appear in `get_total_reserves()` or `get_reserve_balance()`.
+not appear in `get_total_reserve()`.
 
 ---
 
 ## Rounding Semantics
 
-Integer division truncates toward zero. Consequences:
+Reserve splitting rounds up in the protocol's favor when the factor is non-zero.
+Consequences:
 
 - `reserve_amount + lender_amount == interest_amount` always (no value created or destroyed).
-- Sub-threshold interest (e.g. 1 stroop at 10% factor) yields `reserve_amount = 0`.
-- Minimum non-zero reserve: `ceil(10_000 / factor_bps)` stroops of interest.
+- Sub-threshold interest (e.g. 1 stroop at 10% factor) yields `reserve_amount = 1`.
+- Zero factor always yields `reserve_amount = 0`.
 - Flash-loan minimum non-zero fee at 9 bps: 1_112 stroops.
 
 ---
 
 ## Security Invariants
 
-1. `reserve_balance >= 0` at all times.
-2. `total_reserves == Σ per-asset reserve balances`.
-3. `protocol_revenue` is monotonically non-decreasing (withdrawals do not reduce it).
-4. Withdrawals are bounded by `reserve_balance`; excess is rejected with `InsufficientReserve`.
-5. Reserve factor is capped at 5000 bps; values above are rejected with `InvalidReserveFactor`.
-6. All arithmetic uses `checked_*` operations; overflow returns `ReserveError::Overflow`.
-7. Treasury address cannot be the contract itself (`InvalidTreasury`).
-8. Withdrawals respect the `pause_reserve` pause switch.
+1. `total_reserve >= 0` at all times.
+2. `total_reserve` is monotonically non-decreasing until a guarded reserve withdrawal is added.
+3. Reserve factor is capped at 5000 bps; values outside `[0, 5000]` are rejected.
+4. All reserve split and reserve-credit arithmetic uses checked operations.
+5. Borrower principal only receives `interest - reserve_amount`; reserve interest is not double-counted.
 
 ---
 
@@ -87,8 +87,8 @@ Integer division truncates toward zero. Consequences:
 ### 10% factor, 10_000 stroops interest
 
 ```
-reserve_amount = 10_000 × 1_000 ÷ 10_000 = 1_000
-lender_amount  = 10_000 − 1_000           = 9_000
+reserve_amount = ceil(10_000 * 1_000 / 10_000) = 1_000
+lender_amount  = 10_000 - 1_000                 = 9_000
 ```
 
 ### 9 bps flash-loan fee, 100_000 stroops loan
@@ -101,14 +101,17 @@ total_repayment = 100_000 + 90 = 100_090
 ### Near-zero rounding (10% factor, 9 stroops interest)
 
 ```
-reserve_amount = 9 × 1_000 ÷ 10_000 = 0   (truncated)
-lender_amount  = 9 − 0               = 9
+reserve_amount = ceil(9 * 1_000 / 10_000) = 1
+lender_amount  = 9 - 1                       = 8
 ```
 
 ---
 
 ## References
 
+- `contracts/lending/src/debt.rs` - reserve split and settlement helpers
+- `contracts/lending/src/lib.rs` - reserve factor setter and total reserve view
+- `contracts/lending/src/reserve_factor_test.rs` - reserve factor tests
 - `contracts/hello-world/src/reserve.rs` — accrual, withdrawal, view functions
 - `contracts/hello-world/src/flash_loan.rs` — fee calculation and fee bucket write
 - `contracts/hello-world/src/tests/reserve_test.rs` — full test suite including

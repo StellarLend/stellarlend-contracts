@@ -14,11 +14,13 @@ mod health_factor_edge_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
+mod reserve_factor_test;
+#[cfg(test)]
 mod rounding_drift_test;
 
 use debt::{
     borrow_amount, effective_debt, load_debt, repay_amount, save_debt, DebtPosition,
-    DEFAULT_APR_BPS,
+    DEFAULT_APR_BPS, MAX_RESERVE_FACTOR_BPS,
 };
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
@@ -44,6 +46,8 @@ pub enum DataKey {
     Balance(Address, Address),
     Treasury(Address),
     TotalDebt,
+    TotalReserve,
+    ReserveFactorBps,
     TotalDeposits,
     DebtCeiling,
     DepositCap,
@@ -419,11 +423,16 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
-        let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::Overflow => LendingError::Overflow,
-        })?;
+        let reserve_factor_bps = Self::get_reserve_factor_bps(env.clone());
+        let (updated, reserve_share) =
+            borrow_amount(position, now, amount, rate, reserve_factor_bps).map_err(
+                |e| match e {
+                    debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+                    debt::DebtError::Overflow => LendingError::Overflow,
+                },
+            )?;
         save_debt(&env, &user, &updated);
+        credit_total_reserve(&env, reserve_share)?;
         // Track protocol-level total debt
         let total_debt: i128 = env
             .storage()
@@ -530,11 +539,14 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
-        let updated = repay_amount(position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::Overflow => LendingError::Overflow,
-        })?;
+        let reserve_factor_bps = Self::get_reserve_factor_bps(env.clone());
+        let (updated, reserve_share) =
+            repay_amount(position, now, amount, rate, reserve_factor_bps).map_err(|e| match e {
+                debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+                debt::DebtError::Overflow => LendingError::Overflow,
+            })?;
         save_debt(&env, &user, &updated);
+        credit_total_reserve(&env, reserve_share)?;
         // Track protocol-level total debt
         let total_debt: i128 = env
             .storage()
@@ -556,6 +568,39 @@ impl LendingContract {
             extend_debt_ttl(&env, &user);
         }
         position
+    }
+
+    /// Set the protocol reserve factor in basis points (admin-only).
+    ///
+    /// The value must be between 0 and 5000 inclusive. On each settled accrual,
+    /// this percentage of borrower interest is credited to TotalReserve and the
+    /// remainder compounds into borrower principal.
+    pub fn set_reserve_factor_bps(env: Env, factor_bps: i128) -> Result<(), LendingError> {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        if !(0..=MAX_RESERVE_FACTOR_BPS).contains(&factor_bps) {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ReserveFactorBps, &factor_bps);
+        Ok(())
+    }
+
+    /// Return the configured protocol reserve factor in basis points.
+    pub fn get_reserve_factor_bps(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReserveFactorBps)
+            .unwrap_or(0)
+    }
+
+    /// Return total interest routed to the protocol reserve.
+    pub fn get_total_reserve(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalReserve)
+            .unwrap_or(0)
     }
 
     /// Set the protocol-level debt ceiling (admin-only).
@@ -875,6 +920,27 @@ fn current_borrow_rate(env: &Env) -> i128 {
         }
         None => DEFAULT_APR_BPS,
     }
+}
+
+fn credit_total_reserve(env: &Env, amount: i128) -> Result<(), LendingError> {
+    if amount == 0 {
+        return Ok(());
+    }
+    if amount < 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+    let total_reserve: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalReserve)
+        .unwrap_or(0);
+    let updated = total_reserve
+        .checked_add(amount)
+        .ok_or(LendingError::Overflow)?;
+    env.storage()
+        .persistent()
+        .set(&DataKey::TotalReserve, &updated);
+    Ok(())
 }
 
 #[contract]
