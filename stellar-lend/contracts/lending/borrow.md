@@ -133,6 +133,11 @@ pub fn borrow(
 - Interest accrues on each `borrow` and `repay` using banker's rounding via `calculate_interest_with_rounding`
 - Formula: `principal * rate_bps * elapsed_seconds / (BASIS_POINTS_SCALE * SECONDS_PER_YEAR)`
 - Checked arithmetic; overflow surfaces as contract panic on mutating paths
+- Property tests in `src/property_invariants_test.rs` cover the low-level debt
+  helpers directly: `repay_amount` never makes principal negative, full repayment
+  clears principal, `borrow_amount` increases settled principal by exactly the
+  borrowed amount, and `effective_debt` is always at least principal for
+  non-negative rates. See `docs/PROTOCOL_ACCOUNTING.md`.
 
 ### Overflow Protection
 
