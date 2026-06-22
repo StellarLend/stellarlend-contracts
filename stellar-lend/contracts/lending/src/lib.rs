@@ -249,6 +249,29 @@ impl LendingContract {
             .unwrap_or(5)
     }
 
+    /// Return the configured protocol debt ceiling, if one has been set.
+    pub fn get_debt_ceiling(env: Env) -> Option<i128> {
+        env.storage().instance().get(&DataKey::DebtCeiling)
+    }
+
+    /// Return the configured deposit cap or the protocol default.
+    pub fn get_deposit_cap(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DepositCap)
+            .unwrap_or(DEFAULT_DEPOSIT_CAP)
+    }
+
+    /// Return the configured flash-loan fee in basis points.
+    pub fn get_flash_fee(env: Env) -> i128 {
+        Self::get_flash_fee_bps(&env)
+    }
+
+    /// Return the current emergency lifecycle state.
+    pub fn get_emergency_state(env: Env) -> EmergencyState {
+        read_emergency_state(&env)
+    }
+
     /// Propose a new admin (current admin only).
     pub fn propose_admin(env: Env, new_admin: Address) {
         let current_admin = Self::get_admin(env.clone());
@@ -297,7 +320,7 @@ impl LendingContract {
             }
         }
 
-        let old_state = get_emergency_state(&env);
+        let old_state = read_emergency_state(&env);
         set_emergency_state_internal(&env, new_state);
         EmergencyStateChangedEvent {
             old_state,
@@ -824,7 +847,7 @@ fn check_pause_status(env: &Env, action: ProtocolAction) {
     }
 }
 
-fn get_emergency_state(env: &Env) -> EmergencyState {
+fn read_emergency_state(env: &Env) -> EmergencyState {
     env.storage()
         .instance()
         .get(&DataKey::EmergencyState)
@@ -838,7 +861,7 @@ fn set_emergency_state_internal(env: &Env, state: EmergencyState) {
 }
 
 fn check_emergency_status(env: &Env, action: ProtocolAction) {
-    match get_emergency_state(env) {
+    match read_emergency_state(env) {
         EmergencyState::Normal => {}
         EmergencyState::Shutdown => panic!("OperationDisabledDuringShutdown"),
         EmergencyState::Recovery => match action {
@@ -1035,14 +1058,47 @@ mod test {
     #[test]
     fn test_set_debt_ceiling_admin_only() {
         let (_env, client, _admin, _user) = setup();
+        assert_eq!(client.get_debt_ceiling(), None);
         client.set_debt_ceiling(&1_000_000);
-        // No getter yet, just assert no panic.
+        assert_eq!(client.get_debt_ceiling(), Some(1_000_000));
+        client.set_debt_ceiling(&2_000_000);
+        assert_eq!(client.get_debt_ceiling(), Some(2_000_000));
+    }
+
+    #[test]
+    fn test_risk_param_getters_return_defaults() {
+        let (_env, client, _admin, _user) = setup();
+        assert_eq!(client.get_debt_ceiling(), None);
+        assert_eq!(client.get_deposit_cap(), DEFAULT_DEPOSIT_CAP);
+        assert_eq!(client.get_flash_fee(), 5);
+        assert_eq!(client.get_emergency_state(), EmergencyState::Normal);
+    }
+
+    #[test]
+    fn test_risk_param_getters_return_stored_values() {
+        let (env, client, _admin, _user) = setup();
+
+        client.set_debt_ceiling(&5_000_000);
+        client.set_flash_fee(&25);
+        client.set_emergency_state(&EmergencyState::Shutdown);
+
+        env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::DepositCap, &7_000_000i128);
+        });
+
+        assert_eq!(client.get_debt_ceiling(), Some(5_000_000));
+        assert_eq!(client.get_deposit_cap(), 7_000_000);
+        assert_eq!(client.get_flash_fee(), 25);
+        assert_eq!(client.get_emergency_state(), EmergencyState::Shutdown);
     }
 
     #[test]
     fn test_set_flash_fee_valid_range() {
         let (_env, client, _admin, _user) = setup();
         client.set_flash_fee(&50);
+        assert_eq!(client.get_flash_fee(), 50);
     }
 
     #[test]

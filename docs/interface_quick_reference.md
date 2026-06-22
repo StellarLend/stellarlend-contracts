@@ -73,8 +73,12 @@
 |---|---|---|---|
 | `set_min_borrow` | `(min_borrow: i128)` | admin | `Result<(), LendingError>` |
 | `set_debt_ceiling` | `(ceiling: i128)` | admin | `Result<(), LendingError>` |
+| `get_debt_ceiling` | `()` | — | `Option<i128>` |
+| `get_deposit_cap` | `()` | — | `i128` |
 | `set_flash_fee` | `(fee_bps: i128)` | admin | `Result<(), LendingError>` |
+| `get_flash_fee` | `()` | — | `i128` |
 | `set_emergency_state` | `(new_state: EmergencyState)` | admin; guardian may set `Shutdown` | `()` |
+| `get_emergency_state` | `()` | — | `EmergencyState` |
 
 ---
 
@@ -178,7 +182,6 @@ The following functions and events are **not** present in `src/lib.rs` and shoul
 
 | Function / Event | Tracking |
 |---|---|
-| `get_emergency_state()` | Planned public view (state visible via events today) |
 | `set_oracle(admin, oracle)` | Planned external oracle contract adapter; signed oracle pubkey and price updates exist today |
 | `set_liquidation_threshold_bps(admin, bps)` | Planned — currently hardcoded 8000 BPS |
 | `set_close_factor_bps(admin, bps)` | Planned — currently hardcoded 5000 BPS |

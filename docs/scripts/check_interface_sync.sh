@@ -39,9 +39,13 @@ DOCUMENTED_FUNCTIONS=(
   "liquidate"
   "get_debt_position"
   "set_debt_ceiling"
+  "get_debt_ceiling"
+  "get_deposit_cap"
   "set_flash_fee"
+  "get_flash_fee"
   "flash_loan"
   "repay_flash_loan"
+  "get_emergency_state"
   "get_position"
   "get_health_factor"
   "get_protocol_metrics"
@@ -50,7 +54,10 @@ DOCUMENTED_FUNCTIONS=(
 # ----------------------------------------------------------------------------
 # Compare docs against the public contract surface.
 # ----------------------------------------------------------------------------
-mapfile -t ACTUAL_FUNCTIONS < <(
+ACTUAL_FUNCTIONS=()
+while IFS= read -r fn_name; do
+  ACTUAL_FUNCTIONS+=("$fn_name")
+done < <(
   awk '
     /impl LendingContract[[:space:]]*\{/ { in_impl = 1; next }
     in_impl && /^}/ { exit }
@@ -60,9 +67,20 @@ mapfile -t ACTUAL_FUNCTIONS < <(
     sort -u
 )
 
-mapfile -t DOCUMENTED_SORTED < <(printf '%s\n' "${DOCUMENTED_FUNCTIONS[@]}" | sort -u)
-mapfile -t MISSING_IN_SOURCE < <(comm -23 <(printf '%s\n' "${DOCUMENTED_SORTED[@]}") <(printf '%s\n' "${ACTUAL_FUNCTIONS[@]}"))
-mapfile -t MISSING_IN_DOCS < <(comm -13 <(printf '%s\n' "${DOCUMENTED_SORTED[@]}") <(printf '%s\n' "${ACTUAL_FUNCTIONS[@]}"))
+DOCUMENTED_SORTED=()
+while IFS= read -r fn_name; do
+  DOCUMENTED_SORTED+=("$fn_name")
+done < <(printf '%s\n' "${DOCUMENTED_FUNCTIONS[@]}" | sort -u)
+
+MISSING_IN_SOURCE=()
+while IFS= read -r fn_name; do
+  MISSING_IN_SOURCE+=("$fn_name")
+done < <(comm -23 <(printf '%s\n' "${DOCUMENTED_SORTED[@]}") <(printf '%s\n' "${ACTUAL_FUNCTIONS[@]}"))
+
+MISSING_IN_DOCS=()
+while IFS= read -r fn_name; do
+  MISSING_IN_DOCS+=("$fn_name")
+done < <(comm -13 <(printf '%s\n' "${DOCUMENTED_SORTED[@]}") <(printf '%s\n' "${ACTUAL_FUNCTIONS[@]}"))
 
 # ----------------------------------------------------------------------------
 # Report

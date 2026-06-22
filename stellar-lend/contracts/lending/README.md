@@ -96,8 +96,12 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 |---|---|---|---|
 | `set_min_borrow` | `(env, min_borrow: i128) → Result<(), LendingError>` | admin | Sets the minimum amount required to open or increase a borrow. |
 | `set_debt_ceiling` | `(env, ceiling: i128) → Result<(), LendingError>` | admin | Sets the maximum total protocol debt. |
+| `get_debt_ceiling` | `(env) → Option<i128>` | — | Returns the configured debt ceiling, if set. |
+| `get_deposit_cap` | `(env) → i128` | — | Returns the configured deposit cap or `DEFAULT_DEPOSIT_CAP`. |
 | `set_flash_fee` | `(env, fee_bps: i128) → Result<(), LendingError>` | admin | Sets the flash-loan fee in the inclusive range `[0, 1000]` bps. |
+| `get_flash_fee` | `(env) → i128` | — | Returns the current flash-loan fee in basis points. |
 | `set_emergency_state` | `(env, new_state: EmergencyState)` | admin or guardian | Transitions between `Normal`, `Shutdown`, and `Recovery`. Emits `EmergencyStateChanged` event. |
+| `get_emergency_state` | `(env) → EmergencyState` | — | Returns the current emergency lifecycle state. |
 
 ### Emergency State Machine
 
