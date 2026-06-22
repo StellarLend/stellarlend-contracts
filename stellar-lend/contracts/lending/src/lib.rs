@@ -32,6 +32,8 @@ const DEFAULT_DEPOSIT_CAP: i128 = 1_000_000_000_000;
 const HEALTH_FACTOR_SCALE: i128 = 10_000;
 const HEALTH_FACTOR_NO_DEBT: i128 = 100_000_000;
 pub const LIQUIDATION_THRESHOLD_BPS: i128 = 8000;
+const DEFAULT_CLOSE_FACTOR_BPS: i128 = 5000;
+const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 1000;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
@@ -58,6 +60,9 @@ pub enum DataKey {
     Guardian,
     PauseState(PauseType),
     RateParams,
+    LiquidationThresholdBps,
+    CloseFactorBps,
+    LiquidationIncentiveBps,
 }
 
 #[contractevent]
@@ -322,6 +327,51 @@ impl LendingContract {
             .unwrap_or(0)
     }
 
+    /// Set the liquidation threshold in basis points (admin-only). Must be in (0, 10000].
+    pub fn set_liquidation_threshold_bps(env: Env, bps: i128) -> Result<(), LendingError> {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        validate_positive_bps(bps)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationThresholdBps, &bps);
+        Ok(())
+    }
+
+    pub fn get_liquidation_threshold_bps(env: Env) -> i128 {
+        get_liquidation_threshold_bps(&env)
+    }
+
+    /// Set the close factor in basis points (admin-only). Must be in (0, 10000].
+    pub fn set_close_factor_bps(env: Env, bps: i128) -> Result<(), LendingError> {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        validate_positive_bps(bps)?;
+        env.storage().instance().set(&DataKey::CloseFactorBps, &bps);
+        Ok(())
+    }
+
+    pub fn get_close_factor_bps(env: Env) -> i128 {
+        get_close_factor_bps(&env)
+    }
+
+    /// Set the liquidation incentive in basis points (admin-only). Must be in [0, 5000].
+    pub fn set_liquidation_incentive_bps(env: Env, bps: i128) -> Result<(), LendingError> {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        if !(0..=5000).contains(&bps) {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationIncentiveBps, &bps);
+        Ok(())
+    }
+
+    pub fn get_liquidation_incentive_bps(env: Env) -> i128 {
+        get_liquidation_incentive_bps(&env)
+    }
+
     /// Deposit collateral for a user.
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         check_emergency_status(&env, ProtocolAction::Deposit);
@@ -461,9 +511,9 @@ impl LendingContract {
             return Err(LendingError::PositionHealthy);
         }
 
-        const LIQUIDATION_THRESHOLD: i128 = 8000;
+        let liquidation_threshold = get_liquidation_threshold_bps(&env);
         let hf = collateral
-            .checked_mul(LIQUIDATION_THRESHOLD)
+            .checked_mul(liquidation_threshold)
             .and_then(|v| v.checked_div(debt))
             .ok_or(LendingError::Overflow)?;
 
@@ -471,9 +521,9 @@ impl LendingContract {
             return Err(LendingError::PositionHealthy);
         }
 
-        const CLOSE_FACTOR: i128 = 5000;
+        let close_factor = get_close_factor_bps(&env);
         let max_repay = debt
-            .checked_mul(CLOSE_FACTOR)
+            .checked_mul(close_factor)
             .and_then(|v| v.checked_div(10000))
             .ok_or(LendingError::Overflow)?;
         let actual_repay = if amount > max_repay {
@@ -482,9 +532,9 @@ impl LendingContract {
             amount
         };
 
-        const INCENTIVE_BPS: i128 = 1000;
+        let incentive_bps = get_liquidation_incentive_bps(&env);
         let seized_collateral = actual_repay
-            .checked_mul(10000 + INCENTIVE_BPS)
+            .checked_mul(10000 + incentive_bps)
             .and_then(|v| v.checked_div(10000))
             .ok_or(LendingError::Overflow)?;
 
@@ -683,7 +733,7 @@ impl LendingContract {
             effective_debt(&position, env.ledger().timestamp(), rate).unwrap_or(position.principal);
 
         let health_factor = if debt > 0 {
-            col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
+            col.checked_mul(get_liquidation_threshold_bps(&env))
                 .map(|v| v / debt)
                 .unwrap_or(i128::MAX)
         } else {
@@ -698,7 +748,7 @@ impl LendingContract {
     }
 
     /// Get the health factor for a user. Read-only view.
-    /// Computed as: `(collateral * LIQUIDATION_THRESHOLD_BPS) / debt`
+    /// Computed as: `(collateral * liquidation_threshold_bps) / debt`
     /// Returns `HEALTH_FACTOR_NO_DEBT` sentinel if user has no debt.
     /// Scale: `HEALTH_FACTOR_SCALE` (10000 = 1.0).
     pub fn get_health_factor(env: Env, user: Address) -> i128 {
@@ -716,7 +766,7 @@ impl LendingContract {
             .max(0);
 
         if debt > 0 {
-            col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
+            col.checked_mul(get_liquidation_threshold_bps(&env))
                 .map(|v| v / debt)
                 .unwrap_or(i128::MAX)
         } else {
@@ -835,6 +885,34 @@ fn set_emergency_state_internal(env: &Env, state: EmergencyState) {
     env.storage()
         .instance()
         .set(&DataKey::EmergencyState, &state);
+}
+
+fn validate_positive_bps(bps: i128) -> Result<(), LendingError> {
+    if bps <= 0 || bps > BPS_DENOM {
+        return Err(LendingError::InvalidFeeBps);
+    }
+    Ok(())
+}
+
+fn get_liquidation_threshold_bps(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::LiquidationThresholdBps)
+        .unwrap_or(LIQUIDATION_THRESHOLD_BPS)
+}
+
+fn get_close_factor_bps(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::CloseFactorBps)
+        .unwrap_or(DEFAULT_CLOSE_FACTOR_BPS)
+}
+
+fn get_liquidation_incentive_bps(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::LiquidationIncentiveBps)
+        .unwrap_or(DEFAULT_LIQUIDATION_INCENTIVE_BPS)
 }
 
 fn check_emergency_status(env: &Env, action: ProtocolAction) {
@@ -1054,6 +1132,86 @@ mod test {
             "expected InvalidFeeBps, got {:?}",
             res
         );
+    }
+
+    #[test]
+    fn test_liquidation_param_getters_default_and_update() {
+        let (_env, client, _admin, _user) = setup();
+        assert_eq!(
+            client.get_liquidation_threshold_bps(),
+            LIQUIDATION_THRESHOLD_BPS
+        );
+        assert_eq!(client.get_close_factor_bps(), DEFAULT_CLOSE_FACTOR_BPS);
+        assert_eq!(
+            client.get_liquidation_incentive_bps(),
+            DEFAULT_LIQUIDATION_INCENTIVE_BPS
+        );
+
+        client.set_liquidation_threshold_bps(&9_000);
+        client.set_close_factor_bps(&7_500);
+        client.set_liquidation_incentive_bps(&500);
+
+        assert_eq!(client.get_liquidation_threshold_bps(), 9_000);
+        assert_eq!(client.get_close_factor_bps(), 7_500);
+        assert_eq!(client.get_liquidation_incentive_bps(), 500);
+    }
+
+    #[test]
+    fn test_liquidation_param_bounds() {
+        let (_env, client, _admin, _user) = setup();
+        assert_eq!(
+            client.try_set_liquidation_threshold_bps(&0),
+            Err(Ok(LendingError::InvalidFeeBps))
+        );
+        assert_eq!(
+            client.try_set_liquidation_threshold_bps(&10_001),
+            Err(Ok(LendingError::InvalidFeeBps))
+        );
+        assert_eq!(
+            client.try_set_close_factor_bps(&0),
+            Err(Ok(LendingError::InvalidFeeBps))
+        );
+        assert_eq!(
+            client.try_set_close_factor_bps(&10_001),
+            Err(Ok(LendingError::InvalidFeeBps))
+        );
+        assert_eq!(
+            client.try_set_liquidation_incentive_bps(&-1),
+            Err(Ok(LendingError::InvalidFeeBps))
+        );
+        assert_eq!(
+            client.try_set_liquidation_incentive_bps(&5_001),
+            Err(Ok(LendingError::InvalidFeeBps))
+        );
+
+        assert_eq!(
+            client.try_set_liquidation_threshold_bps(&10_000),
+            Ok(Ok(()))
+        );
+        assert_eq!(client.try_set_close_factor_bps(&10_000), Ok(Ok(())));
+        assert_eq!(client.try_set_liquidation_incentive_bps(&5_000), Ok(Ok(())));
+    }
+
+    #[test]
+    #[should_panic(expected = "Unauthorized")]
+    fn test_random_caller_cannot_set_liquidation_params() {
+        let env2 = Env::default();
+        let id2 = env2.register(LendingContract, ());
+        let client2 = LendingContractClient::new(&env2, &id2);
+        let admin2 = Address::generate(&env2);
+        let attacker = Address::generate(&env2);
+        env2.mock_all_auths();
+        client2.initialize(&admin2);
+        env2.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &attacker,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &id2,
+                fn_name: "set_close_factor_bps",
+                args: (7_500i128,).into_val(&env2),
+                sub_invokes: &[],
+            },
+        }]);
+        client2.set_close_factor_bps(&7_500);
     }
 
     // -----------------------------------------------------------------------
@@ -1289,6 +1447,38 @@ mod test {
         let hf = client.get_health_factor(&user);
         let pos = client.get_position(&user);
         assert_eq!(hf, pos.health_factor);
+    }
+
+    #[test]
+    fn test_configured_liquidation_threshold_drives_health_views() {
+        let (_env, client, _admin, user) = setup();
+        client.deposit(&user, &100);
+        client.borrow(&user, &90);
+
+        assert!(client.get_health_factor(&user) < HEALTH_FACTOR_SCALE);
+
+        client.set_liquidation_threshold_bps(&10_000);
+        let hf = client.get_health_factor(&user);
+        let pos = client.get_position(&user);
+        assert!(hf > HEALTH_FACTOR_SCALE);
+        assert_eq!(hf, pos.health_factor);
+    }
+
+    #[test]
+    fn test_configured_close_factor_and_incentive_drive_liquidation() {
+        let (env, client, _admin, borrower) = setup();
+        let liquidator = Address::generate(&env);
+        client.deposit(&borrower, &100);
+        client.borrow(&borrower, &200);
+        client.set_close_factor_bps(&2_500);
+        client.set_liquidation_incentive_bps(&0);
+
+        let actual_repay = client.liquidate(&liquidator, &borrower, &200);
+        let pos = client.get_position(&borrower);
+
+        assert_eq!(actual_repay, 50);
+        assert_eq!(pos.debt, 150);
+        assert_eq!(pos.collateral, 50);
     }
 
     #[test]

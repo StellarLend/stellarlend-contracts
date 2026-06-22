@@ -17,7 +17,7 @@ This document describes the view functions for user collateral value, debt value
 - **Purpose:** Returns the user's position summary: raw collateral balance, effective debt (principal + accrued interest), and health factor.
 - **Read-only:** Yes. Extends TTL for active positions.
 - **Returns:** `PositionSummary { collateral: i128, debt: i128, health_factor: i128 }`. Zero-valued fields if the user has no position.
-- **Health factor formula:** `(collateral * LIQUIDATION_THRESHOLD_BPS) / debt` with `LIQUIDATION_THRESHOLD_BPS = 8000` (80%).
+- **Health factor formula:** `(collateral * liquidation_threshold_bps) / debt`, where `liquidation_threshold_bps` is storage-backed and defaults to 8000 (80%).
 - **Special health factor values:**
   - No debt: returns `HEALTH_FACTOR_NO_DEBT` (100_000_000), meaning "healthy".
   - Overflow in calculation: returns `i128::MAX`.
@@ -26,11 +26,11 @@ This document describes the view functions for user collateral value, debt value
 
 ## 2. `get_health_factor(user: Address) -> i128`
 
-- **Purpose:** Health factor for liquidations and UI. Computed from raw collateral, effective debt, and the hardcoded liquidation threshold.
+- **Purpose:** Health factor for liquidations and UI. Computed from raw collateral, effective debt, and the configured liquidation threshold.
 - **Read-only:** Yes. Extends TTL for active positions.
 - **Formula:**  
-  `health_factor = (collateral * LIQUIDATION_THRESHOLD_BPS) / debt`  
-  with `LIQUIDATION_THRESHOLD_BPS = 8000` (80%) and implicit `HEALTH_FACTOR_SCALE = 10000`, so **10000 = 1.0**.
+  `health_factor = (collateral * liquidation_threshold_bps) / debt`  
+  with `liquidation_threshold_bps` defaulting to 8000 (80%) and implicit `HEALTH_FACTOR_SCALE = 10000`, so **10000 = 1.0**.
 - **Interpretation:**
   - **> 10000:** Healthy (above liquidation threshold).
   - **< 10000:** Liquidatable.
@@ -62,7 +62,7 @@ The `health_factor_edge_test` suite pins both `get_position().health_factor` and
 ## Security Assumptions
 
 1. **No state change:** All view functions only read storage. They do not modify protocol or user state beyond TTL extension.
-2. **Liquidation threshold:** Currently hardcoded at 8000 BPS (80%) as `LIQUIDATION_THRESHOLD_BPS`.
+2. **Liquidation threshold:** Storage-backed and admin-configurable through `set_liquidation_threshold_bps`; defaults to 8000 BPS (80%).
 3. **Overflow:** Health factor calculations use checked arithmetic where applicable; edge cases (e.g. zero debt) are handled explicitly.
 
 ---
@@ -188,4 +188,3 @@ let metrics = client.get_protocol_metrics();
 // metrics.utilization_bps =>     5_000  // 50 %
 // metrics.ledger          =>    123_456
 ```
-

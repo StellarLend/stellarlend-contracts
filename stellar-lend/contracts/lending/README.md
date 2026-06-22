@@ -60,7 +60,15 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `withdraw` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | New collateral balance | Removes `amount` from the user's collateral. Only allowed in Normal and Recovery states. |
 | `borrow` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Updated debt principal | Increases user debt; enforces `min_borrow` and protocol debt ceiling. Blocked during Shutdown/Recovery. |
 | `repay` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Remaining debt principal | Reduces user debt with interest accrued up to the current timestamp. Allowed in Normal and Recovery. |
-| `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) → Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to 50% of an undercollateralized borrower's debt and seizes proportional collateral (+ 10% bonus). Reverts if position is healthy (`hf >= 10000`). |
+| `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) → Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to the configured close factor of an undercollateralized borrower's debt and seizes proportional collateral plus the configured incentive. Reverts if position is healthy (`hf >= 10000`). |
+
+### Risk Parameter Controls
+
+| Function | Bounds | Default | Notes |
+|---|---:|---:|---|
+| `set_liquidation_threshold_bps(env, bps)` / `get_liquidation_threshold_bps(env)` | `1..=10000` | `8000` | Admin-only setter; health-factor views and liquidation eligibility read this value from storage. |
+| `set_close_factor_bps(env, bps)` / `get_close_factor_bps(env)` | `1..=10000` | `5000` | Admin-only setter; caps the maximum debt a liquidator can repay in one liquidation. |
+| `set_liquidation_incentive_bps(env, bps)` / `get_liquidation_incentive_bps(env)` | `0..=5000` | `1000` | Admin-only setter; controls the collateral bonus applied to the repaid amount. |
 
 ### Flash Loans
 
@@ -140,8 +148,6 @@ The functions listed below appear in older documentation but are **not yet imple
 |---|---|
 | `set_oracle(env, admin, oracle)` | External oracle contract adapter; signed `set_oracle_pubkey` / `set_price` flow is implemented today. |
 | `set_pause(env, admin, pause_type, paused)` | Granular per-operation pausing (currently only global via `set_emergency_state`). |
-| `set_liquidation_threshold_bps(env, admin, bps)` | Configurable liquidation threshold (currently hardcoded at 8000 BPS). |
-| `set_close_factor_bps(env, admin, bps)` | Configurable close factor (currently hardcoded at 5000 BPS). |
 | `get_collateral_value(env, user)` | USD-denominated collateral value (requires oracle). |
 | `get_debt_value(env, user)` | USD-denominated debt value (requires oracle). |
 | `get_max_liquidatable_amount(env, user)` | Convenience helper for liquidators. |
