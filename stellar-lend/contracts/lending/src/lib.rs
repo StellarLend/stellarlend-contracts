@@ -281,6 +281,47 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Guardian)
     }
 
+    /// Set or clear a granular pause flag for an operation.
+    ///
+    /// The caller must be the admin or configured guardian. `ttl_ledgers` is
+    /// added to the current ledger sequence with saturating arithmetic; because
+    /// pause checks are inclusive, `ttl_ledgers == 0` pauses only the current
+    /// ledger when `paused` is true. Use `unpause` to clear an operation without
+    /// computing a TTL.
+    pub fn set_pause(
+        env: Env,
+        caller: Address,
+        operation: PauseType,
+        paused: bool,
+        ttl_ledgers: u32,
+    ) -> Result<(), LendingError> {
+        ensure_pause_authorized(&env, &caller)?;
+        let key = DataKey::PauseState(operation);
+        let old_state = current_pause_state(&env, operation);
+        let new_state = PauseState {
+            paused,
+            expires_at_ledger: env.ledger().sequence().saturating_add(ttl_ledgers),
+        };
+        env.storage().instance().set(&key, &new_state);
+        PauseStateChangedEvent {
+            operation,
+            old_state,
+            new_state,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Clear a granular pause flag for an operation.
+    pub fn unpause(env: Env, caller: Address, operation: PauseType) -> Result<(), LendingError> {
+        Self::set_pause(env, caller, operation, false, 0)
+    }
+
+    /// Return true when the operation is currently paused, including `All`.
+    pub fn get_pause_state(env: Env, operation: PauseType) -> bool {
+        pause_is_active(&env, PauseType::All) || pause_is_active(&env, operation)
+    }
+
     pub fn set_emergency_state(env: Env, new_state: EmergencyState) {
         // For Shutdown, guardian (if set) or admin can call; for other states, admin only.
         match new_state {
@@ -800,12 +841,28 @@ fn extend_debt_ttl(env: &Env, user: &Address) {
 }
 
 fn pause_is_active(env: &Env, operation: PauseType) -> bool {
-    let key = DataKey::PauseState(operation);
+    let state = current_pause_state(env, operation);
+    state.paused && env.ledger().sequence() <= state.expires_at_ledger
+}
+
+fn current_pause_state(env: &Env, operation: PauseType) -> PauseState {
     env.storage()
         .instance()
-        .get(&key)
-        .map(|state: PauseState| state.paused && env.ledger().sequence() <= state.expires_at_ledger)
-        .unwrap_or(false)
+        .get(&DataKey::PauseState(operation))
+        .unwrap_or(PauseState {
+            paused: false,
+            expires_at_ledger: 0,
+        })
+}
+
+fn ensure_pause_authorized(env: &Env, caller: &Address) -> Result<(), LendingError> {
+    let admin = LendingContract::get_admin(env.clone());
+    let guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
+    if caller != &admin && guardian.as_ref() != Some(caller) {
+        return Err(LendingError::Unauthorized);
+    }
+    caller.require_auth();
+    Ok(())
 }
 
 fn check_pause_status(env: &Env, action: ProtocolAction) {
@@ -925,7 +982,7 @@ mod test {
     use super::*;
     use ed25519_dalek::{Keypair, Signer};
     use rand::{rngs::StdRng, SeedableRng};
-    use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
+    use soroban_sdk::testutils::{Address as _, Events, Ledger};
 
     fn setup() -> (
         Env,
@@ -1067,6 +1124,81 @@ mod test {
         client.propose_admin(&new_admin);
         client.accept_admin();
         assert_eq!(client.get_admin(), new_admin);
+    }
+
+    #[test]
+    fn test_set_pause_admin_writes_state_and_emits_event() {
+        let (env, client, admin, _user) = setup();
+        let before_events = env.events().all().events().len();
+        let current_ledger = env.ledger().sequence();
+
+        client.set_pause(&admin, &PauseType::Borrow, &true, &10);
+        assert_eq!(env.events().all().events().len(), before_events + 1);
+
+        assert!(client.get_pause_state(&PauseType::Borrow));
+        assert!(!client.get_pause_state(&PauseType::Repay));
+
+        advance_time(&env, 11);
+        assert!(
+            env.ledger().sequence() > current_ledger + 10,
+            "test must advance beyond pause expiry"
+        );
+        assert!(!client.get_pause_state(&PauseType::Borrow));
+    }
+
+    #[test]
+    fn test_set_pause_guardian_can_pause_all() {
+        let (env, client, admin, _user) = setup();
+        let guardian = Address::generate(&env);
+        client.set_guardian(&guardian);
+
+        client.set_pause(&guardian, &PauseType::All, &true, &5);
+
+        assert!(client.get_pause_state(&PauseType::Borrow));
+        assert!(client.get_pause_state(&PauseType::Repay));
+
+        client.unpause(&admin, &PauseType::All);
+        assert!(!client.get_pause_state(&PauseType::Borrow));
+        assert!(!client.get_pause_state(&PauseType::Repay));
+    }
+
+    #[test]
+    fn test_set_pause_rejects_unauthorized_caller() {
+        let (env, client, _admin, _user) = setup();
+        let attacker = Address::generate(&env);
+
+        let res = client.try_set_pause(&attacker, &PauseType::Borrow, &true, &10);
+
+        assert!(
+            matches!(res, Err(Ok(LendingError::Unauthorized))),
+            "expected Unauthorized, got {:?}",
+            res
+        );
+        assert!(!client.get_pause_state(&PauseType::Borrow));
+    }
+
+    #[test]
+    fn test_set_pause_zero_ttl_expires_after_current_ledger() {
+        let (env, client, admin, _user) = setup();
+
+        client.set_pause(&admin, &PauseType::Repay, &true, &0);
+
+        assert!(client.get_pause_state(&PauseType::Repay));
+        advance_time(&env, 1);
+        assert!(!client.get_pause_state(&PauseType::Repay));
+    }
+
+    #[test]
+    fn test_unpause_clears_repaused_operation() {
+        let (_env, client, admin, _user) = setup();
+
+        client.set_pause(&admin, &PauseType::Withdraw, &true, &10);
+        client.set_pause(&admin, &PauseType::Withdraw, &true, &20);
+        assert!(client.get_pause_state(&PauseType::Withdraw));
+
+        client.unpause(&admin, &PauseType::Withdraw);
+
+        assert!(!client.get_pause_state(&PauseType::Withdraw));
     }
 
     // -----------------------------------------------------------------------

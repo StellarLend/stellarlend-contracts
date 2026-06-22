@@ -139,7 +139,6 @@ The functions listed below appear in older documentation but are **not yet imple
 | Function | Notes |
 |---|---|
 | `set_oracle(env, admin, oracle)` | External oracle contract adapter; signed `set_oracle_pubkey` / `set_price` flow is implemented today. |
-| `set_pause(env, admin, pause_type, paused)` | Granular per-operation pausing (currently only global via `set_emergency_state`). |
 | `set_liquidation_threshold_bps(env, admin, bps)` | Configurable liquidation threshold (currently hardcoded at 8000 BPS). |
 | `set_close_factor_bps(env, admin, bps)` | Configurable close factor (currently hardcoded at 5000 BPS). |
 | `get_collateral_value(env, user)` | USD-denominated collateral value (requires oracle). |

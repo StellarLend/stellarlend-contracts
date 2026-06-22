@@ -26,8 +26,8 @@ situations or maintenance windows.
 - A pause is considered active only while `env.ledger().sequence() <= expires_at_ledger`.
 - When ledger sequence exceeds `expires_at_ledger`, the paused operation is treated as unpaused
   without any storage rewrite.
-- Operators should either explicitly extend an active pause with `extend_pause(operation, new_expiry)`
-  or re-issue a new pause after expiry.
+- Operators should either re-issue `set_pause(caller, operation, true, ttl_ledgers)`
+  before expiry or clear the flag with `unpause(caller, operation)`.
 
 ## Operation Types
 
@@ -112,24 +112,26 @@ The protocol follows an explicit liquidation policy that balances **solvency pro
 - **Precedence Rules**: Emergency states and ReadOnly mode override granular pause flags
 - **Atomic Operations**: Pause checks happen before any state changes
 - **Event Transparency**: All pause changes emit events for off-chain monitoring
-- **Role Separation**: Only admin can set granular pauses; guardian can trigger emergency shutdown
+- **Role Separation**: Admin or guardian can set granular pauses; guardian can also trigger emergency shutdown
 
 ## Contract Interface
 
 ### Admin Functions
 
-#### `set_pause(admin: Address, operation: PauseType, paused: bool, expires_at_ledger: u32) -> Result<(), LendingError>`
+#### `set_pause(caller: Address, operation: PauseType, paused: bool, ttl_ledgers: u32) -> Result<(), LendingError>`
 
-Toggles the pause state for a specific operation or the entire protocol.
+Toggles the pause state for a specific operation or the entire protocol. The contract stores
+`expires_at_ledger = current_ledger + ttl_ledgers` with saturating arithmetic. Pause checks are
+inclusive, so `ttl_ledgers = 0` pauses only the current ledger.
 
-- **Requires Authorization**: Yes (by `admin`).
+- **Requires Authorization**: Yes (by admin or guardian).
 - **Emits**: `PauseStateChangedEvent`.
 
-#### `extend_pause(admin: Address, operation: PauseType, new_expiry: u32) -> Result<(), LendingError>`
+#### `unpause(caller: Address, operation: PauseType) -> Result<(), LendingError>`
 
-Extends an active pause state to a later ledger sequence.
+Clears a pause state for a specific operation by writing `paused = false`.
 
-- **Requires Authorization**: Yes (by `admin`).
+- **Requires Authorization**: Yes (by admin or guardian).
 - **Emits**: `PauseStateChangedEvent`.
 
 #### `set_guardian(admin: Address, guardian: Address) -> Result<(), BorrowError>`
@@ -250,7 +252,7 @@ fully unwind positions. All other entry points remain blocked.
 
 | Event                      | Topic                     | Emitted by                                |
 | -------------------------- | ------------------------- | ----------------------------------------- |
-| `PauseStateChangedEvent`   | `pause_state_changed_event` | `set_pause`, `extend_pause`               |
+| `PauseStateChangedEvent`   | `pause_state_changed_event` | `set_pause`, `unpause`                    |
 | `GuardianSetEvent`         | `guardian_set_event`      | `set_guardian`                            |
 | `EmergencyStateEvent`      | `emergency_state_event`   | `emergency_shutdown`, `start_recovery`, `complete_recovery` |
 
@@ -259,9 +261,9 @@ fully unwind positions. All other entry points remain blocked.
 1. **Admin Trust**: The admin should be a multisig or DAO-governed address to avoid single-key
    centralization risk. Compromise of the admin key allows arbitrary pause/unpause.
 
-2. **Guardian Scope**: The guardian can only trigger `emergency_shutdown`. It cannot set individual
-   pause flags, rotate itself, or invoke recovery — those paths require the admin key. Configure the
-   guardian as a lower-latency security multisig.
+2. **Guardian Scope**: The guardian can trigger `emergency_shutdown` and operate granular pause
+   flags. It cannot rotate itself, invoke recovery, upgrade, or modify risk parameters. Configure
+   the guardian as a lower-latency security multisig.
 
 3. **Persistence**: All pause and emergency states are stored in persistent storage so they survive
    ledger upgrades and contract updates.
@@ -289,10 +291,10 @@ fully unwind positions. All other entry points remain blocked.
 
 ```rust
 // Pause borrowing in an emergency
-client.set_pause(&admin, &PauseType::Borrow, &true);
+client.set_pause(&admin, &PauseType::Borrow, &true, &100);
 
 // Re-enable borrowing
-client.set_pause(&admin, &PauseType::Borrow, &false);
+client.unpause(&admin, &PauseType::Borrow);
 
 // Query pause state before presenting UI options
 let borrow_paused = client.get_pause_state(&PauseType::Borrow);
