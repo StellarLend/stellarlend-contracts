@@ -6,6 +6,8 @@ pub mod rate_model;
 pub mod rounding_strategy;
 
 #[cfg(test)]
+mod cross_asset_test;
+#[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
 mod error_codes_test;
@@ -23,7 +25,7 @@ use debt::{
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
-    Env, IntoVal, Symbol, Val,
+    Env, IntoVal, Symbol, Val, Vec,
 };
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
@@ -35,6 +37,7 @@ pub const LIQUIDATION_THRESHOLD_BPS: i128 = 8000;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
+const PRICE_SCALE: i128 = 10_000_000;
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +61,12 @@ pub enum DataKey {
     Guardian,
     PauseState(PauseType),
     RateParams,
+    AssetParams(Address),
+    CrossCollateral(Address, Address),
+    CrossDebt(Address, Address),
+    CrossCollateralAssets(Address),
+    CrossDebtAssets(Address),
+    CrossTotalDebt(Address),
 }
 
 #[contractevent]
@@ -134,6 +143,71 @@ pub enum LendingError {
 pub struct PriceRecord {
     pub price: i128,
     pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetParams {
+    pub ltv_bps: i128,
+    pub liquidation_threshold_bps: i128,
+    pub price_feed: Address,
+    pub debt_ceiling: i128,
+    pub can_collateralize: bool,
+    pub can_borrow: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossPositionSummary {
+    pub total_collateral_usd: i128,
+    pub weighted_collateral_usd: i128,
+    pub total_debt_usd: i128,
+    pub health_factor: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetParamsSetEvent {
+    pub asset: Address,
+    pub ltv_bps: i128,
+    pub liquidation_threshold_bps: i128,
+    pub debt_ceiling: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossDepositEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+    pub balance: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossBorrowEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+    pub debt: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossRepayEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+    pub debt: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossWithdrawEvent {
+    pub user: Address,
+    pub asset: Address,
+    pub amount: i128,
+    pub balance: i128,
 }
 
 #[contracttype]
@@ -226,6 +300,244 @@ impl LendingContract {
 
     pub fn get_price_record(env: Env, asset: Address) -> Option<PriceRecord> {
         env.storage().persistent().get(&DataKey::OraclePrice(asset))
+    }
+
+    /// Configure cross-asset risk parameters for an asset.
+    pub fn set_asset_params(
+        env: Env,
+        asset: Address,
+        ltv_bps: i128,
+        liquidation_threshold_bps: i128,
+        price_feed: Address,
+        debt_ceiling: i128,
+        can_collateralize: bool,
+        can_borrow: bool,
+    ) -> Result<(), LendingError> {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        if ltv_bps < 0
+            || liquidation_threshold_bps <= 0
+            || ltv_bps > liquidation_threshold_bps
+            || liquidation_threshold_bps > BPS_DENOM
+            || debt_ceiling < 0
+        {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        let params = AssetParams {
+            ltv_bps,
+            liquidation_threshold_bps,
+            price_feed,
+            debt_ceiling,
+            can_collateralize,
+            can_borrow,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::AssetParams(asset.clone()), &params);
+
+        AssetParamsSetEvent {
+            asset,
+            ltv_bps,
+            liquidation_threshold_bps,
+            debt_ceiling,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn get_asset_params(env: Env, asset: Address) -> Option<AssetParams> {
+        env.storage().instance().get(&DataKey::AssetParams(asset))
+    }
+
+    /// Deposit a configured asset as cross-asset collateral.
+    pub fn deposit_collateral_asset(
+        env: Env,
+        user: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Deposit);
+        check_emergency_status(&env, ProtocolAction::Deposit);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        user.require_auth();
+        let params = get_asset_params_or_err(&env, &asset)?;
+        if !params.can_collateralize {
+            return Err(LendingError::InvalidAmount);
+        }
+        ensure_fresh_price(&env, &asset)?;
+
+        let key = DataKey::CrossCollateral(user.clone(), asset.clone());
+        let current = cross_collateral_balance(&env, &user, &asset);
+        let updated = current.checked_add(amount).ok_or(LendingError::Overflow)?;
+        env.storage().persistent().set(&key, &updated);
+        add_user_asset(&env, &DataKey::CrossCollateralAssets(user.clone()), &asset);
+
+        CrossDepositEvent {
+            user,
+            asset,
+            amount,
+            balance: updated,
+        }
+        .publish(&env);
+
+        Ok(updated)
+    }
+
+    /// Borrow a configured asset against aggregate cross-asset collateral.
+    pub fn borrow_asset(
+        env: Env,
+        user: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Borrow);
+        check_emergency_status(&env, ProtocolAction::Borrow);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        user.require_auth();
+        let params = get_asset_params_or_err(&env, &asset)?;
+        if !params.can_borrow {
+            return Err(LendingError::InvalidAmount);
+        }
+        ensure_fresh_price(&env, &asset)?;
+
+        let current_debt = cross_debt_balance(&env, &user, &asset);
+        let updated_debt = current_debt
+            .checked_add(amount)
+            .ok_or(LendingError::Overflow)?;
+        let current_total_debt = cross_total_debt(&env, &asset);
+        let updated_total_debt = current_total_debt
+            .checked_add(amount)
+            .ok_or(LendingError::Overflow)?;
+        if params.debt_ceiling > 0 && updated_total_debt > params.debt_ceiling {
+            return Err(LendingError::DebtCeilingExceeded);
+        }
+
+        let summary =
+            compute_cross_position(&env, &user, Some((asset.clone(), updated_debt)), None)?;
+        if summary.health_factor < HEALTH_FACTOR_SCALE {
+            return Err(LendingError::InsufficientCollateral);
+        }
+
+        env.storage().persistent().set(
+            &DataKey::CrossDebt(user.clone(), asset.clone()),
+            &updated_debt,
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::CrossTotalDebt(asset.clone()), &updated_total_debt);
+        add_user_asset(&env, &DataKey::CrossDebtAssets(user.clone()), &asset);
+
+        CrossBorrowEvent {
+            user,
+            asset,
+            amount,
+            debt: updated_debt,
+        }
+        .publish(&env);
+
+        Ok(updated_debt)
+    }
+
+    /// Repay a configured borrowed asset.
+    pub fn repay_asset(
+        env: Env,
+        user: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Repay);
+        check_emergency_status(&env, ProtocolAction::Repay);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        user.require_auth();
+        let current_debt = cross_debt_balance(&env, &user, &asset);
+        let actual_repay = if amount > current_debt {
+            current_debt
+        } else {
+            amount
+        };
+        let updated_debt = current_debt.saturating_sub(actual_repay);
+        let updated_total_debt = cross_total_debt(&env, &asset).saturating_sub(actual_repay);
+
+        env.storage().persistent().set(
+            &DataKey::CrossDebt(user.clone(), asset.clone()),
+            &updated_debt,
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::CrossTotalDebt(asset.clone()), &updated_total_debt);
+
+        CrossRepayEvent {
+            user,
+            asset,
+            amount: actual_repay,
+            debt: updated_debt,
+        }
+        .publish(&env);
+
+        Ok(updated_debt)
+    }
+
+    /// Withdraw cross-asset collateral if the remaining aggregate position is healthy.
+    pub fn withdraw_asset(
+        env: Env,
+        user: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Withdraw);
+        check_emergency_status(&env, ProtocolAction::Withdraw);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        user.require_auth();
+        let current = cross_collateral_balance(&env, &user, &asset);
+        if amount > current {
+            return Err(LendingError::InvalidAmount);
+        }
+        let updated = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+
+        let summary = compute_cross_position(&env, &user, None, Some((asset.clone(), updated)))?;
+        if summary.total_debt_usd > 0 && summary.health_factor < HEALTH_FACTOR_SCALE {
+            return Err(LendingError::InsufficientCollateral);
+        }
+
+        env.storage().persistent().set(
+            &DataKey::CrossCollateral(user.clone(), asset.clone()),
+            &updated,
+        );
+
+        CrossWithdrawEvent {
+            user,
+            asset,
+            amount,
+            balance: updated,
+        }
+        .publish(&env);
+
+        Ok(updated)
+    }
+
+    pub fn get_cross_position_summary(
+        env: Env,
+        user: Address,
+    ) -> Result<CrossPositionSummary, LendingError> {
+        compute_cross_position(&env, &user, None, None)
+    }
+
+    pub fn get_cross_collateral(env: Env, user: Address, asset: Address) -> i128 {
+        cross_collateral_balance(&env, &user, &asset)
+    }
+
+    pub fn get_cross_debt(env: Env, user: Address, asset: Address) -> i128 {
+        cross_debt_balance(&env, &user, &asset)
     }
 
     fn oracle_price_signature_payload(
@@ -875,6 +1187,163 @@ fn current_borrow_rate(env: &Env) -> i128 {
         }
         None => DEFAULT_APR_BPS,
     }
+}
+
+fn get_asset_params_or_err(env: &Env, asset: &Address) -> Result<AssetParams, LendingError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::AssetParams(asset.clone()))
+        .ok_or(LendingError::NotInitialized)
+}
+
+fn ensure_fresh_price(env: &Env, asset: &Address) -> Result<PriceRecord, LendingError> {
+    let record: PriceRecord = env
+        .storage()
+        .persistent()
+        .get(&DataKey::OraclePrice(asset.clone()))
+        .ok_or(LendingError::OraclePubkeyNotSet)?;
+    let now = env.ledger().timestamp();
+    if record.price <= 0 || now > record.timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
+        return Err(LendingError::StaleOracleTimestamp);
+    }
+    Ok(record)
+}
+
+fn cross_collateral_balance(env: &Env, user: &Address, asset: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossCollateral(user.clone(), asset.clone()))
+        .unwrap_or(0)
+}
+
+fn cross_debt_balance(env: &Env, user: &Address, asset: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossDebt(user.clone(), asset.clone()))
+        .unwrap_or(0)
+}
+
+fn cross_total_debt(env: &Env, asset: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossTotalDebt(asset.clone()))
+        .unwrap_or(0)
+}
+
+fn add_user_asset(env: &Env, key: &DataKey, asset: &Address) {
+    let mut assets: Vec<Address> = env.storage().persistent().get(key).unwrap_or(Vec::new(env));
+    if !address_in_vec(&assets, asset) {
+        assets.push_back(asset.clone());
+        env.storage().persistent().set(key, &assets);
+    }
+}
+
+fn address_in_vec(addresses: &Vec<Address>, needle: &Address) -> bool {
+    for address in addresses.iter() {
+        if address == *needle {
+            return true;
+        }
+    }
+    false
+}
+
+fn asset_value_usd(amount: i128, price: i128) -> Result<i128, LendingError> {
+    amount
+        .checked_mul(price)
+        .and_then(|v| v.checked_div(PRICE_SCALE))
+        .ok_or(LendingError::Overflow)
+}
+
+fn weighted_value_usd(value: i128, bps: i128) -> Result<i128, LendingError> {
+    value
+        .checked_mul(bps)
+        .and_then(|v| v.checked_div(BPS_DENOM))
+        .ok_or(LendingError::Overflow)
+}
+
+fn compute_cross_position(
+    env: &Env,
+    user: &Address,
+    debt_override: Option<(Address, i128)>,
+    collateral_override: Option<(Address, i128)>,
+) -> Result<CrossPositionSummary, LendingError> {
+    let collateral_assets: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::CrossCollateralAssets(user.clone()))
+        .unwrap_or(Vec::new(env));
+    let debt_assets: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::CrossDebtAssets(user.clone()))
+        .unwrap_or(Vec::new(env));
+
+    let mut total_collateral_usd = 0i128;
+    let mut weighted_collateral_usd = 0i128;
+    for asset in collateral_assets.iter() {
+        let amount = match &collateral_override {
+            Some((override_asset, override_amount)) if *override_asset == asset => *override_amount,
+            _ => cross_collateral_balance(env, user, &asset),
+        };
+        if amount == 0 {
+            continue;
+        }
+        let params = get_asset_params_or_err(env, &asset)?;
+        let price = ensure_fresh_price(env, &asset)?;
+        let value = asset_value_usd(amount, price.price)?;
+        total_collateral_usd = total_collateral_usd
+            .checked_add(value)
+            .ok_or(LendingError::Overflow)?;
+        let weighted = weighted_value_usd(value, params.liquidation_threshold_bps)?;
+        weighted_collateral_usd = weighted_collateral_usd
+            .checked_add(weighted)
+            .ok_or(LendingError::Overflow)?;
+    }
+
+    let mut total_debt_usd = 0i128;
+    let mut saw_override_debt_asset = false;
+    for asset in debt_assets.iter() {
+        let amount = match &debt_override {
+            Some((override_asset, override_amount)) if *override_asset == asset => {
+                saw_override_debt_asset = true;
+                *override_amount
+            }
+            _ => cross_debt_balance(env, user, &asset),
+        };
+        if amount == 0 {
+            continue;
+        }
+        let price = ensure_fresh_price(env, &asset)?;
+        let value = asset_value_usd(amount, price.price)?;
+        total_debt_usd = total_debt_usd
+            .checked_add(value)
+            .ok_or(LendingError::Overflow)?;
+    }
+    if let Some((override_asset, override_amount)) = debt_override {
+        if !saw_override_debt_asset && override_amount > 0 {
+            let price = ensure_fresh_price(env, &override_asset)?;
+            let value = asset_value_usd(override_amount, price.price)?;
+            total_debt_usd = total_debt_usd
+                .checked_add(value)
+                .ok_or(LendingError::Overflow)?;
+        }
+    }
+
+    let health_factor = if total_debt_usd > 0 {
+        weighted_collateral_usd
+            .checked_mul(HEALTH_FACTOR_SCALE)
+            .and_then(|v| v.checked_div(total_debt_usd))
+            .ok_or(LendingError::Overflow)?
+    } else {
+        HEALTH_FACTOR_NO_DEBT
+    };
+
+    Ok(CrossPositionSummary {
+        total_collateral_usd,
+        weighted_collateral_usd,
+        total_debt_usd,
+        health_factor,
+    })
 }
 
 #[contract]

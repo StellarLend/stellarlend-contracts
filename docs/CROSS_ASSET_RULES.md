@@ -4,6 +4,30 @@
 
 The StellarLend protocol supports cross-asset borrowing and repaying, allowing users to deposit multiple types of collateral and borrow different assets. This document outlines the rules, invariants, and edge cases for these operations.
 
+## Current Lending Contract Surface
+
+The lending contract currently implements the following cross-asset entrypoints:
+
+- `set_asset_params(asset, ltv_bps, liquidation_threshold_bps, price_feed, debt_ceiling, can_collateralize, can_borrow)`
+- `deposit_collateral_asset(user, asset, amount)`
+- `borrow_asset(user, asset, amount)`
+- `repay_asset(user, asset, amount)`
+- `withdraw_asset(user, asset, amount)`
+- `get_cross_position_summary(user)`
+- `get_cross_collateral(user, asset)`
+- `get_cross_debt(user, asset)`
+
+Valuation uses stored `PriceRecord` values with 7-decimal precision (`10_000_000 = $1.00`).
+The implemented aggregate health factor is:
+
+```
+health_factor = sum(collateral_amount_i * price_i * liquidation_threshold_i)
+              / sum(debt_amount_j * price_j)
+```
+
+scaled by `10_000`. Missing or stale prices fail closed. Borrow-factor and reserve-factor
+fields described below remain extension points for future per-asset risk accounting.
+
 ## Core Concepts
 
 ### Asset Configuration

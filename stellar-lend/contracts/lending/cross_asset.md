@@ -7,7 +7,7 @@ The Cross-Asset implementation in StellarLend allows users to interact with mult
 - **Unified Position Logic**: All collateral assets contribute to a single USD-denominated borrowing capacity.
 - **Risk Management**: Each asset has its own Loan-to-Value (LTV) and Liquidation Threshold (LT).
 - **Asset Specificity**: Supports `set_asset_params` for admin configuration of LTV, LT, and price feeds.
-- **Aggregate Health Factor**: HealthFactor = (Σ CollateralValue_i * LTV_i) / Σ DebtValue_j.
+- **Aggregate Health Factor**: HealthFactor = (Σ CollateralValue_i * liquidation_threshold_i) / Σ DebtValue_j.
 
 ## Operations
 
@@ -17,35 +17,38 @@ Admin only function to configure an asset's parameters.
 - `liquidation_threshold`: Point at which the asset becomes eligible for liquidation (basis points).
 - `price_feed`: The oracle address providing the asset's price.
 - `debt_ceiling`: Total system-wide debt allowed for this asset.
+- `can_collateralize`: Whether this asset can be deposited as collateral.
+- `can_borrow`: Whether this asset can be borrowed.
 - **Event**: Emits `AssetParamsSetEvent`.
 
 ### `deposit_collateral_asset`
 Users can deposit any supported asset as collateral. This increases their total borrowing power based on the asset's USD value and its specific LTV.
 - **Pause Check**: Blocked if `PauseType::Deposit` or `PauseType::All` is set.
-- **Token Transfer**: Automatically transfers tokens from user to the contract.
+- **Accounting**: Updates per-user/per-asset collateral storage.
 - **Event**: Emits `CrossDepositEvent`.
 
 ### `borrow_asset`
 Users can borrow any supported asset as long as their aggregate Health Factor remains above 1.0 (10000 basis points).
 - **Pause Check**: Blocked if `PauseType::Borrow` or `PauseType::All` is set.
-- **Token Transfer**: Automatically transfers tokens from the contract to the user.
+- **Accounting**: Updates per-user/per-asset debt storage and per-asset total debt.
 - **Event**: Emits `CrossBorrowEvent`.
 
 ### `repay_asset`
 Users repay borrowed assets to reduce their total debt and improve their position's Health Factor.
 - **Pause Check**: Blocked if `PauseType::Repay` or `PauseType::All` is set.
-- **Token Transfer**: Automatically transfers tokens from user to the contract.
+- **Accounting**: Reduces per-user/per-asset debt and per-asset total debt.
 - **Event**: Emits `CrossRepayEvent`.
 
 ### `withdraw_asset`
 Collateral withdrawal is allowed only if the remaining position stays healthy (Health Factor > 1.0).
 - **Pause Check**: Blocked if `PauseType::Withdraw` or `PauseType::All` is set.
-- **Token Transfer**: Automatically transfers tokens from the contract to the user.
+- **Accounting**: Reduces per-user/per-asset collateral storage.
 - **Event**: Emits `CrossWithdrawEvent`.
 
 ### `get_cross_position_summary`
 Returns a summary of the user's position:
 - `total_collateral_usd`: Aggregated value of all collateral.
+- `weighted_collateral_usd`: Aggregated collateral value after liquidation thresholds.
 - `total_debt_usd`: Aggregated value of all debt.
 - `health_factor`: Unified risk indicator for the entire position.
 
@@ -74,8 +77,29 @@ The protocol uses a deterministic valuation model for multi-collateral positions
 To ensure safe and deterministic valuation, the oracle must satisfy the following:
 1. **Freshness**: Prices must be updated within the configured staleness window (default 1 hour). If any asset in a position has a stale price, the entire position's summary query will fail to prevent unsafe operations.
 2. **Precision**: All prices are scaled to 7 decimals (`10,000,000 = $1.00`) within the cross-asset module to maintain consistency.
-3. **Availability**: Both primary and fallback feeds are supported. Fallback is automatically used if the primary is stale or missing.
+3. **Availability**: Each asset must have a stored `PriceRecord`; missing prices fail closed.
 4. **Monotonicity**: Valuation must remain monotonic with respect to price changes. A price increase in collateral must never decrease the health factor.
+
+## Storage Model
+
+- `DataKey::AssetParams(asset)` stores per-asset risk and enablement flags.
+- `DataKey::CrossCollateral(user, asset)` stores per-user collateral balances.
+- `DataKey::CrossDebt(user, asset)` stores per-user debt balances.
+- `DataKey::CrossCollateralAssets(user)` and `DataKey::CrossDebtAssets(user)` store the asset lists used for aggregation.
+- `DataKey::CrossTotalDebt(asset)` stores per-asset total debt for debt-ceiling checks.
+
+## Validation
+
+Covered by `src/cross_asset_test.rs`:
+
+- multi-collateral aggregate borrow
+- exact aggregate health-factor boundary
+- insufficient-collateral rejection without mutation
+- repay capping at current debt
+- withdraw health-factor guard
+- per-asset debt ceiling
+- stale-price fail-safe
+- disabled asset rejection
 
 ## Security Considerations
 

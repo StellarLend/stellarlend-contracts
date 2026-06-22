@@ -62,6 +62,17 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `repay` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Remaining debt principal | Reduces user debt with interest accrued up to the current timestamp. Allowed in Normal and Recovery. |
 | `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) → Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to 50% of an undercollateralized borrower's debt and seizes proportional collateral (+ 10% bonus). Reverts if position is healthy (`hf >= 10000`). |
 
+### Cross-Asset Operations
+
+| Function | Signature | Auth | Returns | Description |
+|---|---|---|---|---|
+| `set_asset_params` | `(asset, ltv_bps, liquidation_threshold_bps, price_feed, debt_ceiling, can_collateralize, can_borrow)` | admin | `Result<(), LendingError>` | Configures an asset for cross-asset collateral and/or borrowing. |
+| `deposit_collateral_asset` | `(user, asset, amount)` | `user` | New per-asset collateral balance | Adds supported asset collateral and tracks the user's collateral asset list. |
+| `borrow_asset` | `(user, asset, amount)` | `user` | New per-asset debt | Borrows a supported asset if aggregate health factor remains `>= 10000` and the asset debt ceiling is respected. |
+| `repay_asset` | `(user, asset, amount)` | `user` | Remaining per-asset debt | Repays up to the current debt for that asset. |
+| `withdraw_asset` | `(user, asset, amount)` | `user` | Remaining per-asset collateral | Withdraws collateral only if the remaining aggregate position stays healthy. |
+| `get_cross_position_summary` | `(user)` | `CrossPositionSummary` | Aggregate collateral, weighted collateral, debt, and health factor. |
+
 ### Flash Loans
 
 | Function | Signature | Auth | Description |
@@ -146,7 +157,6 @@ The functions listed below appear in older documentation but are **not yet imple
 | `get_debt_value(env, user)` | USD-denominated debt value (requires oracle). |
 | `get_max_liquidatable_amount(env, user)` | Convenience helper for liquidators. |
 | `get_emergency_state(env)` | Public view for current lifecycle state (today exposed only via events). |
-| `deposit_collateral(env, user, asset, amount)` | Multi-asset collateral support. |
 | `upgrade_init / upgrade_propose / upgrade_approve / upgrade_execute` | Multisig upgrade governance. |
 | `data_store_init / data_save / data_load / data_backup / data_restore` | Persistent data-store management helpers. |
 
