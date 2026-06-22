@@ -8,6 +8,8 @@ pub mod rounding_strategy;
 #[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
+mod emergency_state_matrix_test;
+#[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
 mod health_factor_edge_test;
@@ -449,6 +451,7 @@ impl LendingContract {
         borrower: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        check_emergency_status(&env, ProtocolAction::Liquidate);
         liquidator.require_auth();
         let col_key = DataKey::Collateral(borrower.clone());
 

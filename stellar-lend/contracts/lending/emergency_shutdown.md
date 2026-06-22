@@ -13,15 +13,15 @@ This separation allows a fast-response operator (the guardian) to halt the proto
 
 ## Emergency States
 
-| State      | Deposit | Borrow | Repay | Withdraw |
-|------------|---------|--------|-------|----------|
-| `Normal`   | ✅      | ✅     | ✅    | ✅       |
-| `Shutdown` | ❌      | ❌     | ❌    | ❌       |
-| `Recovery` | ❌      | ❌     | ✅    | ✅       |
+| State      | Deposit | Borrow | Repay | Withdraw | Liquidate |
+|------------|---------|--------|-------|----------|-----------|
+| `Normal`   | ✅      | ✅     | ✅    | ✅       | ✅        |
+| `Shutdown` | ❌      | ❌     | ❌    | ❌       | ❌        |
+| `Recovery` | ❌      | ❌     | ✅    | ✅       | ❌        |
 
-- **Normal** — full protocol operation.
+- **Normal** — full protocol operation, including liquidation of unhealthy positions.
 - **Shutdown** — all user-facing actions are blocked. Used for immediate halts (e.g., exploit detected).
-- **Recovery** — new positions cannot be opened; users may only repay debt and withdraw collateral.
+- **Recovery** — new positions cannot be opened or liquidated; users may only repay debt and withdraw collateral.
 
 ## Contract Functions
 
