@@ -10,6 +10,8 @@ mod deposit_accounting_test;
 #[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
+mod flash_loan_repayment_test;
+#[cfg(test)]
 mod health_factor_edge_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
@@ -657,8 +659,28 @@ impl LendingContract {
             ],
         );
 
-        env.storage().instance().set(&DataKey::FlashActive, &false);
+        let required_repayment = amount
+            .checked_add(fee)
+            .expect("flash_loan: repayment addition overflow");
+        let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
+        if rec_bal < required_repayment {
+            panic!("InsufficientRepayment");
+        }
+        env.storage().persistent().set(
+            &rec_key,
+            &rec_bal
+                .checked_sub(required_repayment)
+                .expect("flash_loan: receiver repayment underflow"),
+        );
+        let tre_bal_after_callback: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
+        env.storage().persistent().set(
+            &tre_key,
+            &tre_bal_after_callback
+                .checked_add(required_repayment)
+                .expect("flash_loan: treasury repayment overflow"),
+        );
 
+        env.storage().instance().set(&DataKey::FlashActive, &false);
         let final_tre: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         let required_balance = tre_bal
             .checked_add(fee)

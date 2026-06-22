@@ -7,7 +7,7 @@ The StellarLend flash loan feature allows users to borrow assets and repay them 
 1.  **Initiation**: A user calls the `flash_loan` function on the lending contract.
 2.  **Fund Transfer**: The lending contract transfers the requested amount of assets to the specified `receiver` address.
 3.  **Callback**: The lending contract invokes the `on_flash_loan` function on the `receiver` contract.
-4.  **Repayment**: After the callback returns, the lending contract transfers the borrowed amount plus a fee back from the `receiver`.
+4.  **Repayment**: After the callback returns, the lending contract debits `amount + fee` from the receiver's internal balance and returns it to treasury.
 
 ## Interface
 
@@ -38,7 +38,10 @@ pub fn on_flash_loan(
 ) -> bool
 ```
 
-The receiver must return `true` to acknowledge the loan and must have approved the lending contract to transfer back `amount + fee` by the time the function returns.
+The receiver must finish the callback with at least `amount + fee` available in
+its StellarLend internal balance. The lending contract performs the repayment
+settlement after the callback returns. This avoids same-contract re-entry during
+`on_flash_loan`, which Soroban rejects.
 
 ## Fees
 
@@ -51,7 +54,7 @@ The flash loan fee is configurable by the protocol admin in basis points (1 bp =
 ## Security Assumptions
 
 - **Atomicity**: The entire process occurs in a single transaction. If repayment fails, the transaction reverts.
-- **Reentrancy**: Standard Soroban protections apply.
+- **Reentrancy**: `FlashActive` blocks `deposit`, `withdraw`, and `repay` during the receiver callback, and repayment settlement is performed by `flash_loan` after the callback returns.
 - **Fee Caps**: fees are capped at 10% to prevent accidental or malicious misconfiguration.
 
 # Flash Loan Reservation Accounting
@@ -163,4 +166,3 @@ Reservation overflow: Checked arithmetic prevents overflow on debit
 Double-release: Asserted against; cannot release more than reserved
 Temporary storage expiry: If a bug prevents release, the reservation expires at ledger close (no permanent state corruption)
 Reentrancy: Callback is invoked after debit but before release; the reservation protects against reentrant deposits
-
