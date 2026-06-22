@@ -64,7 +64,7 @@ repay(user, 1_000);
 
 ## Overview
 
-The borrow function allows users to borrow assets from the StellarLend protocol by providing collateral. The system enforces minimum collateral ratios, tracks interest accrual, and respects protocol-level constraints such as debt ceilings and pause states.
+The borrow function allows users to borrow from the StellarLend protocol against previously deposited collateral. The system enforces a minimum borrow amount, post-borrow health factor, accrued-interest settlement, and protocol-level constraints such as debt ceilings and emergency states.
 
 ## Function Signature
 
@@ -72,60 +72,52 @@ The borrow function allows users to borrow assets from the StellarLend protocol 
 pub fn borrow(
     env: Env,
     user: Address,
-    asset: Address,
     amount: i128,
-    collateral_asset: Address,
-    collateral_amount: i128,
-) -> Result<(), BorrowError>
+) -> Result<i128, LendingError>
 ```
 
 ## Parameters
 
 - `env`: The contract environment
 - `user`: The borrower's address (must authorize the transaction)
-- `asset`: The address of the asset to borrow
 - `amount`: The amount to borrow (must be positive and above minimum)
-- `collateral_asset`: The address of the collateral asset
-- `collateral_amount`: The amount of collateral to deposit (must be positive)
 
 ## Returns
 
-- `Ok(())` on successful borrow
-- `Err(BorrowError)` on failure
+- `Ok(updated_principal)` on successful borrow
+- `Err(LendingError)` on failure
 
 ## Error Types
 
-| Error                    | Description                                           |
-| ------------------------ | ----------------------------------------------------- |
-| `InsufficientCollateral` | Collateral ratio is below the minimum required (150%) |
-| `DebtCeilingReached`     | Protocol's total debt ceiling would be exceeded       |
-| `ProtocolPaused`         | Borrow operations are currently paused                |
-| `InvalidAmount`          | Amount or collateral is zero or negative              |
-| `BelowMinimumBorrow`     | Borrow amount is below the minimum threshold          |
-| `Overflow`               | Arithmetic overflow occurred during calculation       |
-| `Unauthorized`           | User did not authorize the transaction                |
-| `AssetNotSupported`      | The specified asset is not supported                  |
+| Error | Description |
+| --- | --- |
+| `InsufficientCollateral` | Post-borrow health factor would fall below `10000` |
+| `DebtCeilingExceeded` | Protocol's total debt ceiling would be exceeded |
+| `InvalidAmount` | Amount is zero or negative |
+| `BelowMinimumBorrow` | Borrow amount is below the minimum threshold |
+| `Overflow` | Arithmetic overflow occurred during calculation |
+| `Unauthorized` | User did not authorize the transaction |
 
 ## Security Assumptions
 
-### Collateral Ratio
+### Health Factor
 
-- **Minimum Ratio**: 150% (15 000 basis points) — configurable by admin via `set_collateral_ratio`
-- Users must have collateral worth at least 1.5× their **total** debt (existing + new borrow)
-- Ratio is evaluated as:
+- **Minimum Health Factor**: `10000` (1.0)
+- Borrow uses the current borrower debt after interest accrual plus the requested amount.
+- Health factor is evaluated as:
 
   ```
-  collateral * 10_000 / (existing_debt + amount) >= col_ratio
+  collateral * LIQUIDATION_THRESHOLD_BPS / new_debt >= 10_000
   ```
 
   Equivalently (overflow-safe form used in the contract):
 
   ```
-  collateral * 10_000 >= col_ratio * (existing_debt + amount)
+  collateral * LIQUIDATION_THRESHOLD_BPS >= new_debt * 10_000
   ```
 
-- The ratio is stored under the `"col_ratio"` instance-storage key; if unset the default of 15 000 bps applies
-- Prevents under-collateralised positions that could lead to protocol insolvency
+- With the current `LIQUIDATION_THRESHOLD_BPS = 8000`, a borrower must have at least 125% collateralization after the borrow.
+- Prevents under-collateralized positions that could lead to protocol insolvency.
 
 ### Interest Calculation
 
@@ -143,7 +135,8 @@ pub fn borrow(
 ### Debt Ceiling
 
 - Protocol enforces a maximum total debt limit
-- Each borrow checks if new total debt would exceed ceiling
+- Each borrow checks whether post-borrow `TotalDebt` would exceed `DataKey::DebtCeiling`
+- If unset, the default ceiling is 1,000,000,000,000
 - Protects protocol from excessive leverage
 
 ### Minimum Borrow Threshold
@@ -257,7 +250,7 @@ The contract uses persistent storage for:
 
 ## Best Practices
 
-1. **Always check collateral ratio**: Ensure collateral is at least 150% of borrow amount
+1. **Always check health factor**: Ensure collateral supports the full post-borrow debt including accrued interest
 2. **Monitor interest accrual**: Interest compounds over time, check positions regularly
 3. **Respect debt ceiling**: Large borrows may fail if they exceed protocol limits
 4. **Handle pause state**: Implement retry logic for paused protocol scenarios

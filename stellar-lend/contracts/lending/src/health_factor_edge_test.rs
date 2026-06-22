@@ -1,4 +1,5 @@
 use super::*;
+use crate::debt::{save_debt, DebtPosition};
 use soroban_sdk::testutils::Address as _;
 
 fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
@@ -43,8 +44,17 @@ fn health_factor_no_debt_uses_healthy_sentinel() {
 /// health factor, not the no-debt sentinel.
 #[test]
 fn health_factor_zero_collateral_nonzero_debt_is_zero() {
-    let (_env, client, _id, user) = setup();
-    client.borrow(&user, &125);
+    let (env, client, id, user) = setup();
+    env.as_contract(&id, || {
+        save_debt(
+            &env,
+            &user,
+            &DebtPosition {
+                principal: 125,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     let position = client.get_position(&user);
     assert_eq!(position.collateral, 0);
@@ -74,8 +84,15 @@ fn health_factor_overflow_returns_i128_max_sentinel() {
         env.storage()
             .persistent()
             .set(&DataKey::Collateral(user.clone()), &overflowing_collateral);
+        save_debt(
+            &env,
+            &user,
+            &DebtPosition {
+                principal: 1,
+                last_update: env.ledger().timestamp(),
+            },
+        );
     });
-    client.borrow(&user, &1);
 
     let position = client.get_position(&user);
     assert_eq!(position.collateral, overflowing_collateral);
