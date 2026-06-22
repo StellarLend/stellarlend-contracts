@@ -1,6 +1,6 @@
 #![no_std]
 
-mod debt;
+pub mod debt;
 pub mod math;
 pub mod rate_model;
 pub mod rounding_strategy;

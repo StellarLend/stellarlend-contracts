@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-stellar-lend-contract = { path = ".." }
+stellarlend-lending = { path = ".." }
 
 # Fuzzing-specific dependencies
 soroban-sdk = { workspace = true, features = ["testutils"] }
@@ -38,6 +38,10 @@ path = "fuzz_targets/fuzz_utilization.rs"
 [[bin]]
 name = "fuzz_liquidation"
 path = "fuzz_targets/fuzz_liquidation.rs"
+
+[[bin]]
+name = "fuzz_repay_borrow_roundtrip"
+path = "fuzz_targets/fuzz_repay_borrow_roundtrip.rs"
 
 [profile.release]
 opt-level = 3

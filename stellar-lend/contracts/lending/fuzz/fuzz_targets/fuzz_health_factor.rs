@@ -7,14 +7,9 @@
 
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
-use stellar_lend_contract::math::{
-    compute_health_factor,
-    is_liquidatable,
-    MathError,
-    SCALE,
-};
 use arbitrary::Arbitrary;
+use libfuzzer_sys::fuzz_target;
+use stellarlend_lending::math::{compute_health_factor, is_liquidatable, MathError, SCALE};
 
 #[derive(Debug, Arbitrary)]
 struct HealthFactorInput {

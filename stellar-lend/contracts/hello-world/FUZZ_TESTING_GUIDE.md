@@ -214,6 +214,12 @@ This project uses `cargo-fuzz` with `libFuzzer` to continuously fuzz the
 pure-math helpers in the lending crate. Fuzzing targets are located in
 `stellar-lend/contracts/lending/fuzz/`.
 
+The lending fuzz suite includes `fuzz_repay_borrow_roundtrip`, which drives the
+`debt.rs` helpers through bounded borrow/repay sequences. It asserts that debt
+principal never goes negative, full repay clears principal, effective debt does
+not decrease between repayments, and extreme cases only fail with the documented
+overflow path.
+
 ## Prerequisites
 
 ```bash

@@ -4,6 +4,7 @@ members = [
   "contracts/common",
   "contracts/hello-world",
   "contracts/lending",
+  "contracts/lending/fuzz",
   "contracts/multisig",
   "contracts/vesting",
 ]

@@ -5,14 +5,9 @@
 
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
-use stellar_lend_contract::math::{
-    compute_borrow_rate,
-    MathError,
-    MAX_RATE_BPS,
-    BPS_SCALE,
-};
 use arbitrary::Arbitrary;
+use libfuzzer_sys::fuzz_target;
+use stellarlend_lending::math::{compute_borrow_rate, MathError, MAX_RATE_BPS};
 
 #[derive(Debug, Arbitrary)]
 struct BorrowRateInput {
@@ -35,12 +30,18 @@ fuzz_target!(|input: BorrowRateInput| {
     match result {
         Ok(rate) => {
             // Invariant: rate >= base_rate (approximately, within rounding)
-            assert!(rate >= input.base_rate_bps || rate == 0,
-                "Rate must be >= base_rate (or 0 if base_rate is 0)");
+            assert!(
+                rate >= input.base_rate_bps || rate == 0,
+                "Rate must be >= base_rate (or 0 if base_rate is 0)"
+            );
 
             // Invariant: rate <= MAX_RATE_BPS
-            assert!(rate <= MAX_RATE_BPS as u32,
-                "Rate {} exceeds maximum {}", rate, MAX_RATE_BPS);
+            assert!(
+                rate <= MAX_RATE_BPS as u32,
+                "Rate {} exceeds maximum {}",
+                rate,
+                MAX_RATE_BPS
+            );
 
             // Invariant: rate increases monotonically with utilization
             // (for fixed other parameters)
