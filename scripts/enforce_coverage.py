@@ -68,6 +68,11 @@ def main():
         default=None,
         help="Path to coverage_thresholds.json (default: scripts/coverage_thresholds.json)",
     )
+    parser.add_argument(
+        "--overall-only",
+        action="store_true",
+        help="Only enforce the report-level line-rate threshold.",
+    )
     args = parser.parse_args()
 
     coverage_file = _resolve_coverage_path(args.coverage_file)
@@ -107,7 +112,7 @@ def main():
         ok = coverage_pct >= crate_threshold
         status = "OK" if ok else "FAIL"
         print(f"  {name:<45} {coverage_pct:>9.2f}% {crate_threshold:>9.2f}%  {status}")
-        if not ok:
+        if not ok and not args.overall_only:
             failures.append((name, coverage_pct, crate_threshold))
 
     overall_line_rate = root.attrib.get("line-rate")
