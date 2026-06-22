@@ -17,6 +17,8 @@ This document describes the view functions for user collateral value, debt value
 - **Purpose:** Returns the user's position summary: raw collateral balance, effective debt (principal + accrued interest), and health factor.
 - **Read-only:** Yes. Extends TTL for active positions.
 - **Returns:** `PositionSummary { collateral: i128, debt: i128, health_factor: i128 }`. Zero-valued fields if the user has no position.
+- **Rate source:** Effective debt uses `current_borrow_rate(&env)`, the same
+  source used by `get_health_factor` and liquidation execution.
 - **Health factor formula:** `(collateral * LIQUIDATION_THRESHOLD_BPS) / debt` with `LIQUIDATION_THRESHOLD_BPS = 8000` (80%).
 - **Special health factor values:**
   - No debt: returns `HEALTH_FACTOR_NO_DEBT` (100_000_000), meaning "healthy".
@@ -28,6 +30,9 @@ This document describes the view functions for user collateral value, debt value
 
 - **Purpose:** Health factor for liquidations and UI. Computed from raw collateral, effective debt, and the hardcoded liquidation threshold.
 - **Read-only:** Yes. Extends TTL for active positions.
+- **Rate source:** Effective debt uses `current_borrow_rate(&env)`, matching
+  `get_position` and `liquidate` so UI and liquidation decisions agree at the
+  same ledger height.
 - **Formula:**  
   `health_factor = (collateral * LIQUIDATION_THRESHOLD_BPS) / debt`  
   with `LIQUIDATION_THRESHOLD_BPS = 8000` (80%) and implicit `HEALTH_FACTOR_SCALE = 10000`, so **10000 = 1.0**.
@@ -63,7 +68,10 @@ The `health_factor_edge_test` suite pins both `get_position().health_factor` and
 
 1. **No state change:** All view functions only read storage. They do not modify protocol or user state beyond TTL extension.
 2. **Liquidation threshold:** Currently hardcoded at 8000 BPS (80%) as `LIQUIDATION_THRESHOLD_BPS`.
-3. **Overflow:** Health factor calculations use checked arithmetic where applicable; edge cases (e.g. zero debt) are handled explicitly.
+3. **Rate source of truth:** Position views, standalone health-factor views,
+   and liquidation execution all derive effective debt from
+   `current_borrow_rate(&env)`.
+4. **Overflow:** Health factor calculations use checked arithmetic where applicable; edge cases (e.g. zero debt) are handled explicitly.
 
 ---
 
@@ -188,4 +196,3 @@ let metrics = client.get_protocol_metrics();
 // metrics.utilization_bps =>     5_000  // 50 %
 // metrics.ledger          =>    123_456
 ```
-

@@ -10,6 +10,8 @@ mod deposit_accounting_test;
 #[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
+mod health_factor_consistency_test;
+#[cfg(test)]
 mod health_factor_edge_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
@@ -454,8 +456,9 @@ impl LendingContract {
 
         let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
         let position = load_debt(&env, &borrower);
-        let debt = effective_debt(&position, env.ledger().timestamp(), DEFAULT_APR_BPS)
-            .unwrap_or(position.principal);
+        let rate = current_borrow_rate(&env);
+        let debt =
+            effective_debt(&position, env.ledger().timestamp(), rate).unwrap_or(position.principal);
 
         if debt == 0 {
             return Err(LendingError::PositionHealthy);
@@ -711,7 +714,8 @@ impl LendingContract {
         if position.principal != 0 {
             extend_debt_ttl(&env, &user);
         }
-        let debt = effective_debt(&position, env.ledger().timestamp(), DEFAULT_APR_BPS)
+        let rate = current_borrow_rate(&env);
+        let debt = effective_debt(&position, env.ledger().timestamp(), rate)
             .unwrap_or(position.principal)
             .max(0);
 
