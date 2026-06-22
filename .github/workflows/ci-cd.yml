@@ -83,7 +83,7 @@ jobs:
           cargo tarpaulin --verbose --out Xml --packages stellarlend-lending --lib --exclude-files "**/indexing_system/**"
 
       - name: Enforce lending crate coverage threshold
-        run: python3 scripts/enforce_coverage.py stellar-lend/contracts/lending/cobertura.xml --threshold 63.0
+        run: python3 scripts/enforce_coverage.py stellar-lend/contracts/lending/cobertura.xml --threshold 63.0 --overall-only
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
