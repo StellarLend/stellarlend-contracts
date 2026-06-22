@@ -329,14 +329,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        let active: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::FlashActive)
-            .unwrap_or(false);
-        if active {
-            panic!("FlashLoanReentrancy");
-        }
+        reject_flash_reentrancy(&env);
         user.require_auth();
 
         let total_deposits: i128 = env
@@ -373,14 +366,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        let active: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::FlashActive)
-            .unwrap_or(false);
-        if active {
-            panic!("FlashLoanReentrancy");
-        }
+        reject_flash_reentrancy(&env);
         user.require_auth();
         let key = DataKey::Collateral(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -409,6 +395,7 @@ impl LendingContract {
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
+        reject_flash_reentrancy(&env);
         user.require_auth();
         let min_borrow = Self::get_min_borrow(env.clone());
         if amount < min_borrow {
@@ -449,6 +436,7 @@ impl LendingContract {
         borrower: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        reject_flash_reentrancy(&env);
         liquidator.require_auth();
         let col_key = DataKey::Collateral(borrower.clone());
 
@@ -517,14 +505,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        let active: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::FlashActive)
-            .unwrap_or(false);
-        if active {
-            panic!("FlashLoanReentrancy");
-        }
+        reject_flash_reentrancy(&env);
         user.require_auth();
         let now = env.ledger().timestamp();
         let position = load_debt(&env, &user);
@@ -614,6 +595,7 @@ impl LendingContract {
         amount: i128,
         params: Bytes,
     ) {
+        reject_flash_reentrancy(&env);
         let tre_key = DataKey::Treasury(asset.clone());
         let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         if amount > tre_bal {
@@ -749,32 +731,20 @@ impl LendingContract {
     }
 }
 
-#[allow(dead_code)]
-fn acquire_reentrancy_lock(env: &Env) {
-    let reentrancy_lock_key = Symbol::new(env, "reent_l");
-    let locked: bool = env
+/// Reject user-facing state mutations while a flash-loan callback is active.
+///
+/// Soroban prevents same-contract re-entry at the host layer, and this explicit
+/// instance-storage guard keeps the lending policy uniform for every mutating
+/// facade path that could otherwise be reached during callback-style flows.
+fn reject_flash_reentrancy(env: &Env) {
+    let active: bool = env
         .storage()
-        .temporary()
-        .get(&reentrancy_lock_key)
+        .instance()
+        .get(&DataKey::FlashActive)
         .unwrap_or(false);
-    if locked {
-        panic!("reentrant call");
+    if active {
+        panic!("FlashLoanReentrancy");
     }
-    env.storage().temporary().set(&reentrancy_lock_key, &true);
-}
-
-#[allow(dead_code)]
-fn release_reentrancy_lock(env: &Env) {
-    let reentrancy_lock_key = Symbol::new(env, "reent_l");
-    env.storage().temporary().remove(&reentrancy_lock_key);
-}
-
-#[allow(dead_code)]
-fn with_reentrancy_lock<T>(env: &Env, f: impl FnOnce() -> T) -> T {
-    acquire_reentrancy_lock(env);
-    let result = f();
-    release_reentrancy_lock(env);
-    result
 }
 
 fn extend_collateral_ttl(env: &Env, user: &Address) {
@@ -983,6 +953,12 @@ mod test {
         BytesN::from_array(env, &signature.to_bytes())
     }
 
+    fn set_flash_active(env: &Env, contract_id: &Address, active: bool) {
+        env.as_contract(contract_id, || {
+            env.storage().instance().set(&DataKey::FlashActive, &active);
+        });
+    }
+
     // -----------------------------------------------------------------------
     // Basic admin / init
     // -----------------------------------------------------------------------
@@ -1176,6 +1152,32 @@ mod test {
         let (_env, client, _admin, user) = setup();
         client.borrow(&user, &100);
         assert_eq!(client.repay(&user, &30), 70);
+    }
+
+    #[test]
+    fn test_flash_active_blocks_all_user_mutations() {
+        let (env, client, _admin, user) = setup();
+        let liquidator = Address::generate(&env);
+        let borrower = Address::generate(&env);
+        let receiver = Address::generate(&env);
+        let asset = env.register(MockAsset, ());
+        let params = Bytes::new(&env);
+
+        set_flash_active(&env, &client.address, true);
+
+        assert!(client.try_deposit(&user, &100).is_err());
+        assert!(client.try_withdraw(&user, &1).is_err());
+        assert!(client.try_borrow(&user, &100).is_err());
+        assert!(client.try_repay(&user, &1).is_err());
+        assert!(client.try_liquidate(&liquidator, &borrower, &1).is_err());
+        assert!(client
+            .try_flash_loan(&user, &receiver, &asset, &1, &params)
+            .is_err());
+
+        set_flash_active(&env, &client.address, false);
+        assert_eq!(client.deposit(&user, &100), 100);
+        assert_eq!(client.borrow(&user, &50), 50);
+        assert_eq!(client.repay(&user, &10), 40);
     }
 
     #[test]

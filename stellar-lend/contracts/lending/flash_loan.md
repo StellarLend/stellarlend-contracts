@@ -51,7 +51,7 @@ The flash loan fee is configurable by the protocol admin in basis points (1 bp =
 ## Security Assumptions
 
 - **Atomicity**: The entire process occurs in a single transaction. If repayment fails, the transaction reverts.
-- **Reentrancy**: Standard Soroban protections apply.
+- **Reentrancy**: `flash_loan` sets `FlashActive` before invoking the receiver callback. While it is set, `deposit`, `withdraw`, `borrow`, `repay`, `liquidate`, and nested `flash_loan` attempts panic with `FlashLoanReentrancy`.
 - **Fee Caps**: fees are capped at 10% to prevent accidental or malicious misconfiguration.
 
 # Flash Loan Reservation Accounting
@@ -162,5 +162,4 @@ Security Notes
 Reservation overflow: Checked arithmetic prevents overflow on debit
 Double-release: Asserted against; cannot release more than reserved
 Temporary storage expiry: If a bug prevents release, the reservation expires at ledger close (no permanent state corruption)
-Reentrancy: Callback is invoked after debit but before release; the reservation protects against reentrant deposits
-
+Reentrancy: Callback is invoked after debit but before release; the `FlashActive` guard rejects deposit, withdraw, borrow, repay, liquidate, and nested flash-loan attempts until the callback returns
