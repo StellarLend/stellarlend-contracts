@@ -224,6 +224,10 @@ mode act as master overrides.
 Emergency lifecycle states (`Shutdown`, `Recovery`) provide a secondary layer of protection for
 high-risk entry points.
 
+Core user entry points evaluate granular/global pause flags first, then emergency lifecycle state.
+This keeps the `All` flag and operation-specific flags available as immediate circuit breakers,
+including for `Recovery` unwind paths that would otherwise be allowed.
+
 | Emergency State | Granular Pause | High-Risk Op (e.g. `Borrow`) | Unwind Op (e.g. `Repay`) |
 | --------------- | -------------- | ---------------------------- | ------------------------ |
 | `Normal`        | `False`        | Allowed                      | Allowed                  |
@@ -243,8 +247,8 @@ Normal ──(emergency_shutdown)──► Shutdown ──(start_recovery)──
                                      └──────────────(complete_recovery, fast-exit)────────────────►
 ```
 
-During **Recovery**, the pause check for repay / withdraw explicitly allows these paths so users can
-fully unwind positions. All other entry points remain blocked.
+During **Recovery**, repay / withdraw remain available only when their granular pause flag and the
+global `All` flag are inactive. Deposit, borrow, and liquidation remain blocked by emergency state.
 
 ## Events
 
@@ -289,10 +293,11 @@ fully unwind positions. All other entry points remain blocked.
 
 ```rust
 // Pause borrowing in an emergency
-client.set_pause(&admin, &PauseType::Borrow, &true);
+let expires_at_ledger = env.ledger().sequence() + 100;
+client.set_pause(&admin, &PauseType::Borrow, &true, &expires_at_ledger);
 
 // Re-enable borrowing
-client.set_pause(&admin, &PauseType::Borrow, &false);
+client.set_pause(&admin, &PauseType::Borrow, &false, &expires_at_ledger);
 
 // Query pause state before presenting UI options
 let borrow_paused = client.get_pause_state(&PauseType::Borrow);

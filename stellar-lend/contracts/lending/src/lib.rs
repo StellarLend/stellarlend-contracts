@@ -10,6 +10,8 @@ mod deposit_accounting_test;
 #[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
+mod granular_pause_ops_test;
+#[cfg(test)]
 mod health_factor_edge_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
@@ -306,6 +308,52 @@ impl LendingContract {
         .publish(&env);
     }
 
+    /// Set or clear a granular pause flag.
+    ///
+    /// Core user operations check granular/global pause state before emergency
+    /// state so an active pause can also stop recovery-allowed unwind paths.
+    pub fn set_pause(
+        env: Env,
+        admin: Address,
+        operation: PauseType,
+        paused: bool,
+        expires_at_ledger: u32,
+    ) -> Result<(), LendingError> {
+        admin.require_auth();
+        if admin != Self::get_admin(env.clone()) {
+            return Err(LendingError::Unauthorized);
+        }
+
+        let key = DataKey::PauseState(operation);
+        let old_state = env.storage().instance().get(&key).unwrap_or(PauseState {
+            paused: false,
+            expires_at_ledger: 0,
+        });
+        let new_state = PauseState {
+            paused,
+            expires_at_ledger,
+        };
+        env.storage().instance().set(&key, &new_state);
+        PauseStateChangedEvent {
+            operation,
+            old_state,
+            new_state,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Return true if a specific operation is currently paused.
+    ///
+    /// `PauseType::All` acts as a global override for every operation-specific
+    /// query. Expired pauses are treated as inactive.
+    pub fn get_pause_state(env: Env, pause_type: PauseType) -> bool {
+        if pause_is_active(&env, PauseType::All) {
+            return true;
+        }
+        pause_is_active(&env, pause_type)
+    }
+
     pub fn set_min_borrow(env: Env, min_borrow: i128) -> Result<(), LendingError> {
         let admin = Self::get_admin(env.clone());
         admin.require_auth();
@@ -324,6 +372,7 @@ impl LendingContract {
 
     /// Deposit collateral for a user.
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Deposit);
         check_emergency_status(&env, ProtocolAction::Deposit);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -367,7 +416,9 @@ impl LendingContract {
         Ok(new_balance)
     }
 
+    /// Withdraw collateral after pause and emergency gates pass.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Withdraw);
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -404,7 +455,9 @@ impl LendingContract {
         Ok(new_balance)
     }
 
+    /// Borrow assets after pause and emergency gates pass.
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
