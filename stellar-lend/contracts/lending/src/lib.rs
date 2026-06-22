@@ -6,6 +6,8 @@ pub mod rate_model;
 pub mod rounding_strategy;
 
 #[cfg(test)]
+mod admin_setters_dedupe_test;
+#[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
 mod error_codes_test;
@@ -174,8 +176,7 @@ impl LendingContract {
 
     /// Set the configured oracle pubkey used to verify signed price updates.
     pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) {
-        let admin = Self::get_admin(env.clone());
-        admin.require_auth();
+        assert_admin(&env);
         env.storage()
             .instance()
             .set(&DataKey::OraclePubKey, &pubkey);
@@ -274,8 +275,7 @@ impl LendingContract {
     }
 
     pub fn set_guardian(env: Env, guardian: Address) {
-        let admin = Self::get_admin(env.clone());
-        admin.require_auth();
+        assert_admin(&env);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
     }
 
@@ -284,20 +284,7 @@ impl LendingContract {
     }
 
     pub fn set_emergency_state(env: Env, new_state: EmergencyState) {
-        // For Shutdown, guardian (if set) or admin can call; for other states, admin only.
-        match new_state {
-            EmergencyState::Shutdown => {
-                let caller: Address = env
-                    .storage()
-                    .instance()
-                    .get(&DataKey::Guardian)
-                    .unwrap_or_else(|| Self::get_admin(env.clone()));
-                caller.require_auth();
-            }
-            EmergencyState::Recovery | EmergencyState::Normal => {
-                Self::get_admin(env.clone()).require_auth();
-            }
-        }
+        assert_admin_or_guardian(&env, &new_state);
 
         let old_state = get_emergency_state(&env);
         set_emergency_state_internal(&env, new_state);
@@ -355,8 +342,7 @@ impl LendingContract {
     }
 
     pub fn set_min_borrow(env: Env, min_borrow: i128) -> Result<(), LendingError> {
-        let admin = Self::get_admin(env.clone());
-        admin.require_auth();
+        assert_admin(&env);
         env.storage()
             .instance()
             .set(&DataKey::BorrowMinAmount, &min_borrow);
@@ -619,8 +605,7 @@ impl LendingContract {
 
     /// Set the protocol-level debt ceiling (admin-only).
     pub fn set_debt_ceiling(env: Env, ceiling: i128) -> Result<(), LendingError> {
-        let admin = Self::get_admin(env.clone());
-        admin.require_auth();
+        assert_admin(&env);
         if ceiling <= 0 {
             return Err(LendingError::Overflow);
         }
@@ -632,8 +617,7 @@ impl LendingContract {
 
     /// Set the flash loan fee in basis points (admin-only). Must be in [0, 1000].
     pub fn set_flash_fee(env: Env, fee_bps: i128) -> Result<(), LendingError> {
-        let admin = Self::get_admin(env.clone());
-        admin.require_auth();
+        assert_admin(&env);
         if fee_bps < 0 || fee_bps > 1000 {
             return Err(LendingError::InvalidFeeBps);
         }
@@ -912,6 +896,30 @@ struct RateSnapshot {
     total_debt: i128,
     total_supply: i128,
     params: Option<rate_model::RateParams>,
+}
+
+/// Assert that the transaction signer is the protocol admin.
+/// Panics with the default auth error if not.
+fn assert_admin(env: &Env) {
+    let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    admin.require_auth();
+}
+
+/// For Shutdown, allow the guardian (if set) or admin; for Recovery/Normal, admin only.
+fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) {
+    match state {
+        EmergencyState::Shutdown => {
+            let caller: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Guardian)
+                .unwrap_or_else(|| env.storage().instance().get(&DataKey::Admin).unwrap());
+            caller.require_auth();
+        }
+        EmergencyState::Recovery | EmergencyState::Normal => {
+            assert_admin(env);
+        }
+    }
 }
 
 fn load_rate_snapshot(env: &Env) -> RateSnapshot {
