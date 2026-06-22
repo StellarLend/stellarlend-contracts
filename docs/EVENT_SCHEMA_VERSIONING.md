@@ -27,6 +27,7 @@ The versioning strategy is minimal by design:
 | `WithdrawEvent` | 1 | Versioned withdraw event with user and new collateral balance. |
 | `BorrowEvent` | 1 | Versioned borrow event with user and new debt balance. |
 | `RepayEvent` | 1 | Versioned repay event with user and new debt balance. |
+| `LiquidateEvent` | 1 | Versioned liquidation event with liquidator, borrower, repaid debt, seized collateral, and post-liquidation borrower snapshot. |
 | `AmmSwapEventV1` | 1 | Versioned AMM swap event with stable `amm/v1` topics. |
 | `AmmLiquidityAddedEventV1` | 1 | Versioned AMM add-liquidity event with stable `amm/v1` topics. |
 | `AmmLiquidityRemovedEventV1` | 1 | Versioned AMM remove-liquidity event with stable `amm/v1` topics. |
@@ -54,6 +55,23 @@ explicit `event` field that matches the final topic segment.
 All other events are unversioned (no `schema_version` field). They follow an
 additive-only policy: new fields may be appended but existing fields will not
 be removed or reordered within a major version.
+
+## Lending Core Operation Events
+
+The lending contract emits these versioned event structs only after the
+corresponding operation succeeds and state has been written:
+
+| Operation | Event topic | Required payload fields |
+|---|---|---|
+| `deposit` | `deposit_event` | `schema_version`, `user`, `amount`, `resulting_balance` |
+| `withdraw` | `withdraw_event` | `schema_version`, `user`, `amount`, `resulting_balance` |
+| `borrow` | `borrow_event` | `schema_version`, `borrower`, `amount`, `resulting_debt` |
+| `repay` | `repay_event` | `schema_version`, `borrower`, `amount`, `resulting_debt` |
+| `liquidate` | `liquidate_event` | `schema_version`, `liquidator`, `borrower`, `repaid_debt`, `seized_collateral`, `resulting_debt`, `resulting_collateral` |
+
+The event payload contains public accounting state only. It intentionally does
+not include signatures, oracle payloads, or other caller-supplied secret
+material.
 
 ---
 

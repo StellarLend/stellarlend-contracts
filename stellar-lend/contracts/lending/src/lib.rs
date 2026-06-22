@@ -35,6 +35,7 @@ pub const LIQUIDATION_THRESHOLD_BPS: i128 = 8000;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
+const EVENT_SCHEMA_VERSION: u32 = 1;
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +74,54 @@ pub struct PauseStateChangedEvent {
     pub operation: PauseType,
     pub old_state: PauseState,
     pub new_state: PauseState,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DepositEvent {
+    pub schema_version: u32,
+    pub user: Address,
+    pub amount: i128,
+    pub resulting_balance: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WithdrawEvent {
+    pub schema_version: u32,
+    pub user: Address,
+    pub amount: i128,
+    pub resulting_balance: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BorrowEvent {
+    pub schema_version: u32,
+    pub borrower: Address,
+    pub amount: i128,
+    pub resulting_debt: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepayEvent {
+    pub schema_version: u32,
+    pub borrower: Address,
+    pub amount: i128,
+    pub resulting_debt: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiquidateEvent {
+    pub schema_version: u32,
+    pub liquidator: Address,
+    pub borrower: Address,
+    pub repaid_debt: i128,
+    pub seized_collateral: i128,
+    pub resulting_debt: i128,
+    pub resulting_collateral: i128,
 }
 
 #[contracttype]
@@ -364,6 +413,13 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
+        DepositEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            user,
+            amount,
+            resulting_balance: new_balance,
+        }
+        .publish(&env);
         Ok(new_balance)
     }
 
@@ -401,6 +457,13 @@ impl LendingContract {
                 .expect("withdraw: total deposits underflow"),
         );
         extend_collateral_ttl(&env, &user);
+        WithdrawEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            user,
+            amount,
+            resulting_balance: new_balance,
+        }
+        .publish(&env);
         Ok(new_balance)
     }
 
@@ -440,6 +503,13 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
+        BorrowEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            borrower: user,
+            amount,
+            resulting_debt: updated.principal,
+        }
+        .publish(&env);
         Ok(updated.principal)
     }
 
@@ -505,6 +575,16 @@ impl LendingContract {
         };
         save_debt(&env, &borrower, &updated_position);
         env.storage().persistent().set(&col_key, &new_col);
+        LiquidateEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            liquidator,
+            borrower,
+            repaid_debt: actual_repay,
+            seized_collateral: final_seized,
+            resulting_debt: new_debt,
+            resulting_collateral: new_col,
+        }
+        .publish(&env);
 
         Ok(actual_repay)
     }
@@ -547,6 +627,13 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
+        RepayEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            borrower: user,
+            amount: repaid,
+            resulting_debt: updated.principal,
+        }
+        .publish(&env);
         Ok(updated.principal)
     }
 

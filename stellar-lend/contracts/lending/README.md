@@ -62,6 +62,19 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `repay` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Remaining debt principal | Reduces user debt with interest accrued up to the current timestamp. Allowed in Normal and Recovery. |
 | `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) → Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to 50% of an undercollateralized borrower's debt and seizes proportional collateral (+ 10% bonus). Reverts if position is healthy (`hf >= 10000`). |
 
+### Core Operation Events
+
+Successful user operations emit versioned, indexable events after state is
+written:
+
+| Function | Event topic | Key payload fields |
+|---|---|---|
+| `deposit` | `deposit_event` | `schema_version`, `user`, `amount`, `resulting_balance` |
+| `withdraw` | `withdraw_event` | `schema_version`, `user`, `amount`, `resulting_balance` |
+| `borrow` | `borrow_event` | `schema_version`, `borrower`, `amount`, `resulting_debt` |
+| `repay` | `repay_event` | `schema_version`, `borrower`, `amount`, `resulting_debt` |
+| `liquidate` | `liquidate_event` | `schema_version`, `liquidator`, `borrower`, `repaid_debt`, `seized_collateral`, `resulting_debt`, `resulting_collateral` |
+
 ### Flash Loans
 
 | Function | Signature | Auth | Description |
