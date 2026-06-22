@@ -68,6 +68,11 @@ def main():
         default=None,
         help="Path to coverage_thresholds.json (default: scripts/coverage_thresholds.json)",
     )
+    parser.add_argument(
+        "--overall-only",
+        action="store_true",
+        help="Only enforce the report-level overall line-rate.",
+    )
     args = parser.parse_args()
 
     coverage_file = _resolve_coverage_path(args.coverage_file)
@@ -96,19 +101,22 @@ def main():
     print(f"{'Crate':<45} {'Coverage':>10} {'Threshold':>10}  Status")
     print("-" * 80)
 
-    for pkg in packages:
-        name = pkg.get("name", "unknown")
-        line_rate_str = pkg.get("line-rate")
-        if line_rate_str is None:
-            print(f"  {name:<45} {'N/A':>10} {'N/A':>10}  SKIP (no line-rate)")
-            continue
-        coverage_pct = float(line_rate_str) * 100
-        crate_threshold = get_threshold(name, thresholds)
-        ok = coverage_pct >= crate_threshold
-        status = "OK" if ok else "FAIL"
-        print(f"  {name:<45} {coverage_pct:>9.2f}% {crate_threshold:>9.2f}%  {status}")
-        if not ok:
-            failures.append((name, coverage_pct, crate_threshold))
+    if args.overall_only:
+        print(f"  {'(packages skipped by --overall-only)':<45} {'N/A':>10} {'N/A':>10}  SKIP")
+    else:
+        for pkg in packages:
+            name = pkg.get("name", "unknown")
+            line_rate_str = pkg.get("line-rate")
+            if line_rate_str is None:
+                print(f"  {name:<45} {'N/A':>10} {'N/A':>10}  SKIP (no line-rate)")
+                continue
+            coverage_pct = float(line_rate_str) * 100
+            crate_threshold = get_threshold(name, thresholds)
+            ok = coverage_pct >= crate_threshold
+            status = "OK" if ok else "FAIL"
+            print(f"  {name:<45} {coverage_pct:>9.2f}% {crate_threshold:>9.2f}%  {status}")
+            if not ok:
+                failures.append((name, coverage_pct, crate_threshold))
 
     overall_line_rate = root.attrib.get("line-rate")
     if overall_line_rate is not None:
