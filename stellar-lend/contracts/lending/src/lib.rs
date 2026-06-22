@@ -15,6 +15,8 @@ mod health_factor_edge_test;
 mod interest_drift_regression_test;
 #[cfg(test)]
 mod rounding_drift_test;
+#[cfg(test)]
+mod upgrade_governance_test;
 
 use debt::{
     borrow_amount, effective_debt, load_debt, repay_amount, save_debt, DebtPosition,
@@ -23,7 +25,7 @@ use debt::{
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
-    Env, IntoVal, Symbol, Val,
+    Env, IntoVal, Symbol, Val, Vec,
 };
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
@@ -35,6 +37,8 @@ pub const LIQUIDATION_THRESHOLD_BPS: i128 = 8000;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
+const MIN_UPGRADE_DELAY_LEDGERS: u32 = 600_000;
+const DEFAULT_UPGRADE_EXPIRY_LEDGERS: u32 = 1_200_000;
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +62,11 @@ pub enum DataKey {
     Guardian,
     PauseState(PauseType),
     RateParams,
+    UpgradeApprovers,
+    UpgradeThreshold,
+    UpgradeProposalCounter,
+    UpgradeProposal(u64),
+    UpgradeApprovals(u64),
 }
 
 #[contractevent]
@@ -120,6 +129,15 @@ pub enum LendingError {
     NotInitialized = 1009,
     AlreadyInitialized = 1010,
     PositionHealthy = 1011,
+    UpgradeNotInitialized = 1012,
+    InvalidUpgradeThreshold = 1013,
+    UpgradeProposalNotFound = 1014,
+    UpgradeProposalNotReady = 1015,
+    UpgradeProposalExpired = 1016,
+    UpgradeAlreadyExecuted = 1017,
+    UpgradeInsufficientApprovals = 1018,
+    UpgradeDuplicateApproval = 1019,
+    InvalidUpgradeProposal = 1020,
     DebtCeilingExceeded = 2001,
     DepositCapExceeded = 2002,
     InvalidFeeBps = 2005,
@@ -151,6 +169,40 @@ pub struct PositionSummary {
     pub collateral: i128,
     pub debt: i128,
     pub health_factor: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpgradeProposal {
+    pub id: u64,
+    pub new_wasm_hash: BytesN<32>,
+    pub eta_ledger: u32,
+    pub expires_at_ledger: u32,
+    pub executed: bool,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpgradeProposedEvent {
+    pub proposal_id: u64,
+    pub new_wasm_hash: BytesN<32>,
+    pub eta_ledger: u32,
+    pub expires_at_ledger: u32,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpgradeApprovedEvent {
+    pub proposal_id: u64,
+    pub approver: Address,
+    pub approvals: u32,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpgradeExecutedEvent {
+    pub proposal_id: u64,
+    pub new_wasm_hash: BytesN<32>,
 }
 
 #[contract]
@@ -584,6 +636,195 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Initialize timelocked upgrade governance with approvers and a threshold.
+    pub fn upgrade_init(
+        env: Env,
+        approvers: Vec<Address>,
+        threshold: u32,
+    ) -> Result<(), LendingError> {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        validate_upgrade_threshold(&approvers, threshold)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeApprovers, &approvers);
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeThreshold, &threshold);
+        Ok(())
+    }
+
+    /// Propose a WASM upgrade and record the admin as the first approval if eligible.
+    pub fn upgrade_propose(env: Env, new_wasm_hash: BytesN<32>) -> Result<u64, LendingError> {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        let approvers = get_upgrade_approvers(&env)?;
+        let _threshold = get_upgrade_threshold(&env)?;
+        let current_ledger = env.ledger().sequence();
+        let eta_ledger = current_ledger
+            .checked_add(MIN_UPGRADE_DELAY_LEDGERS)
+            .ok_or(LendingError::Overflow)?;
+        let expires_at_ledger = current_ledger
+            .checked_add(DEFAULT_UPGRADE_EXPIRY_LEDGERS)
+            .ok_or(LendingError::Overflow)?;
+        if expires_at_ledger < eta_ledger {
+            return Err(LendingError::InvalidUpgradeProposal);
+        }
+        let proposal_id = env
+            .storage()
+            .instance()
+            .get(&DataKey::UpgradeProposalCounter)
+            .unwrap_or(0u64)
+            .checked_add(1)
+            .ok_or(LendingError::Overflow)?;
+        let proposal = UpgradeProposal {
+            id: proposal_id,
+            new_wasm_hash: new_wasm_hash.clone(),
+            eta_ledger,
+            expires_at_ledger,
+            executed: false,
+        };
+        let mut approvals = Vec::new(&env);
+        if address_in_vec(&approvers, &admin) {
+            approvals.push_back(admin);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeProposalCounter, &proposal_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeProposal(proposal_id), &proposal);
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeApprovals(proposal_id), &approvals);
+
+        UpgradeProposedEvent {
+            proposal_id,
+            new_wasm_hash,
+            eta_ledger,
+            expires_at_ledger,
+        }
+        .publish(&env);
+
+        Ok(proposal_id)
+    }
+
+    /// Approve a pending WASM upgrade proposal.
+    pub fn upgrade_approve(
+        env: Env,
+        approver: Address,
+        proposal_id: u64,
+    ) -> Result<u32, LendingError> {
+        approver.require_auth();
+        let approvers = get_upgrade_approvers(&env)?;
+        if !address_in_vec(&approvers, &approver) {
+            return Err(LendingError::Unauthorized);
+        }
+        let proposal = get_live_upgrade_proposal(&env, proposal_id)?;
+        if proposal.executed {
+            return Err(LendingError::UpgradeAlreadyExecuted);
+        }
+        let mut approvals: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::UpgradeApprovals(proposal_id))
+            .unwrap_or(Vec::new(&env));
+        if address_in_vec(&approvals, &approver) {
+            return Err(LendingError::UpgradeDuplicateApproval);
+        }
+        approvals.push_back(approver.clone());
+        let approval_count = approvals.len();
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeApprovals(proposal_id), &approvals);
+
+        UpgradeApprovedEvent {
+            proposal_id,
+            approver,
+            approvals: approval_count,
+        }
+        .publish(&env);
+
+        Ok(approval_count)
+    }
+
+    /// Execute an approved WASM upgrade after its timelock has elapsed.
+    pub fn upgrade_execute(
+        env: Env,
+        executor: Address,
+        proposal_id: u64,
+    ) -> Result<(), LendingError> {
+        executor.require_auth();
+        let approvers = get_upgrade_approvers(&env)?;
+        if !address_in_vec(&approvers, &executor) {
+            return Err(LendingError::Unauthorized);
+        }
+        let threshold = get_upgrade_threshold(&env)?;
+        let mut proposal = get_live_upgrade_proposal(&env, proposal_id)?;
+        if proposal.executed {
+            return Err(LendingError::UpgradeAlreadyExecuted);
+        }
+        let current_ledger = env.ledger().sequence();
+        if current_ledger < proposal.eta_ledger {
+            return Err(LendingError::UpgradeProposalNotReady);
+        }
+        let approvals: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::UpgradeApprovals(proposal_id))
+            .unwrap_or(Vec::new(&env));
+        if approvals.len() < threshold {
+            return Err(LendingError::UpgradeInsufficientApprovals);
+        }
+
+        proposal.executed = true;
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeProposal(proposal_id), &proposal);
+        update_current_contract_wasm(&env, proposal.new_wasm_hash.clone());
+
+        UpgradeExecutedEvent {
+            proposal_id,
+            new_wasm_hash: proposal.new_wasm_hash,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Return the configured upgrade approver set.
+    pub fn get_upgrade_approvers(env: Env) -> Option<Vec<Address>> {
+        env.storage().instance().get(&DataKey::UpgradeApprovers)
+    }
+
+    /// Return the configured upgrade approval threshold.
+    pub fn get_upgrade_threshold(env: Env) -> Option<u32> {
+        env.storage().instance().get(&DataKey::UpgradeThreshold)
+    }
+
+    /// Return a stored upgrade proposal.
+    pub fn get_upgrade_proposal(env: Env, proposal_id: u64) -> Option<UpgradeProposal> {
+        env.storage()
+            .instance()
+            .get(&DataKey::UpgradeProposal(proposal_id))
+    }
+
+    /// Return approvals recorded for a stored upgrade proposal.
+    pub fn get_upgrade_approvals(env: Env, proposal_id: u64) -> Option<Vec<Address>> {
+        env.storage()
+            .instance()
+            .get(&DataKey::UpgradeApprovals(proposal_id))
+    }
+
+    pub fn get_upgrade_delay_ledgers(_env: Env) -> u32 {
+        MIN_UPGRADE_DELAY_LEDGERS
+    }
+
+    pub fn get_upgrade_expiry_ledgers(_env: Env) -> u32 {
+        DEFAULT_UPGRADE_EXPIRY_LEDGERS
+    }
+
     /// Repay function used by receiver during callback to return funds to the contract.
     /// Uses checked arithmetic to prevent overflow/underflow.
     pub fn repay_flash_loan(env: Env, payer: Address, asset: Address, amount: i128) {
@@ -876,6 +1117,59 @@ fn current_borrow_rate(env: &Env) -> i128 {
         None => DEFAULT_APR_BPS,
     }
 }
+
+fn validate_upgrade_threshold(
+    approvers: &Vec<Address>,
+    threshold: u32,
+) -> Result<(), LendingError> {
+    if threshold == 0 || approvers.is_empty() || threshold > approvers.len() {
+        return Err(LendingError::InvalidUpgradeThreshold);
+    }
+    Ok(())
+}
+
+fn get_upgrade_approvers(env: &Env) -> Result<Vec<Address>, LendingError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::UpgradeApprovers)
+        .ok_or(LendingError::UpgradeNotInitialized)
+}
+
+fn get_upgrade_threshold(env: &Env) -> Result<u32, LendingError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::UpgradeThreshold)
+        .ok_or(LendingError::UpgradeNotInitialized)
+}
+
+fn get_live_upgrade_proposal(env: &Env, proposal_id: u64) -> Result<UpgradeProposal, LendingError> {
+    let proposal: UpgradeProposal = env
+        .storage()
+        .instance()
+        .get(&DataKey::UpgradeProposal(proposal_id))
+        .ok_or(LendingError::UpgradeProposalNotFound)?;
+    if env.ledger().sequence() > proposal.expires_at_ledger {
+        return Err(LendingError::UpgradeProposalExpired);
+    }
+    Ok(proposal)
+}
+
+fn address_in_vec(addresses: &Vec<Address>, needle: &Address) -> bool {
+    for address in addresses.iter() {
+        if address == *needle {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(test))]
+fn update_current_contract_wasm(env: &Env, new_wasm_hash: BytesN<32>) {
+    env.deployer().update_current_contract_wasm(new_wasm_hash);
+}
+
+#[cfg(test)]
+fn update_current_contract_wasm(_env: &Env, _new_wasm_hash: BytesN<32>) {}
 
 #[contract]
 pub struct MockAmm;

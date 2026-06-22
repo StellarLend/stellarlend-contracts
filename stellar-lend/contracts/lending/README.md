@@ -132,6 +132,20 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 
 ---
 
+## Upgrade Governance
+
+The lending contract exposes a timelocked WASM upgrade flow:
+
+| Function | Notes |
+|---|---|
+| `upgrade_init(approvers, threshold)` | Admin-only setup for the approver set and required approval threshold. |
+| `upgrade_propose(new_wasm_hash)` | Admin-only proposal. Records the WASM hash, ETA ledger, expiry ledger, and admin approval when the admin is an approver. |
+| `upgrade_approve(approver, proposal_id)` | Approver-only approval. Duplicate approvals are rejected. |
+| `upgrade_execute(executor, proposal_id)` | Approver-only execution after the timelock and threshold are satisfied. Calls `update_current_contract_wasm`. |
+| `get_upgrade_proposal / get_upgrade_approvals` | Audit views for proposal state and signer approvals. |
+
+Upgrade proposals use a 600,000-ledger minimum delay and a 1,200,000-ledger expiry window.
+
 ## 🔮 Planned Features
 
 The functions listed below appear in older documentation but are **not yet implemented** in `src/lib.rs`. They are tracked for future milestones.
@@ -147,7 +161,6 @@ The functions listed below appear in older documentation but are **not yet imple
 | `get_max_liquidatable_amount(env, user)` | Convenience helper for liquidators. |
 | `get_emergency_state(env)` | Public view for current lifecycle state (today exposed only via events). |
 | `deposit_collateral(env, user, asset, amount)` | Multi-asset collateral support. |
-| `upgrade_init / upgrade_propose / upgrade_approve / upgrade_execute` | Multisig upgrade governance. |
 | `data_store_init / data_save / data_load / data_backup / data_restore` | Persistent data-store management helpers. |
 
 ---

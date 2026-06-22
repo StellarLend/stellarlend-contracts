@@ -4,6 +4,47 @@
 
 This playbook provides a practical guide for safely upgrading StellarLend contracts, including preflight checks, execution procedures, post-upgrade monitoring, and rollback criteria. It aligns with the upgrade authorization model documented in `docs/UPGRADE_AUTHORIZATION.md`.
 
+## Lending WASM Governance Flow
+
+The lending contract uses a timelocked threshold approval flow for WASM upgrades:
+
+1. Configure approvers once or during signer rotation:
+
+   ```rust
+   client.upgrade_init(&approvers, &threshold);
+   ```
+
+2. Admin proposes the reviewed WASM hash:
+
+   ```rust
+   let proposal_id = client.upgrade_propose(&new_wasm_hash);
+   ```
+
+   The proposal records `eta_ledger = current_ledger + 600_000` and
+   `expires_at_ledger = current_ledger + 1_200_000`.
+
+3. Approvers review the artifact and approve:
+
+   ```rust
+   client.upgrade_approve(&approver, &proposal_id);
+   ```
+
+4. After the ETA ledger and once the threshold is met, an approver executes:
+
+   ```rust
+   client.upgrade_execute(&executor, &proposal_id);
+   ```
+
+5. Verify proposal state and approvals:
+
+   ```rust
+   client.get_upgrade_proposal(&proposal_id);
+   client.get_upgrade_approvals(&proposal_id);
+   ```
+
+Execution rejects unknown proposals, expired proposals, duplicate execution, insufficient
+approvals, and execution before the timelock.
+
 ## Pre-Upgrade Checklist
 
 ### 1. Authorization Verification

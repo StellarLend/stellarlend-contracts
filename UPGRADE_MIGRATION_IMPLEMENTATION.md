@@ -1,5 +1,42 @@
 # Upgrade and Storage Migration Safety Suite - Implementation Summary
 
+## Current Lending Upgrade Governance
+
+The lending contract now ships a native timelocked WASM upgrade governance flow:
+
+- `upgrade_init(approvers, threshold)` stores the approver set and threshold. It is
+  admin-only and rejects empty approver sets, zero thresholds, and thresholds greater
+  than the approver count.
+- `upgrade_propose(new_wasm_hash)` is admin-only. It records an `UpgradeProposal`
+  with a 600,000-ledger ETA, a 1,200,000-ledger expiry, and the admin's approval when
+  the admin is in the approver set.
+- `upgrade_approve(approver, proposal_id)` is approver-only and rejects duplicate
+  approvals, unknown proposals, executed proposals, and expired proposals.
+- `upgrade_execute(executor, proposal_id)` is approver-only and calls
+  `update_current_contract_wasm(new_wasm_hash)` only after the timelock has elapsed
+  and the stored approval threshold has been met.
+- Audit views are available through `get_upgrade_proposal`, `get_upgrade_approvals`,
+  `get_upgrade_approvers`, and `get_upgrade_threshold`.
+
+The focused test suite is `stellar-lend/contracts/lending/src/upgrade_governance_test.rs`.
+Run it with:
+
+```bash
+cd stellar-lend
+cargo test -p stellarlend-lending --lib upgrade_governance -- --nocapture
+```
+
+Full lending library validation:
+
+```bash
+cd stellar-lend
+cargo test -p stellarlend-lending --lib
+```
+
+The older notes below describe a broader versioned rollback/data-store safety suite and
+should be treated as historical design context unless those modules are present in the
+current branch.
+
 ## Overview
 
 Implemented a comprehensive test suite for contract upgrade and storage migration safety in the StellarLend lending protocol. The suite validates that contract upgrades preserve user state, handle failures gracefully, and support safe rollback operations.
