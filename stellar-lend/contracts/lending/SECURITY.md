@@ -8,6 +8,10 @@
 ## Liquidation Invariant Guarantees (Issue: Add explicit invariant tests for liquidation close-factor and incentive bounds)
 
 The following invariants are now proven by the `liquidation_invariant_test` suite (29 tests).
+The `liquidation_branch_test` suite adds direct coverage of the current
+`LendingContract::liquidate` entrypoint for close-factor capping, seizure
+clamping, repeated partial liquidation, zero-debt rejection, and healthy-position
+rejection.
 
 ### Liquidation Engine Fixes
 
