@@ -168,10 +168,19 @@ impl LendingContract {
 
     pub fn get_admin(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Admin).unwrap()
+    /// Reject all state-mutating operations before `initialize` has been called.
+    /// Returns `LendingError::NotInitialized` when `DataKey::Admin` is unset.
+    fn require_initialized(env: &Env) -> Result<(), LendingError> {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(LendingError::NotInitialized);
+        }
+        Ok(())
+    }
     }
 
     /// Set the configured oracle pubkey used to verify signed price updates.
     pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) {
+        require_initialized(&env)?;
         let admin = Self::get_admin(env.clone());
         admin.require_auth();
         env.storage()
@@ -192,6 +201,7 @@ impl LendingContract {
         timestamp: u64,
         signature: BytesN<64>,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         let admin = Self::get_admin(env.clone());
         caller.require_auth();
         if caller != admin {
@@ -251,6 +261,7 @@ impl LendingContract {
 
     /// Propose a new admin (current admin only).
     pub fn propose_admin(env: Env, new_admin: Address) {
+        require_initialized(&env)?;
         let current_admin = Self::get_admin(env.clone());
         current_admin.require_auth();
         env.storage()
@@ -259,6 +270,7 @@ impl LendingContract {
     }
 
     pub fn accept_admin(env: Env) {
+        require_initialized(&env)?;
         let pending_admin: Address = env
             .storage()
             .instance()
@@ -272,6 +284,7 @@ impl LendingContract {
     }
 
     pub fn set_guardian(env: Env, guardian: Address) {
+        require_initialized(&env)?;
         let admin = Self::get_admin(env.clone());
         admin.require_auth();
         env.storage().instance().set(&DataKey::Guardian, &guardian);
@@ -282,6 +295,7 @@ impl LendingContract {
     }
 
     pub fn set_emergency_state(env: Env, new_state: EmergencyState) {
+        require_initialized(&env)?;
         // For Shutdown, guardian (if set) or admin can call; for other states, admin only.
         match new_state {
             EmergencyState::Shutdown => {
@@ -307,6 +321,7 @@ impl LendingContract {
     }
 
     pub fn set_min_borrow(env: Env, min_borrow: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         let admin = Self::get_admin(env.clone());
         admin.require_auth();
         env.storage()
@@ -324,6 +339,7 @@ impl LendingContract {
 
     /// Deposit collateral for a user.
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_emergency_status(&env, ProtocolAction::Deposit);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -368,6 +384,7 @@ impl LendingContract {
     }
 
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -405,6 +422,7 @@ impl LendingContract {
     }
 
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_emergency_status(&env, ProtocolAction::Borrow);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -449,6 +467,7 @@ impl LendingContract {
         borrower: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         liquidator.require_auth();
         let col_key = DataKey::Collateral(borrower.clone());
 
@@ -510,6 +529,7 @@ impl LendingContract {
     }
 
     pub fn repay(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
 
@@ -560,6 +580,7 @@ impl LendingContract {
 
     /// Set the protocol-level debt ceiling (admin-only).
     pub fn set_debt_ceiling(env: Env, ceiling: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         let admin = Self::get_admin(env.clone());
         admin.require_auth();
         if ceiling <= 0 {
@@ -573,6 +594,7 @@ impl LendingContract {
 
     /// Set the flash loan fee in basis points (admin-only). Must be in [0, 1000].
     pub fn set_flash_fee(env: Env, fee_bps: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         let admin = Self::get_admin(env.clone());
         admin.require_auth();
         if fee_bps < 0 || fee_bps > 1000 {
@@ -614,6 +636,7 @@ impl LendingContract {
         amount: i128,
         params: Bytes,
     ) {
+        require_initialized(&env)?;
         let tre_key = DataKey::Treasury(asset.clone());
         let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         if amount > tre_bal {
