@@ -181,11 +181,10 @@ All arithmetic on protocol-controlled values uses the Rust *checked* API or Soro
 
 ## Oracle Security
 
-* The protocol supports **primary** and **fallback** oracle addresses per asset, both settable only by the admin.
-* `get_price` attempts the primary oracle first; only on failure/stale does it fall back.
-* `configure_oracle` allows the admin to set a `max_staleness_seconds` threshold; a stale price returns `OracleError::StalePrice` rather than silently using an outdated value.
-* Oracle updates (via `update_price_feed`) are restricted to the admin or the registered primary/fallback oracle address for each asset.
-* Oracle updates can be globally paused via `set_oracle_paused` (admin only).
+* Signed oracle updates are restricted to the admin and verified against the configured Ed25519 public key.
+* The signed payload format remains `domain || asset || price || timestamp`.
+* `set_price` rejects updates whose timestamp is stale, in the future, or not strictly greater than the stored timestamp for that asset. This prevents replaying a previously signed but still-fresh price over a newer record.
+* `get_fresh_price_record` is the staleness-checked read path for price-consuming valuation code. It returns `OraclePriceStaleAtUse` instead of silently using an outdated record.
 
 ---
 
@@ -292,11 +291,10 @@ All arithmetic on protocol-controlled values uses the Rust *checked* API or Soro
 
 ## Oracle Security
 
-* The protocol supports **primary** and **fallback** oracle addresses per asset, both settable only by the admin.
-* `get_price` attempts the primary oracle first; only on failure/stale does it fall back.
-* `configure_oracle` allows the admin to set a `max_staleness_seconds` threshold; a stale price returns `OracleError::StalePrice` rather than silently using an outdated value.
-* Oracle updates (via `update_price_feed`) are restricted to the admin or the registered primary/fallback oracle address for each asset.
-* Oracle updates can be globally paused via `set_oracle_paused` (admin only).
+* Signed oracle updates are restricted to the admin and verified against the configured Ed25519 public key.
+* The signed payload format remains `domain || asset || price || timestamp`.
+* `set_price` rejects updates whose timestamp is stale, in the future, or not strictly greater than the stored timestamp for that asset. This prevents replaying a previously signed but still-fresh price over a newer record.
+* `get_fresh_price_record` is the staleness-checked read path for price-consuming valuation code. It returns `OraclePriceStaleAtUse` instead of silently using an outdated record.
 
 ---
 

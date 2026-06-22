@@ -87,8 +87,9 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 |---|---|---|---|
 | `set_oracle_pubkey` | `(env, pubkey: BytesN<32>)` | admin | Stores the Ed25519 public key used to verify signed price updates. |
 | `get_oracle_pubkey` | `(env) → Option<BytesN<32>>` | — | Returns the configured oracle public key, if any. |
-| `set_price` | `(env, caller: Address, asset: Address, price: i128, timestamp: u64, signature: BytesN<64>) → Result<(), LendingError>` | `caller` must be admin | Verifies a signed price payload and stores a fresh `PriceRecord` for `asset`. |
+| `set_price` | `(env, caller: Address, asset: Address, price: i128, timestamp: u64, signature: BytesN<64>) → Result<(), LendingError>` | `caller` must be admin | Verifies a signed price payload and stores a fresh, strictly newer `PriceRecord` for `asset`. |
 | `get_price_record` | `(env, asset: Address) → Option<PriceRecord>` | — | Returns the stored oracle price and timestamp for `asset`, if present. |
+| `get_fresh_price_record` | `(env, asset: Address) → Result<PriceRecord, LendingError>` | — | Returns the stored oracle price only if it is still inside the max-age window. |
 
 ### Admin & Risk Controls
 
@@ -129,6 +130,8 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 | `LendingError::InvalidOracleSignature` | 5001 | Oracle price update signature is invalid. |
 | `LendingError::StaleOracleTimestamp` | 5002 | Oracle price update is too old. |
 | `LendingError::OraclePubkeyNotSet` | 5003 | Oracle public key is missing from storage. |
+| `LendingError::OracleTimestampNotMonotonic` | 5004 | Oracle price update timestamp is not strictly newer than the stored record. |
+| `LendingError::OraclePriceStaleAtUse` | 5005 | Stored oracle price is too old for valuation use. |
 
 ---
 

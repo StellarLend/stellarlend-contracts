@@ -127,6 +127,8 @@ pub enum LendingError {
     InvalidOracleSignature = 5001,
     StaleOracleTimestamp = 5002,
     OraclePubkeyNotSet = 5003,
+    OracleTimestampNotMonotonic = 5004,
+    OraclePriceStaleAtUse = 5005,
 }
 
 #[contracttype]
@@ -206,6 +208,13 @@ impl LendingContract {
             return Err(LendingError::StaleOracleTimestamp);
         }
 
+        let key = DataKey::OraclePrice(asset.clone());
+        if let Some(existing) = env.storage().persistent().get::<_, PriceRecord>(&key) {
+            if timestamp <= existing.timestamp {
+                return Err(LendingError::OracleTimestampNotMonotonic);
+            }
+        }
+
         let oracle_pubkey: BytesN<32> = env
             .storage()
             .instance()
@@ -217,15 +226,31 @@ impl LendingContract {
         env.crypto()
             .ed25519_verify(&oracle_pubkey, &payload, &signature);
 
-        env.storage().persistent().set(
-            &DataKey::OraclePrice(asset),
-            &PriceRecord { price, timestamp },
-        );
+        env.storage()
+            .persistent()
+            .set(&key, &PriceRecord { price, timestamp });
         Ok(())
     }
 
     pub fn get_price_record(env: Env, asset: Address) -> Option<PriceRecord> {
         env.storage().persistent().get(&DataKey::OraclePrice(asset))
+    }
+
+    /// Return a stored oracle price only if it is fresh at the current ledger time.
+    ///
+    /// This is the read path position valuation should use before health-factor,
+    /// borrow-limit, or liquidation calculations consume signed oracle prices.
+    pub fn get_fresh_price_record(env: Env, asset: Address) -> Result<PriceRecord, LendingError> {
+        let record: PriceRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OraclePrice(asset))
+            .ok_or(LendingError::StaleOracleTimestamp)?;
+        let now = env.ledger().timestamp();
+        if now > record.timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
+            return Err(LendingError::OraclePriceStaleAtUse);
+        }
+        Ok(record)
     }
 
     fn oracle_price_signature_payload(
@@ -1139,6 +1164,141 @@ mod test {
         assert!(
             matches!(res, Err(Ok(LendingError::StaleOracleTimestamp))),
             "expected StaleOracleTimestamp, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_rejects_equal_timestamp_replay() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let timestamp = env.ledger().timestamp();
+        let first_price = 1_000_000_000i128;
+        let first_signature = sign_oracle_update(&env, &keypair, &asset, first_price, timestamp);
+        client.set_price(&admin, &asset, &first_price, &timestamp, &first_signature);
+
+        let replay_price = 900_000_000i128;
+        let replay_signature = sign_oracle_update(&env, &keypair, &asset, replay_price, timestamp);
+        let res =
+            client.try_set_price(&admin, &asset, &replay_price, &timestamp, &replay_signature);
+
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleTimestampNotMonotonic))),
+            "expected OracleTimestampNotMonotonic, got {:?}",
+            res
+        );
+        assert_eq!(
+            client.get_price_record(&asset).expect("stored").price,
+            first_price
+        );
+    }
+
+    #[test]
+    fn test_set_price_rejects_older_fresh_replay() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let newer_timestamp = env.ledger().timestamp();
+        let newer_price = 1_200_000_000i128;
+        let newer_signature =
+            sign_oracle_update(&env, &keypair, &asset, newer_price, newer_timestamp);
+        client.set_price(
+            &admin,
+            &asset,
+            &newer_price,
+            &newer_timestamp,
+            &newer_signature,
+        );
+
+        let older_timestamp = newer_timestamp.saturating_sub(10);
+        let older_price = 950_000_000i128;
+        let older_signature =
+            sign_oracle_update(&env, &keypair, &asset, older_price, older_timestamp);
+        let res = client.try_set_price(
+            &admin,
+            &asset,
+            &older_price,
+            &older_timestamp,
+            &older_signature,
+        );
+
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleTimestampNotMonotonic))),
+            "expected OracleTimestampNotMonotonic, got {:?}",
+            res
+        );
+        assert_eq!(
+            client.get_price_record(&asset).expect("stored").price,
+            newer_price
+        );
+    }
+
+    #[test]
+    fn test_set_price_accepts_strictly_newer_update() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let first_timestamp = env.ledger().timestamp();
+        let first_price = 1_000_000_000i128;
+        let first_signature =
+            sign_oracle_update(&env, &keypair, &asset, first_price, first_timestamp);
+        client.set_price(
+            &admin,
+            &asset,
+            &first_price,
+            &first_timestamp,
+            &first_signature,
+        );
+
+        advance_time(&env, 1);
+        let second_timestamp = env.ledger().timestamp();
+        let second_price = 1_100_000_000i128;
+        let second_signature =
+            sign_oracle_update(&env, &keypair, &asset, second_price, second_timestamp);
+        client.set_price(
+            &admin,
+            &asset,
+            &second_price,
+            &second_timestamp,
+            &second_signature,
+        );
+
+        let record = client.get_price_record(&asset).expect("stored");
+        assert_eq!(record.price, second_price);
+        assert_eq!(record.timestamp, second_timestamp);
+    }
+
+    #[test]
+    fn test_get_fresh_price_record_rejects_stale_at_use() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_000_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+
+        let fresh = client.get_fresh_price_record(&asset);
+        assert_eq!(fresh.price, price);
+
+        advance_time(&env, DEFAULT_ORACLE_MAX_AGE_SECS + 1);
+        let res = client.try_get_fresh_price_record(&asset);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OraclePriceStaleAtUse))),
+            "expected OraclePriceStaleAtUse, got {:?}",
             res
         );
     }

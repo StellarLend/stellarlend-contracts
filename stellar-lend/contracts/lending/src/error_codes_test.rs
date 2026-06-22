@@ -18,6 +18,8 @@ fn test_error_code_stability_and_uniqueness() {
         (LendingError::InvalidOracleSignature, 5001),
         (LendingError::StaleOracleTimestamp, 5002),
         (LendingError::OraclePubkeyNotSet, 5003),
+        (LendingError::OracleTimestampNotMonotonic, 5004),
+        (LendingError::OraclePriceStaleAtUse, 5005),
     ];
 
     for i in 0..cases.len() {
