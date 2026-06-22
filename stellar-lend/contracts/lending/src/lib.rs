@@ -443,12 +443,20 @@ impl LendingContract {
         Ok(updated.principal)
     }
 
+    /// Liquidate an unhealthy borrower while respecting pause and emergency gates.
+    ///
+    /// Liquidations are blocked in Shutdown, allowed in Recovery, and can be
+    /// paused independently through `PauseType::Liquidation` or globally through
+    /// `PauseType::All`.
     pub fn liquidate(
         env: Env,
         liquidator: Address,
         borrower: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        check_pause_status(&env, ProtocolAction::Liquidate);
+        check_emergency_status(&env, ProtocolAction::Liquidate);
+
         liquidator.require_auth();
         let col_key = DataKey::Collateral(borrower.clone());
 
@@ -842,7 +850,7 @@ fn check_emergency_status(env: &Env, action: ProtocolAction) {
         EmergencyState::Normal => {}
         EmergencyState::Shutdown => panic!("OperationDisabledDuringShutdown"),
         EmergencyState::Recovery => match action {
-            ProtocolAction::Repay | ProtocolAction::Withdraw => {}
+            ProtocolAction::Repay | ProtocolAction::Withdraw | ProtocolAction::Liquidate => {}
             _ => panic!("ActionBlockedInRecovery"),
         },
     }
@@ -933,6 +941,17 @@ mod test {
         soroban_sdk::Address,
         soroban_sdk::Address,
     ) {
+        let (env, client, admin, user, _id) = setup_with_contract_id();
+        (env, client, admin, user)
+    }
+
+    fn setup_with_contract_id() -> (
+        Env,
+        LendingContractClient<'static>,
+        soroban_sdk::Address,
+        soroban_sdk::Address,
+        soroban_sdk::Address,
+    ) {
         let env = Env::default();
         env.mock_all_auths();
         let id = env.register(LendingContract, ());
@@ -940,7 +959,7 @@ mod test {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         client.initialize(&admin);
-        (env, client, admin, user)
+        (env, client, admin, user, id)
     }
 
     fn advance_time(env: &Env, seconds: u64) {
@@ -949,6 +968,18 @@ mod test {
         li.timestamp = li.timestamp.saturating_add(seconds);
         li.sequence_number = li.sequence_number.saturating_add(seconds as u32);
         env.ledger().set(li);
+    }
+
+    fn set_pause_state_for_test(env: &Env, contract_id: &Address, operation: PauseType, ttl: u32) {
+        env.as_contract(contract_id, || {
+            env.storage().instance().set(
+                &DataKey::PauseState(operation),
+                &PauseState {
+                    paused: true,
+                    expires_at_ledger: env.ledger().sequence().saturating_add(ttl),
+                },
+            );
+        });
     }
 
     fn build_oracle_payload(env: &Env, asset: &Address, price: i128, timestamp: u64) -> Bytes {
@@ -1398,6 +1429,67 @@ mod test {
         client.set_emergency_state(&EmergencyState::Recovery);
         assert_eq!(client.repay(&user, &10), 40);
         assert_eq!(client.withdraw(&user, &10), 190);
+    }
+
+    #[test]
+    #[should_panic(expected = "OperationDisabledDuringShutdown")]
+    fn test_shutdown_blocks_liquidate() {
+        let (env, client, _admin, borrower) = setup();
+        let liquidator = Address::generate(&env);
+        client.deposit(&borrower, &100);
+        client.borrow(&borrower, &200);
+
+        client.set_emergency_state(&EmergencyState::Shutdown);
+
+        client.liquidate(&liquidator, &borrower, &10);
+    }
+
+    #[test]
+    fn test_recovery_allows_liquidate() {
+        let (env, client, _admin, borrower) = setup();
+        let liquidator = Address::generate(&env);
+        client.deposit(&borrower, &100);
+        client.borrow(&borrower, &200);
+
+        client.set_emergency_state(&EmergencyState::Recovery);
+
+        assert_eq!(client.liquidate(&liquidator, &borrower, &10), 10);
+    }
+
+    #[test]
+    #[should_panic(expected = "OperationPaused")]
+    fn test_global_pause_blocks_liquidate() {
+        let (env, client, _admin, borrower, contract_id) = setup_with_contract_id();
+        let liquidator = Address::generate(&env);
+        client.deposit(&borrower, &100);
+        client.borrow(&borrower, &200);
+        set_pause_state_for_test(&env, &contract_id, PauseType::All, 10);
+
+        client.liquidate(&liquidator, &borrower, &10);
+    }
+
+    #[test]
+    #[should_panic(expected = "OperationPaused")]
+    fn test_liquidation_pause_blocks_liquidate() {
+        let (env, client, _admin, borrower, contract_id) = setup_with_contract_id();
+        let liquidator = Address::generate(&env);
+        client.deposit(&borrower, &100);
+        client.borrow(&borrower, &200);
+        set_pause_state_for_test(&env, &contract_id, PauseType::Liquidation, 10);
+
+        client.liquidate(&liquidator, &borrower, &10);
+    }
+
+    #[test]
+    fn test_expired_liquidation_pause_allows_liquidate() {
+        let (env, client, _admin, borrower, contract_id) = setup_with_contract_id();
+        let liquidator = Address::generate(&env);
+        client.deposit(&borrower, &100);
+        client.borrow(&borrower, &200);
+        set_pause_state_for_test(&env, &contract_id, PauseType::Liquidation, 0);
+        advance_time(&env, 1);
+
+        assert_eq!(client.liquidate(&liquidator, &borrower, &10), 10);
     }
 
     #[test]

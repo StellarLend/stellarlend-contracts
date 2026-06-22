@@ -41,6 +41,27 @@ Layer 3: Emergency States (Shutdown/Recovery)
 Layer 4: ReadOnly Mode (incident freeze)
 ```
 
+### Liquidation Enforcement Policy
+
+`LendingContract::liquidate` applies incident gates before any liquidation math or
+state changes:
+
+1. `check_pause_status(ProtocolAction::Liquidate)` blocks liquidation when either
+   `PauseType::Liquidation` or `PauseType::All` is active and unexpired.
+2. `check_emergency_status(ProtocolAction::Liquidate)` blocks liquidation in
+   `Shutdown`, but allows liquidation in `Recovery` so unhealthy positions can be
+   resolved while deposits and new borrows remain disabled.
+
+This ordering keeps operator-driven pause flags authoritative for oracle or
+liquidation-specific incidents, while still allowing controlled solvency recovery
+after a full shutdown has been lifted into Recovery.
+
+| Emergency State | Liquidation Policy |
+|-----------------|--------------------|
+| Normal | Allowed when position is unhealthy and no active liquidation/global pause exists |
+| Shutdown | Blocked with `OperationDisabledDuringShutdown` |
+| Recovery | Allowed unless an active liquidation/global pause exists |
+
 ## Incident Response Procedures
 
 ### Phase 1: Detection (0-5 minutes)
