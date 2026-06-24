@@ -8,6 +8,8 @@ pub mod rounding_strategy;
 #[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
+mod emergency_state_matrix_test;
+#[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
 mod granular_pause_ops_test;
