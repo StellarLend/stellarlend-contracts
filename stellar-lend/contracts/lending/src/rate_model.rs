@@ -28,6 +28,15 @@ impl Default for RateParams {
     }
 }
 
+/// Compute the annualized borrow APR in basis points from utilization.
+///
+/// The kink curve and worked examples are documented in
+/// `stellar-lend/contracts/lending/RATE_MODEL.md`.
+///
+/// Formula:
+/// `base + min(utilization, kink) * multiplier / 10_000`, plus
+/// `(utilization - kink) * jump_multiplier / 10_000` above the kink, then
+/// clamped between `rate_floor_bps` and `rate_ceiling_bps`.
 pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
     let pre_kink_rate = params
         .base_rate_bps

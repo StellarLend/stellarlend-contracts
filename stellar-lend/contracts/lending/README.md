@@ -14,9 +14,9 @@ A secure, efficient lending protocol built on Soroban that allows users to depos
 
 - **Collateralized Borrowing**: Users deposit collateral and borrow up to the configured ceiling.
 - **Interest Accrual**: Debt grows continuously based on a fixed APR expressed in basis points.
-- **Risk Management**: Protocol-level debt ceilings, deposit caps, and a health-factor–based liquidation mechanism.
+- **Risk Management**: Protocol-level debt ceilings, deposit caps, and a health-factor??ased liquidation mechanism.
 - **Flash Loans**: Single-transaction loans with configurable fees; callers must implement an `on_flash_loan` callback.
-- **Emergency Lifecycle**: `Normal → Shutdown → Recovery → Normal` state machine controlled by the admin or guardian.
+- **Emergency Lifecycle**: `Normal ??Shutdown ??Recovery ??Normal` state machine controlled by the admin or guardian.
 - **Two-Step Admin Transfer**: Admin handoff requires both `propose_admin` and `accept_admin` to prevent lockouts.
 - **Arithmetic Safety**: All mutations use `checked_*` arithmetic; overflows return `LendingError::Overflow`.
 - **Persistent TTL Management**: Collateral and debt entries have their TTL extended on every read or write to prevent archival.
@@ -39,28 +39,28 @@ cargo test -p stellarlend-lending
 
 ## Contract Interface
 
-The table below reflects the **shipping** surface of `src/lib.rs` as of this branch. Functions marked **🔮 Planned** do not exist yet.
+The table below reflects the **shipping** surface of `src/lib.rs` as of this branch. Functions marked **?? Planned** do not exist yet.
 
 ### Initialization
 
 | Function | Signature | Auth | Description |
 |---|---|---|---|
-| `initialize` | `(env, admin: Address)` | — | One-time setup; sets admin and initial `EmergencyState::Normal`. Reverts if already initialized. |
-| `get_admin` | `(env) → Address` | — | Returns the current admin address. |
+| `initialize` | `(env, admin: Address)` | ??| One-time setup; sets admin and initial `EmergencyState::Normal`. Reverts if already initialized. |
+| `get_admin` | `(env) ??Address` | ??| Returns the current admin address. |
 | `propose_admin` | `(env, new_admin: Address)` | current admin | Step 1 of two-step admin transfer. Stores the proposed address. |
 | `accept_admin` | `(env)` | proposed admin | Step 2: accepts the role committed by `propose_admin`. |
 | `set_guardian` | `(env, guardian: Address)` | admin | Stores the guardian address allowed to enter `Shutdown`. |
-| `get_guardian` | `(env) → Option<Address>` | — | Returns the configured guardian address, if any. |
+| `get_guardian` | `(env) ??Option<Address>` | ??| Returns the configured guardian address, if any. |
 
 ### User Operations
 
 | Function | Signature | Auth | Returns | Description |
 |---|---|---|---|---|
-| `deposit` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | New collateral balance | Adds `amount` to the user's collateral. Enforces deposit cap. Blocked during Shutdown. |
-| `withdraw` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | New collateral balance | Removes `amount` from the user's collateral. Only allowed in Normal and Recovery states. |
-| `borrow` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Updated debt principal | Increases user debt; enforces `min_borrow` and protocol debt ceiling. Blocked during Shutdown/Recovery. |
-| `repay` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Remaining debt principal | Reduces user debt with interest accrued up to the current timestamp. Allowed in Normal and Recovery. |
-| `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) → Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to 50% of an undercollateralized borrower's debt and seizes proportional collateral (+ 10% bonus). Reverts if position is healthy (`hf >= 10000`). |
+| `deposit` | `(env, user: Address, amount: i128) ??Result<i128, LendingError>` | `user` | New collateral balance | Adds `amount` to the user's collateral. Enforces deposit cap. Blocked during Shutdown. |
+| `withdraw` | `(env, user: Address, amount: i128) ??Result<i128, LendingError>` | `user` | New collateral balance | Removes `amount` from the user's collateral. Only allowed in Normal and Recovery states. |
+| `borrow` | `(env, user: Address, amount: i128) ??Result<i128, LendingError>` | `user` | Updated debt principal | Increases user debt; enforces `min_borrow` and protocol debt ceiling. Blocked during Shutdown/Recovery. |
+| `repay` | `(env, user: Address, amount: i128) ??Result<i128, LendingError>` | `user` | Remaining debt principal | Reduces user debt with interest accrued up to the current timestamp. Allowed in Normal and Recovery. |
+| `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) ??Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to 50% of an undercollateralized borrower's debt and seizes proportional collateral (+ 10% bonus). Reverts if position is healthy (`hf >= 10000`). |
 
 ### Flash Loans
 
@@ -75,41 +75,41 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 
 | Function | Signature | Returns | Description |
 |---|---|---|---|
-| `get_position` | `(env, user: Address) → PositionSummary` | `{ collateral: i128, debt: i128, health_factor: i128 }` | Returns collateral balance, effective debt (principal + accrued interest), and health factor (`col * 8000 / debt`; `100_000_000` when debt is zero). Extends TTL on read. |
-| `get_debt_position` | `(env, user: Address) → DebtPosition` | `{ principal: i128, last_update: u64 }` | Raw debt state; useful for debugging or off-chain interest simulation. Extends TTL on read. |
-| `get_min_borrow` | `(env) → i128` | `i128` | Returns the current minimum borrow amount (default `0`). |
-| `get_health_factor` | `(env, user: Address) → i128` | `i128` | Convenience health-factor view using the same liquidation threshold scale; returns the no-debt sentinel when debt is zero. |
-| `get_protocol_metrics` | `(env) → ProtocolMetrics` | `{ total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` | Returns aggregate borrow/supply utilization and the current ledger sequence. |
+| `get_position` | `(env, user: Address) ??PositionSummary` | `{ collateral: i128, debt: i128, health_factor: i128 }` | Returns collateral balance, effective debt (principal + accrued interest), and health factor (`col * 8000 / debt`; `100_000_000` when debt is zero). Extends TTL on read. |
+| `get_debt_position` | `(env, user: Address) ??DebtPosition` | `{ principal: i128, last_update: u64 }` | Raw debt state; useful for debugging or off-chain interest simulation. Extends TTL on read. |
+| `get_min_borrow` | `(env) ??i128` | `i128` | Returns the current minimum borrow amount (default `0`). |
+| `get_health_factor` | `(env, user: Address) ??i128` | `i128` | Convenience health-factor view using the same liquidation threshold scale; returns the no-debt sentinel when debt is zero. |
+| `get_protocol_metrics` | `(env) ??ProtocolMetrics` | `{ total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` | Returns aggregate borrow/supply utilization and the current ledger sequence. |
 
 ### Oracle Price Controls
 
 | Function | Signature | Auth | Description |
 |---|---|---|---|
 | `set_oracle_pubkey` | `(env, pubkey: BytesN<32>)` | admin | Stores the Ed25519 public key used to verify signed price updates. |
-| `get_oracle_pubkey` | `(env) → Option<BytesN<32>>` | — | Returns the configured oracle public key, if any. |
-| `set_price` | `(env, caller: Address, asset: Address, price: i128, timestamp: u64, signature: BytesN<64>) → Result<(), LendingError>` | `caller` must be admin | Verifies a signed price payload and stores a fresh `PriceRecord` for `asset`. |
-| `get_price_record` | `(env, asset: Address) → Option<PriceRecord>` | — | Returns the stored oracle price and timestamp for `asset`, if present. |
+| `get_oracle_pubkey` | `(env) ??Option<BytesN<32>>` | ??| Returns the configured oracle public key, if any. |
+| `set_price` | `(env, caller: Address, asset: Address, price: i128, timestamp: u64, signature: BytesN<64>) ??Result<(), LendingError>` | `caller` must be admin | Verifies a signed price payload and stores a fresh `PriceRecord` for `asset`. |
+| `get_price_record` | `(env, asset: Address) ??Option<PriceRecord>` | ??| Returns the stored oracle price and timestamp for `asset`, if present. |
 
 ### Admin & Risk Controls
 
 | Function | Signature | Auth | Description |
 |---|---|---|---|
-| `set_min_borrow` | `(env, min_borrow: i128) → Result<(), LendingError>` | admin | Sets the minimum amount required to open or increase a borrow. |
-| `set_debt_ceiling` | `(env, ceiling: i128) → Result<(), LendingError>` | admin | Sets the maximum total protocol debt. |
-| `set_flash_fee` | `(env, fee_bps: i128) → Result<(), LendingError>` | admin | Sets the flash-loan fee in the inclusive range `[0, 1000]` bps. |
+| `set_min_borrow` | `(env, min_borrow: i128) ??Result<(), LendingError>` | admin | Sets the minimum amount required to open or increase a borrow. |
+| `set_debt_ceiling` | `(env, ceiling: i128) ??Result<(), LendingError>` | admin | Sets the maximum total protocol debt. |
+| `set_flash_fee` | `(env, fee_bps: i128) ??Result<(), LendingError>` | admin | Sets the flash-loan fee in the inclusive range `[0, 1000]` bps. |
 | `set_emergency_state` | `(env, new_state: EmergencyState)` | admin or guardian | Transitions between `Normal`, `Shutdown`, and `Recovery`. Emits `EmergencyStateChanged` event. |
 
 ### Emergency State Machine
 
 ```
-Normal ──► Shutdown ──► Recovery ──► Normal
+Normal ??????Shutdown ??????Recovery ??????Normal
 ```
 
 | State | Deposit | Borrow | Repay | Withdraw |
 |---|---|---|---|---|
-| `Normal` | ✅ | ✅ | ✅ | ✅ |
-| `Shutdown` | ❌ | ❌ | ❌ | ❌ |
-| `Recovery` | ❌ | ❌ | ✅ | ✅ |
+| `Normal` | ??| ??| ??| ??|
+| `Shutdown` | ??| ??| ??| ??|
+| `Recovery` | ??| ??| ??| ??|
 
 ### Error Reference
 
@@ -121,7 +121,7 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 | `LendingError::BelowMinimumBorrow` | 1008 | Borrow amount is below the protocol minimum. |
 | `LendingError::NotInitialized` | 1009 | Contract has not been initialized. |
 | `LendingError::AlreadyInitialized` | 1010 | `initialize` called on an already-live contract. |
-| `LendingError::PositionHealthy` | 1011 | Liquidation rejected — health factor is sufficient. |
+| `LendingError::PositionHealthy` | 1011 | Liquidation rejected ??health factor is sufficient. |
 | `LendingError::DebtCeilingExceeded` | 2001 | Borrow would exceed the global debt ceiling. |
 | `LendingError::DepositCapExceeded` | 2002 | Deposit would exceed the total deposit cap. |
 | `LendingError::InvalidFeeBps` | 2005 | Flash loan fee is outside the permitted range. |
@@ -132,7 +132,7 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 
 ---
 
-## 🔮 Planned Features
+## ?? Planned Features
 
 The functions listed below appear in older documentation but are **not yet implemented** in `src/lib.rs`. They are tracked for future milestones.
 
@@ -175,15 +175,16 @@ graph LR
 ### Execution Safety
 - **Reentrancy**: Flash loans set `DataKey::FlashActive = true` before the external call and clear it after. `deposit`, `withdraw`, and `repay` panic if the guard is active.
 - **Arithmetic Integrity**: All storage mutations use `checked_add` / `checked_sub`; overflows return `LendingError::Overflow` or panic with an informative message.
-- **Multi-User Isolation**: Storage keys include the user `Address` (e.g., `DataKey::Collateral(user)`), guaranteeing strict per-address namespacing — verified by `test_multi_user_isolation` in `src/lib.rs`.
+- **Multi-User Isolation**: Storage keys include the user `Address` (e.g., `DataKey::Collateral(user)`), guaranteeing strict per-address namespacing ??verified by `test_multi_user_isolation` in `src/lib.rs`.
 
 ---
 
 ## Documentation
 
-- [Interface Quick Reference](../../../../docs/interface_quick_reference.md) — compact, integrator-focused function table.
-- [Storage Layout](../../../../docs/storage.md) — persistent key schema and TTL policy.
-- [Developer Glossary](../../../../docs/glossary.md) — key protocol terms and numeric scales.
+- [Interface Quick Reference](../../../../docs/interface_quick_reference.md) ??compact, integrator-focused function table.
+- [Interest Rate Kink Model](RATE_MODEL.md) - borrow-rate parameters, formulas, and worked examples.
+- [Storage Layout](../../../../docs/storage.md) ??persistent key schema and TTL policy.
+- [Developer Glossary](../../../../docs/glossary.md) ??key protocol terms and numeric scales.
 
 ## License
 
