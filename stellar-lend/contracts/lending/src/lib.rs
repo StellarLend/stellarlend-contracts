@@ -496,6 +496,12 @@ impl LendingContract {
         Ok(updated.principal)
     }
 
+    /// Liquidates an unhealthy borrower position using the mechanics documented in
+    /// `../LIQUIDATION_MECHANICS.md`.
+    ///
+    /// The entrypoint settles debt, checks the health factor, caps repayment by the
+    /// close factor, applies the liquidation incentive to seized collateral, and
+    /// leaves residual debt when available collateral is exhausted.
     pub fn liquidate(
         env: Env,
         liquidator: Address,
@@ -1147,7 +1153,7 @@ mod test {
             },
         }]);
         client2.initialize(&admin2);
-        // Now call set_min_borrow as attacker with no auth — should panic.
+        // Now call set_min_borrow as attacker with no auth - should panic.
         client2.set_min_borrow(&100);
     }
 

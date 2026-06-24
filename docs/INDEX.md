@@ -10,7 +10,7 @@ This document provides a central, canonical entry point for all project document
 - [Security Assumptions](SECURITY_ASSUMPTIONS.md)
 - [Reentrancy Guarantees](REENTRANCY_GUARANTEES.md)
 
-These documents define the protocol’s core security model, including assumptions, invariants, and protections against reentrancy and malicious interactions.
+These documents define the protocol's core security model, including assumptions, invariants, and protections against reentrancy and malicious interactions.
 
 
 ### Access Control & Admin
@@ -31,6 +31,7 @@ Single-page reference for frontend integrators: unit scales, entrypoint signatur
 ### Lending & Risk
 
 - [Risk Parameters](risk_params.md)
+- [Liquidation Mechanics](../stellar-lend/contracts/lending/LIQUIDATION_MECHANICS.md)
 
 Covers protocol-level parameters such as collateral ratios, liquidation thresholds, and limits enforced by the lending system.
 
@@ -47,7 +48,7 @@ Provides step-by-step instructions for building, deploying, and initializing con
 - [Interface Quick Reference](interface_quick_reference.md)
 - [Lending Contract README](../stellar-lend/contracts/lending/README.md)
 
-Documents the **shipping** function surface of the lending contract (`src/lib.rs`), including exact signatures, return types, error codes, and emergency state permissions. Functions that are planned but not yet implemented are explicitly marked as 🔮 Planned.
+Documents the **shipping** function surface of the lending contract (`src/lib.rs`), including exact signatures, return types, error codes, and emergency state permissions. Functions that are planned but not yet implemented are explicitly marked as ?? Planned.
 
 
 ## Additional Documentation
@@ -58,7 +59,7 @@ Documents the **shipping** function surface of the lending contract (`src/lib.rs
 
 ## Historical Documents
 
-⚠️ The following documents are retained for reference but may be outdated or superseded:
+?? The following documents are retained for reference but may be outdated or superseded:
 
 - PR summaries
 - Temporary notes
