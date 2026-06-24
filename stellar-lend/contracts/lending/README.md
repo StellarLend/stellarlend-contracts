@@ -181,6 +181,7 @@ graph LR
 
 ## Documentation
 
+- [Cross-Asset Operations](cross_asset.md) - multi-asset valuation, health-factor aggregation, and worked examples.
 - [Interface Quick Reference](../../../../docs/interface_quick_reference.md) — compact, integrator-focused function table.
 - [Storage Layout](../../../../docs/storage.md) — persistent key schema and TTL policy.
 - [Developer Glossary](../../../../docs/glossary.md) — key protocol terms and numeric scales.

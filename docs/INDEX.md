@@ -31,6 +31,8 @@ Single-page reference for frontend integrators: unit scales, entrypoint signatur
 ### Lending & Risk
 
 - [Risk Parameters](risk_params.md)
+- [Cross-Asset Rules](CROSS_ASSET_RULES.md)
+- [Cross-Asset Operations](../stellar-lend/contracts/lending/cross_asset.md)
 
 Covers protocol-level parameters such as collateral ratios, liquidation thresholds, and limits enforced by the lending system.
 

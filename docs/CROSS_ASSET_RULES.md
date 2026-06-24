@@ -30,18 +30,28 @@ Each user has separate positions for each asset, tracking:
 
 ### Health Factor
 
-The health factor determines whether a position can be liquidated:
+The health factor determines whether a position can be liquidated. For the full
+formula, scales, and worked examples, see
+[Cross-Asset Operations](../stellar-lend/contracts/lending/cross_asset.md#aggregation-formula-and-scales).
 
+```text
+collateral_value_i = collateral_amount_i * price_i / PRICE_SCALE
+weighted_collateral_i = collateral_value_i * liquidation_threshold_i / BPS_SCALE
+debt_value_j = debt_amount_j * price_j / PRICE_SCALE
+
+total_weighted_collateral = sum(weighted_collateral_i)
+total_debt_value = sum(debt_value_j)
+health_factor = total_weighted_collateral * HF_SCALE / total_debt_value
 ```
-Health Factor = (Weighted Collateral Value / Weighted Debt Value) * 10000
-```
 
-- Health Factor >= 10000 (1.0): Position is healthy
-- Health Factor < 10000 (1.0): Position is liquidatable
+- `PRICE_SCALE = 10_000_000` for oracle prices.
+- `BPS_SCALE = 10_000` for risk weights.
+- `HF_SCALE = 10_000_000` in `src/math.rs`, where `10_000_000 = 1.0`.
+- Health factor `>= HF_SCALE`: position is healthy.
+- Health factor `< HF_SCALE`: position is liquidatable.
 
-**Weighted Collateral Value** = Sum of (Collateral Amount × Price × Collateral Factor) for all assets
-
-**Weighted Debt Value** = Sum of (Debt Amount × Price × Borrow Factor) for all assets
+When a UI or view presents health factor on a 10,000 scale, divide the
+`HF_SCALE` result by `1_000` using integer floor semantics.
 
 ## Borrowing Rules
 
@@ -358,8 +368,8 @@ Result:
 
 ## View Guarantees
 
-<<<<<<< HEAD
-The following guarantees hold for `get_cross_position_summary` and all other read-only view functions. These are verified by the invariant test suite in `cross_asset_view_invariants_test.rs`.
+The following guarantees describe the intended cross-asset summary behavior for
+`get_cross_position_summary` and other read-only view functions.
 
 ### G-1 — Read-only (no state mutation)
 
@@ -389,15 +399,17 @@ total_debt_usd = Σ_j  (debt_balances[j] × price_j) / 10_000_000
 
 `health_factor` is computed from the above totals using:
 
-```
+```text
 if total_debt_usd == 0:
-    health_factor = 1_000_000   # HF_NO_DEBT sentinel
+    health_factor = i128::MAX
 else:
-    weighted_collateral = Σ_i (collateral_value_i × ltv_i) / BPS_SCALE
-    health_factor       = weighted_collateral × BPS_SCALE / total_debt_usd
+    weighted_collateral_i = collateral_value_i * liquidation_threshold_i / BPS_SCALE
+    total_weighted_collateral = sum(weighted_collateral_i)
+    health_factor = total_weighted_collateral * HF_SCALE / total_debt_usd
 ```
 
-All divisions use integer floor semantics (truncation toward zero). `BPS_SCALE = 10_000`.
+All divisions use integer floor semantics (truncation toward zero).
+`BPS_SCALE = 10_000` and `HF_SCALE = 10_000_000`.
 
 ### G-6 — Monotonicity in collateral and debt
 
@@ -416,9 +428,9 @@ Depositing assets in any order produces the same `total_collateral_usd` and `hea
 
 ### G-9 — Rounding is conservative (floor division)
 
-All LTV weighting and USD-value conversions use integer floor division. This means:
+All risk weighting and USD-value conversions use integer floor division. This means:
 - `weighted_collateral` can only be less than or equal to the real-valued result.
-- A borrow is only permitted when the floor-divided health factor is **strictly above 1.0** (> `BPS_SCALE`).
+- A borrow is only permitted when the floor-divided health factor is above the configured healthy threshold.
 - Borrowers cannot extract more value than the floor-rounded weighted collateral.
 
 ### G-10 — No view-based exploitation
@@ -437,13 +449,11 @@ Because view functions are read-only and deterministic, there is no mechanism th
 | LTV = 0 | `weighted_collateral = 0`; borrow rejected by health check |
 | Overpayment of debt | Capped at outstanding balance; `total_debt_usd` goes to 0 |
 | Same asset in collateral and debt | Counted independently in both totals (no netting) |
-=======
-Read-only methods that surface position state — `get_user_position`,
-`get_collateral_balance`, `get_debt_balance`, `get_collateral_value`,
-`get_debt_value`, `get_health_factor`, `get_max_liquidatable_amount`, and
-`get_liquidation_incentive_amount` — are pinned by the invariant test suite
-in `stellar-lend/contracts/lending/src/views_test.rs`. The properties below
-hold for every user, asset configuration, and ordering of view calls.
+
+### Current View Helper Guarantees
+
+Read-only methods that surface position state should preserve the properties
+below for every user, asset configuration, and ordering of view calls.
 
 ### Consistency
 
@@ -481,7 +491,6 @@ Views never mutate state, never charge fees, and trigger only the read-only
 oracle lookup. Integrators MUST NOT rely on a view's value beyond the ledger
 height at which it was observed — oracle prices and risk parameters can
 change.
->>>>>>> origin
 
 ## Conclusion
 

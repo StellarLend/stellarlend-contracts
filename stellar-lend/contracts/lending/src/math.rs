@@ -92,7 +92,10 @@ pub fn compute_compound_interest(
     }
 }
 
-/// Compute health factor for a position
+/// Compute health factor for a position.
+///
+/// Cross-asset callers use the same BPS and fixed-point scales after aggregating
+/// oracle-priced collateral and debt values as described in `../cross_asset.md`.
 ///
 /// Formula: HF = (collateral_value * liquidation_threshold) / debt_value
 ///
