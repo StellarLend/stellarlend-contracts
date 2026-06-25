@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use stellar_lend_contract::math::{
+use stellarlend_lending::math::{
     compute_utilization,
     MathError,
     BPS_SCALE,

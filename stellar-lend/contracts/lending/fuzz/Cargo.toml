@@ -7,13 +7,15 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+[workspace]
+
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-stellar-lend-contract = { path = ".." }
+stellarlend-lending = { path = "..", features = ["fuzzing"] }
 
 # Fuzzing-specific dependencies
-soroban-sdk = { workspace = true, features = ["testutils"] }
+soroban-sdk = { version = "=25.3.0", features = ["testutils"] }
 
 [[bin]]
 name = "fuzz_accrual"
@@ -38,6 +40,10 @@ path = "fuzz_targets/fuzz_utilization.rs"
 [[bin]]
 name = "fuzz_liquidation"
 path = "fuzz_targets/fuzz_liquidation.rs"
+
+[[bin]]
+name = "fuzz_repay_borrow_roundtrip"
+path = "fuzz_targets/fuzz_repay_borrow_roundtrip.rs"
 
 [profile.release]
 opt-level = 3
