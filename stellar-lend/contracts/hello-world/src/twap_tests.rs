@@ -182,10 +182,7 @@ mod tests {
         let twap = get_twap(&env, &asset, MIN_WINDOW_SECS);
         // Price should be approximately 1:1 (tiny swaps barely move the reserves).
         let price = twap as f64 / PRICE_SCALE as f64;
-        assert!(
-            (price - 1.0_f64).abs() < 0.01,
-            "expected ~1.0, got {price}"
-        );
+        assert!((price - 1.0_f64).abs() < 0.01, "expected ~1.0, got {price}");
     }
 
     #[test]
@@ -196,10 +193,7 @@ mod tests {
 
         let twap = get_twap(&env, &asset, 150); // 30 ledgers
         let price = twap as f64 / PRICE_SCALE as f64;
-        assert!(
-            (price - 1.0_f64).abs() < 0.01,
-            "expected ~1.0, got {price}"
-        );
+        assert!((price - 1.0_f64).abs() < 0.01, "expected ~1.0, got {price}");
     }
 
     #[test]
@@ -210,10 +204,7 @@ mod tests {
 
         let twap = get_twap(&env, &asset, 1500); // 300 ledgers — use all available history
         let price = twap as f64 / PRICE_SCALE as f64;
-        assert!(
-            (price - 1.0_f64).abs() < 0.02,
-            "expected ~1.0, got {price}"
-        );
+        assert!((price - 1.0_f64).abs() < 0.02, "expected ~1.0, got {price}");
     }
 
     // -----------------------------------------------------------------------

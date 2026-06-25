@@ -20,7 +20,9 @@
 use crate::deposit::DepositDataKey;
 use crate::events::{emit_price_updated, PriceUpdatedEvent};
 use crate::risk_management::get_admin;
-use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, IntoVal, Map, Symbol, Val, Vec};
+use soroban_sdk::{
+    contracterror, contracttype, symbol_short, Address, Env, IntoVal, Map, Symbol, Val, Vec,
+};
 
 use crate::amm_twap;
 
@@ -214,9 +216,13 @@ fn check_price_deviation(env: &Env, new_price: i128, old_price: i128) -> Result<
     }
     let config = get_oracle_config(env);
     let diff = if new_price > old_price {
-        new_price.checked_sub(old_price).ok_or(OracleError::Overflow)?
+        new_price
+            .checked_sub(old_price)
+            .ok_or(OracleError::Overflow)?
     } else {
-        old_price.checked_sub(new_price).ok_or(OracleError::Overflow)?
+        old_price
+            .checked_sub(new_price)
+            .ok_or(OracleError::Overflow)?
     };
     let deviation_bps = diff
         .checked_mul(10000)
@@ -262,10 +268,8 @@ fn cache_price(env: &Env, asset: &Address, price: i128) {
 // ---------------------------------------------------------------------------
 
 fn emit_oracle_stale_event(env: &Env, asset: &Address, age_secs: u64) {
-    env.events().publish(
-        (symbol_short!("OrcStale"), asset.clone()),
-        age_secs,
-    );
+    env.events()
+        .publish((symbol_short!("OrcStale"), asset.clone()), age_secs);
 }
 
 fn emit_oracle_fallback_event(env: &Env, asset: &Address) {
@@ -488,7 +492,9 @@ pub fn set_primary_oracle(
         return Err(OracleError::Unauthorized);
     }
     let primary_key = OracleDataKey::PrimaryOracle(asset);
-    env.storage().persistent().set(&primary_key, &primary_oracle);
+    env.storage()
+        .persistent()
+        .set(&primary_key, &primary_oracle);
     Ok(())
 }
 
@@ -503,7 +509,9 @@ pub fn set_fallback_oracle(
         return Err(OracleError::InvalidOracle);
     }
     let fallback_key = OracleDataKey::FallbackOracle(asset);
-    env.storage().persistent().set(&fallback_key, &fallback_oracle);
+    env.storage()
+        .persistent()
+        .set(&fallback_key, &fallback_oracle);
     Ok(())
 }
 

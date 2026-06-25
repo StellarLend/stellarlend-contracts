@@ -40,7 +40,6 @@
 ///
 /// Historic snapshots are written every `SNAPSHOT_INTERVAL_SECS` seconds to bound the lookup
 /// window granularity.  Lookups binary-search the available snapshots.
-
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Map, Symbol, Vec};
 
 // ---------------------------------------------------------------------------
@@ -179,10 +178,7 @@ fn maybe_write_snapshot(env: &Env, asset: &Address, state: &TwapPoolState) {
         .get(&snaps_key)
         .unwrap_or_else(|| Vec::new(env));
 
-    let last_snap_ts = snaps
-        .last()
-        .map(|s: TwapSnapshot| s.timestamp)
-        .unwrap_or(0);
+    let last_snap_ts = snaps.last().map(|s: TwapSnapshot| s.timestamp).unwrap_or(0);
 
     if state.last_timestamp.saturating_sub(last_snap_ts) >= SNAPSHOT_INTERVAL_SECS {
         let snap = TwapSnapshot {
@@ -267,13 +263,11 @@ pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> u128 {
     match snap_start {
         None => {
             // No snapshot before target_start — pool is too new, use all available history.
-            let earliest_snap = snaps
-                .first()
-                .unwrap_or(TwapSnapshot {
-                    timestamp: current_state.last_timestamp,
-                    price0_cumulative: 0,
-                    price1_cumulative: 0,
-                });
+            let earliest_snap = snaps.first().unwrap_or(TwapSnapshot {
+                timestamp: current_state.last_timestamp,
+                price0_cumulative: 0,
+                price1_cumulative: 0,
+            });
 
             let actual_window = now.saturating_sub(earliest_snap.timestamp);
             assert!(
