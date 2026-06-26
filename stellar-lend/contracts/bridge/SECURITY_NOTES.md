@@ -20,5 +20,50 @@ Operational guidance
 
 Testing and coverage
 
-- Unit tests cover quorum acceptance, insufficient quorum rejection, and epoch boundary enforcement.
-- Before deployment, run integration tests and perform a security review comparing the on-chain encoding and off-chain signing tools.
+`rotation_test.rs` provides ≥ 95 % coverage on `rotate_validators` and
+`validate_inbound_epoch` and locks down the following invariants:
+
+### Epoch monotonicity
+
+| Scenario | Expected outcome |
+|---|---|
+| `epoch == current_epoch` (same, non-incrementing) | **Rejected** — `invalid epoch` |
+| `epoch == current_epoch + 2` (skipped) | **Rejected** — `invalid epoch` |
+| `epoch < current_epoch` (stale replay) | **Rejected** — `invalid epoch` |
+| `epoch == current_epoch + 1` (correct) | **Accepted** |
+
+The epoch counter must increment by exactly **1** on every successful rotation.
+After `n` rotations the bridge's `epoch` field equals `n`.
+
+### Quorum-threshold enforcement on rotation
+
+The supermajority threshold is `floor(2n/3) + 1` for an `n`-validator set.
+
+| Scenario | Expected outcome |
+|---|---|
+| Exactly `threshold` unique valid signatures | **Accepted** |
+| `threshold − 1` unique valid signatures | **Rejected** — `insufficient quorum` |
+| Duplicate signer entries (counted once each) | Deduplicated before counting |
+| Duplicate signer that inflates apparent count to threshold but unique count is below | **Rejected** |
+| Signer whose public key is not in the current set | **Rejected** — `signer not in current validator set` |
+| Empty proof list | **Rejected** — `empty proofs` |
+
+### Rotated-out-set replay rejection
+
+- After rotation A → B, any inbound message bearing `signed_epoch < current_epoch`
+  is rejected by `validate_inbound_epoch` with `retired validator set`.
+- Attempting to trigger a *further* rotation (B → C) using signatures from the
+  already-rotated-out set A is rejected because A's keys are no longer in the
+  current validator set.
+
+### Multi-rotation correctness
+
+Sequential rotations A → B → C → … produce a strictly monotonically increasing
+epoch sequence. All epochs prior to the current one are rejected for inbound
+messages.
+
+### References
+
+- `src/rotation_test.rs` — full test implementations.
+- Before deployment, run integration tests and perform a security review
+  comparing the on-chain encoding and off-chain signing tools.

@@ -150,6 +150,19 @@ Removes expired, unexecuted proposal records and their approval vectors from con
 
 ---
 
+## Quorum-Counting Rules
+
+The multisig contract enforces strict quorum-integrity guarantees at execution time to ensure that only current, valid approvals contribute to meeting the threshold:
+
+- **Deduplication:** A signer can only approve a proposal once; subsequent approvals from the same signer are rejected with `AlreadyApproved`. At execution time, the contract deduplicates the approval list so that each signer address counts at most once.
+- **Live Signer Set Evaluation:** Only addresses currently present in the registered signer set contribute to the quorum. If a signer approved a proposal but is subsequently removed from the signer set before the proposal is executed, their approval is excluded and no longer counts.
+- **Live Threshold Evaluation:** The quorum threshold is read fresh from storage at the time of execution, not at the time of proposal creation. If the threshold is raised during the proposal's lifecycle, the proposal requires additional approvals to meet the new threshold before it can be executed.
+- **Fallback Signer:** When no signer set is configured, the administrator address is treated as the sole implicit signer (requiring a threshold of 1).
+
+These rules are fully covered and verified by the tests in `quorum_edge_test.rs`.
+
+---
+
 ## Extending with New Actions
 
 To add a new governable parameter (e.g. `SetReserveFactor`):

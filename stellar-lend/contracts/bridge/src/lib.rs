@@ -101,6 +101,9 @@ impl Bridge {
 }
 
 #[cfg(test)]
+mod rotation_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ed25519_dalek::{Keypair, Signer};

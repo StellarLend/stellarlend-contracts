@@ -145,3 +145,172 @@ fn adversarial_interleavings_reject_invalid_withdraw_and_repay() {
     assert_eq!(pos.collateral, 0);
     assert_eq!(pos.debt, 0);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// debt.rs property-based invariants
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn arb_principal() -> impl Strategy<Value = i128> {
+    0i128..=1_000_000_000_000i128
+}
+
+fn arb_elapsed() -> impl Strategy<Value = u64> {
+    0u64..=157_680_000u64 // 0..5 years in seconds
+}
+
+fn arb_rate_bps() -> impl Strategy<Value = i128> {
+    0i128..=10_000i128 // 0..100%
+}
+
+fn arb_repay_amount() -> impl Strategy<Value = i128> {
+    0i128..=2_000_000_000_000i128
+}
+
+fn arb_borrow_amount() -> impl Strategy<Value = i128> {
+    1i128..=1_000_000_000_000i128
+}
+
+fn make_position(principal: i128, last_update: u64) -> debt::DebtPosition {
+    debt::DebtPosition {
+        principal,
+        last_update,
+    }
+}
+
+proptest! {
+    // INV-1: repay never makes principal negative and result <= effective_debt
+    #[test]
+    fn prop_repay_never_increases_principal(
+        principal in arb_principal(),
+        elapsed in arb_elapsed(),
+        rate in arb_rate_bps(),
+        repay_amt in arb_repay_amount(),
+    ) {
+        let now = 1_000_000u64;
+        let pos = make_position(principal, now.saturating_sub(elapsed));
+        let eff = debt::effective_debt(&pos, now, rate).unwrap_or(principal);
+        let result = debt::repay_amount(pos, now, repay_amt, rate);
+        if let Ok(settled) = result {
+            prop_assert!(settled.principal >= 0,
+                "repay produced negative principal: {}", settled.principal);
+            prop_assert!(settled.principal <= eff,
+                "repay result {} > effective_debt {}", settled.principal, eff);
+        }
+    }
+
+    // INV-2: full repay zeroes principal
+    #[test]
+    fn prop_full_repay_zeroes_principal(
+        principal in arb_principal(),
+        elapsed in arb_elapsed(),
+        rate in arb_rate_bps(),
+    ) {
+        let now = 1_000_000u64;
+        let pos = make_position(principal, now.saturating_sub(elapsed));
+        let eff = debt::effective_debt(&pos, now, rate).unwrap_or(principal);
+        let result = debt::repay_amount(pos, now, eff, rate);
+        if let Ok(settled) = result {
+            prop_assert_eq!(settled.principal, 0);
+        }
+    }
+
+    // INV-3: borrow increases principal by exactly amount after settlement
+    #[test]
+    fn prop_borrow_increases_principal_by_amount(
+        principal in arb_principal(),
+        elapsed in arb_elapsed(),
+        rate in arb_rate_bps(),
+        borrow_amt in arb_borrow_amount(),
+    ) {
+        let now = 1_000_000u64;
+        let pos = make_position(principal, now.saturating_sub(elapsed));
+        let eff = debt::effective_debt(&pos, now, rate).unwrap_or(principal);
+        let result = debt::borrow_amount(pos, now, borrow_amt, rate);
+        if let Ok(settled) = result {
+            prop_assert_eq!(settled.principal, eff + borrow_amt);
+        }
+    }
+
+    // INV-4: effective_debt >= principal for non-negative rates
+    #[test]
+    fn prop_effective_debt_gte_principal(
+        principal in arb_principal(),
+        elapsed in arb_elapsed(),
+        rate in arb_rate_bps(),
+    ) {
+        let now = 1_000_000u64;
+        let pos = make_position(principal, now.saturating_sub(elapsed));
+        let eff = debt::effective_debt(&pos, now, rate);
+        if let Ok(total) = eff {
+            prop_assert!(total >= principal,
+                "effective_debt {} < principal {}", total, principal);
+        }
+    }
+
+    // INV-5: accrue_interest returns non-negative for non-negative inputs
+    #[test]
+    fn prop_accrue_interest_non_negative(
+        principal in arb_principal(),
+        elapsed in arb_elapsed(),
+        rate in arb_rate_bps(),
+    ) {
+        let interest = debt::accrue_interest(principal, elapsed, rate);
+        if let Ok(i) = interest {
+            prop_assert!(i >= 0,
+                "accrue_interest returned negative: {}", i);
+        }
+    }
+
+    // INV-6: settle_accrual never decreases principal
+    #[test]
+    fn prop_settle_accrual_never_decreases_principal(
+        principal in arb_principal(),
+        elapsed in arb_elapsed(),
+        rate in arb_rate_bps(),
+    ) {
+        let now = 1_000_000u64;
+        let pos = make_position(principal, now.saturating_sub(elapsed));
+        let result = debt::settle_accrual(&pos, now, rate);
+        if let Ok(settled) = result {
+            prop_assert!(settled.principal >= principal,
+                "settle_accrual decreased principal: {} < {}", settled.principal, principal);
+        }
+    }
+}
+
+// Deterministic overflow test for extreme values
+#[test]
+fn debt_functions_return_overflow_on_extreme_values() {
+    let now = 1_000_000u64;
+    let pos = make_position(i128::MAX / 2, 0);
+
+    // accrue_interest overflows with extreme principal
+    let result = debt::accrue_interest(i128::MAX / 2, 31_536_000, 10_000);
+    assert!(result.is_err());
+
+    // settle_accrual overflows when interest + principal > i128::MAX
+    let result = debt::settle_accrual(&pos, now, 10_000);
+    assert!(result.is_err());
+
+    // effective_debt overflows when principal + interest > i128::MAX
+    let result = debt::effective_debt(&pos, now, 10_000);
+    assert!(result.is_err());
+
+    // borrow_amount overflows when settled principal + amount > i128::MAX
+    let small_overflow_pos = make_position(i128::MAX - 5, 0);
+    let result = debt::borrow_amount(small_overflow_pos, now, 10, 0);
+    assert!(result.is_err());
+
+    // repay with amount <= 0 returns InvalidAmount
+    let pos = make_position(100, 0);
+    let result = debt::repay_amount(pos, now, 0, 500);
+    assert!(result.is_err());
+
+    // borrow with amount <= 0 returns InvalidAmount
+    let pos = make_position(100, 0);
+    let result = debt::borrow_amount(pos, now, 0, 500);
+    assert!(result.is_err());
+    let pos = make_position(100, 0);
+    let result = debt::borrow_amount(pos, now, -1, 500);
+    assert!(result.is_err());
+}

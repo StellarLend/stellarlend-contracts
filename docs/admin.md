@@ -85,10 +85,23 @@ uncontrolled address:
    - Stores `new_admin` under `DataKey::PendingAdmin`.
    - Guarded by `require_admin`, so only the current admin can nominate a
      successor.
+   - Re-proposing replaces any previously pending admin.
 2. **Accept**: `new_admin` calls `accept_admin()`.
-   - `new_admin.require_auth()` is called — the successor must sign the
-     acceptance.
-   - Clears `PendingAdmin` and overwrites `Admin` with `new_admin`.
+   - If no proposal exists, the contract returns `LendingError::PendingAdminNotSet`.
+   - Otherwise `new_admin.require_auth()` is called — the successor must sign
+     the acceptance.
+   - On success, `PendingAdmin` is cleared and `Admin` is overwritten with
+     `new_admin`.
+
+### State machine
+
+| Current state | `propose_admin(new_admin)` | `accept_admin()` |
+|---|---|---|
+| No pending admin | Sets `PendingAdmin = new_admin` | Returns `PendingAdminNotSet` |
+| Pending admin set | Overwrites `PendingAdmin` with `new_admin` | If signed by the pending admin, promotes to `Admin` and clears `PendingAdmin` |
+
+Re-proposing while a handover is in flight is intentional. The latest proposal
+wins, which lets the current admin correct a bad nomination before acceptance.
 
 ---
 
@@ -110,7 +123,7 @@ private key in a hot path.
 initialize          ── no auth (deployer trusted)
 ─── already-initialized guard prevents re-init ───────────────────────────
 propose_admin       ── require_admin()
-accept_admin        ── pending_admin.require_auth()
+accept_admin        ── PendingAdminNotSet if empty, else pending_admin.require_auth()
 set_min_borrow      ── require_admin()
 set_debt_ceiling    ── require_admin()
 set_flash_fee       ── require_admin()

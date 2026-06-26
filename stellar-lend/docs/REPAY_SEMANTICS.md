@@ -13,22 +13,26 @@ Integrators must understand which path they are calling.
 pub fn repay(env: &Env, user: Address, asset: Address, amount: i128) -> Result<(), BorrowError>
 ```
 
-### Overpay behaviour: **Error**
-If `amount` exceeds the total outstanding debt (principal + accrued interest), `repay` returns
-`BorrowError::RepayAmountTooHigh`. The position is left unchanged.
+### Overpay behaviour: **Clamp to zero, refund excess**
+If `amount` exceeds the total outstanding debt (principal + accrued interest), the repay
+clamps the consumed amount to the outstanding debt, zeroing the principal exactly. The excess
+payment is refunded conceptually (not consumed). Integrators must calculate the refund as:
 
-**Integrator requirement**: read the exact current balance with `get_debt_balance()` before
-submitting a repay. Never pass a hardcoded "large" amount expecting it to be silently capped.
+```
+refund = max(0, amount - (principal + accrued_interest))
+```
+
+**Integrator requirement**: For transactions that handle user funds, query the exact current debt
+with `get_debt_position()` before submitting a repay. This allows precise overpayment refund handling.
 
 ### Interest ordering
 Interest is settled **before** principal on every repay:
 
-1. `calculate_interest` is called at repay time and added to `interest_accrued`.
-2. The repay amount is first consumed against `interest_accrued`.
-3. Any remaining amount reduces `borrowed_amount`.
+1. `settle_accrual` is called at repay time and accrued interest is added to the principal.
+2. The repay amount is consumed against the settled total (principal + interest).
+3. If repay amount exceeds settled total, the principal is clamped to 0 and the excess is refunded.
 
-This means a repay of exactly `interest_accrued` zeros interest without touching principal, and
-the borrower retains their collateral-backed position.
+This means an overpayment always results in zero debt, and interest is never carried forward.
 
 ### Dust prevention
 `calculate_interest` uses **ceiling division**:
