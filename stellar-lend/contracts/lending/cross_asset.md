@@ -69,6 +69,8 @@ The protocol uses a deterministic valuation model for multi-collateral positions
 - **Health Factor**:
   - $1,690 / $1,000 = 1.69 (16,900 bps)
 
+The contract’s view function `get_health_factor` will return `16,900` for this position.
+
 ### Oracle Requirements for Multi-Collateral
 
 To ensure safe and deterministic valuation, the oracle must satisfy the following:
@@ -82,3 +84,7 @@ To ensure safe and deterministic valuation, the oracle must satisfy the followin
 - **Price Feeds**: The implementation relies on price oracles. Ensure oracles are reliable and current.
 - **Rounding**: All calculations use conservative rounding (floor for collateral value and health factor) to protect the protocol.
 - **Auth**: Critical operations require user or admin authorization.
+
+## Cross‑Linking
+- See the formal risk parameters in [CROSS_ASSET_RULES.md](../docs/CROSS_ASSET_RULES.md).
+- Overview of the lending module is in the main [README.md](README.md).
