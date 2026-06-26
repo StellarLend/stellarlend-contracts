@@ -1,6 +1,13 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Env};
+
+#[cfg(test)]
+mod liquidity_math;
+#[cfg(test)]
+mod math;
+#[cfg(test)]
+mod mint_shares_proptest;
 
 #[contract]
 pub struct AmmContract;
@@ -62,12 +69,14 @@ impl AmmContract {
         let numerator = amount_in_with_fee.checked_mul(rb).expect("overflow");
         // denominator = reserve_in * 10000 + amount_in_with_fee
         let denom_part = ra.checked_mul(10_000_i128).expect("overflow");
-        let denominator = denom_part.checked_add(amount_in_with_fee).expect("overflow");
+        let denominator = denom_part
+            .checked_add(amount_in_with_fee)
+            .expect("overflow");
 
         let amount_out = numerator / denominator;
 
         let new_ra = ra.checked_add(amount_in).expect("overflow");
-        let new_rb = rb.checked_sub(amount_out);
+        let new_rb = rb.checked_sub(amount_out).expect("overflow");
         assert_k_monotonic(ra, rb, new_ra, new_rb, true);
 
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
@@ -86,16 +95,28 @@ impl AmmContract {
 // ---------------------------------------------------------------------------
 // Core invariant helper
 // ---------------------------------------------------------------------------
-fn assert_k_monotonic(before_a: i128, before_b: i128, after_a: i128, after_b: i128, expect_increase: bool) {
+fn assert_k_monotonic(
+    before_a: i128,
+    before_b: i128,
+    after_a: i128,
+    after_b: i128,
+    expect_increase: bool,
+) {
     let k_before = before_a.checked_mul(before_b).expect("k overflow before");
     let k_after = after_a.checked_mul(after_b).expect("k overflow after");
     if expect_increase {
         if k_after < k_before {
-            panic!("Invariant violation: k decreased (before={}, after={})", k_before, k_after);
+            panic!(
+                "Invariant violation: k decreased (before={}, after={})",
+                k_before, k_after
+            );
         }
     } else {
         if k_after > k_before {
-            panic!("Invariant violation: k increased on removal (before={}, after={})", k_before, k_after);
+            panic!(
+                "Invariant violation: k increased on removal (before={}, after={})",
+                k_before, k_after
+            );
         }
     }
 }
@@ -106,7 +127,6 @@ fn assert_k_monotonic(before_a: i128, before_b: i128, after_a: i128, after_b: i1
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
 
     #[test]
     fn fuzz_swap_k_monotonic() {
@@ -127,7 +147,15 @@ mod test {
                     let (new_ra, new_rb) = client.get_reserves();
                     let k_before = ra.checked_mul(rb).unwrap();
                     let k_after = new_ra.checked_mul(new_rb).unwrap();
-                    assert!(k_after >= k_before, "k decreased: ra={}, rb={}, amt={}, k_before={}, k_after={}", ra, rb, amt, k_before, k_after);
+                    assert!(
+                        k_after >= k_before,
+                        "k decreased: ra={}, rb={}, amt={}, k_before={}, k_after={}",
+                        ra,
+                        rb,
+                        amt,
+                        k_before,
+                        k_after
+                    );
                 }
             }
         }

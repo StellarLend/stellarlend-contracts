@@ -1,5 +1,3 @@
-#![no_std]
-
 /// Calculates the integer square root of `y` using Newton's method.
 /// This implementation ensures fast convergence and avoids overflow
 /// by carefully choosing the initial guess and avoiding additions

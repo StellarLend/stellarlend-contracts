@@ -1866,6 +1866,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellarlend-amm"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "stellarlend-lending"
 version = "0.1.0"
 dependencies = [
