@@ -20,6 +20,8 @@ mod health_factor_edge_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
+mod rate_smoothing_test;
+#[cfg(test)]
 mod rounding_drift_test;
 
 use debt::{
@@ -946,7 +948,8 @@ fn current_borrow_rate(env: &Env) -> i128 {
             } else {
                 0
             };
-            rate_model::compute_borrow_rate(utilization_bps, &p)
+            let target_rate = rate_model::compute_borrow_rate(utilization_bps, &p);
+            rate_model::update_and_get_rate(env, target_rate, &p)
         }
         None => DEFAULT_APR_BPS,
     }
@@ -1014,8 +1017,10 @@ mod borrow_rate_snapshot_test {
     }
 }
 
+#[cfg(test)]
 #[contract]
 pub struct MockAmm;
+#[cfg(test)]
 #[contractimpl]
 impl MockAmm {
     pub fn swap(
@@ -1035,8 +1040,10 @@ impl MockAmm {
     }
 }
 
+#[cfg(test)]
 #[contract]
 pub struct BadAmm;
+#[cfg(test)]
 #[contractimpl]
 impl BadAmm {
     pub fn swap(
@@ -1052,8 +1059,10 @@ impl BadAmm {
     }
 }
 
+#[cfg(test)]
 #[contract]
 pub struct MockAsset;
+#[cfg(test)]
 #[contractimpl]
 impl MockAsset {}
 
