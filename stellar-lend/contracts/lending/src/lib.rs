@@ -5,7 +5,47 @@ pub mod rounding_strategy;
 #[cfg(test)]
 mod interest_drift_regression_test;
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+#[cfg(test)]
+mod liquidate_perf_test;
+
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, Symbol};
+#[cfg(any(test, feature = "testutils"))]
+extern crate std;
+
+#[cfg(any(test, feature = "testutils"))]
+std::thread_local! {
+    pub static STORAGE_READ_COUNT: core::cell::Cell<u32> = core::cell::Cell::new(0);
+}
+
+#[cfg(any(test, feature = "testutils"))]
+pub fn get_storage_read_count() -> u32 {
+    STORAGE_READ_COUNT.with(|c| c.get())
+}
+
+#[cfg(any(test, feature = "testutils"))]
+pub fn reset_storage_read_count() {
+    STORAGE_READ_COUNT.with(|c| c.set(0));
+}
+
+fn read_persistent<K, V>(env: &Env, key: &K) -> Option<V>
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + core::fmt::Debug,
+    V: soroban_sdk::TryFromVal<Env, soroban_sdk::Val>,
+{
+    #[cfg(any(test, feature = "testutils"))]
+    {
+        STORAGE_READ_COUNT.with(|c| c.set(c.get() + 1));
+    }
+    env.storage().persistent().get(key)
+}
+
+fn write_persistent<K, V>(env: &Env, key: &K, val: &V)
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+    V: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+{
+    env.storage().persistent().set(key, val);
+}
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -14,11 +54,30 @@ pub struct PositionSummary {
     pub debt: i128,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssetParams {
+    pub is_active: bool,
+    pub collateral_factor: i128, // in BPS, e.g. 8000
+    pub liquidation_bonus: i128, // in BPS, e.g. 1000
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiquidationResult {
+    pub collateral_seized: i128,
+    pub debt_repaid: i128,
+    pub bad_debt: i128,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum LendingError {
     BelowMinimumBorrow = 1008,
+    InvalidAmount = 1009,
+    MarketNotFound = 1010,
+    PositionSolvent = 1011,
 }
 
 #[contract]
@@ -112,6 +171,181 @@ impl LendingContract {
             debt,
         }
     }
+
+    /// Set asset parameters (admin-only).
+    pub fn set_asset_params(
+        env: Env,
+        asset: Address,
+        is_active: bool,
+        collateral_factor: i128,
+        liquidation_bonus: i128,
+    ) {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        let params = AssetParams {
+            is_active,
+            collateral_factor,
+            liquidation_bonus,
+        };
+        write_persistent(&env, &("params", asset), &params);
+    }
+
+    /// Get asset parameters.
+    pub fn get_asset_params(env: Env, asset: Address) -> Option<AssetParams> {
+        read_persistent(&env, &("params", asset))
+    }
+
+    /// Set asset price (admin-only).
+    pub fn set_asset_price(env: Env, asset: Address, price: i128) {
+        let admin = Self::get_admin(env.clone());
+        admin.require_auth();
+        write_persistent(&env, &("price", asset), &price);
+    }
+
+    /// Get asset price.
+    pub fn get_asset_price(env: Env, asset: Address) -> i128 {
+        read_persistent(&env, &("price", asset)).unwrap_or(0)
+    }
+
+    /// Deposit collateral for a specific asset.
+    pub fn deposit_asset(env: Env, user: Address, asset: Address, amount: i128) -> i128 {
+        user.require_auth();
+        let key = ("col", user.clone(), asset.clone());
+        let current: i128 = read_persistent(&env, &key).unwrap_or(0);
+        let new_balance = current + amount;
+        write_persistent(&env, &key, &new_balance);
+        new_balance
+    }
+
+    /// Borrow a specific asset.
+    pub fn borrow_asset(env: Env, user: Address, asset: Address, amount: i128) -> Result<i128, LendingError> {
+        user.require_auth();
+        let min_borrow = Self::get_min_borrow(env.clone());
+        if amount < min_borrow {
+            return Err(LendingError::BelowMinimumBorrow);
+        }
+        let key = ("debt", user.clone(), asset.clone());
+        let current: i128 = read_persistent(&env, &key).unwrap_or(0);
+        let new_debt = current + amount;
+        write_persistent(&env, &key, &new_debt);
+        Ok(new_debt)
+    }
+
+    /// Liquidate an undercollateralized position.
+    ///
+    /// This function is optimized to minimize storage reads. It loads all required
+    /// parameters and balances in exactly 6 persistent storage reads.
+    pub fn liquidate(
+        env: Env,
+        liquidator: Address,
+        borrower: Address,
+        debt_asset: Address,
+        collateral_asset: Address,
+        amount: i128,
+    ) -> Result<LiquidationResult, LendingError> {
+        liquidator.require_auth();
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        // --- BATCHED STORAGE READS (Exactly 6 reads) ---
+        // 1. Read debt asset parameters
+        let debt_params: AssetParams = read_persistent(&env, &("params", debt_asset.clone()))
+            .ok_or(LendingError::MarketNotFound)?;
+        // 2. Read collateral asset parameters
+        let col_params: AssetParams = read_persistent(&env, &("params", collateral_asset.clone()))
+            .ok_or(LendingError::MarketNotFound)?;
+        // 3. Read borrower collateral balance
+        let col_balance: i128 = read_persistent(&env, &("col", borrower.clone(), collateral_asset.clone()))
+            .unwrap_or(0);
+        // 4. Read borrower debt balance
+        let debt_balance: i128 = read_persistent(&env, &("debt", borrower.clone(), debt_asset.clone()))
+            .unwrap_or(0);
+        // 5. Read debt asset price
+        let debt_price: i128 = read_persistent(&env, &("price", debt_asset.clone()))
+            .unwrap_or(0);
+        // 6. Read collateral asset price
+        let col_price: i128 = read_persistent(&env, &("price", collateral_asset.clone()))
+            .unwrap_or(0);
+        // -----------------------------------------------
+
+        // Guard: active markets
+        if !debt_params.is_active || !col_params.is_active {
+            return Err(LendingError::MarketNotFound);
+        }
+
+        // Guard: borrower has debt
+        if debt_balance <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        // Verify position is unhealthy (health factor < 1.0)
+        let borrow_value = debt_balance
+            .checked_mul(debt_price)
+            .ok_or(LendingError::InvalidAmount)?;
+        let col_value = col_balance
+            .checked_mul(col_price)
+            .ok_or(LendingError::InvalidAmount)?;
+        let max_borrow = col_value
+            .checked_mul(col_params.collateral_factor)
+            .ok_or(LendingError::InvalidAmount)?
+            / 10000;
+
+        if borrow_value <= max_borrow {
+            return Err(LendingError::PositionSolvent);
+        }
+
+        // Apply close factor (50%)
+        let max_repay = debt_balance
+            .checked_mul(5000)
+            .ok_or(LendingError::InvalidAmount)?
+            / 10000;
+        let actual_repay = amount.min(max_repay);
+        if actual_repay <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        // Compute collateral to seize (including liquidation bonus)
+        let bonus_factor = 10000i128
+            .checked_add(col_params.liquidation_bonus)
+            .ok_or(LendingError::InvalidAmount)?;
+        let seized_value = actual_repay
+            .checked_mul(debt_price)
+            .ok_or(LendingError::InvalidAmount)?
+            .checked_mul(bonus_factor)
+            .ok_or(LendingError::InvalidAmount)?
+            / 10000;
+        
+        if col_price <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        let collateral_to_seize = seized_value / col_price;
+        let actual_seized = collateral_to_seize.min(col_balance);
+
+        // Check for shortfall (bad debt)
+        let mut bad_debt = 0i128;
+        if actual_seized < collateral_to_seize {
+            let shortfall_usd = (collateral_to_seize - actual_seized)
+                .checked_mul(col_price)
+                .ok_or(LendingError::InvalidAmount)?;
+            if debt_price > 0 {
+                bad_debt = shortfall_usd / debt_price;
+            }
+        }
+
+        // Update balances in storage
+        let new_col = col_balance - actual_seized;
+        let new_debt = debt_balance - actual_repay;
+
+        write_persistent(&env, &("col", borrower.clone(), collateral_asset.clone()), &new_col);
+        write_persistent(&env, &("debt", borrower.clone(), debt_asset.clone()), &new_debt);
+
+        Ok(LiquidationResult {
+            collateral_seized: actual_seized,
+            debt_repaid: actual_repay,
+            bad_debt,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -204,7 +438,7 @@ mod test {
 
     #[test]
     fn test_set_min_borrow_admin_only() {
-        let (_env, client, admin, _user) = setup();
+        let (_env, client, _admin, _user) = setup();
         assert_eq!(client.get_min_borrow(), 0);
         client.set_min_borrow(&100);
         assert_eq!(client.get_min_borrow(), 100);
