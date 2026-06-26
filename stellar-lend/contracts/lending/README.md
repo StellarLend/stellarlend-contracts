@@ -143,7 +143,8 @@ Comprehensive guides are available for specific components:
 - [Pause & Emergency](./pause.md): How the pause and emergency states work.
 - [Emergency Shutdown](./emergency_shutdown.md): Procedures for protocol shutdown.
 - [Flash Loans](./flash_loan.md): Technical details on flash loan execution.
-- [Views & Monitoring](./views.md): Data structures for frontend integration.
+- [Views & Monitoring](./views.md)
+- [Liquidation Mechanics](./LIQUIDATION_MECHANICS.md): Data structures for frontend integration.
 - [Token Receiver](./token_receiver.md): Documentation for the `receive` hook.
 
 ## License

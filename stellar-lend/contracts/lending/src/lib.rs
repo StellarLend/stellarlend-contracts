@@ -231,6 +231,7 @@ impl LendingContract {
         Ok(new_debt)
     }
 
+    /// See LIQUIDATION_MECHANICS.md for detailed liquidation arithmetic.
     /// Liquidate an undercollateralized position.
     ///
     /// This function is optimized to minimize storage reads. It loads all required
@@ -442,5 +443,26 @@ mod test {
         assert_eq!(client.get_min_borrow(), 0);
         client.set_min_borrow(&100);
         assert_eq!(client.get_min_borrow(), 100);
+    }
+    #[test]
+    fn test_liquidation_example1() {
+        let (env, client, _admin, user) = setup();
+        // asset addresses
+        let coll_asset = Address::generate(&env);
+        let debt_asset = Address::generate(&env);
+        // set asset params and prices (collateral_factor 8000 bps, liquidation_bonus 1000 bps)
+        client.set_asset_params(&coll_asset, true, 8000, 1000);
+        client.set_asset_params(&debt_asset, true, 8000, 1000);
+        client.set_asset_price(&coll_asset, 1);
+        client.set_asset_price(&debt_asset, 1);
+        // user deposits collateral and borrows
+        client.deposit_asset(&user, &coll_asset, 1000);
+        client.borrow_asset(&user, &debt_asset, 900);
+        // perform liquidation: request 500 repay
+        let res = client.liquidate(&user, &user, &debt_asset, &coll_asset, 500).unwrap();
+        // Expected values from Example #1 (close factor caps at 450)
+        assert_eq!(res.debt_repaid, 450);
+        assert_eq!(res.collateral_seized, 495);
+        assert_eq!(res.bad_debt, 0);
     }
 }

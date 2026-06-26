@@ -16,7 +16,7 @@ These documents define the protocol’s core security model, including assumptio
 ### Lending & Risk
 
 - [Risk Parameters](risk_params.md)
-
+- [Liquidation Mechanics](../stellar-lend/contracts/lending/LIQUIDATION_MECHANICS.md)
 Covers protocol-level parameters such as collateral ratios, liquidation thresholds, and limits enforced by the lending system.
 
 
