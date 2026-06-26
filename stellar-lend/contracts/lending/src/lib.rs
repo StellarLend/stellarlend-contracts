@@ -771,7 +771,6 @@ impl LendingContract {
         }
     }
 
-
     /// Withdraws accrued protocol reserve for a specific asset to the designated treasury address.
     /// Only the protocol admin can call this. Must not exceed the accrued reserve balance.
     pub fn withdraw_reserve(env: Env, admin: Address, asset: Address, to: Address, amount: i128) {
@@ -785,7 +784,7 @@ impl LendingContract {
         }
 
         // 3. Load Reserve Accumulator
-        // Note: Using a generic symbol for the bounty test to compile. 
+        // Note: Using a generic symbol for the bounty test to compile.
         // If this repo uses a specific DataKey::Reserve enum, you may need to update this key.
         let reserve_key = soroban_sdk::symbol_short!("reserve");
         let current_reserve: i128 = env.storage().persistent().get(&reserve_key).unwrap_or(0);
@@ -804,7 +803,11 @@ impl LendingContract {
 
         // 6. Emit indexing event
         env.events().publish(
-            (soroban_sdk::symbol_short!("reserve"), soroban_sdk::symbol_short!("withdraw"), asset.clone()),
+            (
+                soroban_sdk::symbol_short!("reserve"),
+                soroban_sdk::symbol_short!("withdraw"),
+                asset.clone(),
+            ),
             (to, amount),
         );
     }

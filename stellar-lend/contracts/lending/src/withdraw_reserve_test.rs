@@ -1,7 +1,11 @@
 #![cfg(test)]
 
 use crate::{LendingContract, LendingContractClient};
-use soroban_sdk::{testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation}, symbol_short, token, Address, Env};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    token, Address, Env,
+};
 
 #[test]
 fn test_withdraw_reserve_success() {
@@ -11,7 +15,7 @@ fn test_withdraw_reserve_success() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let asset = env.register_stellar_asset_contract(admin.clone());
-    
+
     let contract_id = env.register_contract(None, LendingContract);
     let client = LendingContractClient::new(&env, &contract_id);
 
@@ -34,7 +38,7 @@ fn test_withdraw_reserve_success() {
     // Full drain ensures depositor principal (8000) is isolated
     client.withdraw_reserve(&admin, &asset, &treasury, &1_500);
     assert_eq!(token_client.balance(&treasury), 2_000);
-    assert_eq!(token_client.balance(&contract_id), 8_000); 
+    assert_eq!(token_client.balance(&contract_id), 8_000);
 }
 
 #[test]
@@ -46,7 +50,7 @@ fn test_withdraw_reserve_over_withdraw() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let asset = env.register_stellar_asset_contract(admin.clone());
-    
+
     let contract_id = env.register_contract(None, LendingContract);
     let client = LendingContractClient::new(&env, &contract_id);
     client.initialize(&admin);
@@ -67,11 +71,11 @@ fn test_withdraw_reserve_over_withdraw() {
 fn test_withdraw_reserve_zero_amount() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let asset = env.register_stellar_asset_contract(admin.clone());
-    
+
     let contract_id = env.register_contract(None, LendingContract);
     let client = LendingContractClient::new(&env, &contract_id);
     client.initialize(&admin);
