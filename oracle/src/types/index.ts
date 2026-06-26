@@ -14,6 +14,8 @@ export interface PriceData {
     timestamp: number;
     source: string;
     confidence: number;
+    /** 24-hour quote volume in USD, carried from the raw provider response. Used as weight in aggregation. */
+    volume24h?: bigint;
 }
 
 /**
@@ -24,6 +26,8 @@ export interface RawPriceData {
     price: number;
     timestamp: number;
     source: string;
+    /** 24-hour quote volume in USD (integer, scaled to avoid floats). Used as weight in aggregation. */
+    volume24h?: bigint;
 }
 
 /**
@@ -63,6 +67,8 @@ export enum ValidationErrorCode {
     PRICE_NEGATIVE = 'PRICE_NEGATIVE',
     PRICE_STALE = 'PRICE_STALE',
     PRICE_DEVIATION_TOO_HIGH = 'PRICE_DEVIATION_TOO_HIGH',
+    PRICE_BELOW_MIN = 'PRICE_BELOW_MIN',
+    PRICE_ABOVE_MAX = 'PRICE_ABOVE_MAX',
     INVALID_ASSET = 'INVALID_ASSET',
     SOURCE_UNAVAILABLE = 'SOURCE_UNAVAILABLE',
 }
@@ -107,18 +113,27 @@ export interface ContractUpdateResult {
 /**
  * Service configuration
  */
+export interface AssetPriceBounds {
+    minPrice: number;
+    maxPrice: number;
+}
+
 export interface OracleServiceConfig {
     stellarNetwork: 'testnet' | 'mainnet';
     stellarRpcUrl: string;
     contractId: string;
     adminSecretKey: string;
+    adminApiPort: number;
+    adminHmacSecret?: string;
     updateIntervalMs: number;
     maxPriceDeviationPercent: number;
+    madZScoreThreshold: number;
     priceStaleThresholdSeconds: number;
     cacheTtlSeconds: number;
     redisUrl?: string;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     providers: ProviderConfig[];
+    priceBounds: Record<SupportedAsset, AssetPriceBounds>;
 }
 
 /**

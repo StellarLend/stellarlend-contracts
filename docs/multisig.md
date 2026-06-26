@@ -35,8 +35,8 @@ Shares all storage with `governance.rs` via `GovernanceDataKey`:
 | `GovernanceDataKey::MultisigAdmins` | `Vec<Address>` | Current admin set |
 | `GovernanceDataKey::MultisigThreshold` | `u32` | Approval quorum |
 | `GovernanceDataKey::ProposalCounter` | `u64` | Monotonic proposal ID counter |
-| `GovernanceDataKey::Proposal(id)` | `Proposal` | Proposal data |
-| `GovernanceDataKey::ProposalApprovals(id)` | `Vec<Address>` | Per-proposal approvals |
+| `GovernanceDataKey::Proposal(id)` | `Proposal` | Proposal data, including `expires_at_ledger: u32` |
+| `GovernanceDataKey::ProposalApprovals(id)` | `Vec<Address>` | Per-proposal approvals; removed with its proposal during expiry cleanup |
 
 ---
 
@@ -100,11 +100,27 @@ Adds one approval to a proposal. Duplicate approvals rejected.
 
 > **Auth:** Registered multisig admin
 
-Executes the proposal after the approval threshold is met **and** the execution timelock has elapsed.
+Executes the proposal after the approval threshold is met **and** the execution timelock has elapsed. Execution also checks `env.ledger().sequence() <= proposal.expires_at_ledger`; stale proposals whose expiry ledger is in the past are rejected and must be recreated so approvals reflect current signer intent.
 
-**Errors:** `Unauthorized`, `InsufficientApprovals`, `ProposalNotReady`, `ProposalAlreadyExecuted`
+**Errors:** `Unauthorized`, `InsufficientApprovals`, `ProposalNotReady`, `ProposalAlreadyExecuted`, `ProposalExpired`
 
 **Events:** `proposal_executed(proposal_id, executor)`
+
+---
+
+### `cleanup_expired(env, ids)`
+
+> **Auth:** Multisig admin / cleanup administrator
+
+Removes expired, unexecuted proposal records and their approval vectors from contract storage. The call is deliberately batched by explicit proposal IDs so operators can bound transaction cost and review exactly which records will be deleted. Fresh proposals and executed proposals are retained for auditability.
+
+| Param | Type | Constraint |
+|-------|------|-----------|
+| `ids` | `Vec<u64>` | Proposal IDs to inspect and clean |
+
+**Returns:** number of proposals removed.
+
+**Errors:** `Unauthorized`, `NotInitialized`
 
 ---
 
@@ -116,6 +132,7 @@ Executes the proposal after the approval threshold is met **and** the execution 
 | `get_ms_threshold(env)` | `u32` | Approval threshold (default `1`) |
 | `get_ms_proposal(env, id)` | `Option<Proposal>` | Proposal by ID |
 | `get_ms_approvals(env, id)` | `Option<Vec<Address>>` | Approvals for a proposal |
+| `get_default_expiry_ledgers(env)` | `u32` | Default proposal lifetime used by the multisig crate |
 
 ---
 
@@ -128,6 +145,8 @@ Executes the proposal after the approval threshold is met **and** the execution 
 | Old proposal ID reuse | Monotonic counter in `governance.rs` — IDs never decrease |
 | Front-running a proposal | Proposer auto-approves in the same call, so no window between creation and first approval |
 | Rushed execution | Execution timelock (default 2 days) gives time to detect malicious proposals |
+| Stale approval execution | `expires_at_ledger` is stored on every proposal and `ms_execute` / `execute_proposal` rejects `current_ledger > expires_at_ledger` |
+| Storage bloat from expired proposals | `cleanup_expired(ids)` removes expired unexecuted proposals and their approvals in bounded batches |
 
 ---
 
@@ -293,8 +312,20 @@ it takes effect.
 
 ### Expiry window
 
-Proposals expire 14 days after creation if not executed. An expired proposal
-cannot be executed; a new proposal must be created.
+Each proposal stores an explicit `expires_at_ledger: u32`. Proposal creation must set this value far enough in the future to cover the execution timelock, review period, and expected operational delay. The multisig crate default is 14 days of ledgers.
+
+Execution is valid through the exact expiry ledger (`current_ledger == expires_at_ledger`) and rejected once the ledger sequence advances past it (`current_ledger > expires_at_ledger`). An expired proposal cannot be executed; a new proposal must be created and approved so the quorum reflects current intent and current protocol state.
+
+### Operational cleanup cadence
+
+Run `cleanup_expired(ids)` as part of normal governance operations, ideally after each governance meeting and at least weekly for active deployments. Suggested procedure:
+
+1. Enumerate pending proposal IDs from governance monitoring.
+2. Filter to proposals where `env.ledger().sequence() > expires_at_ledger` and `status != Executed`.
+3. Submit bounded cleanup batches sized to fit Soroban transaction limits.
+4. Archive proposal metadata off-chain before cleanup if long-term audit records are required.
+
+Cleanup is not a substitute for the execution guard. Even if cleanup is delayed, expired proposals still cannot execute because execution checks `expires_at_ledger` on-chain.
 
 ### Bootstrap vs. post-bootstrap
 
@@ -335,3 +366,109 @@ If a malicious proposal reaches the approval threshold:
 2. Review all pending proposals for approvals from the compromised key.
 3. Cancel any proposals that were approved by the compromised key if their
    legitimacy is in doubt.
+
+
+## Proposal Lifecycle Test Coverage
+
+The `stellarlend-multisig` crate ships a `#[cfg(test)]` module covering every error variant and timing boundary in the proposal flow. Run with:
+
+```bash
+cargo test -p stellarlend-multisig
+```
+
+### Key scenarios
+
+| Test | Error variant asserted |
+|------|----------------------|
+| `test_execute_proposal_double_execution` | `ProposalAlreadyExecuted` |
+| `test_execute_proposal_not_found` | `ProposalNotFound` |
+| `test_execute_proposal_before_eta_rejected` | `ProposalNotReady` |
+| `test_execute_at_exact_eta_boundary` | `ProposalNotReady` (boundary −1); success (boundary) |
+| `test_execute_expired_proposal_rejected` | `ProposalExpired` |
+| `test_execute_at_expiry_boundary` | success at boundary; `ProposalExpired` at boundary +1 |
+| `test_apply_threshold_change_before_delay` | `DelayNotElapsed` |
+| `test_apply_at_exact_min_delay_boundary` | `DelayNotElapsed` (boundary −1); success (boundary) |
+| `test_queue_threshold_change_zero_threshold` | `InvalidThreshold` |
+| `test_create_proposal_invalid_threshold` | `InvalidThreshold` |
+| `test_apply_threshold_change_no_queued_change` | `NoQueuedChange` |
+| `test_initialize_already_initialized` | `AlreadyInitialized` |
+| `test_queue_threshold_change_unauthorized` | host-level abort (`#[should_panic]`) |
+| `test_apply_threshold_change_unauthorized` | host-level abort (`#[should_panic]`) |
+
+### Timing boundary invariants
+
+- `DelayNotElapsed` until `current_ledger >= eta_ledger` (where `eta_ledger = queue_ledger + 600 000`).
+- `ProposalNotReady` until `current_ledger >= proposal.eta_ledger`.
+- `ProposalExpired` when `current_ledger > proposal.expires_at_ledger`; the boundary ledger itself is still valid.
+- `ProposalAlreadyExecuted` on any second call to `execute_proposal` for an `executed = true` proposal — no amount of ledger advancement can re-enable execution.
+
+### Snapshot Testing
+
+## Overview
+
+Soroban tests generate deterministic JSON snapshots in test_snapshots/ directories. These snapshots capture the ledger state at the end of each test and must be committed and kept in sync with the contract code. Drift between committed snapshots and freshly generated output indicates an unintended change in contract behavior.
+
+## How Snapshots Work
+The Soroban Rust SDK automatically writes snapshots to test_snapshots/<test_name>.<n>.json when tests use the Env. These files contain:
+Ledger entries: Contract data, token balances, persistent storage
+Contract events: Emitted events with topics and data
+Authorization contexts: Auth trees and signatures
+Budget/resource usage: CPU and memory metrics
+
+Running Snapshot Checks Locally
+# Check for drift (fails if snapshots differ from fresh runs)
+SNAPSHOT_CHECK=1 ./scripts/check-snapshots.sh
+
+# Warning only (does not fail)
+SNAPSHOT_CHECK=0 ./scripts/check-snapshots.sh
+
+Regenerating Snapshots (Intentional Changes)
+
+When you modify contract logic that legitimately changes the snapshot output:
+# 1. Regenerate all snapshots for both crates
+./scripts/regenerate-snapshots.sh
+
+# 2. Review the diff carefully
+# Ensure every change is expected and explained by your code changes
+git diff stellar-lend/contracts/*/test_snapshots/
+
+# 3. Commit the updated snapshots
+git add stellar-lend/contracts/*/test_snapshots/
+git commit -m "chore: regenerate test snapshots for <describe change>"
+
+## CI Failure Recovery
+1. If CI fails with SNAPSHOT DRIFT DETECTED:
+Check if drift is intentional: Did your PR change contract logic?
+Yes: Run ./scripts/regenerate-snapshots.sh, review every diff line, commit.
+No: Your change introduced unintended behavior. Fix the code, do not regenerate.
+2. Never blindly regenerate: Always review the diff to ensure changes match your intent.
+3. Common causes of unintended drift:
+Changed Env setup in tests (timestamps, ledgers)
+Modified contract state transitions
+Updated SDK version changing snapshot format
+Non-deterministic test data (random values, unmocked time)
+
+
+## Snapshot File Format
+test_snapshots/
+└── test/
+    └── test_name.1.json          # First snapshot assertion in test_name
+    └── test_name.2.json          # Second snapshot assertion (if multiple)
+    └── test_other.1.json
+    Each .json file contains a complete ledger state dump. The filename pattern is:
+
+    test_name — The Rust test function name
+.1, .2 — Snapshot index (incremented per env assertion in the test)
+
+
+## Troubleshooting
+| Symptom                            | Cause                            | Fix                                                       |
+| ---------------------------------- | -------------------------------- | --------------------------------------------------------- |
+| `diff: No such file or directory`  | Missing `test_snapshots/` dir    | Run tests locally first to generate baseline, then commit |
+| All snapshots show as "new"        | `.gitignore` excluding snapshots | Remove `test_snapshots/` from `.gitignore`                |
+| Non-deterministic diffs            | Random data in tests             | Use fixed seeds, mock `Env` timestamps, avoid `rand`      |
+| Large diffs across all tests       | SDK version change               | Regenerate once, commit alongside SDK upgrade PR          |
+| CI passes locally but fails remote | Different Rust version           | Pin `rust-toolchain.toml` to exact version                |
+
+
+

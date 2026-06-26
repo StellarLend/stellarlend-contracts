@@ -11,6 +11,7 @@ import type {
     ValidationResult,
     ValidationError,
     ValidationErrorCode,
+    AssetPriceBounds,
 } from '../types/index.js';
 import { scalePrice } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -41,13 +42,19 @@ const DEFAULT_CONFIG: ValidatorConfig = {
 export class PriceValidator {
     private config: ValidatorConfig;
     private cachedPrices: Map<string, number> = new Map();
+    private assetBounds: Record<string, AssetPriceBounds>;
 
-    constructor(config: Partial<ValidatorConfig> = {}) {
+    constructor(
+        config: Partial<ValidatorConfig> = {},
+        assetBounds: Record<string, AssetPriceBounds> = {},
+    ) {
         this.config = { ...DEFAULT_CONFIG, ...config };
+        this.assetBounds = this.normalizeBounds(assetBounds);
 
         logger.info('Price validator initialized', {
             maxDeviationPercent: this.config.maxDeviationPercent,
             maxStalenessSeconds: this.config.maxStalenessSeconds,
+            assetBounds: Object.keys(this.assetBounds).length,
         });
     }
 
@@ -89,7 +96,32 @@ export class PriceValidator {
             });
         }
 
-        const cachedPrice = this.cachedPrices.get(raw.asset);
+        const asset = raw.asset.toUpperCase();
+        const bounds = this.getBounds(asset);
+
+        if (raw.price < bounds.minPrice) {
+            errors.push({
+                code: 'PRICE_BELOW_MIN' as ValidationErrorCode,
+                message: `Price ${raw.price} below minimum ${bounds.minPrice} for ${asset}`,
+                details: {
+                    asset,
+                    minPrice: bounds.minPrice,
+                },
+            });
+        }
+
+        if (raw.price > bounds.maxPrice) {
+            errors.push({
+                code: 'PRICE_ABOVE_MAX' as ValidationErrorCode,
+                message: `Price ${raw.price} exceeds maximum ${bounds.maxPrice} for ${asset}`,
+                details: {
+                    asset,
+                    maxPrice: bounds.maxPrice,
+                },
+            });
+        }
+
+        const cachedPrice = this.cachedPrices.get(asset);
         if (cachedPrice !== undefined) {
             const deviation = Math.abs((raw.price - cachedPrice) / cachedPrice) * 100;
 
@@ -108,14 +140,15 @@ export class PriceValidator {
 
         if (errors.length === 0) {
             const validatedPrice: PriceData = {
-                asset: raw.asset.toUpperCase(),
+                asset,
                 price: scalePrice(raw.price),
                 timestamp: raw.timestamp,
                 source: raw.source,
                 confidence: this.calculateConfidence(raw, cachedPrice),
+                volume24h: raw.volume24h,
             };
 
-            this.cachedPrices.set(raw.asset, raw.price);
+            this.cachedPrices.set(asset, raw.price);
 
             return {
                 isValid: true,
@@ -178,6 +211,26 @@ export class PriceValidator {
     }
 
     /**
+     * Reload validator settings and optional bounds at runtime
+     */
+    reloadConfig(
+        config: Partial<ValidatorConfig> = {},
+        assetBounds?: Record<string, AssetPriceBounds>,
+    ): void {
+        this.config = { ...this.config, ...config };
+
+        if (assetBounds) {
+            this.assetBounds = this.normalizeBounds(assetBounds);
+        }
+
+        logger.info('Price validator configuration reloaded', {
+            maxDeviationPercent: this.config.maxDeviationPercent,
+            maxStalenessSeconds: this.config.maxStalenessSeconds,
+            boundsUpdated: assetBounds ? Object.keys(assetBounds).length : 0,
+        });
+    }
+
+    /**
      * Clear cached price for an asset
      */
     clearCache(asset?: string): void {
@@ -194,11 +247,35 @@ export class PriceValidator {
     getCacheState(): Record<string, number> {
         return Object.fromEntries(this.cachedPrices);
     }
+
+    private getBounds(asset: string): AssetPriceBounds {
+        return this.assetBounds[asset] ?? {
+            minPrice: this.config.minPrice,
+            maxPrice: this.config.maxPrice,
+        };
+    }
+
+    private normalizeBounds(
+        bounds: Record<string, AssetPriceBounds>,
+    ): Record<string, AssetPriceBounds> {
+        return Object.fromEntries(
+            Object.entries(bounds).map(([asset, value]) => [
+                asset.toUpperCase(),
+                {
+                    minPrice: value.minPrice,
+                    maxPrice: value.maxPrice,
+                },
+            ]),
+        );
+    }
 }
 
 /**
  * Create a validator with custom configuration
  */
-export function createValidator(config?: Partial<ValidatorConfig>): PriceValidator {
-    return new PriceValidator(config);
+export function createValidator(
+    config?: Partial<ValidatorConfig>,
+    assetBounds: Record<string, AssetPriceBounds> = {},
+): PriceValidator {
+    return new PriceValidator(config, assetBounds);
 }

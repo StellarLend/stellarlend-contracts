@@ -1,0 +1,11 @@
+{
+  "flat_threshold": 95.0,
+  "per_crate": {
+    "contracts/lending/src": 95.0,
+    "contracts/hello-world/src": 95.0,
+    "contracts/common/src": 95.0,
+    "contracts/multisig/src": 95.0,
+    "contracts/amm/src": 95.0,
+    "contracts/bridge/src": 95.0
+  }
+}

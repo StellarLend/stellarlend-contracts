@@ -215,6 +215,11 @@ cargo test initialize_test::test_successful_initialization --lib
 cargo test initialize_test --lib -- --nocapture
 ```
 
+## Notes about recent contract changes
+
+- `get_admin()` now returns a typed contract error when the contract is not initialized; clients should use `try_get_admin()` or handle `LendingError::NotInitialized`.
+- `initialize()` now returns a typed error and will reject subsequent initialization attempts with `LendingError::AlreadyInitialized`.
+
 ---
 
 ## Coverage Analysis

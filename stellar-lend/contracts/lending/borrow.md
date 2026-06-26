@@ -1,5 +1,67 @@
 # Borrow Function Documentation
 
+## Canonical contract tree
+
+The live Soroban lending crate is `stellar-lend/contracts/lending`. Interest accrual is implemented in `src/rounding_strategy.rs` and `src/debt.rs`, with borrow and repay settling accrual in `src/lib.rs`.
+
+The sibling path `contracts/lending/scr/` (misnamed for `src`) is a legacy reference implementation. New changes belong in `stellar-lend/contracts/lending` only.
+
+## Interest accrual
+
+| Item | Value |
+| --- | --- |
+| Rounding mode | Banker's (round half to even) |
+| Annual rate | 500 basis points (5% APR) |
+| Principal units | Asset smallest units (`i128`) |
+| Rate units | Basis points per year (10_000 = 100%) |
+| Time units | Ledger timestamp seconds (`u64`) |
+| Storage | `DebtPosition { principal, last_update }` per user |
+
+Accrual runs on `borrow` and `repay` before principal changes. `get_position` reports principal plus pending interest without persisting a view-time accrual.
+
+Formula (scaled internally with `INTEREST_PRECISION = 1_000_000`):
+
+```
+interest = principal * elapsed_seconds * rate_bps / (SECONDS_PER_YEAR * 10_000)
+```
+
+`SECONDS_PER_YEAR = 31_536_000`.
+
+### Interest Accrual Ordering on Repay
+
+**Security Invariant**: Interest MUST be accrued BEFORE the repay amount is subtracted from the debt.
+
+The order of operations on `repay` is:
+1. **Accrue interest** based on elapsed time since `last_update`
+2. **Apply repayment** to the accrued total (principal + interest)
+3. **Update timestamp** to current ledger time
+
+This ordering ensures users cannot avoid interest by timing their repayments. If the order were reversed (apply-then-accrue), users could repay before interest accrues, effectively getting interest-free loans.
+
+**Test Coverage**: The ordering invariant is verified by comprehensive ledger-time-advancement tests in `src/interest_ordering_time_test.rs`, covering:
+- Zero elapsed time (immediate repay)
+- Exact one-year boundary
+- Repay smaller than accrued interest
+- Multiple borrows and repays with time gaps
+- Adversarial timing attempts
+- Timestamp boundary conditions
+
+**Example**:
+```rust
+// User borrows 10,000 at t=0
+borrow(user, 10_000);
+
+// One year passes (t=31,536,000)
+// Interest accrues: 10,000 * 5% = 500
+// Total debt: 10,500
+
+// User repays 1,000
+repay(user, 1_000);
+
+// Remaining debt: 10,500 - 1,000 = 9,500
+// NOT: 10,000 - 1,000 + 500 = 9,500 (wrong order)
+```
+
 ## Overview
 
 The borrow function allows users to borrow assets from the StellarLend protocol by providing collateral. The system enforces minimum collateral ratios, tracks interest accrual, and respects protocol-level constraints such as debt ceilings and pause states.
@@ -48,17 +110,29 @@ pub fn borrow(
 
 ### Collateral Ratio
 
-- **Minimum Ratio**: 150% (15000 basis points)
-- Users must provide collateral worth at least 1.5x the borrowed amount
-- Ratio is calculated as: `(collateral_amount * 10000) / borrow_amount`
-- Prevents under-collateralized positions that could lead to protocol insolvency
+- **Minimum Ratio**: 150% (15 000 basis points) — configurable by admin via `set_collateral_ratio`
+- Users must have collateral worth at least 1.5× their **total** debt (existing + new borrow)
+- Ratio is evaluated as:
+
+  ```
+  collateral * 10_000 / (existing_debt + amount) >= col_ratio
+  ```
+
+  Equivalently (overflow-safe form used in the contract):
+
+  ```
+  collateral * 10_000 >= col_ratio * (existing_debt + amount)
+  ```
+
+- The ratio is stored under the `"col_ratio"` instance-storage key; if unset the default of 15 000 bps applies
+- Prevents under-collateralised positions that could lead to protocol insolvency
 
 ### Interest Calculation
 
 - **Annual Rate**: 5% (500 basis points)
-- Interest accrues continuously based on time elapsed
-- Formula: `borrowed_amount * interest_rate * time_elapsed / (10000 * seconds_per_year)`
-- Uses saturating arithmetic to prevent overflow
+- Interest accrues on each `borrow` and `repay` using banker's rounding via `calculate_interest_with_rounding`
+- Formula: `principal * rate_bps * elapsed_seconds / (BASIS_POINTS_SCALE * SECONDS_PER_YEAR)`
+- Checked arithmetic; overflow surfaces as contract panic on mutating paths
 
 ### Overflow Protection
 
@@ -134,10 +208,8 @@ contract.set_pause(&admin, PauseType::Borrow, false)?;
 
 ```rust
 pub struct DebtPosition {
-    pub borrowed_amount: i128,    // Total borrowed
-    pub interest_accrued: i128,   // Accrued interest
-    pub last_update: u64,         // Last update timestamp
-    pub asset: Address,           // Borrowed asset
+    pub principal: i128,
+    pub last_update: u64,
 }
 ```
 

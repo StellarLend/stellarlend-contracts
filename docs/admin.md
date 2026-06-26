@@ -1,48 +1,122 @@
 # Admin and Access Control
 
-The StellarLend protocol operates securely by enforcing access controls for privileged functions such as changing risk configurations, updating interest rate models, configuring the oracle, and managing emergency pause states. The core element of this is the unified `admin` module.
+StellarLend's lending contract enforces strict access control for all
+privileged operations. This document describes the initialisation boundary,
+the `require_admin` helper, and the two-step admin rotation pattern.
+
+---
+
+## Initialisation boundary
+
+```
+initialize(env, admin)  →  Result<(), LendingError>
+```
+
+`initialize` may be called **exactly once**.
+
+- On the first call it stores `admin` under `DataKey::Admin` and sets the
+  emergency state to `Normal`.
+- On any subsequent call it returns `LendingError::AlreadyInitialized`
+  immediately, before touching any state.
+
+**Why this matters**: without this guard, anyone who can submit a transaction
+after deployment could call `initialize` again with their own address and
+seize admin rights over the protocol.
+
+`initialize` does **not** call `require_auth` on the supplied `admin` address.
+This matches the conventional Soroban contract pattern where the deployer is
+trusted at construction time.
+
+---
+
+## `require_admin` helper
+
+```rust
+fn require_admin(env: &Env) -> Result<Address, LendingError>
+```
+
+This private helper is the single authoritative auth check for all privileged
+operations:
+
+1. Load `DataKey::Admin` from instance storage.
+   - If missing → `Err(LendingError::NotInitialized)`.
+2. Call `admin.require_auth()`.
+   - Soroban will surface an auth failure if the transaction was not signed by
+     the admin.
+3. Return `Ok(admin)` so callers can use the address if needed.
+
+Every privileged setter **must** call `require_admin` as its first statement,
+before reading or writing any protocol state.
+
+---
+
+## Privileged entrypoints
+
+| Entrypoint | Auth requirement |
+|---|---|
+| `set_min_borrow` | Admin only (`require_admin`) |
+| `set_debt_ceiling` | Admin only (`require_admin`) |
+| `set_flash_fee` | Admin only (`require_admin`) |
+| `set_guardian` | Admin only (`require_admin`) |
+| `propose_admin` | Admin only (`require_admin`) |
+| `accept_admin` | Pending admin (explicit `require_auth`) |
+| `set_emergency_state` | Admin **or** guardian (`require_auth` on guardian) |
+
+---
 
 ## Super Admin
 
-The protocol expects a single Super Admin to be created during contract initialization via the `lib::initialize(env, admin)` invocation. This stores an `Admin` record internally in persistent storage via `set_admin(&env, new_admin, None)`.
+The protocol has a single super-admin whose address is stored under
+`DataKey::Admin`. The admin has clearance for all privileged operations listed
+above.
 
-The Super Admin has default clearance to all privileged operations around the protocol. Their address can be verified natively by ensuring the caller equals the stored admin via `admin::require_admin(&env, &caller)`.
-The Super Admin can seamlessly transfer their rights by calling `admin::set_admin(&env, new_admin, Some(current_admin))`.
+`get_admin()` returns `Result<Address, LendingError>` — a `NotInitialized`
+error signals that `initialize` has not been called. Callers should use
+`try_get_admin()` if the contract may be uninitialized.
 
-## Roles
+---
 
-A flexible Role-Based Access Control (RBAC) was implemented to allow delegating specific operations to customized role types. Custom roles are identified by symbols (e.g. `Symbol::new(&env, "oracle_admin")`).
+## Two-step admin rotation
 
-The Super Admin can define and map addresses to responsibilities:
+Admin rotation is a two-step handover to prevent accidental transfers to an
+uncontrolled address:
 
-- `admin::grant_role(&env, admin_address, role_symbol, address_to_grant)`
-- `admin::revoke_role(&env, admin_address, role_symbol, address_to_revoke)`
+1. **Propose**: current admin calls `propose_admin(new_admin)`.
+   - Stores `new_admin` under `DataKey::PendingAdmin`.
+   - Guarded by `require_admin`, so only the current admin can nominate a
+     successor.
+2. **Accept**: `new_admin` calls `accept_admin()`.
+   - `new_admin.require_auth()` is called — the successor must sign the
+     acceptance.
+   - Clears `PendingAdmin` and overwrites `Admin` with `new_admin`.
 
-To validate during executions you can authorize a particular action for either exactly a custom role or the super admin implicitly using `admin::require_role_or_admin(&env, &caller, role_symbol)`.
+---
 
-## Example Integrations
+## Guardian role
 
-```rust
-// In your module you want to safeguard
-use crate::admin::{require_admin, require_role_or_admin};
-use soroban_sdk::{Address, Env, Symbol};
+The guardian is an optional address that is permitted to call
+`set_emergency_state` without requiring the admin key. This allows an
+emergency operator to pause the protocol quickly without exposing the admin
+private key in a hot path.
 
-pub fn sensitive_admin_operation(env: &Env, caller: Address) {
-    require_admin(env, &caller).unwrap(); // Halts if not Super Admin
-    // Code block executing protected changes
-}
+- Set with `set_guardian(guardian)` (admin only).
+- If no guardian is set, the admin address is used as the fallback.
 
-pub fn sensitive_role_operation(env: &Env, caller: Address) {
-    let required_role = Symbol::new(&env, "oracle_admin");
-    require_role_or_admin(env, &caller, required_role).unwrap(); // Halts if neither Super Admin nor has 'oracle_admin' mapping
-    // Code block executing protected changes
-}
+---
+
+## Auth boundary summary
+
+```
+initialize          ── no auth (deployer trusted)
+─── already-initialized guard prevents re-init ───────────────────────────
+propose_admin       ── require_admin()
+accept_admin        ── pending_admin.require_auth()
+set_min_borrow      ── require_admin()
+set_debt_ceiling    ── require_admin()
+set_flash_fee       ── require_admin()
+set_guardian        ── require_admin()
+set_emergency_state ── guardian.require_auth()  (guardian defaults to admin)
 ```
 
-## Events
-
-The module naturally publishes notifications for external services to subscribe and ingest standard access alterations on-chain.
-
-- `admin_changed`: Triggered when the super admin changes. Contains `new_admin` and `caller`.
-- `role_granted`: Identifies a granted privilege containing `account` and topic-based `role`.
-- `role_revoked`: Tracks when an account’s role is cleared. Contains `account` and topic-based `role`.
+All other entrypoints (`deposit`, `withdraw`, `borrow`, `repay`, `liquidate`)
+require auth from the **user** performing the operation, not the admin.

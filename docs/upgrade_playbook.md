@@ -25,6 +25,12 @@ This playbook provides a practical guide for safely upgrading StellarLend contra
 - [ ] Verify upgrade migration safety tests pass: `cargo test -p stellarlend-lending upgrade_migration_safety --lib`
 - [ ] Validate all 45 tests pass with 0 failures
 - [ ] Test key functions with sample data
+- [ ] **Run preflight upgrade check**: `./scripts/preflight_upgrade.sh <new_wasm_path> --network testnet`
+  - This validates that no exports are removed (backward compatibility)
+  - Ensures binary size hasn't grown beyond 10% (configurable with `--max-size-growth`)
+  - Compares against the previously deployed artifact from `scripts/deployed/<network>/checksums.txt`
+  - Fails if safety checks are not met
+  - Use `--force` only with explicit governance approval
 
 ### 4. Schema Change Analysis
 - [ ] Identify any storage schema changes
@@ -37,6 +43,60 @@ This playbook provides a practical guide for safely upgrading StellarLend contra
 - [ ] Identify potential failure modes
 - [ ] Prepare rollback triggers and criteria
 - [ ] Document monitoring requirements
+
+## Preflight Upgrade Gate
+
+Before executing any upgrade, run the preflight upgrade script to validate the new WASM artifact is safe to deploy.
+
+### Running the Preflight Check
+
+```bash
+# Basic usage (compares against last deployed artifact on testnet)
+./scripts/preflight_upgrade.sh stellar-lend/target/wasm32-unknown-unknown/release/hello_world.optimized.wasm --network testnet
+
+# With custom size growth threshold (default is 10%)
+./scripts/preflight_upgrade.sh <new_wasm_path> --network mainnet --max-size-growth 15
+
+# Force bypass (only with explicit governance approval)
+./scripts/preflight_upgrade.sh <new_wasm_path> --network mainnet --force
+```
+
+### What the Preflight Check Validates
+
+1. **Export Compatibility**: Ensures no exported functions have been removed from the WASM
+   - Removing exports breaks backward compatibility
+   - Adding new exports is allowed and reported
+
+2. **Binary Size Growth**: Verifies the new WASM hasn't grown beyond the configured threshold
+   - Default threshold: 10% growth
+   - Configurable via `--max-size-growth` flag
+   - Size reductions are always allowed
+   - Large size increases may impact deployment costs and performance
+
+3. **Baseline Comparison**: Uses checksums from `scripts/deployed/<network>/checksums.txt` as the reference
+   - The baseline is established during initial deployment
+   - Updated via `scripts/deploy.sh --update-checksum` after approved upgrades
+
+### Override Safety
+
+The `--force` flag bypasses all safety checks. This should only be used:
+- With explicit governance approval
+- After manual review of the changes
+- When the size growth is justified and documented
+- When export removals are intentional and migration is planned
+
+### Test Coverage
+
+The preflight script has comprehensive test coverage in `scripts/tests/test_preflight_upgrade.sh`:
+- 18 test cases covering all scenarios
+- Edge cases: missing files, hash mismatches, threshold boundaries
+- Override flag testing
+- Multi-network support
+
+Run tests with:
+```bash
+bash scripts/tests/test_preflight_upgrade.sh
+```
 
 ## Upgrade Execution
 

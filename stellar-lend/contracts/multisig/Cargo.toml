@@ -1,0 +1,18 @@
+[package]
+name = "stellarlend-multisig"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "stellarlend_multisig"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[features]
+testutils = ["soroban-sdk/testutils"]

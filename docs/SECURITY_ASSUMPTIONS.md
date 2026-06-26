@@ -125,3 +125,35 @@ every restricted path, verified across all protocol lifecycle states.
 - **Input validation** - All protocol parameters validated on entry.
 - **Zero-amount guard** - Every monetary entrypoint rejects `amount <= 0`
   before any state mutation. See `docs/ZERO_AMOUNT_SEMANTICS.md`.
+
+---
+
+## Seeded Property-Based Invariants
+
+The lending contract includes a deterministic, property-based test harness for
+random operation sequences across the four core user mutations:
+
+- `deposit`
+- `withdraw`
+- `borrow`
+- `repay`
+
+### Invariants Proven Per Step
+
+1. Collateral is never negative.
+2. Debt is never negative.
+3. `get_position` values match persistent storage values for the same user.
+
+### Determinism and Reproducibility
+
+- The harness uses a fixed seed (`INVARIANT_SEED`) with a ChaCha test RNG.
+- Test case count and maximum operations per case are fixed in the runner
+   configuration.
+- This makes failing traces reproducible across CI and local runs.
+
+### Shrinking Strategy
+
+- The suite relies on proptest shrinking to minimize failing counterexamples.
+- `max_shrink_iters` is explicitly configured to provide stable shrinking effort
+   while keeping CI runtime bounded.
+- Smaller failing sequences are emitted first, making triage and replay easier.

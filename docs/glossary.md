@@ -76,3 +76,51 @@ This glossary defines key protocol terms, numeric scales, and common pitfalls fo
 - **Collateral Ratio** is `Collateral Value / Debt Value`.
 - **Health Factor** is `(Collateral Value * Liquidation Threshold) / Debt Value`.
 - A position is liquidatable when `Collateral Ratio < Liquidation Threshold`, which is equivalent to `Health Factor < 1.0`.
+
+---
+
+## `stellar-lend-common` Crate
+
+The `stellar-lend-common` crate (`stellar-lend/contracts/common/`) is the single source of truth for shared protocol primitives. All other crates in the workspace should import from here rather than redefining their own versions.
+
+### Exports
+
+| Symbol | Kind | Description |
+|---|---|---|
+| `BPS_DENOM` | `const i128` | Basis-point denominator — `10_000` (= 100 %). Every percentage in the protocol is expressed as `value * rate_bps / BPS_DENOM`. |
+| `LendingError` | `enum` | Canonical on-chain error enum. Variant codes are stable — adding new variants is backward-compatible, but existing codes must never change. |
+| `scale_bps(value, rate_bps)` | `fn` | Checked `value * rate_bps / BPS_DENOM`. Returns `None` on overflow. |
+| `unscale_bps(value, rate_bps)` | `fn` | Inverse: checked `value * BPS_DENOM / rate_bps`. Returns `None` if `rate_bps == 0` or on overflow. |
+
+### `LendingError` Wire Codes
+
+| Variant | Code | Meaning |
+|---|---|---|
+| `InvalidAmount` | 1001 | Amount must be positive and non-zero |
+| `Overflow` | 1002 | Arithmetic would overflow `i128` |
+| `Unauthorized` | 1003 | Caller is not authorised |
+| `BelowMinimumBorrow` | 1008 | Borrow amount is below the protocol minimum |
+| `NotInitialized` | 1009 | Contract has not been initialised |
+| `AlreadyInitialized` | 1010 | `initialize` called more than once |
+| `PositionHealthy` | 1011 | Liquidation refused — position is healthy |
+| `DebtCeilingExceeded` | 2001 | Borrow would exceed the protocol debt ceiling |
+| `DepositCapExceeded` | 2002 | Deposit would exceed the asset deposit cap |
+| `InvalidFeeBps` | 2005 | Flash-loan fee is outside the permitted range |
+| `InsufficientCollateral` | 2007 | Withdrawal exceeds available collateral |
+
+### Migration Guide for Callers
+
+Previously each crate declared its own `LendingError` or `Error` enum. To migrate:
+
+1. Add `stellar-lend-common = { path = "../common" }` to your `Cargo.toml`.
+2. Replace any local `LendingError` / `Error` definitions with:
+   ```rust
+   pub use stellar_lend_common::{BPS_DENOM, LendingError};
+   ```
+3. Replace all inline BPS denominators (`10_000`, `10000`) with `BPS_DENOM`.
+4. Use `scale_bps` / `unscale_bps` for checked percentage arithmetic instead of
+   hand-written `checked_mul` / `checked_div` pairs.
+
+## Related Documentation
+
+- [`stellar-lend/docs/INTEREST_NUMERIC_ASSUMPTIONS.md`](../stellar-lend/docs/INTEREST_NUMERIC_ASSUMPTIONS.md) - Canonical interest scaling constants, BPS conversions, rounding modes, and worked examples

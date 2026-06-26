@@ -246,51 +246,49 @@ The StellarLend contract is organized into the following modules:
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
 | `initialize`                  | Initialize contract and set admin                 |
-| `deposit_collateral`          | Deposit collateral to the protocol                |
+| `deposit`                     | Deposit collateral to the protocol                |
 | `borrow`                      | Borrow assets against collateral                  |
 | `repay`                       | Repay borrowed assets                            |
 | `withdraw`                    | Withdraw collateral                              |
 | `liquidate`                   | Liquidate undercollateralized positions          |
 
-### Cross-Asset Operations
+### Oracle, Admin, and Emergency Controls
 
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
-| `set_asset_params`            | Configure asset-specific parameters              |
-| `deposit_collateral_asset`    | Deposit specific asset as collateral             |
-| `borrow_asset`                | Borrow specific asset                            |
-| `repay_asset`                 | Repay specific asset                             |
-| `withdraw_asset`              | Withdraw specific asset                          |
-| `get_cross_position_summary`  | Get unified position across all assets           |
+| `get_admin`                   | Read current admin                               |
+| `propose_admin`               | Propose admin handoff                            |
+| `accept_admin`                | Accept pending admin role                        |
+| `set_guardian`                | Configure shutdown guardian                      |
+| `get_guardian`                | Read shutdown guardian                           |
+| `set_emergency_state`         | Set protocol emergency state                     |
+| `set_min_borrow`              | Configure minimum borrow amount                  |
+| `get_min_borrow`              | Read minimum borrow amount                       |
+| `set_debt_ceiling`            | Configure debt ceiling                           |
+| `set_flash_fee`               | Configure flash loan fee                         |
+| `set_oracle_pubkey`           | Configure signed price oracle public key         |
+| `get_oracle_pubkey`           | Read oracle public key                           |
+| `set_price`                   | Store a signed oracle price update               |
+| `get_price_record`            | Read stored oracle price                         |
 
-### Admin & Configuration
+### Flash Loans
 
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
-| `set_risk_params`             | Set close factor and liquidation incentive       |
-| `set_pause_switches`          | Pause/unpause protocol actions                   |
-| `set_oracle`                  | Set oracle address                               |
-| `set_min_collateral_ratio`    | Set minimum collateral ratio                    |
-| `set_base_rate`               | Set base interest rate                          |
-| `set_kink_utilization`        | Set kink utilization point                      |
-| `set_multiplier`              | Set interest rate multiplier                    |
-| `set_reserve_factor`          | Set protocol reserve factor                     |
-| `set_rate_limits`             | Set interest rate floor/ceiling                 |
-| `emergency_rate_adjustment`   | Emergency interest rate adjustment               |
+| `flash_loan`                  | Issue a callback-based flash loan                |
+| `repay_flash_loan`            | Repay flash-loan funds to treasury storage       |
 
 ### Query Functions
 
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
 | `get_position`                | Query user position (collateral, debt, ratio)    |
-| `get_protocol_params`         | Query protocol parameters                        |
-| `get_risk_config`             | Query risk management configuration              |
-| `get_system_stats`            | Query system-wide stats                          |
-| `get_protocol_report`         | Get comprehensive protocol analytics             |
-| `get_user_report`             | Get user-specific analytics                      |
-| `get_recent_activity`         | Get activity feed                                |
+| `get_debt_position`           | Query raw debt principal and last update time    |
+| `get_health_factor`           | Query current health factor                      |
+| `get_protocol_metrics`        | Query aggregate debt, supply, utilization, ledger |
 
-For a complete list of entrypoints including AMM, flash loans, bridge, governance, and upgrade functions, see the [contract README](stellar-lend/contracts/hello-world/README.md) and [protocol documentation](docs/README.md).
+For exact signatures and planned-but-not-shipping names, see
+[docs/interface_quick_reference.md](docs/interface_quick_reference.md).
 
 ---
 
