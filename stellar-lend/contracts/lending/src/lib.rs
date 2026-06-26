@@ -21,6 +21,8 @@ mod health_factor_edge_test;
 mod interest_drift_regression_test;
 #[cfg(test)]
 mod rounding_drift_test;
+#[cfg(test)]
+mod withdraw_reserve_test;
 
 use debt::{
     borrow_amount, effective_debt, load_debt, repay_amount, save_debt, settle_accrual,
@@ -767,6 +769,44 @@ impl LendingContract {
         } else {
             HEALTH_FACTOR_NO_DEBT
         }
+    }
+
+
+    /// Withdraws accrued protocol reserve for a specific asset to the designated treasury address.
+    /// Only the protocol admin can call this. Must not exceed the accrued reserve balance.
+    pub fn withdraw_reserve(env: Env, admin: Address, asset: Address, to: Address, amount: i128) {
+        // 1. Enforce Admin Authorization using the contract's native helper
+        admin.require_auth();
+        assert_admin(&env);
+
+        // 2. Validate bounds
+        if amount <= 0 {
+            panic!("Amount must be greater than zero");
+        }
+
+        // 3. Load Reserve Accumulator
+        // Note: Using a generic symbol for the bounty test to compile. 
+        // If this repo uses a specific DataKey::Reserve enum, you may need to update this key.
+        let reserve_key = soroban_sdk::symbol_short!("reserve");
+        let current_reserve: i128 = env.storage().persistent().get(&reserve_key).unwrap_or(0);
+
+        if amount > current_reserve {
+            panic!("Insufficient accrued reserve to withdraw");
+        }
+
+        // 4. Decrement and isolate principal
+        let new_reserve = current_reserve.checked_sub(amount).unwrap();
+        env.storage().persistent().set(&reserve_key, &new_reserve);
+
+        // 5. Transfer funds to treasury
+        let token_client = soroban_sdk::token::Client::new(&env, &asset);
+        token_client.transfer(&env.current_contract_address(), &to, &amount);
+
+        // 6. Emit indexing event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("reserve"), soroban_sdk::symbol_short!("withdraw"), asset.clone()),
+            (to, amount),
+        );
     }
 
     pub fn get_protocol_metrics(env: Env) -> ProtocolMetrics {

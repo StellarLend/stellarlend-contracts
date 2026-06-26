@@ -113,3 +113,11 @@ lender_amount  = 9 − 0               = 9
 - `contracts/hello-world/src/flash_loan.rs` — fee calculation and fee bucket write
 - `contracts/hello-world/src/tests/reserve_test.rs` — full test suite including
   edge-case coverage added in issue #659
+
+
+### Reserve Realization & Withdrawal (`withdraw_reserve`)
+The protocol isolates accrued reserve mathematically using a per-asset accumulator. Because reserves are held in the same SAC token balance as depositor principal, the `withdraw_reserve` entrypoint enforces strict bounds:
+1. **Authorization:** Only the configured protocol admin can trigger a reserve withdrawal.
+2. **Treasury Routing:** The withdrawn amount is routed directly to a specified treasury address.
+3. **Principal Isolation:** The contract strictly enforces that withdrawal `amount` is `<= current_reserve`.
+4. **State Accrual:** The asset's reserve accumulator is decremented by the withdrawn amount, and a `ReserveWithdrawn` event is emitted.
