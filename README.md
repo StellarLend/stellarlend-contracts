@@ -198,7 +198,6 @@ stellar contract deploy \
 stellarlend-contracts/
 ├── README.md                 # This file
 ├── local-ci.sh               # Local CI reproduction script
-├── ci-doc.md                 # CI/CD documentation
 ├── docs/                     # Protocol documentation
 │   ├── README.md            # Detailed protocol documentation
 │   └── examples/            # Example JSON reports
@@ -302,7 +301,7 @@ For exact signatures and planned-but-not-shipping names, see
 - **[Cross-Asset Rules](docs/CROSS_ASSET_RULES.md)**: Borrowing/repay rules, view guarantees (G-1..G-10), and invariants for multi-asset positions
 - **[Repay Semantics](stellar-lend/docs/REPAY_SEMANTICS.md)**: Both repay paths (single-asset vs cross-asset), overpay behaviour, interest ordering, and dust prevention
 - **[Contract README](stellar-lend/contracts/hello-world/README.md)**: Contract-specific documentation and entrypoint reference
-- **[CI/CD Documentation](ci-doc.md)**: Continuous integration setup and local reproduction guide
+- **[CI/CD Overview](docs/CI_OVERVIEW.md)**: Continuous integration setup and local reproduction guide
 - **[Example Reports](docs/examples/)**: Example JSON outputs for protocol and user analytics
 
 ---
@@ -390,4 +389,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 For questions, issues, or contributions:
 - Open an issue on GitHub for bug reports or feature requests
 - Check the [documentation](docs/README.md) for detailed protocol information
-- Review [CI documentation](ci-doc.md) for build and test issues
+- Review [CI documentation](docs/CI_OVERVIEW.md) for build and test issues

@@ -358,7 +358,6 @@ Result:
 
 ## View Guarantees
 
-<<<<<<< HEAD
 The following guarantees hold for `get_cross_position_summary` and all other read-only view functions. These are verified by the invariant test suite in `cross_asset_view_invariants_test.rs`.
 
 ### G-1 — Read-only (no state mutation)
@@ -437,52 +436,52 @@ Because view functions are read-only and deterministic, there is no mechanism th
 | LTV = 0 | `weighted_collateral = 0`; borrow rejected by health check |
 | Overpayment of debt | Capped at outstanding balance; `total_debt_usd` goes to 0 |
 | Same asset in collateral and debt | Counted independently in both totals (no netting) |
-=======
-Read-only methods that surface position state — `get_user_position`,
-`get_collateral_balance`, `get_debt_balance`, `get_collateral_value`,
-`get_debt_value`, `get_health_factor`, `get_max_liquidatable_amount`, and
-`get_liquidation_incentive_amount` — are pinned by the invariant test suite
-in `stellar-lend/contracts/lending/src/views_test.rs`. The properties below
-hold for every user, asset configuration, and ordering of view calls.
 
-### Consistency
+## Isolation Mode Rules
 
-- The unified `get_user_position(user)` summary returns field-for-field exactly
-  what the individual getters return for the same `user` at the same ledger
-  height.
-- View output is a pure function of `(storage, oracle, ledger height)`.
-  Repeated calls must yield bit-identical results, and the order of view
-  calls must not change any answer.
+### Definition
 
-### Risk-parameter isolation
+An asset is in **isolation mode** when its `IsolationConfig.isolated` flag is `true`. Isolated assets are permitted as collateral but subject to two hard constraints:
 
-Adjusting `liquidation_threshold_bps` may move `health_factor` but must not
-move `collateral_balance`, `collateral_value`, `debt_balance`, or `debt_value`.
-The first four are functions of raw state and oracle output only.
+1. **Debt ceiling** — The aggregate outstanding debt backed by the isolated asset across all users must not exceed `isolation_debt_ceiling`. New borrows that would push the running `IsolationDebt` past this ceiling are rejected with `IsolationCeilingExceeded` (error code 2008).
+2. **Non-amplifying** — An isolated asset's collateral contribution does not combine with other collateral to produce additional borrowing capacity beyond what the ceiling allows. Users must call `borrow_against_collateral` (not the generic `borrow`) to have isolation mode enforced and tracked.
 
-### Missing-asset and missing-oracle handling
+### Isolation-Mode Invariants
 
-- A user with no recorded position returns a default summary: zero balances,
-  zero values, and `health_factor == HEALTH_FACTOR_NO_DEBT`.
-- When the oracle is unconfigured, every value-bearing field reads as `0`
-  consistently and `get_max_liquidatable_amount` returns `0` so callers
-  cannot liquidate without price data.
+1. **Ceiling never exceeded** — After every successful `borrow_against_collateral`, `IsolationDebt(asset) ≤ isolation_debt_ceiling`.
+2. **IsolationDebt non-negative** — The running counter is always ≥ 0. Over-repayment is absorbed by saturating subtraction.
+3. **Non-isolated assets unaffected** — A call to `borrow_against_collateral` with a non-isolated `collateral_asset` does not touch `IsolationDebt` and passes through with no overhead.
+4. **Counter consistency** — `IsolationDebt(asset)` equals the sum of all net principal additions from `borrow_against_collateral` minus all net principal reductions from `repay_against_collateral` for that asset, over all users.
+5. **Ceiling change is immediate** — Updating `isolation_debt_ceiling` takes effect on the very next borrow check. Existing debt is not retroactively invalidated; only new borrows are affected.
+6. **Disabling is immediate** — Setting `isolated = false` removes all ceiling enforcement; the `IsolationDebt` counter is left in storage but never consulted until isolation is re-enabled.
 
-### Rounding and ordering
+### Worked Example
 
-- Health-factor division truncates toward zero. `health_factor ==
-  HEALTH_FACTOR_SCALE` (exactly 1.0) is treated as healthy.
-- `get_liquidation_incentive_amount(repay)` is monotonic non-decreasing in
-  `repay`. Negative or zero amounts return `0`.
+```
+Config:  EXOTIC  isolated=true  isolation_debt_ceiling=500_000
 
-### Security: no view-based exploitation
+Step 1 — User A borrows 300_000 against EXOTIC:
+  check: 0 + 300_000 = 300_000 ≤ 500_000  ✓
+  IsolationDebt(EXOTIC) = 300_000
 
-Views never mutate state, never charge fees, and trigger only the read-only
-oracle lookup. Integrators MUST NOT rely on a view's value beyond the ledger
-height at which it was observed — oracle prices and risk parameters can
-change.
->>>>>>> origin
+Step 2 — User B borrows 200_000 against EXOTIC:
+  check: 300_000 + 200_000 = 500_000 ≤ 500_000  ✓  (exactly at ceiling)
+  IsolationDebt(EXOTIC) = 500_000
+
+Step 3 — User C tries to borrow 1 against EXOTIC:
+  check: 500_000 + 1 = 500_001 > 500_000  ✗  → IsolationCeilingExceeded
+
+Step 4 — Admin lowers ceiling to 400_000:
+  User C cannot borrow any amount now (500_000 > 400_000 already).
+
+Step 5 — User A repays 150_000:
+  IsolationDebt(EXOTIC) = 500_000 − 150_000 = 350_000
+
+Step 6 — User C borrows 50_000:
+  check: 350_000 + 50_000 = 400_000 ≤ 400_000  ✓
+  IsolationDebt(EXOTIC) = 400_000
+```
 
 ## Conclusion
 
-The cross-asset system provides flexibility for users to manage positions across multiple assets while maintaining protocol solvency through health factor enforcement. Understanding these rules and invariants is crucial for safe protocol usage and integration.
+The cross-asset system provides flexibility for users to manage positions across multiple assets while maintaining protocol solvency through health factor enforcement. Isolation mode adds a risk-containment layer for volatile or thinly-traded assets, capping their systemic exposure without removing them from the protocol entirely. Understanding these rules and invariants is crucial for safe protocol usage and integration.

@@ -157,3 +157,47 @@ random operation sequences across the four core user mutations:
 - `max_shrink_iters` is explicitly configured to provide stable shrinking effort
    while keeping CI runtime bounded.
 - Smaller failing sequences are emitted first, making triage and replay easier.
+
+---
+
+## Oracle Signature Payload Binding
+
+### Guarantee
+
+An ed25519 signature produced by the oracle is cryptographically bound to the
+exact `(asset, price, timestamp)` tuple it was created for. No field-reordering
+or byte-splicing forgery can produce a valid signature for a different tuple.
+
+### Payload framing
+
+```
+ORACLE_SIGNATURE_DOMAIN  (17 bytes, fixed — "StellarLendOracle")
+u32_be(len(asset_xdr))   (4 bytes  — length prefix for variable field)
+asset_xdr                (variable — Soroban XDR encoding of asset Address)
+price_i128_be            (16 bytes, fixed)
+timestamp_u64_be         (8 bytes,  fixed)
+```
+
+The length prefix on `asset_xdr` is the critical hardening: without it a
+crafted asset whose XDR encoding ends with the first bytes of a target price
+can produce the same byte string as a different `(asset', price')` pair.  With
+the 4-byte prefix the two payloads diverge because the lengths differ.
+
+### Attack vectors ruled out
+
+| Attack | Why it fails |
+|---|---|
+| Replay signature for a different asset | `len(asset_xdr)` and `asset_xdr` bytes both differ → different payload |
+| Replay signature for a different price | `price_i128_be` bytes differ → different payload |
+| Replay signature for a different timestamp | `timestamp_u64_be` bytes differ → different payload |
+| Splice: extend `asset_xdr` to absorb price bytes | `u32_be(len)` encodes the actual asset XDR length; a different length tag invalidates the payload |
+
+### Test coverage
+
+`src/oracle_payload_binding_test.rs` contains five tests:
+
+- `test_valid_signature_accepted` — baseline happy path
+- `test_different_asset_rejected` — cross-asset replay panics
+- `test_different_price_rejected` — cross-price replay panics
+- `test_different_timestamp_rejected` — cross-timestamp replay panics
+- `test_splice_forgery_rejected` — splice attempt with distinct `(asset, price)` pairs panics

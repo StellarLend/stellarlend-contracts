@@ -1,5 +1,9 @@
 # Upgrade Playbook
 
+## Implementation status
+
+The canonical lending contract (`stellar-lend/contracts/lending/src/upgrade.rs`) implements `upgrade_init`, `upgrade_propose`, `upgrade_approve`, and `upgrade_execute` with the same timelock / multisig approval model described below. Governance tests live in `src/upgrade_governance_test.rs`.
+
 ## Overview
 
 This playbook provides a practical guide for safely upgrading StellarLend contracts, including preflight checks, execution procedures, post-upgrade monitoring, and rollback criteria. It aligns with the upgrade authorization model documented in `docs/UPGRADE_AUTHORIZATION.md`.

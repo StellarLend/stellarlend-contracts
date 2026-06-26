@@ -27,6 +27,8 @@ pub enum DataKey {
     Proposal(u64),
     /// Stored approvals keyed by proposal id
     ProposalApprovals(u64),
+    /// Registered signer set eligible to approve proposals
+    Signers,
 }
 
 #[contracterror]
@@ -55,6 +57,12 @@ pub enum MultisigError {
     ProposalExpired = 1010,
     /// Proposal parameters are invalid
     InvalidProposal = 1011,
+    /// Caller has already approved this proposal (duplicate approval)
+    AlreadyApproved = 1012,
+    /// Caller is not a registered signer
+    NotASigner = 1013,
+    /// Quorum has not been reached (too few current-signer approvals)
+    InsufficientApprovals = 1014,
 }
 
 #[contracttype]
@@ -354,7 +362,128 @@ impl MultisigContract {
             .get(&DataKey::ProposalApprovals(id))
     }
 
-    /// Execute a stored proposal if it is still fresh and its delay has elapsed.
+    /// Register the set of signers eligible to approve proposals.
+    ///
+    /// Only the admin may update the signer set. The signer set is independent
+    /// of the admin and may overlap with it. Quorum is evaluated against this
+    /// set at execution time, so changes take effect immediately for all
+    /// pending proposals.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `signers` - New signer set (must be non-empty)
+    ///
+    /// # Errors
+    /// * `Unauthorized` - Caller is not the admin
+    /// * `NotInitialized` - Contract not initialized
+    /// * `InvalidThreshold` - Signer list is empty
+    pub fn set_signers(env: Env, signers: Vec<Address>) -> Result<(), MultisigError> {
+        let admin = Self::get_admin(env.clone())?;
+        admin.require_auth();
+
+        if signers.is_empty() {
+            return Err(MultisigError::InvalidThreshold);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Signers, &signers);
+
+        Ok(())
+    }
+
+    /// Get the current registered signer set.
+    ///
+    /// Returns `None` if no signer set has been registered (fallback: only the
+    /// admin counts as a signer).
+    pub fn get_signers(env: Env) -> Option<Vec<Address>> {
+        env.storage().instance().get(&DataKey::Signers)
+    }
+
+    /// Add an approval to an open proposal.
+    ///
+    /// # Quorum-integrity guarantees
+    /// * **Deduplication** — a signer who has already approved the proposal
+    ///   receives `AlreadyApproved`; duplicate calls never inflate the count.
+    /// * **Signer-set membership** — only addresses in the registered signer
+    ///   set (or the admin when no signer set is configured) may approve.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `id` - Proposal id to approve
+    ///
+    /// # Errors
+    /// * `NotInitialized` - Contract not initialized
+    /// * `ProposalNotFound` - Proposal id does not exist
+    /// * `ProposalAlreadyExecuted` - Proposal has already been executed
+    /// * `ProposalExpired` - Proposal expiry ledger has passed
+    /// * `NotASigner` - Caller is not a registered signer
+    /// * `AlreadyApproved` - Caller has already approved this proposal
+    pub fn approve_proposal(env: Env, approver: Address, id: u64) -> Result<(), MultisigError> {
+        approver.require_auth();
+
+        // Ensure contract is initialized.
+        let _admin = Self::get_admin(env.clone())?;
+
+        let proposal: Proposal = env
+            .storage()
+            .instance()
+            .get(&DataKey::Proposal(id))
+            .ok_or(MultisigError::ProposalNotFound)?;
+
+        if proposal.executed {
+            return Err(MultisigError::ProposalAlreadyExecuted);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        if current_ledger > proposal.expires_at_ledger {
+            return Err(MultisigError::ProposalExpired);
+        }
+
+        // Check that the approver is a registered signer (or admin when no
+        // signer set is configured).
+        let is_valid_signer = if let Some(signers) = Self::get_signers(env.clone()) {
+            signers.contains(&approver)
+        } else {
+            // Fallback: admin is the sole implicit signer.
+            approver == _admin
+        };
+        if !is_valid_signer {
+            return Err(MultisigError::NotASigner);
+        }
+
+        let mut approvals: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalApprovals(id))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Deduplicate: reject a second approval from the same address.
+        if approvals.contains(&approver) {
+            return Err(MultisigError::AlreadyApproved);
+        }
+
+        approvals.push_back(approver);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalApprovals(id), &approvals);
+
+        Ok(())
+    }
+
+    /// Execute a stored proposal if quorum is met, it is still fresh, and its
+    /// delay has elapsed.
+    ///
+    /// # Quorum-integrity guarantees at execution time
+    /// * **Current-signer validation** — only addresses that are *currently* in
+    ///   the registered signer set count toward quorum. A signer removed after
+    ///   approving is excluded automatically.
+    /// * **Deduplication** — each signer address counts at most once even if
+    ///   it appears multiple times in the stored approval list.
+    /// * **Threshold** — the effective quorum threshold is read fresh from
+    ///   storage at execution time, not captured at proposal creation. A
+    ///   threshold raised after approval requires additional approvals before
+    ///   the proposal can execute.
     ///
     /// Execution rejects stale approvals once `current_ledger > expires_at_ledger`,
     /// so old quorums cannot be replayed against newer protocol state.
@@ -380,6 +509,45 @@ impl MultisigContract {
         if current_ledger < proposal.eta_ledger {
             return Err(MultisigError::ProposalNotReady);
         }
+
+        // --- Quorum check ---
+        // Read the current signer set and threshold fresh at execution time.
+        // This ensures:
+        //   1. Removed-after-approval signers do not count.
+        //   2. A raised threshold requires additional approvals.
+        let current_threshold = Self::get_threshold(env.clone())?;
+        let approvals: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalApprovals(id))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Determine effective signer set.
+        let effective_signers: Option<Vec<Address>> = Self::get_signers(env.clone());
+
+        // Count unique approvals from current signers.
+        let mut unique_valid: Vec<Address> = Vec::new(&env);
+        for addr in approvals.iter() {
+            // Skip if already counted (deduplication).
+            if unique_valid.contains(&addr) {
+                continue;
+            }
+            // Check membership in current signer set.
+            let is_current_signer = if let Some(ref signers) = effective_signers {
+                signers.contains(&addr)
+            } else {
+                // No signer set registered: admin acts as implicit sole signer.
+                addr == admin
+            };
+            if is_current_signer {
+                unique_valid.push_back(addr);
+            }
+        }
+
+        if (unique_valid.len() as u32) < current_threshold {
+            return Err(MultisigError::InsufficientApprovals);
+        }
+        // --- End quorum check ---
 
         env.storage()
             .instance()
@@ -439,6 +607,9 @@ impl MultisigContract {
         MIN_THRESHOLD_DELAY_LEDGERS
     }
 }
+
+#[cfg(test)]
+mod quorum_edge_test;
 
 #[cfg(test)]
 mod tests {
@@ -726,7 +897,7 @@ mod tests {
 
     #[test]
     fn test_execute_fresh_proposal_ok() {
-        let (env, _admin, contract_id) = setup_initialized(3);
+        let (env, _admin, contract_id) = setup_initialized(1);
         let client = MultisigContractClient::new(&env, &contract_id);
         let current_ledger = env.ledger().sequence();
         let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10;
@@ -758,7 +929,7 @@ mod tests {
 
     #[test]
     fn test_execute_proposal_at_exact_expiry_ok() {
-        let (env, _admin, contract_id) = setup_initialized(3);
+        let (env, _admin, contract_id) = setup_initialized(1);
         let client = MultisigContractClient::new(&env, &contract_id);
         let current_ledger = env.ledger().sequence();
         let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS;
@@ -821,7 +992,7 @@ mod tests {
     /// ProposalAlreadyExecuted: a second execute_proposal call must be rejected.
     #[test]
     fn test_execute_proposal_double_execution() {
-        let (env, _admin, contract_id) = setup_initialized(3);
+        let (env, _admin, contract_id) = setup_initialized(1);
         let client = MultisigContractClient::new(&env, &contract_id);
         let current_ledger = env.ledger().sequence();
         let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10;
@@ -851,7 +1022,7 @@ mod tests {
     /// create_proposal_default_expiry: sets expires_at_ledger = current + DEFAULT_PROPOSAL_EXPIRY_LEDGERS.
     #[test]
     fn test_create_proposal_default_expiry() {
-        let (env, _admin, contract_id) = setup_initialized(3);
+        let (env, _admin, contract_id) = setup_initialized(1);
         let client = MultisigContractClient::new(&env, &contract_id);
         let current_ledger = env.ledger().sequence();
         let proposal_id = client.create_proposal_default_expiry(&5);
@@ -884,7 +1055,7 @@ mod tests {
     /// cleanup_expired must keep executed proposals; only unexecuted expired ones are removed.
     #[test]
     fn test_cleanup_retains_executed_proposals() {
-        let (env, _admin, contract_id) = setup_initialized(3);
+        let (env, _admin, contract_id) = setup_initialized(1);
         let client = MultisigContractClient::new(&env, &contract_id);
         let current_ledger = env.ledger().sequence();
         let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS;
@@ -935,7 +1106,7 @@ mod tests {
     /// Executing a proposal at exactly eta_ledger (the boundary between NotReady and Ready).
     #[test]
     fn test_execute_at_exact_eta_boundary() {
-        let (env, _admin, contract_id) = setup_initialized(3);
+        let (env, _admin, contract_id) = setup_initialized(1);
         let client = MultisigContractClient::new(&env, &contract_id);
         let current_ledger = env.ledger().sequence();
         let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10;
@@ -959,7 +1130,7 @@ mod tests {
     /// execution does not affect the second proposal's creation validity check.
     #[test]
     fn test_execute_at_expiry_boundary() {
-        let (env, _admin, contract_id) = setup_initialized(3);
+        let (env, _admin, contract_id) = setup_initialized(1);
         let client = MultisigContractClient::new(&env, &contract_id);
         let current_ledger = env.ledger().sequence();
         let expires_at = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS;

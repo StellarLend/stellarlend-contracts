@@ -75,6 +75,26 @@
 | `set_debt_ceiling` | `(ceiling: i128)` | admin | `Result<(), LendingError>` |
 | `set_flash_fee` | `(fee_bps: i128)` | admin | `Result<(), LendingError>` |
 | `set_emergency_state` | `(new_state: EmergencyState)` | admin; guardian may set `Shutdown` | `()` |
+| `set_asset_params` | `(admin: Address, asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128)` | admin | `Result<(), LendingError>` |
+| `get_asset_params` | `(asset: Address)` | — | `Option<AssetParams>` |
+
+### Cross-Asset User Operations
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `deposit_collateral_asset` | `(user: Address, asset: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — new collateral balance |
+| `borrow_asset` | `(user: Address, asset: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — debt principal |
+| `repay_asset` | `(user: Address, asset: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — remaining debt principal |
+| `withdraw_asset` | `(user: Address, asset: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — new collateral balance |
+
+### Cross-Asset View Functions
+
+| Function | Signature | Returns |
+|---|---|---|
+| `get_cross_position_summary` | `(user: Address)` | `CrossPositionSummary { total_collateral_usd: i128, total_debt_usd: i128, health_factor: i128 }` |
+| `get_cross_health_factor` | `(user: Address)` | `i128` |
+| `get_collateral_asset_balance` | `(user: Address, asset: Address)` | `i128` |
+| `get_debt_asset_position` | `(user: Address, asset: Address)` | `DebtPosition` |
 
 ---
 
@@ -96,6 +116,26 @@ pub struct PositionSummary {
 pub struct DebtPosition {
     pub principal: i128,    // Borrowed principal (before interest)
     pub last_update: u64,   // Timestamp of last interest calculation
+}
+```
+
+### `AssetParams`
+
+```rust
+pub struct AssetParams {
+    pub ltv_bps: i128,                  // Loan-to-value in basis points
+    pub liquidation_threshold_bps: i128, // Liquidation threshold in basis points
+    pub debt_ceiling: i128,             // Total system-wide debt cap for this asset
+}
+```
+
+### `CrossPositionSummary`
+
+```rust
+pub struct CrossPositionSummary {
+    pub total_collateral_usd: i128, // Σ(collateral_i × price_i) / PRICE_DIVISOR
+    pub total_debt_usd: i128,       // Σ(debt_j × price_j) / PRICE_DIVISOR
+    pub health_factor: i128,        // Aggregate HF (≥10000 = healthy)
 }
 ```
 
@@ -149,6 +189,9 @@ pub enum EmergencyState {
 | 5001 | `LendingError::InvalidOracleSignature` | Bad oracle signature | "Oracle signature verification failed." |
 | 5002 | `LendingError::StaleOracleTimestamp` | Oracle update too old | "Oracle price is outdated." |
 | 5003 | `LendingError::OraclePubkeyNotSet` | Oracle key missing | "System error: Oracle key not configured." |
+| 3001 | `LendingError::AssetNotConfigured` | Asset not registered via `set_asset_params` | "Asset is not configured. Contact the administrator." |
+| 3002 | `LendingError::PriceFeedNotFound` | Oracle price missing for asset | "Price data not available for this asset." |
+| 3003 | `LendingError::HealthFactorTooLow` | Operation would drop HF below 1.0 | "Insufficient collateral for this action." |
 
 ---
 
@@ -167,6 +210,12 @@ pub enum EmergencyState {
 | Event Topic | Payload | Emitted When |
 |---|---|---|
 | `EmergencyStateChanged` | `(old_state: EmergencyState, new_state: EmergencyState)` | `set_emergency_state` completes |
+| `PauseStateChanged` | `(operation: PauseType, old_state: PauseState, new_state: PauseState)` | `set_pause` completes |
+| `AssetParamsSet` | `(asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128)` | `set_asset_params` completes |
+| `CrossDeposit` | `(user: Address, asset: Address, amount: i128)` | `deposit_collateral_asset` completes |
+| `CrossBorrow` | `(user: Address, asset: Address, amount: i128)` | `borrow_asset` completes |
+| `CrossRepay` | `(user: Address, asset: Address, amount: i128)` | `repay_asset` completes |
+| `CrossWithdraw` | `(user: Address, asset: Address, amount: i128)` | `withdraw_asset` completes |
 
 > Additional events for `deposit`, `borrow`, `repay`, `liquidate`, and `flash_loan` are **planned** but not yet emitted by the current implementation.
 
@@ -174,17 +223,14 @@ pub enum EmergencyState {
 
 ## 7. 🔮 Planned — Not Yet Implemented
 
-The following functions and events are **not** present in `src/lib.rs` and should not be called. They are documented here for roadmap visibility.
+The following functions are **not** present in `src/lib.rs` and should not be called. They are documented here for roadmap visibility.
 
-| Function / Event | Tracking |
+| Feature | Tracking |
 |---|---|
 | `get_emergency_state()` | Planned public view (state visible via events today) |
-| `set_oracle(admin, oracle)` | Planned external oracle contract adapter; signed oracle pubkey and price updates exist today |
+| `set_oracle(admin, oracle)` | Planned external oracle contract adapter |
 | `set_liquidation_threshold_bps(admin, bps)` | Planned — currently hardcoded 8000 BPS |
 | `set_close_factor_bps(admin, bps)` | Planned — currently hardcoded 5000 BPS |
-| `set_pause(admin, pause_type, paused)` | Planned granular per-operation pause |
-| `get_collateral_value(user)` | Planned — requires oracle |
-| `get_debt_value(user)` | Planned — requires oracle |
 | `get_max_liquidatable_amount(user)` | Planned convenience helper |
 | `upgrade_*` functions | Planned multisig upgrade governance |
 | `data_*` functions | Planned persistent data-store management |
