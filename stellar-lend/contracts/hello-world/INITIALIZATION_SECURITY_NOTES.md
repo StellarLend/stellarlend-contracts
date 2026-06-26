@@ -16,6 +16,7 @@ This document outlines the security assumptions, trust boundaries, and critical 
 - **Implementation**: Centralized admin module with role-based access control
 - **Risk**: Unauthorized access to privileged operations
 - **Mitigation**: Require admin authentication for all privileged functions
+- **Note**: `set_admin` bootstraps the first admin once, but any subsequent admin rotation must be authorized by the current admin to prevent silent takeover.
 
 ### 3. Storage Persistence and Isolation
 - **Requirement**: Initialization data must persist across ledger advancements

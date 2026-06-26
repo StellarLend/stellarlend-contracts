@@ -49,7 +49,7 @@ This document outlines the procedures for managing oracle configurations in the 
 pub struct OracleConfig {
     /// Maximum price deviation in basis points (e.g., 500 = 5%)
     pub max_deviation_bps: i128,
-    /// Maximum staleness in seconds (global default for all assets)
+    /// Maximum staleness in seconds
     pub max_staleness_seconds: u64,
     /// Cache TTL in seconds
     pub cache_ttl_seconds: u64,
@@ -59,47 +59,6 @@ pub struct OracleConfig {
     pub max_price: i128,
 }
 ```
-
-### Per-Asset Staleness Configuration (Issue #645)
-
-In addition to the global `max_staleness_seconds`, each asset can have its own
-staleness limit. This is useful when different assets have different oracle update
-cadences — for example, a stablecoin oracle that updates every 60 seconds versus
-a long-tail asset oracle that updates every 30 minutes.
-
-**Resolution order** (most specific wins):
-1. Per-asset override (`set_asset_max_staleness`) — if set for this asset.
-2. Global config (`configure_oracle`) — if no per-asset override.
-3. Hard-coded default (3 600 s) — if neither has been stored.
-
-**New contract functions:**
-
-| Function | Description |
-|----------|-------------|
-| `set_asset_max_staleness(caller, asset, seconds)` | Set per-asset staleness limit. Admin only. `seconds` must be > 0. |
-| `clear_asset_max_staleness(caller, asset)` | Remove per-asset override; reverts to global config. Admin only. |
-| `get_asset_max_staleness(asset)` | Read the effective staleness limit for `asset` (read-only). |
-
-**Example — tighter limit for a stablecoin:**
-```bash
-# Stablecoin oracle updates every 60s; reject prices older than 90s
-contract.set_asset_max_staleness(admin, usdc_address, 90)
-
-# Verify
-effective = contract.get_asset_max_staleness(usdc_address)
-assert(effective == 90)
-```
-
-**Example — remove per-asset override:**
-```bash
-contract.clear_asset_max_staleness(admin, usdc_address)
-# Now falls back to global max_staleness_seconds
-```
-
-**Storage layout note:** The per-asset override is stored under a new
-`OracleKey::AssetStaleness(Address)` variant. This is additive — no existing
-storage keys are modified and no migration is required when upgrading from a
-version that did not have this feature.
 
 ### Provider Configuration
 
@@ -498,103 +457,67 @@ contract.health_check()
    - Configuration issues
    - Resolution actions
 
-## Oracle Failure Modes
-
-This section documents how the protocol behaves under adversarial oracle conditions, based on the adversarial test suite in `contracts/lending/src/oracle_adversarial_test.rs`.
-
-### Sudden Price Jumps and Crashes
-
-| Scenario | Protocol Response |
-|----------|-------------------|
-| 10× collateral price increase | Health factor improves proportionally; position remains healthy |
-| 10× collateral price crash | Health factor drops immediately; position becomes liquidatable when below threshold |
-| Debt asset price spike | Health factor worsens (debt value grows); position may become liquidatable |
-
-**Key invariant**: View functions (`get_health_factor`, `get_collateral_value`, `get_max_liquidatable_amount`) reflect price changes immediately with no lag. No state change is required from the user.
-
-### Stale Feed Handling
-
-| Scenario | Resolution Order | Result |
-|----------|-----------------|--------|
-| Primary feed fresh | Primary → (done) | Fresh primary price used |
-| Primary stale, fallback fresh | Primary stale → Fallback → (done) | Fallback price used transparently |
-| Primary missing, fallback fresh | No primary → Fallback → (done) | Fallback price used |
-| Primary stale, fallback stale | Both checked → error | `StalePrice` error returned |
-| No feed configured | No primary, no fallback | `NoPriceFeed` error returned |
-
-**Staleness definition**: A price is stale if `current_timestamp - last_updated > max_staleness_seconds` (default 3600s). Future timestamps (`last_updated > current_timestamp`) are **also treated as stale** as a clock-skew manipulation guard.
-
-### Behaviour When No Price Is Available
-
-When the oracle module cannot provide a fresh price, **all values default to 0** rather than reverting:
-
-- `get_collateral_value()` → `0`
-- `get_debt_value()` → `0`
-- `get_health_factor()` → `0` (when user has debt but no oracle; `HEALTH_FACTOR_NO_DEBT` when no debt)
-- `get_max_liquidatable_amount()` → `0` (position treated as non-liquidatable under missing oracle)
-
-This "fail-safe to zero" design prevents panics but means external monitors should treat `health_factor == 0` as an oracle outage signal rather than a healthy position.
-
-### Unauthorised Price Writes (Cache Poisoning)
-
-The oracle enforces three-tier slot isolation:
-
-1. **Admin** can write to the primary slot for any asset.
-2. **Registered primary oracle** can write to the primary slot for its registered asset only.
-3. **Registered fallback oracle** can write to the fallback slot only — it **cannot overwrite the primary slot**.
-4. **All other addresses** are rejected with `OracleError::Unauthorized`.
-
-An attacker injecting a far-future timestamp via storage cannot extend feed freshness: future timestamps are immediately treated as stale by `is_stale()`.
-
-Zero and negative prices are always rejected (`OracleError::InvalidPrice`) regardless of the caller's role.
-
-### Health Factor Boundary
-
-The liquidation threshold boundary is:
-
-```
-health_factor = (collateral_value × liquidation_threshold_bps / 10000) × 10000 / debt_value
-```
-
-| `health_factor` value | Meaning |
-|-----------------------|---------|
-| ≥ `HEALTH_FACTOR_SCALE` (10000) | Position is healthy; not liquidatable |
-| < `HEALTH_FACTOR_SCALE` | Position is liquidatable |
-| `HEALTH_FACTOR_NO_DEBT` (100_000_000) | No debt; trivially healthy |
-| `0` | Oracle unavailable with active debt; cannot compute |
-
-**Exact boundary**: A position with `health_factor == 10000` is **not** liquidatable (`get_max_liquidatable_amount` returns 0).
-
-### Oracle Pause Mode
-
-When `set_oracle_paused(admin, true)` is called:
-- **New price updates are blocked** (`OracleError::OraclePaused`)
-- **Existing prices remain readable** until they become stale under the normal staleness window
-- Pause is intended as a short-term emergency circuit-breaker; prolonged pause causes all feeds to go stale and views to return 0
-
-### Cross-Asset Independence
-
-Oracle state for each asset is completely independent:
-
-- Staleness of Asset A's feed has **no effect** on Asset B's price reads
-- A stale collateral oracle causes `collateral_value → 0`; the debt value is still correctly computed from a fresh debt oracle (and vice versa)
-- Price manipulation of one asset in a cross-asset position affects only the relevant value, not all positions
-
-### Attack Resistance Summary
-
-| Attack Vector | Mitigation |
-|---------------|------------|
-| Non-authorized price write | `require_auth()` + role check on every `update_price_feed` call |
-| Fallback oracle overwrites primary | Slot routing: fallback oracle can only write to `FallbackFeed` key |
-| Far-future timestamp injection | `is_stale()` treats `now < last_updated` as stale |
-| Zero/negative price injection | `validate_price()` rejects `price ≤ 0` before any storage write |
-| Price feed poisoning via protocol pause | Oracle pause blocks writes; existing prices expire naturally |
-| Self-referential oracle registration | `set_primary_oracle` / `set_fallback_oracle` reject `oracle == contract_address` |
-
----
-
 ## Conclusion
 
 Effective oracle configuration management is critical for the security and reliability of the StellarLend protocol. This guide provides the procedures and considerations necessary for maintaining a robust oracle system while ensuring proper role separation and security controls.
 
 Regular review of configurations, continuous monitoring, and adherence to security best practices are essential for maintaining system integrity and protecting user assets.
+
+
+
+## AMM TWAP Fallback (Issue #868)
+
+### Overview
+
+When the primary oracle is stale or unavailable, the lending contract automatically
+falls back to a Time-Weighted Average Price (TWAP) derived from the on-chain AMM pool.
+
+### Fallback chain
+
+Call external oracle → accept if age ≤ max_staleness_seconds
+If stale/absent    → emit OrcStale event, use AMM TWAP
+If TWAP has no history → panic (fail-safe, never price on nothing)
+
+
+### TWAP formula
+
+For a pool with reserves `(R₀, R₁)`, after `Δt` seconds:
+price0_cumulative += (R₁ / R₀) × 10¹⁸ × Δt
+TWAP over window W = Δprice0_cumulative / W
+
+Divide the result by `10¹⁸` to get the human-readable price.
+
+### Configuration
+
+The `twap_window_secs` field in `OracleConfig` controls the fallback look-back window.
+
+| Window       | Seconds | Use case                        |
+|--------------|---------|---------------------------------|
+| Minimum      | 25 s    | Testing / low-value positions   |
+| Recommended  | 150 s   | Standard liquidation checks     |
+| High-value   | 1500 s  | Large / high-value positions    |
+
+### Manipulation resistance
+
+A single flash-loan or block-level swap cannot meaningfully move a 150 s+ TWAP because
+the manipulated price only affects one slot out of many. The attacker must hold the
+position open across multiple ledger closes, bearing full impermanent loss and
+liquidation risk throughout.
+
+### Events emitted
+
+| Event       | Trigger                                  |
+|-------------|------------------------------------------|
+| `OrcStale`  | Primary oracle age > max_staleness_seconds |
+| `OrcFallbk` | TWAP fallback was used for pricing       |
+
+Monitor both events to detect oracle health issues in production.
+
+### New files added
+
+| File                   | Location                                      |
+|------------------------|-----------------------------------------------|
+| `amm_twap.rs`          | `stellar-lend/contracts/hello-world/src/`     |
+| `twap_tests.rs`        | `stellar-lend/contracts/hello-world/src/`     |
+| Modified: `amm.rs`     | `stellar-lend/contracts/hello-world/src/`     |
+| Modified: `oracle.rs`  | `stellar-lend/contracts/hello-world/src/`     |

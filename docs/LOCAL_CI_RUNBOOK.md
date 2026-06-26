@@ -191,6 +191,86 @@ Fix:
 
 All green locally → CI should pass.
 
+## Coverage enforcement
+
+Coverage thresholds are enforced per-crate via `scripts/enforce_coverage.py`,
+which reads a Cobertura XML report from `cargo-tarpaulin`.
+
+### Configuration
+
+Per-crate thresholds live in `scripts/coverage_thresholds.json`:
+
+```json
+{
+  "flat_threshold": 95.0,
+  "per_crate": {
+    "contracts/lending/src": 95.0,
+    "contracts/hello-world/src": 95.0
+  }
+}
+```
+
+- `flat_threshold` — fallback for any crate not listed in `per_crate`
+- `per_crate` — crate-specific minimum line-rate percentages
+
+### Running locally
+
+```bash
+# Generate coverage report
+cd stellar-lend
+cargo tarpaulin --out Xml
+cd ..
+
+# Enforce thresholds (auto-discovers cobertura.xml next to the crate)
+python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml
+
+# Override the flat threshold for a stricter check
+python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml --threshold 99.0
+
+# Point at a custom thresholds file
+python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml \\
+    --thresholds-json scripts/coverage_thresholds.json
+```
+
+### Output
+
+When every crate meets its threshold:
+
+```
+Crate                                           Coverage  Threshold  Status
+--------------------------------------------------------------------------------
+  contracts/lending/src                           100.00%     95.00%  OK
+  contracts/common/src                             96.00%     95.00%  OK
+  (overall)                                        98.00%     95.00%  OK
+
+Coverage check passed!
+```
+
+When a crate drops below its threshold, the script exits with code 1 and names
+the offending crate:
+
+```
+Crate                                           Coverage  Threshold  Status
+--------------------------------------------------------------------------------
+  contracts/hello-world/src                         0.00%     95.00%  FAIL
+  contracts/lending/src                           100.00%     95.00%  OK
+
+Coverage check FAILED:
+  contracts/hello-world/src: 0.00% < 95.00%
+```
+
+### Unit tests
+
+```bash
+python3 -m pytest scripts/tests/test_enforce_coverage.py -v
+```
+
+Or run directly:
+
+```bash
+python3 scripts/tests/test_enforce_coverage.py
+```
+
 ## References
 
 - local-ci.sh — authoritative local CI script

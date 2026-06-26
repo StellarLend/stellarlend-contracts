@@ -4,8 +4,8 @@
 
 #[cfg(test)]
 mod interest_drift_regression_tests {
-    extern crate std;
-    use std::println;
+extern crate std;
+use std::println;
     use crate::rounding_strategy::{
         calculate_interest_with_rounding, RoundingMode, SECONDS_PER_YEAR,
     };
@@ -18,7 +18,7 @@ mod interest_drift_regression_tests {
         let mut total_interest = 0i128;
 
         // Simulate 24 monthly accruals
-        for month in 0..24 {
+        for _month in 0..24 {
             let result = calculate_interest_with_rounding(
                 borrowed,
                 monthly_seconds,
@@ -28,23 +28,12 @@ mod interest_drift_regression_tests {
             .expect("should not overflow");
 
             total_interest += result.interest;
-
-            println!(
-                "Month {}: monthly interest = {}, total so far = {}",
-                month + 1,
-                result.interest,
-                total_interest
-            );
         }
 
-        // Expected: 100,000 * 0.05 * 2 = 10,000 (exact)
+// Expected: 100,000 * 0.05 * 2 years = 10,000 (exact)
         // With 24 months of rounding: should be very close
         let expected = 10_000i128;
         let drift = (total_interest - expected).abs();
-
-        println!("Total interest accrued: {}", total_interest);
-        println!("Expected: {}", expected);
-        println!("Drift: {} (max allowed: 5)", drift);
 
         // Banker's rounding should keep drift under 20 units for this scenario
         assert!(
@@ -60,9 +49,8 @@ mod interest_drift_regression_tests {
         let borrowed = 50_000i128;
         let monthly_seconds = SECONDS_PER_YEAR / 12;
         let mut total_interest = 0i128;
-        let mut total_drift = 0i128;
 
-        for month in 0..100 {
+        for _month in 0..100 {
             let result = calculate_interest_with_rounding(
                 borrowed,
                 monthly_seconds,
@@ -72,26 +60,12 @@ mod interest_drift_regression_tests {
             .expect("should not overflow");
 
             total_interest += result.interest;
-            total_drift += result.remainder;
-
-            if month % 12 == 11 {
-                println!(
-                    "Year {}: YTD interest = {}, accumulated drift = {}",
-                    month / 12 + 1,
-                    total_interest,
-                    total_drift
-                );
-            }
         }
 
         // 100 months ≈ 8.33 years
         // 50,000 * 0.05 * 8.33 = 20,825
         let expected_approx = 20_825i128;
         let drift = (total_interest - expected_approx).abs();
-
-        println!("Total 100-month interest: {}", total_interest);
-        println!("Approx expected: {}", expected_approx);
-        println!("Drift: {}", drift);
 
         // Even over 100 months, drift should be bounded
         assert!(
@@ -143,15 +117,13 @@ mod interest_drift_regression_tests {
             let mut total = 0i128;
 
             for _ in 0..12 {
-                let result =
-                    calculate_interest_with_rounding(borrowed, one_month, 500, mode)
-                        .expect("should not overflow");
+                let result = calculate_interest_with_rounding(borrowed, one_month, 500, mode)
+                    .expect("should not overflow");
                 total += result.interest;
             }
 
             // Expected: 1000 * 0.05 = 50
             let drift = (total - 50).abs();
-            println!("Mode {:?}: total = {}, drift = {}", mode, total, drift);
 
             // All modes should have bounded drift
             assert!(drift <= 10, "Excessive drift for {:?}: {}", mode, drift);
@@ -169,7 +141,13 @@ mod interest_drift_regression_tests {
         let accumulated_drift = 2i128;
         let max_allowed_drift_bps = 100; // 1% = 100 basis points
 
-        let result = reconcile_debt_with_drift_correction(stored, fresh, accumulated_drift, max_allowed_drift_bps);
+        let result = reconcile_debt_with_drift_correction(
+            stored,
+            fresh,
+            accumulated_drift,
+            max_allowed_drift_bps,
+        );
+
         assert!(result.is_ok());
         let (reconciled_debt, new_drift) = result.unwrap();
         assert_eq!(reconciled_debt, 1005);
@@ -178,7 +156,14 @@ mod interest_drift_regression_tests {
         // Scenario 2: Drift is out of tolerance (5/100 = 500 bps > 100 bps)
         let stored_bad = 100i128;
         let fresh_bad = 105i128;
-        let result_bad = reconcile_debt_with_drift_correction(stored_bad, fresh_bad, accumulated_drift, max_allowed_drift_bps);
+        let result_bad =
+            reconcile_debt_with_drift_correction(
+                stored_bad,
+                fresh_bad,
+                accumulated_drift,
+                max_allowed_drift_bps,
+            );
+
         assert!(result_bad.is_err());
     }
 
@@ -186,12 +171,8 @@ mod interest_drift_regression_tests {
     #[test]
     fn test_extreme_horizon_overflow_protection() {
         // i128::MAX seconds ≈ 9.2 * 10^18 seconds ≈ 292 billion years
-        let result = calculate_interest_with_rounding(
-            i128::MAX / 2,
-            u64::MAX,
-            500,
-            RoundingMode::Bankers,
-        );
+        let result =
+            calculate_interest_with_rounding(i128::MAX / 2, u64::MAX, 500, RoundingMode::Bankers);
 
         // Should error gracefully, not panic
         assert!(result.is_err(), "Should detect overflow at extreme horizon");
@@ -211,6 +192,7 @@ mod interest_drift_regression_tests {
         // 1 * 0.05 = 0.05, rounds to 0
         assert_eq!(result.interest, 0);
     }
+
     /// ✅ Test: High interest rates don't cause unexpected drift
     #[test]
     fn test_high_rate_long_horizon() {
@@ -231,6 +213,6 @@ mod interest_drift_regression_tests {
         }
 
         // 100,000 * 1.0 = 100,000 exact
-        assert!(total >= 95_000 && total <= 105_000, "total: {}", total);
+        assert!((95_000..=105_000).contains(&total), "total: {}", total);
     }
 }

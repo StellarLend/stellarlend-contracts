@@ -1,0 +1,157 @@
+Running preflight upgrade tests
+Test 1: missing WASM file should fail
+ERROR: WASM file not found: /nonexistent.wasm
+OK
+Test 2: non-WASM file should fail
+ERROR: WASM file not found: /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/test.txt
+OK
+Test 3: new contract (no baseline entry) should pass
+======================================================================
+ Preflight Upgrade Check
+ Network          : testnet
+ New WASM          : /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/new_contract.optimized.wasm
+ Max size growth   : 10%
+======================================================================
+
+Using baseline: /home/dp/Documents/stellarlend-contracts/scripts/deployed/testnet/checksums.txt
+WARNING: No baseline entry found for new_contract.optimized.wasm
+         This appears to be a new contract deployment.
+         Skipping export and size comparison.
+
+Preflight check passed (new contract)
+OK
+Test 4: identical WASM should pass (no growth, no export removal)
+======================================================================
+ Preflight Upgrade Check
+ Network          : testnet
+ New WASM          : /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world.optimized.wasm
+ Max size growth   : 10%
+======================================================================
+
+Using baseline: /home/dp/Documents/stellarlend-contracts/scripts/deployed/testnet/checksums.txt
+
+Comparing exported functions...
+WARNING: Failed to extract exports from one or both WASM files
+         Skipping export comparison.
+
+Comparing binary sizes...
+  Old size: 30 bytes
+  New size: 30 bytes
+  Growth:   0 bytes (0%)
+  Size check passed (growth within threshold)
+
+======================================================================
+ Preflight check passed
+======================================================================
+
+The new WASM is safe to deploy:
+  - No exports removed
+  - Size growth within threshold (0% <= 10%)
+
+OK
+Test 5: WASM with size growth within threshold should pass
+======================================================================
+ Preflight Upgrade Check
+ Network          : testnet
+ New WASM          : /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world_new.optimized.wasm
+ Max size growth   : 10%
+======================================================================
+
+Using provided old WASM: /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world.optimized.wasm
+
+Comparing exported functions...
+WARNING: Failed to extract exports from one or both WASM files
+         Skipping export comparison.
+
+Comparing binary sizes...
+  Old size: 30 bytes
+  New size: 31 bytes
+  Growth:   1 bytes (3%)
+  Size check passed (growth within threshold)
+
+======================================================================
+ Preflight check passed
+======================================================================
+
+The new WASM is safe to deploy:
+  - No exports removed
+  - Size growth within threshold (3% <= 10%)
+
+OK
+Test 6: WASM with size growth exceeding threshold should fail
+======================================================================
+ Preflight Upgrade Check
+ Network          : testnet
+ New WASM          : /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world_large.optimized.wasm
+ Max size growth   : 10%
+======================================================================
+
+Using provided old WASM: /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world.optimized.wasm
+
+Comparing exported functions...
+WARNING: Failed to extract exports from one or both WASM files
+         Skipping export comparison.
+
+Comparing binary sizes...
+  Old size: 30 bytes
+  New size: 34 bytes
+  Growth:   4 bytes (13%)
+
+ERROR: WASM size growth exceeds threshold
+       Growth: 13% (max allowed: 10%)
+       Large size increases may impact deployment costs and performance.
+       Use --force only with explicit governance approval.
+OK
+Test 7: --force should bypass size check failure
+======================================================================
+ Preflight Upgrade Check
+ Network          : testnet
+ New WASM          : /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world_large.optimized.wasm
+ Max size growth   : 10%
+======================================================================
+
+WARNING: --force flag set. Bypassing all safety checks.
+         This should only be used with explicit governance approval.
+
+OK
+Test 8: custom max-size-growth threshold should be respected
+======================================================================
+ Preflight Upgrade Check
+ Network          : testnet
+ New WASM          : /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world_large.optimized.wasm
+ Max size growth   : 20%
+======================================================================
+
+Using provided old WASM: /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world.optimized.wasm
+
+Comparing exported functions...
+WARNING: Failed to extract exports from one or both WASM files
+         Skipping export comparison.
+
+Comparing binary sizes...
+  Old size: 30 bytes
+  New size: 34 bytes
+  Growth:   4 bytes (13%)
+  Size check passed (growth within threshold)
+
+======================================================================
+ Preflight check passed
+======================================================================
+
+The new WASM is safe to deploy:
+  - No exports removed
+  - Size growth within threshold (13% <= 20%)
+
+OK
+Test 9: missing baseline directory should fail
+======================================================================
+ Preflight Upgrade Check
+ Network          : testnet
+ New WASM          : /home/dp/Documents/stellarlend-contracts/stellar-lend/target/wasm32-unknown-unknown/release/hello_world.optimized.wasm
+ Max size growth   : 10%
+======================================================================
+ERROR: No baseline checksums found for network 'testnet'
+       Expected: /home/dp/Documents/stellarlend-contracts/scripts/deployed/testnet/checksums.txt
+       Deploy the contract first to establish a baseline.
+OK
+/home/dp/Documents/stellarlend-contracts/scripts/tests/test_preflight_upgrade.sh: line 164: NEW_HASH: unbound variable

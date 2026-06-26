@@ -189,6 +189,44 @@ fn require_positive_amount(amount: i128) -> Result<(), Error> {
 }
 ```
 
+#### Hello-World Contract Amount Validation
+
+The hello-world contract implements strict amount validation to prevent invalid operations:
+
+**Protected Entry Points:**
+- `deposit(user, amount)`: Rejects amount <= 0
+- `withdraw(user, amount)`: Rejects amount <= 0
+- `borrow(user, amount)`: Rejects amount <= 0
+- `repay(user, amount)`: Rejects amount <= 0
+
+**Error Handling:**
+```rust
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum HelloError {
+    InvalidAmount = 1,
+}
+
+// Usage in entrypoints
+pub fn deposit(env: Env, user: Address, amount: i128) -> i128 {
+    if amount <= 0 {
+        panic_with_error!(env, HelloError::InvalidAmount);
+    }
+    // ... rest of implementation
+}
+```
+
+**Security Rationale:**
+- Prevents zero-value operations that could waste gas without effect
+- Prevents negative amounts that could corrupt balances or enable exploits
+- Consistent validation across all amount-accepting entrypoints
+- Early rejection prevents state corruption from invalid inputs
+
+**Test Coverage:**
+- Unit tests verify rejection of zero amounts for all entrypoints
+- Unit tests verify rejection of negative amounts for all entrypoints
+- Tests use panic catching to validate error behavior
+
 ## Protocol Parameter Bounds
 
 ### Hardened Risk Parameter Validation

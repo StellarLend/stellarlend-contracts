@@ -133,8 +133,8 @@ export ADMIN_SECRET_KEY="S..."   # deployer secret key – never commit this
 # Build first, then deploy
 ./scripts/deploy.sh --network testnet --build
 
-# Mainnet
-./scripts/deploy.sh --network mainnet
+# Mainnet (requires MAINNET_CONFIRM=YES_I_AM_SURE environment variable)
+MAINNET_CONFIRM=YES_I_AM_SURE ./scripts/deploy.sh --network mainnet
 ```
 
 The script writes the contract IDs to `scripts/deployed/<network>/`:
@@ -143,6 +143,32 @@ The script writes the contract IDs to `scripts/deployed/<network>/`:
 scripts/deployed/testnet/lending_contract_id.txt
 scripts/deployed/testnet/amm_contract_id.txt
 ```
+
+### WASM checksum verification
+
+The deploy script now performs an integrity check on the optimized WASM
+artifacts before uploading them. It computes a SHA-256 checksum for each
+artifact and compares it against a baseline stored at
+`scripts/deployed/<network>/checksums.txt`.
+
+- Default behavior: the script refuses to deploy if the baseline is missing or
+  if any artifact's checksum differs from the baseline.
+- To seed or rotate the baseline deliberately, run the deploy script with
+  `--update-checksum` (explicit opt-in). This computes new checksums and
+  writes `scripts/deployed/<network>/checksums.txt`.
+- Use `--dry-run` to exercise the build + checksum logic without performing
+  any network uploads.
+
+Rotation workflow (recommended):
+
+1. Run a reproducible build: `./scripts/build.sh --release`.
+2. Verify artifacts locally and inspect sizes/interfaces.
+3. Seed the baseline: `./scripts/deploy.sh --network testnet --dry-run --update-checksum`.
+4. Commit `scripts/deployed/<network>/checksums.txt` to the repo (protected branch).
+5. For future builds, run `./scripts/deploy.sh --network testnet` and the
+   script will refuse to deploy on unexpected checksum changes unless you
+   intentionally rotate with `--update-checksum`.
+
 
 ### Manual deploy (step-by-step)
 
@@ -179,7 +205,12 @@ export STELLAR_RPC_URL="https://soroban-testnet.stellar.org"
 ### Overview
 
 `initialize` must be called **exactly once** after deployment.  A second call
-is rejected on-chain with `AlreadyInitialized` (error code 13).
+is rejected on-chain with `AlreadyInitialized` (error code 13/1010).
+
+The init.sh script is now **idempotent**: it performs a pre-check using the
+read-only `get_admin` view function before attempting initialization. If the
+contract is already initialized, the script exits gracefully with code 0 and
+displays the current admin address.
 
 The function signature is:
 
@@ -193,6 +224,23 @@ It sets up two sub-systems in a single transaction:
 |---|---|
 | Risk management | Admin address, collateral ratios, close factor, liquidation incentive, pause switches |
 | Interest rate model | Admin address, kink-based piecewise linear rate model |
+
+### Idempotency behavior
+
+The init.sh script includes the following idempotency safeguards:
+
+1. **Pre-check**: Before attempting initialization, the script calls the
+   read-only `get_admin` view function to check if the contract is already
+   initialized.
+2. **Graceful exit**: If the contract is already initialized, the script exits
+   with code 0 (success) and displays a message like:
+   ```
+   Already initialized to: GALAXYADMIN1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ
+   No action taken. Exiting with code 0 (success).
+   ```
+3. **Error mapping**: If the pre-check passes but initialization still fails
+   (e.g., due to a race condition), the script detects the `AlreadyInitialized`
+   error (code 13/1010) and displays a human-readable error message.
 
 ### Using the init script
 
@@ -349,11 +397,13 @@ Before deploying to mainnet:
 - [ ] Oracle price feeds configured via `update_price_feed`
 - [ ] Emergency pause tested: `set_emergency_pause(admin, true)` → confirmed paused
 - [ ] Emergency pause disabled before launch: `set_emergency_pause(admin, false)`
+- [ ] `MAINNET_CONFIRM=YES_I_AM_SURE` environment variable provided to bypass the safety guard preventing accidental mainnet deployments
 
 ```bash
 # Mainnet deploy + init
 export ADMIN_SECRET_KEY="S..."          # from secure store
 export ADMIN_ADDRESS="G..."             # multisig / hardware wallet
+export MAINNET_CONFIRM="YES_I_AM_SURE"  # explicit confirmation guard
 
 ./scripts/deploy.sh --network mainnet --build
 export LENDING_CONTRACT_ID="$(cat scripts/deployed/mainnet/lending_contract_id.txt)"
@@ -456,7 +506,17 @@ stellar contract invoke \
 ### `AlreadyInitialized` error when calling initialize
 
 The contract has already been initialized.  This is the expected behavior.
-Do NOT attempt to work around this guard.
+The init.sh script now includes a pre-check that detects this condition
+before attempting initialization and exits gracefully with code 0.
+
+If you see this error despite the pre-check, it may indicate a race condition
+or that the contract was initialized by another process. Verify the current
+admin by running:
+```bash
+stellar contract invoke \
+  --id "$LENDING_CONTRACT_ID" --source "$ADMIN_SECRET_KEY" --network testnet \
+  -- get_admin
+```
 
 ### `stellar contract deploy` returns an empty ID
 

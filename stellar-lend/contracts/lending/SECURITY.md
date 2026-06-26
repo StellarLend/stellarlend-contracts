@@ -149,6 +149,8 @@ Soroban's execution model provides strong reentrancy protection at the VM level:
 * Flash-loan callbacks (`token_receiver::receive`) are invoked synchronously within the same execution context; the fee-enforcement check runs *after* control returns, with no possibility of a reentrant borrow sneaking in.
 * The flash loan reentrancy guard (`ReentrancyGuard` in instance storage) provides an additional explicit check against nested flash loan calls.
 
+The lending facade also applies a transient `reentrancy_lock` in contract temporary storage for all mutating entrypoints (`initialize`, `deposit`, `withdraw`, `borrow`, `repay`). Each entrypoint acquires the lock before auth/state mutation and releases it on success. On any revert path (panic/auth failure), Soroban transaction rollback removes the temporary write, so the lock cannot be left permanently engaged.
+
 ---
 
 ## Checked Arithmetic
@@ -257,6 +259,8 @@ Soroban's execution model provides strong reentrancy protection at the VM level:
 * Each contract call executes as a **single synchronous transaction**; there is no way for an external call to re-enter the lending contract mid-execution within the same ledger transaction.
 * State is committed **atomically**: either the entire call succeeds and all writes persist, or any panic/error causes all storage mutations to be rolled back.
 * Flash-loan callbacks (`token_receiver::receive`) are invoked synchronously within the same execution context; the fee-enforcement check runs *after* control returns, with no possibility of a reentrant borrow sneaking in.
+
+The lending facade also applies a transient `reentrancy_lock` in contract temporary storage for all mutating entrypoints (`initialize`, `deposit`, `withdraw`, `borrow`, `repay`). Each entrypoint acquires the lock before auth/state mutation and releases it on success. On any revert path (panic/auth failure), Soroban transaction rollback removes the temporary write, so the lock cannot be left permanently engaged.
 
 ---
 
