@@ -3,22 +3,37 @@
 use crate::math::sqrt;
 
 /// Minimum liquidity permanently locked in the pool on the first deposit.
-/// 
+///
 /// This constant mitigates the "donation attack" where an attacker deposits
 /// a microscopic amount of liquidity, receives 1 LP share, and then donates
 /// a massive amount of tokens directly to the pool reserves. Without a minimum
 /// locked liquidity, the share price would inflate proportionally, causing
-/// subsequent depositors to receive 0 shares due to integer truncation, 
+/// subsequent depositors to receive 0 shares due to integer truncation,
 /// allowing the attacker to steal their deposits by withdrawing their 1 share.
 ///
-/// By locking a minimum amount of shares (e.g., 1000) to a dead address (or 
-/// simply permanently adding to `total_supply` without a valid owner), the 
+/// By locking a minimum amount of shares (e.g., 1000) to a dead address (or
+/// simply permanently adding to `total_supply` without a valid owner), the
 /// attacker's cost to inflate the share price to a degree that rounds a victim's
 /// deposit to 0 increases by a factor of MINIMUM_LIQUIDITY, making the attack
 /// economically unviable.
 pub const MINIMUM_LIQUIDITY: i128 = 1000;
 
-/// Calculates the LP shares to mint for a deposit, returning `(shares_to_user, shares_to_lock)`.
+/// Error values returned when LP-share minting cannot complete safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiquidityMathError {
+    /// The pool reserves are not usable for subsequent-deposit share math.
+    ZeroReserve,
+    /// The minted liquidity is too small to be accepted.
+    InsufficientLiquidityMinted,
+    /// An intermediate arithmetic product overflowed.
+    Overflow,
+}
+
+/// Calculates the LP shares to mint for a deposit.
+///
+/// The first deposit uses the minimum-liquidity guard to mitigate donation
+/// attacks. Any subsequent deposit must have both reserves available; otherwise
+/// the share formula would divide by zero and trap.
 ///
 /// # Arguments
 /// * `total_supply` - The current total supply of LP shares.
@@ -32,24 +47,38 @@ pub fn calculate_mint_shares(
     amount_1: i128,
     reserve_0: i128,
     reserve_1: i128,
-) -> (i128, i128) {
+) -> Result<(i128, i128), LiquidityMathError> {
     if total_supply == 0 {
-        let product = amount_0.checked_mul(amount_1).expect("overflow in product");
+        let product = amount_0.checked_mul(amount_1).ok_or(LiquidityMathError::Overflow)?;
         let liquidity = sqrt(product);
         if liquidity <= MINIMUM_LIQUIDITY {
-            panic!("InsufficientLiquidityMinted");
+            return Err(LiquidityMathError::InsufficientLiquidityMinted);
         }
-        (liquidity - MINIMUM_LIQUIDITY, MINIMUM_LIQUIDITY)
+        let shares = liquidity.checked_sub(MINIMUM_LIQUIDITY).ok_or(LiquidityMathError::Overflow)?;
+        Ok((shares, MINIMUM_LIQUIDITY))
     } else {
-        let liquidity_0 = amount_0.checked_mul(total_supply).expect("overflow in liquidity_0") / reserve_0;
-        let liquidity_1 = amount_1.checked_mul(total_supply).expect("overflow in liquidity_1") / reserve_1;
+        if reserve_0 == 0 || reserve_1 == 0 {
+            return Err(LiquidityMathError::ZeroReserve);
+        }
+
+        let liquidity_0 = amount_0
+            .checked_mul(total_supply)
+            .ok_or(LiquidityMathError::Overflow)?
+            / reserve_0;
+        let liquidity_1 = amount_1
+            .checked_mul(total_supply)
+            .ok_or(LiquidityMathError::Overflow)?
+            / reserve_1;
         let liquidity = core::cmp::min(liquidity_0, liquidity_1);
         if liquidity == 0 {
-            panic!("InsufficientLiquidityMinted");
+            return Err(LiquidityMathError::InsufficientLiquidityMinted);
         }
-        (liquidity, 0)
+        Ok((liquidity, 0))
     }
 }
+
+#[cfg(test)]
+mod zero_reserve_test;
 
 #[cfg(test)]
 mod tests {
@@ -57,24 +86,22 @@ mod tests {
 
     #[test]
     fn test_first_deposit() {
-        let (shares, lock) = calculate_mint_shares(0, 10000, 10000, 0, 0);
-        assert_eq!(shares, 9000);
-        assert_eq!(lock, MINIMUM_LIQUIDITY);
+        let result = calculate_mint_shares(0, 10000, 10000, 0, 0);
+        assert_eq!(result, Ok((9000, MINIMUM_LIQUIDITY)));
     }
 
     #[test]
-    #[should_panic(expected = "InsufficientLiquidityMinted")]
     fn test_first_deposit_insufficient() {
         // sqrt(100 * 10) = 31, which is <= 1000
-        calculate_mint_shares(0, 100, 10, 0, 0);
+        let result = calculate_mint_shares(0, 100, 10, 0, 0);
+        assert_eq!(result, Err(LiquidityMathError::InsufficientLiquidityMinted));
     }
 
     #[test]
     fn test_subsequent_deposit() {
         // Assuming first deposit was 10000 of each token, total_supply = 10000
-        let (shares, lock) = calculate_mint_shares(10000, 2000, 2000, 10000, 10000);
-        assert_eq!(shares, 2000);
-        assert_eq!(lock, 0);
+        let result = calculate_mint_shares(10000, 2000, 2000, 10000, 10000);
+        assert_eq!(result, Ok((2000, 0)));
     }
 
     #[test]
@@ -86,7 +113,8 @@ mod tests {
         // Since MINIMUM_LIQUIDITY is 1000, attacker deposits 1001 of each token.
         let attacker_amount_0 = 1001;
         let attacker_amount_1 = 1001;
-        let (attacker_shares, locked_shares) = calculate_mint_shares(0, attacker_amount_0, attacker_amount_1, 0, 0);
+        let result = calculate_mint_shares(0, attacker_amount_0, attacker_amount_1, 0, 0);
+        let (attacker_shares, locked_shares) = result.unwrap();
         
         assert_eq!(attacker_shares, 1); // sqrt(1001*1001) - 1000 = 1
         assert_eq!(locked_shares, 1000); // permanently locked
@@ -103,9 +131,10 @@ mod tests {
         let victim_amount_0 = 500_000;
         let victim_amount_1 = 500_000;
         
-        let (victim_shares, new_locked) = calculate_mint_shares(
+        let result = calculate_mint_shares(
             total_supply, victim_amount_0, victim_amount_1, reserve_0, reserve_1
         );
+        let (victim_shares, new_locked) = result.unwrap();
         
         // Because of the locked minimum liquidity (total_supply = 1001 instead of 1),
         // the victim still receives a proportional amount of shares.

@@ -45,15 +45,25 @@ pub mod withdraw;
 
 #[cfg(test)]
 mod twap_tests;
+#[cfg(test)]
+mod twap_eviction_test;
+#[cfg(test)]
+mod twap_fallback_event_test;
+
+#[cfg(test)]
+mod bridge_fee_test;
+
+#[cfg(test)]
+mod amm_integration_test;
+
+#[cfg(test)]
+mod cross_asset_decimals_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
 // mod tests;
 
-use crate::oracle::OracleConfig;
-use crate::risk_management::{RiskConfig, RiskManagementError};
-
-/// Helper function to require admin authorization
+use crate::oracle::FullOracleConfig;
 fn require_admin(env: &Env, caller: &Address) -> Result<(), RiskManagementError> {
     caller.require_auth();
     let admin_key = DepositDataKey::Admin;
@@ -114,7 +124,7 @@ use crate::interest_rate::{
     InterestRateError,
 };
 use crate::liquidate::liquidate;
-use crate::oracle::OracleConfig;
+use crate::oracle::FullOracleConfig;
 use crate::risk_management::{
     check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
     require_admin, set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
@@ -728,7 +738,7 @@ impl HelloContract {
 
     /// Configure oracle parameters (admin only)
     /// Configure oracle parameters (admin only).
-    pub fn configure_oracle(env: Env, caller: Address, config: OracleConfig) {
+    pub fn configure_oracle(env: Env, caller: Address, config: FullOracleConfig) {
         oracle::configure_oracle(&env, caller, config).expect("Oracle error")
     }
 

@@ -385,9 +385,7 @@ impl MultisigContract {
             return Err(MultisigError::InvalidThreshold);
         }
 
-        env.storage()
-            .instance()
-            .set(&DataKey::Signers, &signers);
+        env.storage().instance().set(&DataKey::Signers, &signers);
 
         Ok(())
     }

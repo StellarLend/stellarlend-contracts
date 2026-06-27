@@ -196,6 +196,20 @@ contract.configure_oracle(admin, new_config)
 # Check staleness enforcement
 ```
 
+#### Tested Boundary Behaviour
+
+The lending contract currently hardcodes `DEFAULT_ORACLE_MAX_AGE_SECS = 3600`.
+The oracle-consumption paths in `borrow` and `liquidate` enforce that boundary
+at the point of use:
+
+- `age <= 3600` seconds: accepted
+- `age == 3601` seconds: rejected with `LendingError::StaleOracleTimestamp`
+
+The regression coverage in
+`stellar-lend/contracts/lending/src/oracle_staleness_test.rs` verifies both
+edges and checks each configured valuation asset independently by refreshing one
+asset while intentionally leaving the other stale.
+
 ### 4. Emergency Procedures
 
 #### Oracle Compromise Response
@@ -530,4 +544,3 @@ If a collateral asset is configured, both `borrow` and `liquidate` operations (a
 | `missing_price_test.rs` | `stellar-lend/contracts/lending/src/`         |
 | Modified: `amm.rs`     | `stellar-lend/contracts/hello-world/src/`     |
 | Modified: `oracle.rs`  | `stellar-lend/contracts/hello-world/src/`     |
-| Modified: `lib.rs`      | `stellar-lend/contracts/lending/src/`         |

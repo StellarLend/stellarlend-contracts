@@ -35,11 +35,40 @@ impl ValidatorSet {
 pub struct Bridge {
     pub epoch: u64,
     pub validators: ValidatorSet,
+    /// Maximum cumulative inbound value (in the bridge's native token unit,
+    /// matching the `i128` amount convention used elsewhere in this workspace)
+    /// that may be admitted within a single rolling window.
+    ///
+    /// A value of `0` means "no inbound" (fail-closed) — not "unlimited".
+    /// Defaults to `0` so a freshly constructed `Bridge` admits no inbound
+    /// value until an operator explicitly opts in via [`Bridge::set_inbound_cap`].
+    pub max_per_window: i128,
+    /// Length of the rolling inbound-value window, in ledger-time seconds
+    /// (e.g. `86_400` for a calendar-day window). Must be > 0 once configured.
+    pub window_size: u64,
+    /// Ledger time at which the current window began.
+    pub window_start: u64,
+    /// Cumulative inbound value admitted so far within `[window_start, window_start + window_size)`.
+    pub window_inbound_total: i128,
 }
 
+/// Default rolling window length: one day, in seconds.
+pub const DEFAULT_INBOUND_WINDOW_SECS: u64 = 86_400;
+
 impl Bridge {
+    /// Construct a new bridge. Inbound value transfer is **fail-closed by
+    /// default**: `max_per_window` starts at `0`, so [`Bridge::admit_inbound`]
+    /// rejects everything until [`Bridge::set_inbound_cap`] is called with a
+    /// non-zero cap.
     pub fn new(initial: ValidatorSet) -> Self {
-        Bridge { epoch: 0, validators: initial }
+        Bridge {
+            epoch: 0,
+            validators: initial,
+            max_per_window: 0,
+            window_size: DEFAULT_INBOUND_WINDOW_SECS,
+            window_start: 0,
+            window_inbound_total: 0,
+        }
     }
 
     /// Verify a quorum proof from the current validator set over the (new_set, epoch) payload
@@ -98,7 +127,89 @@ impl Bridge {
         }
         Ok(())
     }
+
+    /// Reconfigure the per-window inbound value cap and (re)start the
+    /// window fresh at `current_time`.
+    ///
+    /// `max_per_window == 0` is a valid, intentional configuration meaning
+    /// "no inbound" (fail-closed) — use a positive value to actually permit
+    /// inbound transfers. `window_size` must be greater than zero.
+    pub fn set_inbound_cap(&mut self, max_per_window: i128, window_size: u64, current_time: u64) -> Result<()> {
+        if max_per_window < 0 {
+            return Err(anyhow!("max_per_window must be >= 0"));
+        }
+        if window_size == 0 {
+            return Err(anyhow!("window_size must be > 0"));
+        }
+
+        self.max_per_window = max_per_window;
+        self.window_size = window_size;
+        self.window_start = current_time;
+        self.window_inbound_total = 0;
+        Ok(())
+    }
+
+    /// Roll the inbound-value window forward if `current_time` has moved
+    /// past the end of the current window. Resetting realigns the window to
+    /// start at `current_time` rather than stepping forward in fixed
+    /// `window_size` increments, so a bridge that sat idle for a long time
+    /// doesn't pay for that idle period with a stale, partially-consumed
+    /// window (see SECURITY_NOTES.md for the rationale).
+    fn roll_window_if_expired(&mut self, current_time: u64) {
+        let window_end = self.window_start.saturating_add(self.window_size);
+        if current_time >= window_end {
+            self.window_start = current_time;
+            self.window_inbound_total = 0;
+        }
+    }
+
+    /// Admit an inbound transfer of `amount` against the per-window inbound
+    /// value cap, tracked on rolling ledger time (not block count).
+    ///
+    /// Rejects (without mutating any state) if:
+    /// - `amount` is negative,
+    /// - the cap is configured as `0` (fail-closed — no inbound permitted
+    ///   regardless of amount), or
+    /// - admitting `amount` would push the window's cumulative inbound value
+    ///   above `max_per_window`.
+    ///
+    /// On success, `amount` is added to the current window's running total
+    /// and `Ok(())` is returned. Callers are expected to have already
+    /// validated validator quorum and inbound epoch separately — this check
+    /// is purely the value-cap defense-in-depth layer.
+    pub fn admit_inbound(&mut self, amount: i128, current_time: u64) -> Result<()> {
+        if amount < 0 {
+            return Err(anyhow!("inbound amount must be >= 0"));
+        }
+
+        if self.max_per_window == 0 {
+            return Err(anyhow!("inbound cap is zero (fail-closed): no inbound transfers permitted"));
+        }
+
+        self.roll_window_if_expired(current_time);
+
+        let new_total = self
+            .window_inbound_total
+            .checked_add(amount)
+            .ok_or_else(|| anyhow!("inbound window total overflow"))?;
+
+        if new_total > self.max_per_window {
+            return Err(anyhow!("inbound cap exceeded for current window"));
+        }
+
+        self.window_inbound_total = new_total;
+        Ok(())
+    }
 }
+
+#[cfg(test)]
+mod rotation_test;
+
+#[cfg(test)]
+mod inbound_cap_test;
+
+#[cfg(test)]
+mod epoch_monotonicity_proptest;
 
 #[cfg(test)]
 mod tests {

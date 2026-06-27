@@ -4,7 +4,8 @@ This note documents the canonical numeric constants, scaling factors, rounding m
 
 ## Scope
 
-- `contracts/lending/src/debt.rs` (`accrue_interest`, `settle_accrual`, `effective_debt`, `borrow_amount`, `repay_amount`)
+- `contracts/lending/src/debt.rs` (`accrue_interest`, `accrue_interest_split`, `settle_accrual`, `settle_accrual_split`, `effective_debt`, `effective_supply_rate`, `borrow_amount`, `repay_amount`)
+- `contracts/lending/src/math.rs` (`split_interest_by_reserve_factor`, `compute_supply_rate`, `compute_borrow_rate`, `compute_utilization`)
 - `contracts/lending/src/rounding_strategy.rs` (`calculate_interest_with_rounding`, `apply_rounding`, `reconcile_debt_with_drift_correction`)
 - `contracts/lending/src/lib.rs` (`get_position` health factor calculation, liquidation math)
 
@@ -17,7 +18,13 @@ All constants are defined in `contracts/lending/src/rounding_strategy.rs`:
 | `INTEREST_PRECISION` | `i128` | `1_000_000` (10^6) | Intermediate fractional precision for interest math |
 | `BASIS_POINTS_SCALE` | `i128` | `10_000` | Denominator for basis-points (100% = 10_000 bps) |
 | `SECONDS_PER_YEAR` | `u64` | `31_536_000` (365 * 24 * 60 * 60) | Time denominator for APR calculations |
+
+In `contracts/lending/src/debt.rs`:
+
+| Constant | Type | Value | Purpose |
+|----------|------|-------|---------|
 | `DEFAULT_APR_BPS` | `i128` | `500` | Default annual percentage rate (5%) |
+| `DEFAULT_RESERVE_FACTOR_BPS` | `u32` | `0` | Default reserve factor (0% — all interest to depositors) |
 
 ### Important: This Protocol Does NOT Use SCALE_18
 
@@ -33,6 +40,8 @@ DENOMINATOR = SECONDS_PER_YEAR * BASIS_POINTS_SCALE
             = 315_360_000_000
 ```
 
+---
+
 ## Interest Calculation Formula
 
 The core formula (from `calculate_interest_with_rounding`) is:
@@ -46,6 +55,102 @@ remainder   = numerator % denominator        (fractional remainder)
 
 final_interest = raw_result / INTEREST_PRECISION   (back-convert from precision scale)
 ```
+
+---
+
+## Utilization-Driven Supply Rate with Reserve-Factor Split
+
+### Overview
+
+Borrower interest is split deterministically between depositors and the protocol
+reserve at the point of accrual. No interest is created or destroyed — every
+basis point a borrower pays lands on exactly one side.
+
+### Borrow Rate (utilization-driven)
+
+The borrow APR comes from the two-slope jump-rate model in `rate_model.rs`:
+
+```
+if utilization <= kink:
+    borrow_rate = base_rate + (utilization × multiplier) / 10_000
+
+if utilization > kink:
+    borrow_rate = base_rate
+                + (kink × multiplier) / 10_000
+                + ((utilization − kink) × jump_multiplier) / 10_000
+```
+
+Clamped to `[rate_floor_bps, rate_ceiling_bps]`.
+
+### Supply Rate Formula
+
+The depositor supply APR is derived from the borrow rate and utilization after
+applying the reserve factor:
+
+```
+supply_rate_bps = borrow_rate_bps
+                × utilization_bps / 10_000
+                × (10_000 − reserve_factor_bps) / 10_000
+```
+
+This is implemented in both `debt::effective_supply_rate` and
+`math::compute_supply_rate`. Both functions produce identical results for the
+same inputs (cross-checked by `supply_rate_agrees_with_math_compute_supply_rate`
+in the test suite).
+
+**When `reserve_factor_bps == 0`** (the default) the formula simplifies to:
+
+```
+supply_rate_bps = borrow_rate_bps × utilization_bps / 10_000
+```
+
+which is the utilization-weighted borrow rate with no protocol cut — identical
+to the previous behaviour before the reserve factor was introduced.
+
+### Interest Split Formula
+
+At accrual time, gross borrower interest is split by `split_interest_by_reserve_factor`:
+
+```
+reserve_cut      = floor(total_interest × reserve_factor_bps / 10_000)
+depositor_yield  = total_interest − reserve_cut
+```
+
+The depositor share is computed as a complement (subtraction from the total)
+rather than a second multiplication. This guarantees:
+
+```
+depositor_yield + reserve_cut == total_interest   (exact, no rounding gap)
+```
+
+Integer division floors the reserve cut, so any fractional unit that cannot be
+divided exactly remains with the depositor. The protocol never takes more than
+its exact share.
+
+### No-Leakage Invariant
+
+For every call to `accrue_interest_split` or `settle_accrual_split`:
+
+```
+split.depositor_yield + split.reserve_cut == split.total_interest
+```
+
+This is verified exhaustively in `supply_rate_split_test::split_no_leakage_invariant_exhaustive`
+across all combinations of total interest and reserve factor from 0 to 10 000 bps.
+
+### Entry Points
+
+| Function | Location | Purpose |
+|---|---|---|
+| `accrue_interest_split(principal, elapsed, rate_bps, reserve_factor_bps)` | `debt.rs` | Compute gross interest and its depositor/reserve split |
+| `settle_accrual_split(position, now, rate_bps, reserve_factor_bps)` | `debt.rs` | Settle interest into principal and return the split |
+| `effective_supply_rate(borrow_rate_bps, utilization_bps, reserve_factor_bps)` | `debt.rs` | Depositor APR in basis points |
+| `split_interest_by_reserve_factor(total_interest, reserve_factor_bps)` | `math.rs` | Pure-math split (no Env dependency, fuzzable) |
+| `compute_supply_rate(borrow_rate_bps, utilization_bps, reserve_factor_bps)` | `math.rs` | Supply APR — same formula as `effective_supply_rate` |
+
+---
+
+## Worked Examples
 
 ### Worked Example 1: $100,000 at 5% APR for 1 second
 
@@ -68,13 +173,13 @@ remainder   = 50_000_000_000_000 % 315_360_000_000
 final_interest = 158 / 1_000_000 = 0  (truncated to 0 whole units)
 ```
 
-With **Bankers rounding** (the default in `debt.rs`), the fractional part `172_160_000_000 / 315_360_000_000 ≈ 0.546` is greater than 0.5, so the raw_result rounds up to 159:
+With **Bankers rounding** (the default in `debt.rs`), the fractional part
+`172_160_000_000 / 315_360_000_000 ≈ 0.546` is greater than 0.5, so the
+raw_result rounds up to 159:
 
 ```
 final_interest = 159 / 1_000_000 = 0  (still 0 whole units)
 ```
-
-This demonstrates that for very small time intervals, interest accrual rounds to 0 at the token-unit level. The fractional remainder is tracked in `InterestCalcResult.remainder` for drift analysis but is not added to debt.
 
 ### Worked Example 2: $100 at 5% APR for 1 year
 
@@ -122,7 +227,53 @@ With Bankers rounding:
 final_interest = 4_166_667 / 1_000_000 = 4  (truncated to 4 whole units)
 ```
 
-The exact interest for 1 month at 5% on $1,000 is $4.167. After rounding and back-conversion, the protocol accrues 4 whole units.
+The exact interest for 1 month at 5% on $1,000 is $4.167. After rounding and
+back-conversion, the protocol accrues 4 whole units.
+
+### Worked Example 4: Reserve-factor split — $100,000 at 5% APR, 20% reserve, 1 year
+
+```
+Step 1 — gross borrow interest (same as Example 2 at 100× scale):
+  total_interest = 5_000
+
+Step 2 — reserve cut (floor division):
+  reserve_cut = floor(5_000 * 2_000 / 10_000)
+              = floor(1_000_000 / 10_000)
+              = 1_000
+
+Step 3 — depositor yield (complement):
+  depositor_yield = 5_000 − 1_000 = 4_000
+
+Verification: 4_000 + 1_000 == 5_000  ✓
+```
+
+Depositors earn an effective supply APR of:
+
+```
+supply_rate = 500 * 10_000 / 10_000 * 8_000 / 10_000
+            = 500 * 0.8
+            = 400 bps  (4%)
+```
+
+i.e. 80% of the borrow rate at 100% utilization (the 20% reserve factor accounts
+for the other 20%).
+
+### Worked Example 5: Supply APR at 50% utilization, 20% reserve
+
+```
+borrow_rate_bps    = 500   (5% APR)
+utilization_bps    = 5_000 (50%)
+reserve_factor_bps = 2_000 (20%)
+
+supply_rate = 500 * 5_000 / 10_000 * (10_000 − 2_000) / 10_000
+           = 500 * 5_000 / 10_000 * 8_000 / 10_000
+           = 250 * 8_000 / 10_000
+           = 200 bps  (2%)
+```
+
+Confirmed by `supply_rate_worked_example_50pct_util_20pct_reserve` in the test suite.
+
+---
 
 ## Basis Points (BPS) Conversions
 
@@ -130,12 +281,13 @@ The protocol uses basis points throughout for rates, thresholds, and factors:
 
 | BPS Value | Percentage | Usage |
 |-----------|------------|-------|
-| `10_000` | 100% | Full utilization, max rate ceiling |
+| `10_000` | 100% | Full utilization, max rate ceiling, 100% reserve |
 | `5_000` | 50% | Close factor (liquidation) |
-| `1_000` | 10% | Liquidation incentive bonus |
+| `2_000` | 20% | Example reserve factor |
+| `1_000` | 10% | Liquidation incentive bonus; example reserve factor |
 | `500` | 5% | Default APR |
 | `100` | 1% | Max drift tolerance example |
-| `8_000` | 80% | Liquidation threshold (health factor base) |
+| `8_000` | 80% | Liquidation threshold (health factor base); default kink utilization |
 
 ### BPS to Decimal Conversion
 
@@ -154,13 +306,13 @@ Health factor uses the same `10_000` base as BPS:
 - `< 10_000` = liquidatable
 - `100_000` = sentinel for no-debt positions (see `lib.rs:get_position`)
 
-The health factor formula (from `lib.rs:549`):
+The health factor formula (from `lib.rs`):
 ```
 health_factor = (collateral * 8000) / debt
 ```
 Where `8000` is the `LIQUIDATION_THRESHOLD` in BPS (80%).
 
-See [`docs/glossary.md#health-factor-hf`](../../docs/glossary.md#health-factor-hf) for the full glossary entry.
+---
 
 ## Rounding Modes
 
@@ -177,7 +329,8 @@ Four rounding modes are available in `RoundingMode`:
 
 | Operation | Rounding Mode | Direction | Rationale |
 |-----------|---------------|-----------|-----------|
-| Debt accrual (`accrue_interest`) | `Bankers` | Nearest, ties to even | Minimizes cumulative drift over many accruals |
+| Debt accrual (`accrue_interest`) | `Bankers` | Nearest, ties to even | Minimises cumulative drift over many accruals |
+| Reserve cut (`split_interest_by_reserve_factor`) | Floor (integer `/`) | Down (toward zero) | Protocol never takes more than exact share |
 | Health factor calculation | Truncate (integer division) | Down (toward zero) | Conservative: overestimates risk |
 | Liquidation seized collateral | Truncate (integer division) | Down | Protocol-safe: never seizes more than owed |
 | Flash loan fee | Truncate (integer division) | Down | Borrower-safe: fee never exceeds exact amount |
@@ -185,7 +338,7 @@ Four rounding modes are available in `RoundingMode`:
 
 ### Bankers Rounding Detail
 
-Bankers rounding (`apply_rounding` in `rounding_strategy.rs:115-144`):
+Bankers rounding (`apply_rounding` in `rounding_strategy.rs`):
 
 ```
 if remainder < half_divisor:
@@ -199,22 +352,10 @@ else:  // remainder == half_divisor (exact tie)
         round up (quotient + 1)
 ```
 
-This ensures that over many accruals, rounding bias cancels out rather than accumulating in one direction.
+This ensures that over many accruals, rounding bias cancels out rather than
+accumulating in one direction.
 
-### Ceil Safety Clamp
-
-`calculate_interest_with_rounding` includes a safety clamp (lines 96-106) that ensures `Ceil` mode never produces a lower integer interest than `Floor` mode due to integer division edge-cases. The clamp computes the floor-rounded result and forces the ceil result to be >= floor:
-
-```rust
-if mode == RoundingMode::Ceil {
-    let (floor_rounded, _) = apply_rounding(full_division, remainder, denominator, RoundingMode::Floor);
-    let floor_interest = floor_rounded / INTEREST_PRECISION;
-    if final_interest < floor_interest {
-        final_interest = floor_interest;
-        final_remainder = 0;
-    }
-}
-```
+---
 
 ## Numeric Safety Properties
 
@@ -222,7 +363,7 @@ if mode == RoundingMode::Ceil {
 
 - **Primary type**: `i128` for all balances, rates, and interest results
 - **Intermediate precision**: Multiplied by `INTEREST_PRECISION` (10^6) before division
-- **NOT I256**: The original design note mentioned `I256` intermediates, but the production implementation uses `i128` with checked arithmetic throughout
+- **NOT I256**: The production implementation uses `i128` with checked arithmetic throughout
 
 ### Overflow Protection
 
@@ -233,7 +374,10 @@ All mutations use checked arithmetic:
 | `calculate_interest_with_rounding` | `checked_mul` chain | Returns `RoundingError::Overflow` |
 | `accrue_interest` | Via `calculate_interest_with_rounding` | Returns `DebtError::Overflow` |
 | `settle_accrual` | `checked_add` on principal | Returns `DebtError::Overflow` |
+| `settle_accrual_split` | `checked_add` on principal | Returns `DebtError::Overflow` |
 | `effective_debt` | `checked_add` on principal | Returns `DebtError::Overflow` |
+| `effective_supply_rate` | `checked_mul` / `checked_div` / `checked_sub` | Returns `DebtError::Overflow` |
+| `split_interest_by_reserve_factor` | `checked_mul` / `checked_div` / `checked_sub` | Returns `MathError::Overflow` / `MathError::OutOfRange` |
 | `borrow_amount` | `checked_add` for new principal | Returns `DebtError::Overflow` |
 | `get_position` (health factor) | `checked_mul` then `unwrap_or(i128::MAX)` | Saturates to `i128::MAX` |
 
@@ -261,7 +405,7 @@ elapsed_seconds < 1.7 * 10^11 seconds
 elapsed_seconds < ~5,400 years
 ```
 
-Tests verify overflow behavior at `u64::MAX` timestamps and `i128::MAX / 2` principal values (see `interest_drift_regression_test.rs:test_extreme_horizon_overflow_protection`).
+---
 
 ## Long-Horizon / Extreme Scenarios Covered
 
@@ -269,8 +413,8 @@ Tests verify overflow behavior at `u64::MAX` timestamps and `i128::MAX / 2` prin
 - Maximum configured annual rate (10000 bps) for accrued-interest monotonicity checks
 - Overflow boundary test where the last safe elapsed second succeeds and the next second returns overflow
 - Extreme high-utilization + aggressive configuration + emergency adjustment still clamped to ceiling
-- Extreme negative emergency adjustment still clamped to floor
 - 24-month and 100-month accrual cycles with drift bounded to < 20 and < 50 units respectively
+- Reserve factor at 0%, 100%, and all intermediate values — split invariant verified exhaustively
 
 ## Security Notes
 
@@ -279,12 +423,14 @@ Tests verify overflow behavior at `u64::MAX` timestamps and `i128::MAX / 2` prin
   - Saturation in `lending` (via `unwrap_or(i128::MAX)`)
   - Explicit error returns via `DebtError::Overflow` and `RoundingError::Overflow`
 - This prevents silent wraparound and protects debt/accounting invariants under adversarial time jumps and parameter settings
+- The no-leakage invariant (`depositor_yield + reserve_cut == total_interest`) is enforced by using subtraction for the depositor share rather than a second multiplication, eliminating the possibility of rounding creating or destroying units
 - Drift is tracked but not automatically corrected; reconciliation is available via `reconcile_debt_with_drift_correction` with configurable max drift tolerance
 
 ## Related Documentation
 
-- [`docs/glossary.md`](../../docs/glossary.md) - Protocol terms, BPS scale, Health Factor definition
-- [`docs/glossary.md#numeric-scales-summary`](../../docs/glossary.md#numeric-scales-summary) - Summary table of all numeric scales
 - `contracts/lending/src/rounding_strategy.rs` - Constants and rounding implementation
-- `contracts/lending/src/debt.rs` - Debt position management and accrual entry points
+- `contracts/lending/src/debt.rs` - Debt position management, accrual, and interest-split entry points
+- `contracts/lending/src/math.rs` - Pure-math helpers including `split_interest_by_reserve_factor`
+- `contracts/lending/src/supply_rate_split_test.rs` - Test suite for the reserve-factor split feature
 - `contracts/lending/src/interest_drift_regression_test.rs` - Long-horizon drift and overflow tests
+- [`docs/INTEREST_ROUNDING_FIX.md`](INTEREST_ROUNDING_FIX.md) - Rounding fix history

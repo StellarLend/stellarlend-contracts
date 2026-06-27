@@ -387,6 +387,47 @@ mod tests {
         let _ = get_twap(&env, &asset, MIN_WINDOW_SECS);
     }
 
+    #[test]
+fn test_same_timestamp_update_does_not_change_accumulator() {
+    let env = Env::default();
+    let asset = mock_asset(&env);
+
+    env.ledger().set_timestamp(1_000);
+
+    update_twap_accumulators(&env, &asset, 100, 200);
+
+    let before = amm_twap::get_pool_state(&env, &asset).unwrap();
+
+    // Same timestamp
+    update_twap_accumulators(&env, &asset, 100, 200);
+
+    let after = amm_twap::get_pool_state(&env, &asset).unwrap();
+
+    assert_eq!(before.price0_cumulative, after.price0_cumulative);
+    assert_eq!(before.price1_cumulative, after.price1_cumulative);
+}
+
+#[test]
+fn test_equal_timestamp_twap_query() {
+    let env = Env::default();
+    let asset = mock_asset(&env);
+
+    env.ledger().set_timestamp(1_000);
+
+    update_twap_accumulators(&env, &asset, 100, 200);
+
+    advance_time(&env, MIN_WINDOW_SECS);
+
+    update_twap_accumulators(&env, &asset, 100, 200);
+
+    // Same timestamp again
+    update_twap_accumulators(&env, &asset, 100, 200);
+
+    let twap = get_twap(&env, &asset, MIN_WINDOW_SECS);
+
+    assert!(twap > 0);
+}
+
     // -----------------------------------------------------------------------
     // 11. Single-block manipulation resistance
     // -----------------------------------------------------------------------
