@@ -64,14 +64,16 @@ pub enum MultisigError {
     InvalidProposal = 1011,
     /// Caller has already approved this proposal (duplicate approval)
     AlreadyApproved = 1012,
+    /// Approval does not exist for the requested signer on the proposal
+    ApprovalNotFound = 1013,
     /// Caller is not a registered signer
-    NotASigner = 1013,
+    NotASigner = 1014,
     /// Quorum has not been reached (too few current-signer approvals)
-    InsufficientApprovals = 1014,
+    InsufficientApprovals = 1015,
     /// No pending signer-set change is queued
-    NoQueuedSignersChange = 1015,
+    NoQueuedSignersChange = 1016,
     /// Signer-set change delay period not yet elapsed
-    SignersDelayNotElapsed = 1016,
+    SignersDelayNotElapsed = 1017,
 }
 
 #[contracttype]
@@ -141,6 +143,14 @@ pub struct SignersChangeAppliedEvent {
 pub struct SignersChangeCancelledEvent {
     pub admin: Address,
     pub ledger: u32,
+}
+
+/// Emitted when a signer revokes a previous approval from an open proposal.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalRevokedEvent {
+    pub proposal_id: u64,
+    pub signer: Address,
 }
 
 #[contract]
@@ -686,6 +696,75 @@ impl MultisigContract {
         Ok(())
     }
 
+    /// Revoke a previously recorded approval from an open proposal.
+    ///
+    /// This is only valid for proposals that are still open, meaning the proposal
+    /// must exist, remain unexecuted, and have not expired. Revoking an approval
+    /// removes the signer from the stored approval list and emits an event for
+    /// off-chain tracking. A revocation that targets a missing approval is a typed
+    /// error rather than a silent no-op.
+    pub fn revoke_approval(env: Env, signer: Address, id: u64) -> Result<(), MultisigError> {
+        signer.require_auth();
+
+        let _admin = Self::get_admin(env.clone())?;
+
+        let proposal: Proposal = env
+            .storage()
+            .instance()
+            .get(&DataKey::Proposal(id))
+            .ok_or(MultisigError::ProposalNotFound)?;
+
+        if proposal.executed {
+            return Err(MultisigError::ProposalAlreadyExecuted);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        if current_ledger > proposal.expires_at_ledger {
+            return Err(MultisigError::ProposalExpired);
+        }
+
+        let is_valid_signer = if let Some(signers) = Self::get_signers(env.clone()) {
+            signers.contains(&signer)
+        } else {
+            signer == _admin
+        };
+        if !is_valid_signer {
+            return Err(MultisigError::NotASigner);
+        }
+
+        let mut approvals: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalApprovals(id))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut removed = false;
+        let mut filtered = Vec::new(&env);
+        for approval in approvals.iter() {
+            if approval == signer {
+                removed = true;
+                continue;
+            }
+            filtered.push_back(approval);
+        }
+
+        if !removed {
+            return Err(MultisigError::ApprovalNotFound);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalApprovals(id), &filtered);
+
+        ApprovalRevokedEvent {
+            proposal_id: id,
+            signer: signer.clone(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Execute a stored proposal if quorum is met, it is still fresh, and its
     /// delay has elapsed.
     ///
@@ -828,6 +907,9 @@ mod quorum_edge_test;
 
 #[cfg(test)]
 mod signer_cooldown_test;
+
+#[cfg(test)]
+mod revoke_approval_test;
 
 #[cfg(test)]
 mod tests {
