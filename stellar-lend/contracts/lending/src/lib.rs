@@ -108,6 +108,7 @@ const DEFAULT_DEPOSIT_CAP: i128 = 1_000_000_000_000;
 pub(crate) const HEALTH_FACTOR_SCALE: i128 = 10_000;
 const HEALTH_FACTOR_NO_DEBT: i128 = 100_000_000;
 pub const LIQUIDATION_THRESHOLD_BPS: i128 = 8000;
+pub const CLOSE_FACTOR: i128 = 5000;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
@@ -1197,6 +1198,14 @@ impl LendingContract {
     ///
     /// The implementation aims to batch redundant reads where possible and avoids
     /// re‑loading the same entry multiple times.
+    /// Liquidates an unhealthy position.
+    ///
+    /// # Checks-Effects-Interactions
+    /// 1. **Checks**: Verify pause status, reentrancy/flash loan status, health factor, and compute repayment/seizure.
+    /// 2. **Effects**: Update borrower's debt and collateral storage.
+    /// 3. **Interactions**: Perform token transfers (pull debt asset from liquidator, pay out collateral asset to liquidator).
+    ///
+    /// Any transfer failure reverts the entire transaction.
     ///
     /// The per‑call read budget is enforced by a regression test in
     /// `liquidate_perf_test.rs`.
@@ -1260,7 +1269,6 @@ impl LendingContract {
             // debt * 5000 / 10000 — rounding down means the liquidator can extinguish
             // *at most* 50 % of debt, and possibly slightly less.  This is conservative:
             // the protocol retains more liquidation opportunities.
-            const CLOSE_FACTOR: i128 = 5000;
             let max_repay = math::checked_mul_div_floor(debt, CLOSE_FACTOR, BPS_DENOM)
                 .map_err(|_| LendingError::Overflow)?;
             let actual_repay = if amount > max_repay {

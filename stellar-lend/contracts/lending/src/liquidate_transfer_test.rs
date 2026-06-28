@@ -1,4 +1,6 @@
-use crate::{DataKey, LendingContract, LendingContractClient};
+use crate::{
+    debt::save_debt, DataKey, DebtPosition, LendingContract, LendingContractClient,
+};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Symbol};
 
 #[contract]
@@ -93,9 +95,7 @@ fn setup() -> (
     let collateral_asset = env.register(MockToken, ());
     lending_client.initialize(&admin);
 
-    let debt_token = MockTokenClient::new(&env, &debt_asset);
     let collateral_token = MockTokenClient::new(&env, &collateral_asset);
-    debt_token.mint(&liquidator, &1000);
     collateral_token.mint(&lending_id, &1000);
 
     (
@@ -109,12 +109,36 @@ fn setup() -> (
     )
 }
 
+fn make_unhealthy_position(
+    env: &Env,
+    lending_id: &Address,
+    borrower: &Address,
+    collateral: i128,
+    debt: i128,
+) {
+    env.as_contract(lending_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &collateral);
+        save_debt(
+            env,
+            borrower,
+            &DebtPosition {
+                principal: debt,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
+}
+
 #[test]
 fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
     let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    let debt_token = MockTokenClient::new(&env, &debt_asset);
+    debt_token.mint(&liquidator, &1000);
+
+    make_unhealthy_position(&env, &lending_id, &borrower, 50, 200);
 
     let repay_amount =
         client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
@@ -145,11 +169,13 @@ fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
 #[test]
 fn liquidation_reverts_when_collateral_payout_transfer_fails() {
     let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
+    let debt_token = MockTokenClient::new(&env, &debt_asset);
+    debt_token.mint(&liquidator, &1000);
+
     let collateral_token = MockTokenClient::new(&env, &collateral_asset);
     collateral_token.set_fail_transfer(&lending_id, &true);
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    make_unhealthy_position(&env, &lending_id, &borrower, 50, 200);
 
     let debt_balance_before = MockTokenClient::new(&env, &debt_asset).balance(&liquidator);
     let collateral_before = MockTokenClient::new(&env, &collateral_asset).balance(&lending_id);
@@ -170,12 +196,11 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
 
 #[test]
 fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
-    let (env, client, _lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
+    let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
     let debt_token = MockTokenClient::new(&env, &debt_asset);
     debt_token.mint(&liquidator, &50);
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    make_unhealthy_position(&env, &lending_id, &borrower, 50, 200);
 
     let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
     assert!(matches!(res, Err(_)));

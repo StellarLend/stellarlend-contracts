@@ -41,8 +41,8 @@ This document details the liquidation process implemented in the StellarLend Len
 1. HF = floor(8_000 × 8_000 / 10_000) = **6_400** → liquidatable.
 2. `max_repay` = floor(10_000 × 5_000 / 10_000) = **5_000**.
 3. `actual_repay` = min(6_000, 5_000) = **5_000**.
-4. `seized` = floor(5_000 × (10_000 + 1_000) / 10_000) = floor(5_000 × 11_000 / 10_000) = **550**.
-5. New collateral balance = 8_000 − 550 = **7_450**.
+4. `seized` = floor(5_000 × (10_000 + 1_000) / 10_000) = floor(5_000 × 11_000 / 10_000) = **5_500**.
+5. New collateral balance = 8_000 − 5_500 = **2_500**.
 6. Remaining debt = 10_000 − 5_000 = **5_000**.
 
 ### Example 2 – Close‑Factor Capped & Shortfall
