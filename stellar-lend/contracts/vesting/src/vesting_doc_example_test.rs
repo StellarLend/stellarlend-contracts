@@ -58,7 +58,8 @@ fn capped_after_end() {
 #[test]
 fn claimable_after_partial_claim() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF).unwrap();
+    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF)
+        .unwrap();
 
     // First claim at now=1_400 — should match doc: released=500, claimable=500
     let first = c.claim("alice", 1_400).expect("claim should not error");
@@ -78,7 +79,8 @@ fn claimable_after_partial_claim() {
 #[test]
 fn revoke_claws_unvested_portion() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF).unwrap();
+    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF)
+        .unwrap();
 
     // Revoke at now=1_400 (no prior claim).
     // After sync: released=500, locked=500
@@ -106,7 +108,8 @@ fn revoke_claws_unvested_portion() {
 #[test]
 fn revoke_after_partial_claim() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF).unwrap();
+    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF)
+        .unwrap();
 
     // Claim 250 at now=1_200
     let claimed = c.claim("alice", 1_200).expect("claim should not error");
@@ -132,7 +135,8 @@ fn revoke_after_partial_claim() {
 #[test]
 fn revoke_at_zero_vested_returns_entire_principal() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF).unwrap();
+    c.add_grant("admin", "alice", TOTAL, START, DURATION, CLIFF)
+        .unwrap();
 
     // Revoke before cliff — entire principal is locked.
     let transferred = c

@@ -44,7 +44,9 @@ pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
         .unwrap();
 
     let raw_rate = if utilization_bps > params.kink_utilization_bps {
-        let excess = utilization_bps.checked_sub(params.kink_utilization_bps).unwrap();
+        let excess = utilization_bps
+            .checked_sub(params.kink_utilization_bps)
+            .unwrap();
         let jump = excess
             .checked_mul(params.jump_multiplier_bps)
             .unwrap()
@@ -54,7 +56,9 @@ pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
     } else {
         pre_kink_rate
     };
-    raw_rate.max(params.rate_floor_bps).min(params.rate_ceiling_bps)
+    raw_rate
+        .max(params.rate_floor_bps)
+        .min(params.rate_ceiling_bps)
 }
 
 #[contracttype]
@@ -68,15 +72,25 @@ pub fn apply_hysteresis(current: i128, target: i128, band: i128) -> i128 {
     let band = band.max(0);
     let diff = match target.checked_sub(current) {
         Some(value) => value,
-        None => if target >= current { i128::MAX } else { i128::MIN },
+        None => {
+            if target >= current {
+                i128::MAX
+            } else {
+                i128::MIN
+            }
+        }
     };
 
     if diff >= 0 {
-        if diff <= band { return current; }
+        if diff <= band {
+            return current;
+        }
         target.checked_sub(band).unwrap_or(target)
     } else {
         let abs_diff = diff.checked_abs().unwrap_or(i128::MAX);
-        if abs_diff <= band { return current; }
+        if abs_diff <= band {
+            return current;
+        }
         target.checked_add(band).unwrap_or(target)
     }
 }
@@ -95,10 +109,16 @@ pub fn compute_smoothed_rate(
     let max_change = max_step.saturating_mul(elapsed as i128);
     let diff = adjusted_target
         .checked_sub(last_rate)
-        .unwrap_or(if adjusted_target >= last_rate { i128::MAX } else { i128::MIN });
+        .unwrap_or(if adjusted_target >= last_rate {
+            i128::MAX
+        } else {
+            i128::MIN
+        });
 
     if diff > 0 {
-        last_rate.checked_add(diff.min(max_change)).unwrap_or(adjusted_target)
+        last_rate
+            .checked_add(diff.min(max_change))
+            .unwrap_or(adjusted_target)
     } else {
         let decrease = diff.checked_abs().unwrap_or(i128::MAX).min(max_change);
         last_rate.checked_sub(decrease).unwrap_or(adjusted_target)
@@ -107,18 +127,39 @@ pub fn compute_smoothed_rate(
 
 pub fn update_and_get_rate(env: &Env, target_rate: i128, params: &RateParams) -> i128 {
     let current_ledger = env.ledger().sequence();
-    let last_ledger = env.storage().instance().get(&RateModelKey::LastRateLedger).unwrap_or(0);
+    let last_ledger = env
+        .storage()
+        .instance()
+        .get(&RateModelKey::LastRateLedger)
+        .unwrap_or(0);
     let last_rate = if last_ledger == 0 {
         target_rate
     } else {
-        env.storage().instance().get(&RateModelKey::LastRate).unwrap_or(target_rate)
+        env.storage()
+            .instance()
+            .get(&RateModelKey::LastRate)
+            .unwrap_or(target_rate)
     };
-    let elapsed = if last_ledger == 0 { 0 } else { current_ledger.saturating_sub(last_ledger) };
+    let elapsed = if last_ledger == 0 {
+        0
+    } else {
+        current_ledger.saturating_sub(last_ledger)
+    };
     let new_rate = compute_smoothed_rate(
-        last_rate, target_rate, params.max_rate_change_per_ledger_bps, elapsed, params.hysteresis_bps,
+        last_rate,
+        target_rate,
+        params.max_rate_change_per_ledger_bps,
+        elapsed,
+        params.hysteresis_bps,
     );
-    let clamped_rate = new_rate.max(params.rate_floor_bps).min(params.rate_ceiling_bps);
-    env.storage().instance().set(&RateModelKey::LastRate, &clamped_rate);
-    env.storage().instance().set(&RateModelKey::LastRateLedger, &current_ledger);
+    let clamped_rate = new_rate
+        .max(params.rate_floor_bps)
+        .min(params.rate_ceiling_bps);
+    env.storage()
+        .instance()
+        .set(&RateModelKey::LastRate, &clamped_rate);
+    env.storage()
+        .instance()
+        .set(&RateModelKey::LastRateLedger, &current_ledger);
     clamped_rate
 }

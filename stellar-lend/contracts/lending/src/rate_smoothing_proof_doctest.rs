@@ -8,18 +8,7 @@ mod rate_smoothing_proof_doctest {
         let target_rate = 110;
         let smoothing_factor_bps = 2_000;
 
-        let expected_trace = [
-            102,
-            103,
-            104,
-            105,
-            106,
-            107,
-            108,
-            109,
-            110,
-            110,
-        ];
+        let expected_trace = [102, 103, 104, 105, 106, 107, 108, 109, 110, 110];
 
         for expected in expected_trace {
             current_rate = compute_smoothed_rate(current_rate, target_rate, smoothing_factor_bps);
@@ -33,18 +22,7 @@ mod rate_smoothing_proof_doctest {
         let target_rate = 200;
         let smoothing_factor_bps = 2_000;
 
-        let expected_trace = [
-            208,
-            207,
-            206,
-            205,
-            204,
-            203,
-            202,
-            201,
-            200,
-            200,
-        ];
+        let expected_trace = [208, 207, 206, 205, 204, 203, 202, 201, 200, 200];
 
         for expected in expected_trace {
             current_rate = compute_smoothed_rate(current_rate, target_rate, smoothing_factor_bps);

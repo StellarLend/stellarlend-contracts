@@ -1,10 +1,10 @@
 #![cfg(test)]
 
+use crate::{DataKey, PriceRecord};
 use crate::{LendingContract, LendingContractClient};
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};
 use stellar_lend_common::MockAsset;
-use crate::{DataKey, PriceRecord};
 
 fn setup() -> (
     Env,
@@ -100,19 +100,22 @@ fn test_cross_asset_borrow_repay_roundtrip() {
 
     // We can't directly check the accrued interest from standard methods without triggering a read that accrues
     // Repaying with an amount larger than the debt will refund the excess
-    
+
     // 4. Overpay Repay
     // Send a massive amount to ensure full repayment and test overpay refund
     let repay_amount = 10_000i128; // much larger than 5000 + interest
-    
+
     let remaining_debt = client.repay_asset(&user, &asset_a, &repay_amount);
-    
+
     // Assert remaining debt is exactly 0
     assert_eq!(remaining_debt, 0);
 
     // Assert debt list is cleared
     let post_repay_debt_list = client.get_debt_assets(&user);
-    assert!(post_repay_debt_list.is_empty(), "Debt list should be cleared on full repay");
+    assert!(
+        post_repay_debt_list.is_empty(),
+        "Debt list should be cleared on full repay"
+    );
 
     // Total debt should return to pre-borrow state (or retain some reserve factor if applicable)
     // In many designs, total_debt only tracks principal or principal + interest.

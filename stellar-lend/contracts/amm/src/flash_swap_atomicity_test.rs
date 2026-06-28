@@ -63,12 +63,7 @@ pub struct SwapCallbackStub;
 #[contractimpl]
 impl SwapCallbackStub {
     /// Initiate flash swap + repay in one atomic host invocation.
-    pub fn execute(
-        env: Env,
-        amm: soroban_sdk::Address,
-        amount_out: i128,
-        amount_in: i128,
-    ) {
+    pub fn execute(env: Env, amm: soroban_sdk::Address, amount_out: i128, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
         client.flash_swap_a_for_b(&amount_out, &FEE_BPS_VAL, &Bytes::new(&env));
         client.repay_flash_swap(&amount_in);
@@ -109,8 +104,7 @@ fn test_correct_repay_clears_flag_and_k_ok() {
     let amount_in = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
 
     let stub_id = env.register(SwapCallbackStub, ());
-    SwapCallbackStubClient::new(&env, &stub_id)
-        .execute(&amm_id, &amount_out, &amount_in);
+    SwapCallbackStubClient::new(&env, &stub_id).execute(&amm_id, &amount_out, &amount_in);
 
     let (ra, rb) = amm.get_reserves();
     let k_after = ra.checked_mul(rb).unwrap();
@@ -129,8 +123,7 @@ fn test_under_repay_reverts_k_violation() {
     let under_in = exact_in - 1;
 
     let stub_id = env.register(SwapCallbackStub, ());
-    SwapCallbackStubClient::new(&env, &stub_id)
-        .execute(&amm_id, &amount_out, &under_in);
+    SwapCallbackStubClient::new(&env, &stub_id).execute(&amm_id, &amount_out, &under_in);
 }
 
 /// Under-repay via `try_` captures the error and confirms reserves are fully
@@ -145,8 +138,8 @@ fn test_under_repay_reserves_unchanged() {
     let under_in = exact_in - 1;
 
     let stub_id = env.register(SwapCallbackStub, ());
-    let res = SwapCallbackStubClient::new(&env, &stub_id)
-        .try_execute(&amm_id, &amount_out, &under_in);
+    let res =
+        SwapCallbackStubClient::new(&env, &stub_id).try_execute(&amm_id, &amount_out, &under_in);
     assert!(res.is_err(), "under-repay must fail");
 
     let (ra, rb) = amm.get_reserves();
@@ -165,8 +158,11 @@ fn test_under_repay_flag_cleared_on_rollback() {
     let exact_in = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
 
     let stub_id = env.register(SwapCallbackStub, ());
-    let _ = SwapCallbackStubClient::new(&env, &stub_id)
-        .try_execute(&amm_id, &amount_out, &(exact_in - 1));
+    let _ = SwapCallbackStubClient::new(&env, &stub_id).try_execute(
+        &amm_id,
+        &amount_out,
+        &(exact_in - 1),
+    );
 
     assert!(
         !amm.is_flash_active(),

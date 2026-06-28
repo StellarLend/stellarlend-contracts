@@ -94,7 +94,11 @@ fn test_saturate_at_max_for_a_side() {
     // Another swap — must stay at MAX, no panic
     client.swap_a_for_b(&50_000, &1);
     let (fee_a2, _) = client.get_accrued_fees();
-    assert_eq!(fee_a2, i128::MAX, "fee_a must stay at MAX after further swaps");
+    assert_eq!(
+        fee_a2,
+        i128::MAX,
+        "fee_a must stay at MAX after further swaps"
+    );
 }
 
 #[test]
@@ -111,7 +115,11 @@ fn test_saturate_at_max_for_b_side() {
     // Another swap — must stay at MAX
     client.swap_b_for_a(&50_000, &1);
     let (_, fee_b2) = client.get_accrued_fees();
-    assert_eq!(fee_b2, i128::MAX, "fee_b must stay at MAX after further swaps");
+    assert_eq!(
+        fee_b2,
+        i128::MAX,
+        "fee_b must stay at MAX after further swaps"
+    );
 }
 
 #[test]
@@ -162,7 +170,11 @@ fn test_zero_fee_safe_near_max() {
     client.swap_a_for_b(&1_000, &0);
 
     let (fee_a, _) = client.get_accrued_fees();
-    assert_eq!(fee_a, i128::MAX - 1, "zero-fee swap must not alter accumulator");
+    assert_eq!(
+        fee_a,
+        i128::MAX - 1,
+        "zero-fee swap must not alter accumulator"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -238,5 +250,9 @@ fn test_no_panic_on_large_fee() {
     // A second swap should also not panic; fee stays at MAX.
     client.swap_a_for_b(&500_000, &9_999);
     let (fee_a2, _) = client.get_accrued_fees();
-    assert_eq!(fee_a2, i128::MAX, "fee_a must stay at MAX after second swap");
+    assert_eq!(
+        fee_a2,
+        i128::MAX,
+        "fee_a must stay at MAX after second swap"
+    );
 }

@@ -82,7 +82,7 @@ pub const HF_BUDGET_PER_DEBT: u32 = 3;
 /// ```
 ///
 /// | N  | M  | ceiling |
-/// |----|----|---------| 
+/// |----|----|---------|
 /// | 0  | 0  | 4       |
 /// | 1  | 0  | 9       |
 /// | 1  | 1  | 12      |
@@ -429,7 +429,8 @@ fn hf_bench_no_extra_reads_hidden_in_collateral_loop() {
         let reads_per_asset = delta / step;
 
         assert_eq!(
-            reads_per_asset, 3,
+            reads_per_asset,
+            3,
             "collateral loop must add exactly 3 reads per asset \
              (got {reads_per_asset} between n={} and n={n})",
             sizes[w - 1]
@@ -453,7 +454,8 @@ fn hf_bench_no_extra_reads_hidden_in_debt_loop() {
         let reads_per_asset = delta / step;
 
         assert_eq!(
-            reads_per_asset, 2,
+            reads_per_asset,
+            2,
             "debt loop must add exactly 2 reads per asset \
              (got {reads_per_asset} between m={} and m={m})",
             sizes[w - 1]

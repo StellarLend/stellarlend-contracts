@@ -140,7 +140,10 @@ mod price_impact_tests {
         // that exact value — the guard uses strict `>`, so impact == cap must
         // be allowed.
         let impact = expected_impact_bps(ra, rb, amount_in, fee_bps);
-        assert!(impact > 0, "need non-zero impact for this test to be meaningful");
+        assert!(
+            impact > 0,
+            "need non-zero impact for this test to be meaningful"
+        );
 
         client.set_max_impact_bps(&admin, &(impact as u32));
         client.init_pool(&ra, &rb);

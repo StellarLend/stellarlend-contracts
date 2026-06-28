@@ -4,15 +4,15 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
-mod fee_accrual_test;
-#[cfg(test)]
-mod flash_swap_test;
-#[cfg(test)]
 mod fee_accrual_overflow_test;
+#[cfg(test)]
+mod fee_accrual_test;
 #[cfg(test)]
 mod flash_swap_atomicity_test;
 #[cfg(test)]
 mod flash_swap_protocol_doctest;
+#[cfg(test)]
+mod flash_swap_test;
 #[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
@@ -26,7 +26,6 @@ pub struct FeeTier {
 }
 
 const FEE_TIERS_KEY: &str = "fee_tiers";
-
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -685,20 +684,20 @@ mod test {
 #[cfg(test)]
 mod swap_symmetry_test;
 
-    /// Set fee tiers for dynamic scaling
-    pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
-        admin.require_auth();
-        let key = Symbol::new(&env, FEE_TIERS_KEY);
-        env.storage().persistent().set(&key, &tiers);
-    }
+/// Set fee tiers for dynamic scaling
+pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
+    admin.require_auth();
+    let key = Symbol::new(&env, FEE_TIERS_KEY);
+    env.storage().persistent().set(&key, &tiers);
+}
 
-    /// Get fee tiers
-    pub fn get_fee_tiers(env: Env) -> Vec<u128> {
-        let key = Symbol::new(&env, FEE_TIERS_KEY);
-        env.storage()
-            .persistent()
-            .get::<_, Vec<u128>>(&key)
-            .unwrap_or_else(|| Vec::new(&env))
-    }
+/// Get fee tiers
+pub fn get_fee_tiers(env: Env) -> Vec<u128> {
+    let key = Symbol::new(&env, FEE_TIERS_KEY);
+    env.storage()
+        .persistent()
+        .get::<_, Vec<u128>>(&key)
+        .unwrap_or_else(|| Vec::new(&env))
+}
 #[cfg(test)]
 mod dynamic_fee_test;
