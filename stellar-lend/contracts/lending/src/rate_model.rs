@@ -3,16 +3,28 @@ use soroban_sdk::{contracttype, Env};
 
 use stellar_lend_common::BPS_DENOM;
 
+/// Configuration for the borrow rate curve, including the optional emergency surcharge.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RateParams {
+    /// Base borrow rate applied at zero utilization.
     pub base_rate_bps: i128,
+    /// Utilization level at which the linear slope changes to the jump multiplier.
     pub kink_utilization_bps: i128,
+    /// Linear slope applied up to the main kink.
     pub multiplier_bps: i128,
+    /// Steeper slope applied above the main kink.
     pub jump_multiplier_bps: i128,
+    /// Minimum borrow rate enforced after the curve is computed.
     pub rate_floor_bps: i128,
+    /// Maximum borrow rate enforced after the curve is computed.
     pub rate_ceiling_bps: i128,
+    /// Maximum allowed rate change per ledger when smoothing is enabled.
     pub max_rate_change_per_ledger_bps: i128,
+    /// Utilization threshold above which the emergency surcharge begins to apply.
+    pub surcharge_kink_bps: i128,
+    /// Extra rate slope applied for utilization above the surcharge kink.
+    pub surcharge_slope: i128,
 }
 
 impl Default for RateParams {
@@ -25,10 +37,17 @@ impl Default for RateParams {
             rate_floor_bps: 50,
             rate_ceiling_bps: 10_000,
             max_rate_change_per_ledger_bps: i128::MAX,
+            surcharge_kink_bps: 0,
+            surcharge_slope: 0,
         }
     }
 }
 
+/// Computes the instantaneous borrow rate for a given utilization level.
+///
+/// The rate follows the existing kinked curve first, then adds an optional
+/// emergency surcharge once utilization exceeds the configured surcharge kink.
+/// The final value is still clamped to the configured floor and ceiling.
 pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
     let pre_kink_rate = params
         .base_rate_bps
@@ -56,7 +75,25 @@ pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
         pre_kink_rate
     };
 
-    raw_rate
+    let rate_with_surcharge = if params.surcharge_slope > 0 && params.surcharge_kink_bps > 0 {
+        if utilization_bps > params.surcharge_kink_bps {
+            let excess = utilization_bps
+                .checked_sub(params.surcharge_kink_bps)
+                .unwrap();
+            let surcharge = excess
+                .checked_mul(params.surcharge_slope)
+                .unwrap()
+                .checked_div(BPS_DENOM)
+                .unwrap();
+            raw_rate.checked_add(surcharge).unwrap()
+        } else {
+            raw_rate
+        }
+    } else {
+        raw_rate
+    };
+
+    rate_with_surcharge
         .max(params.rate_floor_bps)
         .min(params.rate_ceiling_bps)
 }
@@ -257,6 +294,8 @@ mod test {
         assert_eq!(p.rate_floor_bps, 50);
         assert_eq!(p.rate_ceiling_bps, 10_000);
         assert_eq!(p.max_rate_change_per_ledger_bps, i128::MAX);
+        assert_eq!(p.surcharge_kink_bps, 0);
+        assert_eq!(p.surcharge_slope, 0);
     }
 
     #[test]
