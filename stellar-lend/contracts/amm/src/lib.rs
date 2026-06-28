@@ -4,21 +4,28 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
-mod fee_accrual_test;
-#[cfg(test)]
-mod flash_swap_test;
-#[cfg(test)]
 mod fee_accrual_overflow_test;
+#[cfg(test)]
+mod fee_accrual_test;
 #[cfg(test)]
 mod flash_swap_atomicity_test;
 #[cfg(test)]
 mod flash_swap_protocol_doctest;
 #[cfg(test)]
+mod flash_swap_test;
+#[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
 mod sqrt_precision_test;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
+
+pub struct FeeTier {
+    pub min_reserve: u128,
+    pub fee_bps: u32,
+}
+
+const FEE_TIERS_KEY: &str = "fee_tiers";
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -676,3 +683,21 @@ mod test {
 
 #[cfg(test)]
 mod swap_symmetry_test;
+
+/// Set fee tiers for dynamic scaling
+pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
+    admin.require_auth();
+    let key = Symbol::new(&env, FEE_TIERS_KEY);
+    env.storage().persistent().set(&key, &tiers);
+}
+
+/// Get fee tiers
+pub fn get_fee_tiers(env: Env) -> Vec<u128> {
+    let key = Symbol::new(&env, FEE_TIERS_KEY);
+    env.storage()
+        .persistent()
+        .get::<_, Vec<u128>>(&key)
+        .unwrap_or_else(|| Vec::new(&env))
+}
+#[cfg(test)]
+mod dynamic_fee_test;
