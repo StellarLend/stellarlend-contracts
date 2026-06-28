@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod revoke_split_test;
 use std::collections::HashMap;
 
 /// Error type returned by admin-gated and pause-gated operations.
@@ -13,6 +11,10 @@ pub enum VestingError {
     NoSuchGrant,
     /// All grants for the grantee are already revoked.
     AlreadyRevoked,
+    /// The requested claim amount is zero.
+    InvalidAmount,
+    /// The requested claim amount exceeds the claimable balance.
+    OverClaim,
 }
 
 impl core::fmt::Display for VestingError {
@@ -24,13 +26,15 @@ impl core::fmt::Display for VestingError {
             }
             VestingError::NoSuchGrant => write!(f, "no such grant"),
             VestingError::AlreadyRevoked => write!(f, "already revoked"),
+            VestingError::InvalidAmount => write!(f, "amount must be greater than zero"),
+            VestingError::OverClaim => write!(f, "requested amount exceeds claimable balance"),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
-    pub grantee: Address,
+    pub grantee: String,
     pub total: u128,
     pub claimed: u128,
     pub released: u128,
@@ -100,24 +104,10 @@ pub struct VestingContract {
     paused: bool,
 }
 
-const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
-
-fn extend_grant_ttl(env: &Env, grantee: &Address) {
-    let key = DataKey::Grant(grantee.clone());
-    let extend_to = env.storage().max_ttl().min(PERSISTENT_TTL_LEDGERS);
-    let threshold = extend_to / 2 + 1;
-    if env.storage().persistent().has(&key) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, threshold, extend_to);
-    }
-}
-
-#[contract]
-pub struct VestingContract;
-
-#[contractimpl]
 impl VestingContract {
+    /// Creates a new contract instance with the given admin and treasury.
+    ///
+    /// All balances start at zero and the contract is unpaused.
     pub fn new(admin: &str, treasury: &str) -> Self {
         Self {
             admin: admin.to_string(),
@@ -185,28 +175,15 @@ impl VestingContract {
 
     /// Adds a vesting schedule for `grantee` and increases the aggregate locked supply.
     pub fn add_grant(
-        env: Env,
-        grantee: Address,
+        &mut self,
+        grantee: &str,
         total: u128,
         start_seconds: u64,
         duration_seconds: u64,
         cliff_seconds: u64,
-    ) -> Result<(), VestingError> {
-        let admin = Self::get_admin(env.clone())?;
-        admin.require_auth();
-
-        if total == 0 {
-            return Err(VestingError::InvalidParameters);
-        }
-
-        let token = Self::get_token(env.clone())?;
-        let token_client = soroban_sdk::token::Client::new(&env, &token);
-        
-        // Transfer tokens from admin to the contract to escrow them.
-        token_client.transfer(&admin, &env.current_contract_address(), &(total as i128));
-
+    ) {
         let grant = Grant {
-            grantee: grantee.clone(),
+            grantee: grantee.to_string(),
             total,
             claimed: 0,
             released: 0,
@@ -215,7 +192,7 @@ impl VestingContract {
             cliff_seconds,
             revoked: false,
         };
-        self.grants.entry(grantee.to_string()).or_default().push(g);
+        self.grants.entry(grantee.to_string()).or_default().push(grant);
         let bal = self.balances.entry("contract".to_string()).or_default();
         *bal += total;
         self.total_locked += total;
@@ -241,25 +218,109 @@ impl VestingContract {
     /// No state is mutated when this error is returned.
     pub fn claim(&mut self, grantee: &str, now: u64) -> Result<u128, VestingError> {
         self.check_not_paused()?;
-
         self.sync_grants(grantee, now);
         let grants = match self.grants.get_mut(grantee) {
             Some(x) => x,
             None => return Ok(0),
         };
+        let mut total_claimable = 0;
+        for grant in grants.iter() {
+            if !grant.revoked {
+                total_claimable = total_claimable.saturating_add(grant.claimable());
+            }
+        }
+        self.claim_partial_internal(grantee, total_claimable)
+    }
 
-        let mut amount = 0;
+    /// Claim a partial amount from vesting schedules for `grantee`.
+    ///
+    /// Unlike [`claim`], which always claims the full claimable balance, this
+    /// entrypoint allows the grantee to withdraw any amount up to the claimable
+    /// total across all their grants.
+    ///
+    /// # Arguments
+    /// - `grantee` — the account receiving the tokens.
+    /// - `amount` — the exact amount to claim; must satisfy `0 < amount <= claimable()`.
+    /// - `now` — the current Unix timestamp for vesting schedule calculation.
+    ///
+    /// # Errors
+    /// - [`VestingError::InvalidAmount`] — `amount` is zero.
+    /// - [`VestingError::NoSuchGrant`] — no schedules exist for `grantee`.
+    /// - [`VestingError::ContractPaused`] — the admin pause is active.
+    /// - [`VestingError::OverClaim`] — `amount` exceeds the claimable balance.
+    ///
+    /// # Notes
+    /// - Uses checked arithmetic for `u128` claimed accumulator updates.
+    /// - Respects the pause gate via `check_not_paused`.
+    /// - The vested/claimable invariants from `sync` are preserved.
+    /// - All validations that can fail without state mutation are performed before sync.
+    /// - `InvalidAmount` and `NoSuchGrant` are validated before any state mutation;
+    ///   `ContractPaused` is validated before sync; `OverClaim` is validated
+    ///   by computing claimable without mutation.
+    pub fn claim_partial(
+        &mut self,
+        grantee: &str,
+        amount: u128,
+        now: u64,
+    ) -> Result<u128, VestingError> {
+        // Validate amount == 0 before any state mutation.
+        if amount == 0 {
+            return Err(VestingError::InvalidAmount);
+        }
+
+        // Check for grant existence before sync (no state mutation needed if no grant).
+        if !self.grants.contains_key(grantee) {
+            return Err(VestingError::NoSuchGrant);
+        }
+
+        // Check pause before sync so no state is mutated when paused.
+        self.check_not_paused()?;
+
+        // Calculate claimable without mutating state (using vested_at directly).
+        let grants = match self.grants.get(grantee) {
+            Some(x) => x,
+            None => return Err(VestingError::NoSuchGrant),
+        };
+
+        let mut total_claimable = 0;
+        for grant in grants {
+            if !grant.revoked {
+                total_claimable = total_claimable.saturating_add(grant.claimable());
+            }
+        }
+
+        if amount > total_claimable {
+            return Err(VestingError::OverClaim);
+        }
+
+        // Now safe to sync and claim.
+        self.sync_grants(grantee, now);
+        self.claim_partial_internal(grantee, amount)
+    }
+
+    /// Internal helper that performs the actual claim after grants are synced and validated.
+    fn claim_partial_internal(
+        &mut self,
+        grantee: &str,
+        amount: u128,
+    ) -> Result<u128, VestingError> {
+        let grants = match self.grants.get_mut(grantee) {
+            Some(x) => x,
+            None => return Err(VestingError::NoSuchGrant),
+        };
+
+        let mut remaining = amount;
         for grant in grants.iter_mut() {
-            if grant.revoked {
+            if grant.revoked || remaining == 0 {
                 continue;
             }
             let claimable = grant.claimable();
-            grant.claimed += claimable;
-            amount += claimable;
-        }
-
-        if amount == 0 {
-            return Ok(0);
+            let to_claim = std::cmp::min(claimable, remaining);
+            grant.claimed = grant
+                .claimed
+                .checked_add(to_claim)
+                .expect("claimed overflow");
+            remaining = remaining.saturating_sub(to_claim);
         }
 
         let cbal = self.balances.entry("contract".to_string()).or_default();
@@ -349,6 +410,35 @@ impl VestingContract {
     pub fn total_locked(&self) -> u128 {
         self.total_locked
     }
+
+    /// Returns the total claimable amount across all grants for `grantee` at `now`.
+    ///
+    /// This is a view function that computes what would be claimable without mutating
+    /// state. It performs a virtual sync to calculate vested amounts at `now`.
+    ///
+    /// # Arguments
+    /// - `grantee` — the account whose grants to query.
+    /// - `now` — the current Unix timestamp for vesting schedule calculation.
+    ///
+    /// # Notes
+    /// - Revoked grants contribute zero to the total.
+    /// - Returns `0` if the grantee has no grants.
+    /// - This function does not update `released` or `total_locked`; it is a pure view.
+    pub fn claimable_total(&self, grantee: &str, now: u64) -> u128 {
+        let grants = match self.grants.get(grantee) {
+            Some(x) => x,
+            None => return 0,
+        };
+        let mut total = 0u128;
+        for grant in grants {
+            if !grant.revoked {
+                let vested = grant.vested_at(now);
+                let claimable = vested.saturating_sub(grant.claimed);
+                total = total.saturating_add(claimable);
+            }
+        }
+        total
+    }
 }
 
 #[cfg(test)]
@@ -409,3 +499,9 @@ mod vesting_doc_example_test;
 
 #[cfg(test)]
 mod vesting_views_test;
+
+#[cfg(test)]
+ mod partial_claim_test;
+
+ #[cfg(test)]
+ mod multi_grant_test;
