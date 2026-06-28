@@ -4,6 +4,22 @@ use ed25519_dalek::{PublicKey, Signature, Verifier};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// Typed contract errors to represent specific domain violations.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BridgeError {
+    /// Emitted when attempting to configure a rolling window of length 0.
+    InvalidWindowSize,
+}
+
+impl std::fmt::Display for BridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BridgeError::InvalidWindowSize => write!(f, "InvalidWindowSize: window_size must be > 0"),
+        }
+    }
+}
+
+impl std::error::Error for BridgeError {}
 /// Store validator public keys as raw bytes so the struct remains serde-friendly
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValidatorSet {
@@ -11,21 +27,37 @@ pub struct ValidatorSet {
 }
 
 impl ValidatorSet {
+    /// Returns the effective validator count used for quorum decisions.
+    ///
+    /// Duplicate byte-encoded keys collapse to a single logical validator so a
+    /// malformed set cannot silently raise the quorum threshold by repeating the
+    /// same public key multiple times.
     pub fn len(&self) -> usize {
-        self.validators.len()
+        self.validators
+            .iter()
+            .map(|validator| validator.as_slice())
+            .collect::<HashSet<_>>()
+            .len()
     }
 
+    /// Returns the strict supermajority quorum threshold for this set.
+    ///
+    /// The threshold is computed from the deduplicated validator count exposed
+    /// by [`ValidatorSet::len`], so repeated keys never inflate the required
+    /// number of unique signatures.
     pub fn threshold(&self) -> usize {
         // Supermajority: > 2/3 of validators
         let n = self.len();
         (n * 2) / 3 + 1
     }
 
+    /// Returns `true` when `pk` is present anywhere in the raw validator list.
     pub fn contains_pk(&self, pk: &PublicKey) -> bool {
         let b = pk.to_bytes();
         self.validators.iter().any(|v| v.as_slice() == b.as_ref())
     }
 
+    /// Returns the raw byte-encoded validator list in storage order.
     pub fn to_bytes_vec(&self) -> Vec<Vec<u8>> {
         self.validators.clone()
     }
@@ -139,7 +171,7 @@ impl Bridge {
             return Err(anyhow!("max_per_window must be >= 0"));
         }
         if window_size == 0 {
-            return Err(anyhow!("window_size must be > 0"));
+            return Err(BridgeError::InvalidWindowSize.into());
         }
 
         self.max_per_window = max_per_window;
@@ -156,10 +188,16 @@ impl Bridge {
     /// doesn't pay for that idle period with a stale, partially-consumed
     /// window (see SECURITY_NOTES.md for the rationale).
     fn roll_window_if_expired(&mut self, current_time: u64) {
-        let window_end = self.window_start.saturating_add(self.window_size);
-        if current_time >= window_end {
-            self.window_start = current_time;
-            self.window_inbound_total = 0;
+        if current_time < self.window_start {
+            // Guard against non-monotonic clock adjustments (time moving backwards).
+            return;
+        }
+
+        if let Some(window_end) = self.window_start.checked_add(self.window_size) {
+            if current_time >= window_end {
+                self.window_start = current_time;
+                self.window_inbound_total = 0;
+            }
         }
     }
 
@@ -210,6 +248,12 @@ mod inbound_cap_test;
 
 #[cfg(test)]
 mod epoch_monotonicity_proptest;
+
+#[cfg(test)]
+mod window_guard_test;
+
+#[cfg(test)]
+mod validatorset_proptest;
 
 #[cfg(test)]
 mod tests {

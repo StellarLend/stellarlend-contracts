@@ -2,9 +2,10 @@
 // Ensures that the formulae and examples in LIQUIDATION_MECHANICS.md remain correct.
 
 #[cfg(test)]
+use stellar_lend_common::{BPS_DENOM, CLOSE_FACTOR, LIQUIDATION_THRESHOLD_BPS};
 mod tests {
-    use crate::math;
     use soroban_sdk::{testutils::Address as _, Env};
+    use stellarlend_lending::math;
     use stellarlend_lending::*;
 
     // Helper to compute seized collateral based on actual repay

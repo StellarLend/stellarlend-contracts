@@ -413,9 +413,21 @@ pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> u128 {
 /// # Complexity
 /// O(log n) comparisons via binary search, where n ≤ [`MAX_SNAPSHOTS`].
 fn find_snapshot_at_or_before(snaps: &Vec<TwapSnapshot>, target_ts: u64) -> Option<TwapSnapshot> {
+    find_snapshot_at_or_before_with_steps(snaps, target_ts).0
+}
+
+/// Binary-search implementation shared by `get_twap` and the max-buffer tests.
+///
+/// The returned comparison count lets tests enforce a hard upper bound on the
+/// full-buffer lookup cost without changing any externally observable TWAP
+/// behavior.
+fn find_snapshot_at_or_before_with_steps(
+    snaps: &Vec<TwapSnapshot>,
+    target_ts: u64,
+) -> (Option<TwapSnapshot>, u32) {
     let len = snaps.len();
     if len == 0 {
-        return None;
+        return (None, 0);
     }
 
     // Binary search: maintain an invariant window [lo, hi).
@@ -423,10 +435,12 @@ fn find_snapshot_at_or_before(snaps: &Vec<TwapSnapshot>, target_ts: u64) -> Opti
     let mut lo: u32 = 0;
     let mut hi: u32 = len;
     let mut result: Option<TwapSnapshot> = None;
+    let mut comparisons: u32 = 0;
 
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         let snap: TwapSnapshot = snaps.get(mid).unwrap();
+        comparisons = comparisons.saturating_add(1);
         if snap.timestamp <= target_ts {
             // mid is a valid candidate; try to find a later one.
             result = Some(snap);
@@ -437,7 +451,17 @@ fn find_snapshot_at_or_before(snaps: &Vec<TwapSnapshot>, target_ts: u64) -> Opti
         }
     }
 
-    result
+    (result, comparisons)
+}
+
+/// Returns the snapshot lookup result and comparison count used by the
+/// `find_snapshot_at_or_before` binary search.
+#[cfg(test)]
+pub(crate) fn snapshot_search_metrics_for_test(
+    snaps: &Vec<TwapSnapshot>,
+    target_ts: u64,
+) -> (Option<TwapSnapshot>, u32) {
+    find_snapshot_at_or_before_with_steps(snaps, target_ts)
 }
 
 // ---------------------------------------------------------------------------

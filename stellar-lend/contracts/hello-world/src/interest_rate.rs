@@ -65,10 +65,14 @@ pub struct InterestRateConfig {
     pub base_rate_bps: i128,
     /// Utilization kink, in bps, exclusive range `(0, 10_000)`.
     pub kink_utilization_bps: i128,
+    /// Secondary utilization kink, in bps, exclusive range `(kink1, 10_000)`.
+    pub kink2_bps: i128,
     /// Total pre-kink increase added by the time utilization reaches the kink.
     pub multiplier_bps: i128,
     /// Total post-kink increase added between kink and 100% utilization.
     pub jump_multiplier_bps: i128,
+    /// Total increase added between kink2 and 100% utilization.
+    pub slope3_bps: i128,
     /// Legacy floor used by older deployments; retained for storage/API compatibility.
     pub rate_floor_bps: i128,
     /// Legacy ceiling used by older deployments; retained for storage/API compatibility.
@@ -86,8 +90,10 @@ impl Default for InterestRateConfig {
         Self {
             base_rate_bps: 100,
             kink_utilization_bps: 8_000,
+            kink2_bps: 9_000,
             multiplier_bps: 2_000,
             jump_multiplier_bps: 10_000,
+            slope3_bps: 20_000,
             rate_floor_bps: 0,
             rate_ceiling_bps: DEFAULT_MAX_RATE_BPS,
             spread_bps: 0,
@@ -311,8 +317,8 @@ pub fn compute_borrow_rate(
                     .ok_or(InterestRateError::DivisionByZero)?,
             )
             .ok_or(InterestRateError::Overflow)?
-    } else {
-        let post_kink_denominator = BASIS_POINTS_SCALE
+    } else if utilization <= config.kink2_bps {
+        let post_kink_denominator = config.kink2_bps
             .checked_sub(config.kink_utilization_bps)
             .ok_or(InterestRateError::DivisionByZero)?;
         config
@@ -326,6 +332,26 @@ pub fn compute_borrow_rate(
                     .checked_mul(config.jump_multiplier_bps)
                     .ok_or(InterestRateError::Overflow)?
                     .checked_div(post_kink_denominator)
+                    .ok_or(InterestRateError::DivisionByZero)?,
+            )
+            .ok_or(InterestRateError::Overflow)?
+    } else {
+        let post_kink2_denominator = BASIS_POINTS_SCALE
+            .checked_sub(config.kink2_bps)
+            .ok_or(InterestRateError::DivisionByZero)?;
+        config
+            .base_rate_bps
+            .checked_add(config.multiplier_bps)
+            .ok_or(InterestRateError::Overflow)?
+            .checked_add(config.jump_multiplier_bps)
+            .ok_or(InterestRateError::Overflow)?
+            .checked_add(
+                utilization
+                    .checked_sub(config.kink2_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_mul(config.slope3_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_div(post_kink2_denominator)
                     .ok_or(InterestRateError::DivisionByZero)?,
             )
             .ok_or(InterestRateError::Overflow)?
@@ -376,7 +402,10 @@ fn validate_config(config: &InterestRateConfig) -> Result<(), InterestRateError>
     if config.spread_bps < 0 || config.spread_bps > BASIS_POINTS_SCALE {
         return Err(InterestRateError::InvalidParameter);
     }
-    if config.min_rate_bps < 0 || config.max_rate_bps < config.min_rate_bps {
+    if config.kink2_bps <= config.kink_utilization_bps || config.kink2_bps > BASIS_POINTS_SCALE {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    if config.slope3_bps < 0 || config.slope3_bps > MAX_SLOPE_BPS {
         return Err(InterestRateError::InvalidParameter);
     }
     Ok(())
