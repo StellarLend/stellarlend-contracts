@@ -18,7 +18,7 @@ use crate::math::sqrt;
 /// economically unviable.
 pub const MINIMUM_LIQUIDITY: i128 = 1000;
 
-/// Error values returned when LP-share minting cannot complete safely.
+/// Error values returned when LP-share minting or burning cannot complete safely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiquidityMathError {
     /// The pool reserves are not usable for subsequent-deposit share math.
@@ -27,6 +27,12 @@ pub enum LiquidityMathError {
     InsufficientLiquidityMinted,
     /// An intermediate arithmetic product overflowed.
     Overflow,
+    /// The requested burn amount is not strictly positive.
+    InvalidBurnAmount,
+    /// The pool has no LP shares outstanding, so nothing can be burned.
+    ZeroSupply,
+    /// The requested burn exceeds the total LP supply (over-burn).
+    BurnExceedsSupply,
 }
 
 /// Calculates the LP shares to mint for a deposit.
@@ -79,6 +85,84 @@ pub fn calculate_mint_shares(
         }
         Ok((liquidity, 0))
     }
+}
+
+/// Calculates the token amounts returned when burning LP shares.
+///
+/// Burning is the inverse of minting: a holder redeeming `shares` of a pool that
+/// has `total_supply` LP shares outstanding and reserves (`reserve_0`,
+/// `reserve_1`) receives a strictly proportional slice of each reserve:
+///
+/// ```text
+///   amount_i = floor(reserve_i * shares / total_supply)
+/// ```
+///
+/// ## Rounding-down safety
+///
+/// The division truncates toward zero, so the pool never pays out more than the
+/// burner's exact proportional share. Any sub-unit remainder is retained in the
+/// pool for the benefit of the remaining LPs — it is never possible to extract
+/// more value by burning than was deposited, even across many small burns. This
+/// is the same rounding direction Uniswap-v2 uses for `burn`.
+///
+/// ## Over-burn rejection
+///
+/// `shares` must be strictly positive and must not exceed `total_supply`;
+/// otherwise the burn is rejected before any amount is computed. This prevents a
+/// caller from draining more than 100% of the pool.
+///
+/// # Arguments
+/// * `shares`       - LP shares to burn (must be in `1..=total_supply`).
+/// * `total_supply` - Current total supply of LP shares (must be `> 0`).
+/// * `reserve_0`    - Pool reserve of token 0.
+/// * `reserve_1`    - Pool reserve of token 1.
+///
+/// # Errors
+/// * [`LiquidityMathError::InvalidBurnAmount`]  - `shares <= 0`.
+/// * [`LiquidityMathError::ZeroSupply`]         - `total_supply <= 0`.
+/// * [`LiquidityMathError::BurnExceedsSupply`]  - `shares > total_supply`.
+/// * [`LiquidityMathError::Overflow`]           - `reserve_i * shares` overflows `i128`.
+///
+/// # Worked example
+///
+/// A pool holds reserves `(1_000, 4_000)` with `total_supply = 2_000`. Burning
+/// `500` shares (25% of supply) returns:
+///
+/// ```text
+///   amount_0 = floor(1_000 * 500 / 2_000) = 250
+///   amount_1 = floor(4_000 * 500 / 2_000) = 1_000
+/// ```
+///
+/// Burning an amount that does not divide evenly rounds down: with reserves
+/// `(1_000, 1_000)` and `total_supply = 3`, burning `1` share yields
+/// `floor(1_000 / 3) = 333` of each token (not 334), leaving the remainder in
+/// the pool.
+pub fn calculate_burn_amounts(
+    shares: i128,
+    total_supply: i128,
+    reserve_0: i128,
+    reserve_1: i128,
+) -> Result<(i128, i128), LiquidityMathError> {
+    if shares <= 0 {
+        return Err(LiquidityMathError::InvalidBurnAmount);
+    }
+    if total_supply <= 0 {
+        return Err(LiquidityMathError::ZeroSupply);
+    }
+    if shares > total_supply {
+        return Err(LiquidityMathError::BurnExceedsSupply);
+    }
+
+    let amount_0 = reserve_0
+        .checked_mul(shares)
+        .ok_or(LiquidityMathError::Overflow)?
+        / total_supply;
+    let amount_1 = reserve_1
+        .checked_mul(shares)
+        .ok_or(LiquidityMathError::Overflow)?
+        / total_supply;
+
+    Ok((amount_0, amount_1))
 }
 
 #[cfg(test)]
@@ -155,5 +239,109 @@ mod tests {
         // victim_shares would be 500_000 * 1 / 1_000_001 = 0.
         // The attacker would then own 100% of the pool and steal the victim's 500k.
         // The minimum liquidity effectively prevents this attack by changing the truncation ratio.
+    }
+
+    // ── calculate_burn_amounts (proportional LP burn) ───────────────────────
+
+    #[test]
+    fn test_burn_proportional_worked_example() {
+        // 25% of supply against reserves (1_000, 4_000).
+        let result = calculate_burn_amounts(500, 2_000, 1_000, 4_000);
+        assert_eq!(result, Ok((250, 1_000)));
+    }
+
+    #[test]
+    fn test_burn_full_supply_returns_all_reserves() {
+        // Burning the entire supply returns 100% of both reserves.
+        let result = calculate_burn_amounts(2_000, 2_000, 1_000, 4_000);
+        assert_eq!(result, Ok((1_000, 4_000)));
+    }
+
+    #[test]
+    fn test_burn_rounds_down() {
+        // 1/3 of the pool does not divide evenly: floor(1_000 / 3) = 333, not 334.
+        let result = calculate_burn_amounts(1, 3, 1_000, 1_000);
+        assert_eq!(result, Ok((333, 333)));
+    }
+
+    #[test]
+    fn test_burn_rounding_never_overpays_across_repeated_burns() {
+        // Burn a 3-share pool one share at a time. Early burns round down
+        // (floor(1000/3) = 333), retaining sub-unit dust for the remaining LPs;
+        // the final burn of the last share sweeps whatever is left. No individual
+        // burn ever pays out more than the reserve, and the cumulative payout
+        // exactly equals — never exceeds — the 1_000 reserve.
+        let mut reserve = 1_000;
+        let mut supply = 3;
+        let mut paid_out = 0;
+        while supply > 0 {
+            let (amt, _) = calculate_burn_amounts(1, supply, reserve, reserve).unwrap();
+            assert!(
+                amt <= reserve,
+                "a single burn must never exceed the reserve"
+            );
+            paid_out += amt;
+            reserve -= amt;
+            supply -= 1;
+        }
+        assert_eq!(paid_out, 1_000); // 333 + 333 + 334; never more than the reserve
+        assert_eq!(reserve, 0);
+    }
+
+    #[test]
+    fn test_burn_zero_reserves_yields_zero() {
+        // A reserve of 0 simply pays out 0 of that token (no error).
+        let result = calculate_burn_amounts(500, 2_000, 0, 4_000);
+        assert_eq!(result, Ok((0, 1_000)));
+    }
+
+    #[test]
+    fn test_burn_rejects_zero_shares() {
+        assert_eq!(
+            calculate_burn_amounts(0, 2_000, 1_000, 4_000),
+            Err(LiquidityMathError::InvalidBurnAmount)
+        );
+    }
+
+    #[test]
+    fn test_burn_rejects_negative_shares() {
+        assert_eq!(
+            calculate_burn_amounts(-1, 2_000, 1_000, 4_000),
+            Err(LiquidityMathError::InvalidBurnAmount)
+        );
+    }
+
+    #[test]
+    fn test_burn_rejects_zero_supply() {
+        assert_eq!(
+            calculate_burn_amounts(100, 0, 1_000, 4_000),
+            Err(LiquidityMathError::ZeroSupply)
+        );
+    }
+
+    #[test]
+    fn test_burn_rejects_negative_supply() {
+        assert_eq!(
+            calculate_burn_amounts(100, -5, 1_000, 4_000),
+            Err(LiquidityMathError::ZeroSupply)
+        );
+    }
+
+    #[test]
+    fn test_burn_rejects_over_burn() {
+        // shares > total_supply must be rejected (cannot drain >100% of the pool).
+        assert_eq!(
+            calculate_burn_amounts(2_001, 2_000, 1_000, 4_000),
+            Err(LiquidityMathError::BurnExceedsSupply)
+        );
+    }
+
+    #[test]
+    fn test_burn_overflow_is_caught() {
+        // reserve_0 * shares overflows i128 → Overflow, not a panic.
+        assert_eq!(
+            calculate_burn_amounts(i128::MAX, i128::MAX, i128::MAX, 0),
+            Err(LiquidityMathError::Overflow)
+        );
     }
 }
