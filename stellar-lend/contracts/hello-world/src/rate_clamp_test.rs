@@ -129,8 +129,10 @@ fn pure_compute_clamps_extreme_curve_outputs() {
     let config = InterestRateConfig {
         base_rate_bps: 0,
         kink_utilization_bps: 8_000,
+        kink2_bps: 9_000,
         multiplier_bps: 100_000,
-        jump_multiplier_bps: 100_000,
+        jump_multiplier_bps: 10_000,
+        slope3_bps: 20_000,
         min_rate_bps: 1_000,
         max_rate_bps: 4_000,
         rate_floor_bps: 1_000,

@@ -4,6 +4,11 @@ pub mod cross_asset;
 pub mod debt;
 pub mod math;
 pub mod rate_model;
+
+#[cfg(test)]
+mod rate_smoothing_proof_doctest;
+#[cfg(test)]
+mod cross_asset_roundtrip_test;
 pub mod rounding_strategy;
 pub mod upgrade;
 
@@ -19,6 +24,8 @@ mod bad_debt_write_off_test;
 mod borrow_health_factor_test;
 #[cfg(test)]
 mod cross_asset_e2e_test;
+#[cfg(test)]
+mod cross_asset_health_perf_test;
 #[cfg(test)]
 mod cross_asset_test;
 #[cfg(test)]
@@ -37,6 +44,8 @@ mod flash_utilization_test;
 mod granular_pause_ops_test;
 #[cfg(test)]
 mod health_factor_edge_test;
+#[cfg(test)]
+mod health_factor_proptest;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
@@ -69,6 +78,8 @@ mod position_summary_bench_test;
 mod property_invariants_test;
 #[cfg(test)]
 mod rate_cache_test;
+#[cfg(test)]
+mod rate_hysteresis_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]

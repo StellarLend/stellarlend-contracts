@@ -59,7 +59,10 @@ fn test_fee_formula_a() {
 
     client.swap_a_for_b(&amount_in, &fee_bps);
     let (fee_a, _fee_b) = client.get_accrued_fees();
-    assert_eq!(fee_a, expected_fee, "fee_a must equal amount_in * fee_bps / 10_000");
+    assert_eq!(
+        fee_a, expected_fee,
+        "fee_a must equal amount_in * fee_bps / 10_000"
+    );
 }
 
 #[test]
@@ -71,7 +74,10 @@ fn test_fee_formula_b() {
 
     client.swap_b_for_a(&amount_in, &fee_bps);
     let (_fee_a, fee_b) = client.get_accrued_fees();
-    assert_eq!(fee_b, expected_fee, "fee_b must equal amount_in * fee_bps / 10_000");
+    assert_eq!(
+        fee_b, expected_fee,
+        "fee_b must equal amount_in * fee_bps / 10_000"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +92,18 @@ fn test_fee_accumulator_monotonic() {
     for &amt in &[100_i128, 200, 300, 400] {
         client.swap_a_for_b(&amt, &30);
         let (fa, fb) = client.get_accrued_fees();
-        assert!(fa >= prev_a, "fee_a must be monotonic (prev={}, curr={})", prev_a, fa);
-        assert!(fb >= prev_b, "fee_b must be monotonic (prev={}, curr={})", prev_b, fb);
+        assert!(
+            fa >= prev_a,
+            "fee_a must be monotonic (prev={}, curr={})",
+            prev_a,
+            fa
+        );
+        assert!(
+            fb >= prev_b,
+            "fee_b must be monotonic (prev={}, curr={})",
+            prev_b,
+            fb
+        );
         prev_a = fa;
         prev_b = fb;
     }
@@ -107,7 +123,10 @@ fn test_fee_never_exceeds_amount_in() {
 
     client.swap_a_for_b(&amount_in, &fee_bps);
     let (fee_a, _) = client.get_accrued_fees();
-    assert!(fee_a <= amount_in, "accrued fee_a must not exceed the swap's amount_in");
+    assert!(
+        fee_a <= amount_in,
+        "accrued fee_a must not exceed the swap's amount_in"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -149,8 +168,14 @@ fn test_multiple_swaps_accrue() {
     }
 
     let (fee_a, fee_b) = client.get_accrued_fees();
-    assert_eq!(fee_a, expected_fee_a, "fee_a must accumulate across all A→B swaps");
-    assert_eq!(fee_b, expected_fee_b, "fee_b must accumulate across all B→A swaps");
+    assert_eq!(
+        fee_a, expected_fee_a,
+        "fee_a must accumulate across all A→B swaps"
+    );
+    assert_eq!(
+        fee_b, expected_fee_b,
+        "fee_b must accumulate across all B→A swaps"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -203,11 +228,17 @@ fn test_liquidity_ops_preserve_fees() {
 
     client.add_liquidity(&100, &200);
     let (fa_after_add, _) = client.get_accrued_fees();
-    assert_eq!(fa_after_add, fee_a_before, "add_liquidity must not alter fee_a");
+    assert_eq!(
+        fa_after_add, fee_a_before,
+        "add_liquidity must not alter fee_a"
+    );
 
     client.remove_liquidity(&50, &100);
     let (fa_after_rem, _) = client.get_accrued_fees();
-    assert_eq!(fa_after_rem, fee_a_before, "remove_liquidity must not alter fee_a");
+    assert_eq!(
+        fa_after_rem, fee_a_before,
+        "remove_liquidity must not alter fee_a"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +249,10 @@ fn test_liquidity_ops_preserve_fees() {
 fn test_reinit_resets_fees() {
     let (_env, client) = setup_pool(10_000, 10_000);
     client.swap_a_for_b(&500, &30);
-    assert!(client.get_accrued_fees().0 > 0, "fee_a should be positive after swap");
+    assert!(
+        client.get_accrued_fees().0 > 0,
+        "fee_a should be positive after swap"
+    );
 
     client.init_pool(&20_000, &20_000);
     let (fee_a, fee_b) = client.get_accrued_fees();

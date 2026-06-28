@@ -1,5 +1,33 @@
 use std::collections::HashMap;
 
+pub use soroban_sdk::{contracttype, contractevent, Address, Env, Val, IntoVal, Vec, Symbol};
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq, Copy)]
+pub enum DataKey {
+    Grant(Address),
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantTransferred {
+    pub from: Address,
+    pub to: Address,
+    pub amount: u128,
+    pub timestamp: u64,
+}
+
+fn extend_grant_ttl(env: &Env, grantee: &Address) {
+    let key = DataKey::Grant(grantee.clone());
+    let extend_to = env.storage().max_ttl().min(PERSISTENT_TTL_LEDGERS);
+    let threshold = extend_to / 2 + 1;
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, threshold, extend_to);
+    }
+}
+
 /// Error type returned by admin-gated and pause-gated operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VestingError {
@@ -174,6 +202,14 @@ impl VestingContract {
     // ── Grant management ──────────────────────────────────────────────────────
 
     /// Adds a vesting schedule for `grantee` and increases the aggregate locked supply.
+    ///
+    /// Validation runs before any state is mutated, so an invalid grant is never persisted.
+    ///
+    /// # Errors
+    /// - [`VestingError::Unauthorized`] — `caller` is not the admin.
+    /// - [`VestingError::ZeroPrincipal`] — `total` is zero.
+    /// - [`VestingError::ZeroDuration`] — `duration_seconds` is zero.
+    /// - [`VestingError::CliffExceedsDuration`] — `cliff_seconds > duration_seconds`.
     pub fn add_grant(
         &mut self,
         grantee: &str,
@@ -196,6 +232,7 @@ impl VestingContract {
         let bal = self.balances.entry("contract".to_string()).or_default();
         *bal += total;
         self.total_locked += total;
+        Ok(())
     }
 
     fn sync_grants(&mut self, grantee: &str, now: u64) {
@@ -401,6 +438,15 @@ impl VestingContract {
         *self.balances.get(who).unwrap_or(&0)
     }
 
+    /// Returns the grantee address associated with a grant.
+    ///
+    /// `grantee` is the beneficiary address whose grants should be returned.
+    pub fn get_grantee(&self, grantee: &str) -> Option<Address> {
+        self.grants.get(grantee).and_then(|grants| {
+            grants.first().map(|grant| grant.grantee.clone())
+        })
+    }
+
     /// Returns every vesting schedule recorded for `grantee`.
     pub fn get_grants(&self, grantee: &str) -> Vec<Grant> {
         self.grants.get(grantee).cloned().unwrap_or_default()
@@ -448,7 +494,7 @@ mod tests {
     #[test]
     fn claim_before_cliff_is_zero() {
         let mut c = VestingContract::new("admin", "treasury");
-        c.add_grant("alice", 1000, 1000, 1000, 200);
+        c.add_grant("admin", "alice", 1000, 1000, 1000, 200).unwrap();
         let claimed = c.claim("alice", 1100).expect("claim should not error");
         assert_eq!(claimed, 0);
         assert_eq!(c.balance_of("alice"), 0);
@@ -458,7 +504,7 @@ mod tests {
     #[test]
     fn claim_after_cliff_partial() {
         let mut c = VestingContract::new("admin", "treasury");
-        c.add_grant("bob", 1000, 1000, 1000, 100);
+        c.add_grant("admin", "bob", 1000, 1000, 1000, 100).unwrap();
         let claimed = c.claim("bob", 1200).expect("claim should not error");
         assert_eq!(claimed, 200);
         assert_eq!(c.balance_of("bob"), 200);
@@ -468,7 +514,7 @@ mod tests {
     #[test]
     fn revoke_claws_unvested_to_treasury() {
         let mut c = VestingContract::new("admin", "treasury");
-        c.add_grant("carol", 1000, 1000, 1000, 100);
+        c.add_grant("admin", "carol", 1000, 1000, 1000, 100).unwrap();
         let _ = c.claim("carol", 1200).expect("claim should not error");
         assert_eq!(c.balance_of("contract"), 800);
         let transferred = c.revoke("admin", "carol", 1200).expect("revoke failed");
@@ -481,7 +527,7 @@ mod tests {
     #[test]
     fn revoke_only_admin() {
         let mut c = VestingContract::new("admin", "treasury");
-        c.add_grant("dan", 500, 0, 100, 0);
+        c.add_grant("admin", "dan", 500, 0, 100, 0).unwrap();
         let res = c.revoke("not-admin", "dan", 10);
         assert_eq!(res, Err(VestingError::Unauthorized));
         assert_eq!(c.total_locked(), 500);
@@ -490,6 +536,9 @@ mod tests {
 
 #[cfg(test)]
 mod pause_test;
+
+#[cfg(test)]
+mod cliff_bound_test;
 
 #[cfg(test)]
 mod vested_at_proptest;
