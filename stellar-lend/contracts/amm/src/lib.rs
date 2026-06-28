@@ -4,67 +4,15 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
-mod fee_accrual_test;
-#![no_std]
-pub mod liquidity_math;
-pub mod math;
-#[cfg(test)]
 mod flash_swap_test;
 #[cfg(test)]
 mod fee_accrual_test;
-#[cfg(test)]
-mod fee_accrual_overflow_test;
-#[cfg(test)]
-mod flash_swap_atomicity_test;
-#[cfg(test)]
-mod flash_swap_protocol_doctest;
 #[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
 mod sqrt_precision_test;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
-
-pub struct FeeTier {
-    pub min_reserve: u128,
-    pub fee_bps: u32,
-}
-
-const FEE_TIERS_KEY: &str = "fee_tiers";
-
-// [Rest of original lib.rs code - all the swap functions, etc.]
-
-    pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
-        admin.require_auth();
-        let key = Symbol::new(&env, FEE_TIERS_KEY);
-        env.storage().persistent().set(&key, &tiers);
-    }
-
-    pub fn get_fee_tiers(env: Env) -> Vec<u128> {
-        let key = Symbol::new(&env, FEE_TIERS_KEY);
-        env.storage()
-            .persistent()
-            .get::<_, Vec<u128>>(&key)
-            .unwrap_or_else(|| Vec::new(&env))
-    }
-
-#[cfg(test)]
-mod dynamic_fee_test;
-#[cfg(test)]
-mod flash_swap_test;
-#[cfg(test)]
-mod mint_shares_proptest;
-#[cfg(test)]
-mod sqrt_precision_test;
-
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
-
-pub struct FeeTier {
-    pub min_reserve: u128,
-    pub fee_bps: u32,
-}
-
-const FEE_TIERS_KEY: &str = "fee_tiers";
+use soroban_sdk::{contract, contractimpl, Address, Bytes, Env};
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -74,27 +22,6 @@ const FEE_TIERS_KEY: &str = "fee_tiers";
 // integer-only `init_pool(a, b)` and the swap-bounds proptest suite).
 const KEY_RES_A: (&str, &str) = ("pool", "a");
 const KEY_RES_B: (&str, &str) = ("pool", "b");
-
-// Price-impact guard.
-//
-// `KEY_MAX_IMPACT_BPS` stores the admin-configured maximum price-impact in
-// basis points (e.g. 500 = 5 %).  The sentinel `u32::MAX` (0xFFFF_FFFF)
-// disables the guard entirely for backward compatibility — any swap is
-// allowed when the guard is off.
-//
-// Spot price is represented as `reserve_b / reserve_a` (units of B per A).
-// A swap A→B increases reserve_a and decreases reserve_b, which lowers the
-// spot price.  The relative move is:
-//
-//   impact_bps = (price_before - price_after) * 10_000 / price_before
-//              = (rb/ra  −  rb_after/ra_after) * 10_000 / (rb/ra)
-//              = (1 − (rb_after * ra) / (rb * ra_after)) * 10_000
-//
-// Everything is computed in integer arithmetic using checked mul/div to
-// avoid overflow.
-const KEY_MAX_IMPACT_BPS: (&str, &str) = ("pool", "max_impact_bps");
-/// Sentinel value that disables the price-impact guard.
-pub const IMPACT_GUARD_DISABLED: u32 = u32::MAX;
 
 // New keys for the flash-swap feature.
 //
@@ -122,16 +49,14 @@ const KEY_K_BEFORE: (&str, &str) = ("pool", "flash_k_before");
 //
 // `KEY_FEE_A` tracks the total protocol fees earned from swaps where
 // token A is the input (i.e. `swap_a_for_b`).  Each call increments it
-// by `amount_in * fee_bps / 10_000` using saturating addition so the
-// counter can never overflow and panic the pool.
+// by `amount_in * fee_bps / 10_000`.
 //
 // `KEY_FEE_B` tracks the total protocol fees earned from swaps where
 // token B is the input (i.e. `swap_b_for_a`).
 //
-// Both accumulators are monotonic non-decreasing (until saturation at
-// `i128::MAX`) and never exceed the cumulative `amount_in` for their
-// respective side because the fee formula uses floor division with
-// `fee_bps < 10_000`.
+// Both accumulators are monotonic non-decreasing and never exceed the
+// cumulative `amount_in` for their respective side because the fee
+// formula uses floor division with `fee_bps < 10_000`.
 const KEY_FEE_A: (&str, &str) = ("pool", "fee_a");
 const KEY_FEE_B: (&str, &str) = ("pool", "fee_b");
 
@@ -155,45 +80,6 @@ impl AmmContract {
         env.storage().persistent().set(&KEY_FEE_B, &0_i128);
     }
 
-    /// Set the maximum per-swap price impact in basis points.
-    ///
-    /// A swap A→B that would move the spot price (`reserve_b / reserve_a`)
-    /// by more than `max_impact_bps / 10_000` is rejected with a panic,
-    /// rolling back all state changes atomically.
-    ///
-    /// Pass [`IMPACT_GUARD_DISABLED`] (`u32::MAX`) to disable the guard
-    /// and allow swaps of any size (backward-compatible default).
-    ///
-    /// # Arguments
-    /// * `_admin`         — caller address (auth checked by the caller in
-    ///                      production; kept in signature for future ACL).
-    /// * `max_impact_bps` — maximum impact in BPS, or `IMPACT_GUARD_DISABLED`.
-    pub fn set_max_impact_bps(env: Env, _admin: Address, max_impact_bps: u32) {
-        env.storage()
-            .persistent()
-            .set(&KEY_MAX_IMPACT_BPS, &max_impact_bps);
-    }
-
-    /// Return the current max-impact bound in BPS, or [`IMPACT_GUARD_DISABLED`]
-    /// if it has never been set.
-    pub fn get_max_impact_bps(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&KEY_MAX_IMPACT_BPS)
-            .unwrap_or(IMPACT_GUARD_DISABLED)
-    }
-
-    /// Reentrancy guard — panics if a flash swap is currently in flight.
-    ///
-    /// Called by `init_pool`, `add_liquidity`, `remove_liquidity`,
-    /// `swap_a_for_b`, and a nested `flash_swap_a_for_b` before touching
-    /// storage.
-    ///
-    /// # Panics
-    /// `"ReentrantFlashSwap: pool mutation blocked while flash-swap is in flight"`
-    /// when `KEY_FLASH_ACTIVE == true`.
-    ///
-    /// See: [FLASH_SWAP_PROTOCOL.md §Reentrancy Guard](../FLASH_SWAP_PROTOCOL.md)
     fn assert_no_active_flash_swap(env: &Env) {
         let active: bool = env
             .storage()
@@ -236,12 +122,6 @@ impl AmmContract {
 
     /// Swap from A -> B using Uniswap-style formula with fee (fee_bps out
     /// of 10_000).  Returns amount_out.
-    ///
-    /// # Overflow policy
-    ///
-    /// The fee accumulator (`KEY_FEE_A`) uses saturating addition. If the
-    /// counter reaches `i128::MAX` it stops incrementing but never panics.
-    /// This guarantees the swap cannot be halted by fee-accumulation overflow.
     pub fn swap_a_for_b(env: Env, amount_in: i128, fee_bps: i128) -> i128 {
         Self::assert_no_active_flash_swap(&env);
         if amount_in <= 0 {
@@ -273,37 +153,12 @@ impl AmmContract {
         let new_rb = rb.checked_sub(amount_out).expect("underflow");
         assert_k_monotonic(ra, rb, new_ra, new_rb, true);
 
-        let accrued_fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
-let new_fee_a = accrued_fee_a.saturating_add(fee);
-        // ---- Price-impact guard ----
-        // Spot price before  = rb  / ra   (units of B per A).
-        // Spot price after   = new_rb / new_ra.
-        // Relative impact (BPS) = (1 - new_rb * ra / (rb * new_ra)) * 10_000.
-        // We reject if impact_bps > max_impact_bps.
-        let max_impact: u32 = env
+        let accrued_fee_a: i128 = env
             .storage()
             .persistent()
-            .get(&KEY_MAX_IMPACT_BPS)
-            .unwrap_or(IMPACT_GUARD_DISABLED);
-        if max_impact != IMPACT_GUARD_DISABLED {
-            // Numerator of the "price ratio after / before":
-            //   ratio_num = new_rb * ra
-            //   ratio_den = rb     * new_ra
-            // impact_bps = (1 - ratio_num / ratio_den) * 10_000
-            //            = (ratio_den - ratio_num) * 10_000 / ratio_den
-            let ratio_num = new_rb.checked_mul(ra).expect("impact overflow");
-            let ratio_den = rb.checked_mul(new_ra).expect("impact overflow");
-            let impact_bps = (ratio_den - ratio_num)
-                .checked_mul(10_000)
-                .expect("impact overflow")
-                / ratio_den;
-            if impact_bps > max_impact as i128 {
-                panic!(
-                    "PriceImpactExceeded: impact_bps={}, max={}",
-                    impact_bps, max_impact
-                );
-            }
-        }
+            .get(&KEY_FEE_A)
+            .unwrap_or(0);
+        let new_fee_a = accrued_fee_a.checked_add(fee).expect("fee_a overflow");
 
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
         env.storage().persistent().set(&KEY_RES_B, &new_rb);
@@ -331,11 +186,6 @@ let new_fee_a = accrued_fee_a.saturating_add(fee);
     /// - either reserve is zero (empty pool)
     /// - any intermediate checked-arithmetic overflow
     /// - k decreases after the swap (invariant violation)
-    ///
-    /// # Overflow policy
-    ///
-    /// Identical to [`swap_a_for_b`]: the fee accumulator saturates at
-    /// `i128::MAX` and never panics on addition.
     pub fn swap_b_for_a(env: Env, amount_in: i128, fee_bps: i128) -> i128 {
         if amount_in <= 0 {
             panic!("amount must be positive");
@@ -365,8 +215,12 @@ let new_fee_a = accrued_fee_a.saturating_add(fee);
         let new_ra = ra.checked_sub(amount_out).expect("underflow");
         assert_k_monotonic(ra, rb, new_ra, new_rb, true);
 
-        let accrued_fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
-let new_fee_b = accrued_fee_b.saturating_add(fee);
+        let accrued_fee_b: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_B)
+            .unwrap_or(0);
+        let new_fee_b = accrued_fee_b.checked_add(fee).expect("fee_b overflow");
 
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
         env.storage().persistent().set(&KEY_RES_B, &new_rb);
@@ -415,18 +269,6 @@ let new_fee_b = accrued_fee_b.saturating_add(fee);
     ///                  `repay_flash_swap` from a follow-up transaction
     ///                  operation.  The value is bound to a local to
     ///                  keep it in the parameter surface.
-    ///
-    /// # Returns
-    /// `amount_out` — the number of asset-B units debited from the pool.
-    ///
-    /// # Panics
-    /// - `"ReentrantFlashSwap"` — a flash swap is already in flight.
-    /// - `"amount_out must be positive"` — `amount_out ≤ 0`.
-    /// - `"invalid fee_bps (must be in [0, 9999])"` — out-of-range fee.
-    /// - `"empty pool"` — either reserve is zero.
-    /// - `"Insufficient reserves: amount_out would drain reserve_b"` — `amount_out ≥ reserve_b`.
-    ///
-    /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
     pub fn flash_swap_a_for_b(env: Env, amount_out: i128, fee_bps: i128, params: Bytes) -> i128 {
         // `params` is reserved for a future callback variant.  Bound to
         // a local so the parameter is used (no dead-binding lint).
@@ -476,22 +318,8 @@ let new_fee_b = accrued_fee_b.saturating_add(fee);
     /// the optimistic reserve debit) — leaving the pool exactly where it
     /// started.
     ///
-    /// The minimum `amount_in` that satisfies the invariant is:
-    /// ```text
-    /// amount_in_min = ⌈ reserve_a × amount_out / (reserve_b − amount_out) ⌉
-    /// ```
-    /// computed by [`inverse_swap_in`].
-    ///
     /// # Arguments
     /// * `amount_in` — units of asset A being repaid.  Must be `> 0`.
-    ///
-    /// # Panics
-    /// - `"repay_flash_swap: amount_in must be positive"` — `amount_in ≤ 0`.
-    /// - `"repay_flash_swap: no flash swap in progress"` — called outside a flash swap.
-    /// - `"Invariant violation: k decreased during flash-swap repayment"` — under-repayment;
-    ///   Soroban then rolls back all storage changes, including the Op-1 debit.
-    ///
-    /// See: [FLASH_SWAP_PROTOCOL.md §Verify-K Repay Invariant](../FLASH_SWAP_PROTOCOL.md)
     pub fn repay_flash_swap(env: Env, amount_in: i128) {
         if amount_in <= 0 {
             panic!("repay_flash_swap: amount_in must be positive");
@@ -543,14 +371,10 @@ let new_fee_b = accrued_fee_b.saturating_add(fee);
         (ra, rb)
     }
 
-    /// Returns `true` while a flash swap is in flight — between the
-    /// [`flash_swap_a_for_b`](AmmContract::flash_swap_a_for_b) call and
-    /// the matching [`repay_flash_swap`](AmmContract::repay_flash_swap).
-    ///
-    /// Useful for off-chain monitoring, front-ends exposing pool lock-state,
-    /// and test assertions.  Read-only; not gated by the reentrancy guard.
-    ///
-    /// See: [FLASH_SWAP_PROTOCOL.md §Reentrancy Guard](../FLASH_SWAP_PROTOCOL.md)
+    /// Read whether a flash-swap is currently in flight (between
+    /// `flash_swap_a_for_b` and the matching `repay_flash_swap`).
+    /// Useful for tests, off-chain monitoring, and front-ends that want
+    /// to expose pool lock-state.
     pub fn is_flash_active(env: Env) -> bool {
         env.storage()
             .instance()
@@ -567,15 +391,17 @@ let new_fee_b = accrued_fee_b.saturating_add(fee);
     /// Each fee is computed as `amount_in * fee_bps / 10_000` (floor
     /// division) at the time of the swap and accumulated into a
     /// monotonic, persisted counter.
-    ///
-    /// # Overflow policy
-    ///
-    /// Each counter uses saturating addition internally. Should a counter
-    /// reach `i128::MAX` it will stop incrementing; the pool remains
-    /// operational and will not panic.
     pub fn get_accrued_fees(env: Env) -> (i128, i128) {
-        let fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
-        let fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
+        let fee_a: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_A)
+            .unwrap_or(0);
+        let fee_b: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_B)
+            .unwrap_or(0);
         (fee_a, fee_b)
     }
 }
@@ -640,8 +466,6 @@ fn compute_fee(amount_in: i128, fee_bps: i128) -> i128 {
 /// `fee_bps` is still supplied so the function's signature mirrors
 /// the forward swap (callers commonly reach for it from
 /// `swap_a_for_b(fee_bps)`).
-///
-/// See: [FLASH_SWAP_PROTOCOL.md §Minimum Repayment Formula](../FLASH_SWAP_PROTOCOL.md)
 #[cfg(test)]
 pub(crate) fn inverse_swap_in(ra: i128, rb: i128, amount_out: i128, _fee_bps: i128) -> i128 {
     let rb_minus_out = rb.checked_sub(amount_out).expect("amount_out >= rb");
@@ -657,9 +481,6 @@ pub(crate) fn inverse_swap_in(ra: i128, rb: i128, amount_out: i128, _fee_bps: i1
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod swap_bounds_proptest;
-
-#[cfg(test)]
-mod price_impact_test;
 
 #[cfg(test)]
 mod test {
@@ -721,21 +542,3 @@ mod test {
 
 #[cfg(test)]
 mod swap_symmetry_test;
-
-/// Set fee tiers for dynamic scaling
-pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
-    admin.require_auth();
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage().persistent().set(&key, &tiers);
-}
-
-/// Get fee tiers
-pub fn get_fee_tiers(env: Env) -> Vec<u128> {
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage()
-        .persistent()
-        .get::<_, Vec<u128>>(&key)
-        .unwrap_or_else(|| Vec::new(&env))
-}
-#[cfg(test)]
-mod dynamic_fee_test;
