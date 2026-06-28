@@ -4,9 +4,9 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
-mod flash_swap_test;
-#[cfg(test)]
 mod fee_accrual_test;
+#[cfg(test)]
+mod flash_swap_test;
 #[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
@@ -153,11 +153,7 @@ impl AmmContract {
         let new_rb = rb.checked_sub(amount_out).expect("underflow");
         assert_k_monotonic(ra, rb, new_ra, new_rb, true);
 
-        let accrued_fee_a: i128 = env
-            .storage()
-            .persistent()
-            .get(&KEY_FEE_A)
-            .unwrap_or(0);
+        let accrued_fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
         let new_fee_a = accrued_fee_a.checked_add(fee).expect("fee_a overflow");
 
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
@@ -215,11 +211,7 @@ impl AmmContract {
         let new_ra = ra.checked_sub(amount_out).expect("underflow");
         assert_k_monotonic(ra, rb, new_ra, new_rb, true);
 
-        let accrued_fee_b: i128 = env
-            .storage()
-            .persistent()
-            .get(&KEY_FEE_B)
-            .unwrap_or(0);
+        let accrued_fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
         let new_fee_b = accrued_fee_b.checked_add(fee).expect("fee_b overflow");
 
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
@@ -392,16 +384,8 @@ impl AmmContract {
     /// division) at the time of the swap and accumulated into a
     /// monotonic, persisted counter.
     pub fn get_accrued_fees(env: Env) -> (i128, i128) {
-        let fee_a: i128 = env
-            .storage()
-            .persistent()
-            .get(&KEY_FEE_A)
-            .unwrap_or(0);
-        let fee_b: i128 = env
-            .storage()
-            .persistent()
-            .get(&KEY_FEE_B)
-            .unwrap_or(0);
+        let fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
+        let fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
         (fee_a, fee_b)
     }
 }

@@ -42,9 +42,7 @@ use crate::{HelloContract, HelloContractClient};
 /// - `admin`      — initialised protocol admin; passes `require_admin`.
 /// - `user`       — a fresh non-admin address used to drive auth-failure
 ///                  tests.
-fn setup_contract(
-    env: &Env,
-) -> (HelloContractClient, Address, Address, Address) {
+fn setup_contract(env: &Env) -> (HelloContractClient, Address, Address, Address) {
     env.mock_all_auths();
     let contract_id = env.register_contract(None, HelloContract);
     let client = HelloContractClient::new(env, &contract_id);
@@ -66,12 +64,7 @@ fn setup_contract(
 /// * `contract_id` — the deployed hello-world contract address.
 /// * `asset`       — the asset whose reserve bucket is being seeded.
 /// * `balance`     — the accrued reserve balance (stroops, `i128`).
-fn seed_protocol_reserve(
-    env: &Env,
-    contract_id: &Address,
-    asset: &Address,
-    balance: i128,
-) {
+fn seed_protocol_reserve(env: &Env, contract_id: &Address, asset: &Address, balance: i128) {
     env.as_contract(contract_id, || {
         let key = DepositDataKey::ProtocolReserve(Some(asset.clone()));
         env.storage().persistent().set(&key, &balance);
