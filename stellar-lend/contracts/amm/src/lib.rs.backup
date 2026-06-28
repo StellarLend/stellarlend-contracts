@@ -4,22 +4,15 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
-mod fee_accrual_test;
-#[cfg(test)]
 mod flash_swap_test;
+#[cfg(test)]
+mod fee_accrual_test;
 #[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
 mod sqrt_precision_test;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
-
-pub struct FeeTier {
-    pub min_reserve: u128,
-    pub fee_bps: u32,
-}
-
-const FEE_TIERS_KEY: &str = "fee_tiers";
+use soroban_sdk::{contract, contractimpl, Address, Bytes, Env};
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -160,7 +153,11 @@ impl AmmContract {
         let new_rb = rb.checked_sub(amount_out).expect("underflow");
         assert_k_monotonic(ra, rb, new_ra, new_rb, true);
 
-        let accrued_fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
+        let accrued_fee_a: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_A)
+            .unwrap_or(0);
         let new_fee_a = accrued_fee_a.checked_add(fee).expect("fee_a overflow");
 
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
@@ -218,7 +215,11 @@ impl AmmContract {
         let new_ra = ra.checked_sub(amount_out).expect("underflow");
         assert_k_monotonic(ra, rb, new_ra, new_rb, true);
 
-        let accrued_fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
+        let accrued_fee_b: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_B)
+            .unwrap_or(0);
         let new_fee_b = accrued_fee_b.checked_add(fee).expect("fee_b overflow");
 
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
@@ -391,8 +392,16 @@ impl AmmContract {
     /// division) at the time of the swap and accumulated into a
     /// monotonic, persisted counter.
     pub fn get_accrued_fees(env: Env) -> (i128, i128) {
-        let fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
-        let fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
+        let fee_a: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_A)
+            .unwrap_or(0);
+        let fee_b: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_B)
+            .unwrap_or(0);
         (fee_a, fee_b)
     }
 }
@@ -533,21 +542,3 @@ mod test {
 
 #[cfg(test)]
 mod swap_symmetry_test;
-
-/// Set fee tiers for dynamic scaling
-pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
-    admin.require_auth();
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage().persistent().set(&key, &tiers);
-}
-
-/// Get fee tiers
-pub fn get_fee_tiers(env: Env) -> Vec<u128> {
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage()
-        .persistent()
-        .get::<_, Vec<u128>>(&key)
-        .unwrap_or_else(|| Vec::new(&env))
-}
-#[cfg(test)]
-mod dynamic_fee_test;

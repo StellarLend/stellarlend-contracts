@@ -470,10 +470,7 @@ impl MultisigContract {
     /// * `Unauthorized`    - Caller is not the admin
     /// * `NotInitialized`  - Contract not initialized
     /// * `InvalidThreshold` - `new_signers` is empty
-    pub fn queue_signers_change(
-        env: Env,
-        new_signers: Vec<Address>,
-    ) -> Result<(), MultisigError> {
+    pub fn queue_signers_change(env: Env, new_signers: Vec<Address>) -> Result<(), MultisigError> {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
@@ -570,11 +567,7 @@ impl MultisigContract {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
-        if !env
-            .storage()
-            .instance()
-            .has(&DataKey::PendingSignersChange)
-        {
+        if !env.storage().instance().has(&DataKey::PendingSignersChange) {
             return Err(MultisigError::NoQueuedSignersChange);
         }
 
@@ -600,9 +593,7 @@ impl MultisigContract {
     /// `Option<SignersChange>` — the pending change including `new_signers` and
     /// `eta_ledger`.
     pub fn get_pending_signers_change(env: Env) -> Option<SignersChange> {
-        env.storage()
-            .instance()
-            .get(&DataKey::PendingSignersChange)
+        env.storage().instance().get(&DataKey::PendingSignersChange)
     }
 
     /// Get the minimum signer-set change delay in ledgers.

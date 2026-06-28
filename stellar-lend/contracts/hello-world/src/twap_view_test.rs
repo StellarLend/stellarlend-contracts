@@ -16,7 +16,9 @@ mod twap_view_tests {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{testutils::Ledger, Address, Env};
 
-    use crate::amm_twap::{self, update_twap_accumulators, MIN_WINDOW_SECS, SNAPSHOT_INTERVAL_SECS};
+    use crate::amm_twap::{
+        self, update_twap_accumulators, MIN_WINDOW_SECS, SNAPSHOT_INTERVAL_SECS,
+    };
     use crate::oracle::get_pool_twap_price;
 
     fn advance_time(env: &Env, secs: u64) {
@@ -81,7 +83,10 @@ mod twap_view_tests {
         update_twap_accumulators(&env, &asset, 1_000_000, 200_000);
 
         let result = get_pool_twap_price(&env, &asset, MIN_WINDOW_SECS);
-        assert_eq!(result, None, "3s of history cannot cover a MIN_WINDOW_SECS window");
+        assert_eq!(
+            result, None,
+            "3s of history cannot cover a MIN_WINDOW_SECS window"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -158,7 +163,10 @@ mod twap_view_tests {
 
         let window = 2 * SNAPSHOT_INTERVAL_SECS;
         let result = get_pool_twap_price(&env, &asset, window);
-        assert!(result.is_some(), "ample multi-snapshot history must cover this window");
+        assert!(
+            result.is_some(),
+            "ample multi-snapshot history must cover this window"
+        );
 
         let direct = amm_twap::get_twap(&env, &asset, window);
         assert_eq!(

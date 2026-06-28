@@ -502,8 +502,7 @@ mod signer_cooldown_tests {
     #[test]
     fn test_signers_delay_equals_threshold_delay() {
         assert_eq!(
-            MIN_SIGNERS_DELAY_LEDGERS,
-            MIN_THRESHOLD_DELAY_LEDGERS,
+            MIN_SIGNERS_DELAY_LEDGERS, MIN_THRESHOLD_DELAY_LEDGERS,
             "signer-set and threshold-change cooldowns must be identical"
         );
     }

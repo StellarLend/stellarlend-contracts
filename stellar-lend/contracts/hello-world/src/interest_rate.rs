@@ -101,10 +101,7 @@ impl Default for InterestRateConfig {
 ///
 /// Defaults intentionally preserve previous unclamped behaviour: floor `0` and
 /// ceiling `i128::MAX`, until an admin explicitly configures a narrower band.
-pub fn initialize_interest_rate_config(
-    env: &Env,
-    admin: Address,
-) -> Result<(), InterestRateError> {
+pub fn initialize_interest_rate_config(env: &Env, admin: Address) -> Result<(), InterestRateError> {
     if env
         .storage()
         .persistent()
@@ -217,9 +214,10 @@ pub fn set_emergency_rate_adjustment(
     if !(-BASIS_POINTS_SCALE..=BASIS_POINTS_SCALE).contains(&adjustment_bps) {
         return Err(InterestRateError::InvalidParameter);
     }
-    env.storage()
-        .persistent()
-        .set(&InterestRateDataKey::EmergencyRateAdjustment, &adjustment_bps);
+    env.storage().persistent().set(
+        &InterestRateDataKey::EmergencyRateAdjustment,
+        &adjustment_bps,
+    );
     Ok(())
 }
 
@@ -337,7 +335,11 @@ pub fn compute_borrow_rate(
         .checked_add(emergency_adjustment_bps)
         .ok_or(InterestRateError::Overflow)?;
 
-    Ok(clamp_rate(adjusted_rate, config.min_rate_bps, config.max_rate_bps))
+    Ok(clamp_rate(
+        adjusted_rate,
+        config.min_rate_bps,
+        config.max_rate_bps,
+    ))
 }
 
 /// Clamp `rate_bps` to the inclusive configured band.

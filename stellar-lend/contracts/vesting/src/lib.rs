@@ -201,7 +201,7 @@ impl VestingContract {
 
         let token = Self::get_token(env.clone())?;
         let token_client = soroban_sdk::token::Client::new(&env, &token);
-        
+
         // Transfer tokens from admin to the contract to escrow them.
         token_client.transfer(&admin, &env.current_contract_address(), &(total as i128));
 
