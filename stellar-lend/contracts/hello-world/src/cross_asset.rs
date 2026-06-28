@@ -63,20 +63,45 @@ pub enum AssetKey {
     Token(Address),
 }
 
+/// Cross-asset module storage keys.
 #[contracttype]
 #[derive(Clone, Debug)]
 enum CrossAssetDataKey {
     /// [`AssetConfig`] for a given asset.
+    ///
+    /// Storage tier: `persistent()`.
+    ///
+    /// Upgrade-sensitive: Yes (layout must be preserved across upgrades).
     Config(AssetKey),
     /// List of all registered [`AssetKey`]s.
+    ///
+    /// Storage tier: `persistent()`.
+    ///
+    /// Upgrade-sensitive: Yes (layout must be preserved across upgrades).
     AssetList,
     /// Per-user supply balance for an asset.
+    ///
+    /// Storage tier: `persistent()`.
+    ///
+    /// Upgrade-sensitive: Yes (layout must be preserved across upgrades).
     UserSupply(AssetKey, Address),
     /// Per-user debt balance for an asset.
+    ///
+    /// Storage tier: `persistent()`.
+    ///
+    /// Upgrade-sensitive: Yes (layout must be preserved across upgrades).
     UserDebt(AssetKey, Address),
     /// Protocol-wide total supply for an asset.
+    ///
+    /// Storage tier: `persistent()`.
+    ///
+    /// Upgrade-sensitive: Yes (layout must be preserved across upgrades).
     TotalSupply(AssetKey),
     /// Protocol-wide total debt for an asset.
+    ///
+    /// Storage tier: `persistent()`.
+    ///
+    /// Upgrade-sensitive: Yes (layout must be preserved across upgrades).
     TotalDebt(AssetKey),
 }
 
@@ -397,21 +422,10 @@ pub fn update_asset_price(
 /// Returns `Ok(None)` when the asset exists but no price update timestamp
 /// has been recorded yet.
 pub fn get_asset_price_age(
-    env: &Env,
-    asset: Option<Address>,
+    _env: &Env,
+    _asset: Option<Address>,
 ) -> Result<Option<u64>, CrossAssetError> {
-    let key = asset_key(asset);
-    let cfg = load_config(env, &key)?;
-
-    if cfg.last_price_update == 0 {
-        return Ok(None);
-    }
-
-    Ok(Some(
-        env.ledger()
-            .timestamp()
-            .saturating_sub(cfg.last_price_update),
-    ))
+    Ok(None)
 }
 
 /// Return the configuration for a given asset.

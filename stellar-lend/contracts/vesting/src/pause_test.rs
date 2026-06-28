@@ -24,7 +24,7 @@ use super::{VestingContract, VestingError};
 /// duration = 1 000 s, no cliff.
 fn setup_with_grant() -> VestingContract {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
     c
 }
 
@@ -241,7 +241,7 @@ fn add_grant_not_blocked_by_pause() {
     c.pause("admin").expect("pause");
 
     // add_grant has no pause check; this must not panic or error.
-    c.add_grant("bob", 2_000, 0, 1_000, 0);
+    c.add_grant("admin", "bob", 2_000, 0, 1_000, 0).unwrap();
     assert_eq!(c.total_locked(), 2_000);
 }
 
@@ -251,8 +251,8 @@ fn add_grant_not_blocked_by_pause() {
 #[test]
 fn full_pause_resume_cycle() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
-    c.add_grant("bob", 500, 0, 500, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "bob", 500, 0, 500, 0).unwrap();
 
     // ── Pause ──────────────────────────────────────────────────────────────
     c.pause("admin").expect("pause");

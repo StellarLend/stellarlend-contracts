@@ -34,6 +34,8 @@ pub enum DataKey {
     ProposalApprovals(u64),
     /// Registered signer set eligible to approve proposals
     Signers,
+    /// Whether a proposal action kind is currently allowed for creation and execution
+    AllowedAction(ActionKind),
 }
 
 #[contracterror]
@@ -73,7 +75,17 @@ pub enum MultisigError {
     /// No pending signer-set change is queued
     NoQueuedSignersChange = 1016,
     /// Signer-set change delay period not yet elapsed
-    SignersDelayNotElapsed = 1017,
+    SignersDelayNotElapsed = 1016,
+    /// Proposal action kind is not currently registered in the allow-list
+    ActionNotAllowed = 1017,
+}
+
+/// Enumerates the proposal action kinds this contract can execute.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionKind {
+    /// Changes the multisig threshold after the proposal delay elapses.
+    SetThreshold,
 }
 
 #[contracttype]
@@ -97,10 +109,17 @@ pub struct SignersChange {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proposal {
+    /// Monotonic proposal identifier.
     pub id: u64,
+    /// Action kind that will be executed if the proposal passes.
+    pub action_kind: ActionKind,
+    /// New threshold value to apply for `ActionKind::SetThreshold`.
     pub new_threshold: u32,
+    /// Earliest ledger at which execution is permitted.
     pub eta_ledger: u32,
+    /// Final ledger at which execution is still permitted.
     pub expires_at_ledger: u32,
+    /// Whether the proposal has already executed.
     pub executed: bool,
 }
 
@@ -145,12 +164,20 @@ pub struct SignersChangeCancelledEvent {
     pub ledger: u32,
 }
 
-/// Emitted when a signer revokes a previous approval from an open proposal.
+/// Emitted when the admin registers an action kind in the allow-list.
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ApprovalRevokedEvent {
-    pub proposal_id: u64,
-    pub signer: Address,
+pub struct ActionAllowedEvent {
+    pub admin: Address,
+    pub action_kind: ActionKind,
+}
+
+/// Emitted when the admin removes an action kind from the allow-list.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionDisallowedEvent {
+    pub admin: Address,
+    pub action_kind: ActionKind,
 }
 
 #[contract]
@@ -189,6 +216,9 @@ impl MultisigContract {
         env.storage()
             .instance()
             .set(&DataKey::InitializedLedger, &env.ledger().sequence());
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedAction(ActionKind::SetThreshold), &true);
 
         Ok(())
     }
@@ -238,6 +268,66 @@ impl MultisigContract {
         env.storage()
             .instance()
             .get(&DataKey::PendingThresholdChange)
+    }
+
+    /// Returns whether an action kind is currently registered in the allow-list.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `action_kind` - Action kind to query
+    ///
+    /// # Returns
+    /// `true` when the action kind is allowed for proposal creation and execution
+    pub fn is_action_allowed(env: Env, action_kind: ActionKind) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::AllowedAction(action_kind))
+            .unwrap_or(false)
+    }
+
+    /// Adds an action kind to the admin-managed proposal allow-list.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `action_kind` - Action kind to register
+    ///
+    /// # Errors
+    /// * `NotInitialized` - Contract not initialized
+    pub fn add_allowed_action(env: Env, action_kind: ActionKind) -> Result<(), MultisigError> {
+        let admin = Self::get_admin(env.clone())?;
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedAction(action_kind.clone()), &true);
+
+        ActionAllowedEvent { admin, action_kind }.publish(&env);
+
+        Ok(())
+    }
+
+    /// Removes an action kind from the admin-managed proposal allow-list.
+    ///
+    /// Execution re-checks this allow-list, so removing a kind also blocks queued
+    /// proposals of that kind from executing later.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `action_kind` - Action kind to remove
+    ///
+    /// # Errors
+    /// * `NotInitialized` - Contract not initialized
+    pub fn remove_allowed_action(env: Env, action_kind: ActionKind) -> Result<(), MultisigError> {
+        let admin = Self::get_admin(env.clone())?;
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .remove(&DataKey::AllowedAction(action_kind.clone()));
+
+        ActionDisallowedEvent { admin, action_kind }.publish(&env);
+
+        Ok(())
     }
 
     /// Queue a new threshold change with a minimum delay of MIN_THRESHOLD_DELAY_LEDGERS.
@@ -341,7 +431,8 @@ impl MultisigContract {
     ///
     /// The current admin is recorded as the first approver. Execution remains
     /// unavailable until the threshold-change delay has elapsed and permanently
-    /// fails once `env.ledger().sequence() > expires_at_ledger`.
+    /// fails once `env.ledger().sequence() > expires_at_ledger`. The proposal is
+    /// rejected up front unless `ActionKind::SetThreshold` is currently allowed.
     pub fn create_proposal(
         env: Env,
         new_threshold: u32,
@@ -349,6 +440,9 @@ impl MultisigContract {
     ) -> Result<u64, MultisigError> {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
+
+        let action_kind = ActionKind::SetThreshold;
+        Self::require_action_allowed(&env, &action_kind)?;
 
         if new_threshold == 0 {
             return Err(MultisigError::InvalidThreshold);
@@ -373,6 +467,7 @@ impl MultisigContract {
 
         let proposal = Proposal {
             id: next_id,
+            action_kind,
             new_threshold,
             eta_ledger,
             expires_at_ledger,
@@ -480,10 +575,7 @@ impl MultisigContract {
     /// * `Unauthorized`    - Caller is not the admin
     /// * `NotInitialized`  - Contract not initialized
     /// * `InvalidThreshold` - `new_signers` is empty
-    pub fn queue_signers_change(
-        env: Env,
-        new_signers: Vec<Address>,
-    ) -> Result<(), MultisigError> {
+    pub fn queue_signers_change(env: Env, new_signers: Vec<Address>) -> Result<(), MultisigError> {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
@@ -580,11 +672,7 @@ impl MultisigContract {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
-        if !env
-            .storage()
-            .instance()
-            .has(&DataKey::PendingSignersChange)
-        {
+        if !env.storage().instance().has(&DataKey::PendingSignersChange) {
             return Err(MultisigError::NoQueuedSignersChange);
         }
 
@@ -610,9 +698,7 @@ impl MultisigContract {
     /// `Option<SignersChange>` — the pending change including `new_signers` and
     /// `eta_ledger`.
     pub fn get_pending_signers_change(env: Env) -> Option<SignersChange> {
-        env.storage()
-            .instance()
-            .get(&DataKey::PendingSignersChange)
+        env.storage().instance().get(&DataKey::PendingSignersChange)
     }
 
     /// Get the minimum signer-set change delay in ledgers.
@@ -804,6 +890,8 @@ impl MultisigContract {
             return Err(MultisigError::ProposalNotReady);
         }
 
+        Self::require_action_allowed(&env, &proposal.action_kind)?;
+
         // --- Quorum check ---
         // Read the current signer set and threshold fresh at execution time.
         // This ensures:
@@ -900,6 +988,14 @@ impl MultisigContract {
     pub fn get_min_threshold_delay_ledgers(_env: Env) -> u32 {
         MIN_THRESHOLD_DELAY_LEDGERS
     }
+
+    fn require_action_allowed(env: &Env, action_kind: &ActionKind) -> Result<(), MultisigError> {
+        if Self::is_action_allowed(env.clone(), action_kind.clone()) {
+            Ok(())
+        } else {
+            Err(MultisigError::ActionNotAllowed)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -909,7 +1005,7 @@ mod quorum_edge_test;
 mod signer_cooldown_test;
 
 #[cfg(test)]
-mod revoke_approval_test;
+mod action_allowlist_test;
 
 #[cfg(test)]
 mod tests {

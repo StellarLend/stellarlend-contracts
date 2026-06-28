@@ -7,24 +7,46 @@ use crate::{
 };
 
 const PRICE_DIVISOR: i128 = 10_000_000;
+
 /// Sentinel health factor returned when a user has zero outstanding debt.
 ///
 /// Value: `100_000_000` (10 000× the [`HEALTH_FACTOR_SCALE`] baseline of 10 000).
 /// Callers should treat any value ≥ this constant as "position is fully healthy"
 /// and skip liquidation checks.
 pub const HEALTH_FACTOR_NO_DEBT: i128 = 100_000_000;
+
+/// Baseline scale for health-factor comparisons.
+///
+/// A health factor ≥ `HEALTH_FACTOR_SCALE` (i.e., ≥ 1.0 in human terms) means the
+/// position is sufficiently collateralised and cannot be liquidated.
 pub const HEALTH_FACTOR_SCALE: i128 = 10_000;
 
+/// Load the collateral balance for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Returns
+/// The stored collateral amount, or `0` if no entry exists.
 pub fn load_collateral_asset(env: &Env, user: &Address, asset: &Address) -> i128 {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
+/// Persist the collateral balance for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage write** per call.
 pub fn save_collateral_asset(env: &Env, user: &Address, asset: &Address, amount: i128) {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     env.storage().persistent().set(&key, &amount);
 }
 
+/// Load the debt position for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Returns
+/// The stored [`DebtPosition`], or a zero-principal position timestamped at
+/// the current ledger if no entry exists.
 pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPosition {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     env.storage()
@@ -36,16 +58,33 @@ pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPositi
         })
 }
 
+/// Persist the debt position for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage write** per call.
 pub fn save_debt_asset(env: &Env, user: &Address, asset: &Address, position: &DebtPosition) {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     env.storage().persistent().set(&key, position);
 }
 
+/// Load the risk parameters configured for `asset`.
+///
+/// Issues **1 instance-storage read** per call.
+///
+/// # Returns
+/// `Some(AssetParams)` if the asset has been configured via `set_asset_params`,
+/// `None` otherwise.
 pub fn load_asset_params(env: &Env, asset: &Address) -> Option<AssetParams> {
     let key = DataKey::AssetParams(asset.clone());
     env.storage().instance().get(&key)
 }
 
+/// Fetch the most recent oracle price record for `asset`.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Errors
+/// Returns [`LendingError::PriceFeedNotFound`] if no price has been stored for
+/// this asset.
 pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, LendingError> {
     env.storage()
         .persistent()
@@ -105,6 +144,9 @@ fn remove_from_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
+/// Return the ordered list of collateral asset addresses for `user`.
+///
+/// Issues **1 persistent-storage read** per call.
 fn get_user_collateral_assets(env: &Env, user: &Address) -> Vec<Address> {
     let key = DataKey::UserCollateralAssets(user.clone());
     env.storage()
@@ -113,6 +155,9 @@ fn get_user_collateral_assets(env: &Env, user: &Address) -> Vec<Address> {
         .unwrap_or(Vec::new(env))
 }
 
+/// Return the ordered list of debt asset addresses for `user`.
+///
+/// Issues **1 persistent-storage read** per call.
 fn get_user_debt_assets(env: &Env, user: &Address) -> Vec<Address> {
     let key = DataKey::UserDebtAssets(user.clone());
     env.storage()
@@ -143,10 +188,54 @@ fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
-/// Computes the aggregate health factor across all collateral and debt assets.
-/// See `cross_asset.md` for the full aggregation pipeline and a worked example.
+/// Compute the aggregate health factor across all collateral and debt assets.
+///
+/// # Read-budget contract
+///
+/// For a user with **N** collateral assets and **M** debt assets, this function
+/// issues the following persistent-storage reads:
+///
+/// | Operation | Reads |
+/// |-----------|-------|
+/// | Collateral-asset list (`UserCollateralAssets`) | 1 |
+/// | Debt-asset list (`UserDebtAssets`) | 1 |
+/// | Per collateral asset: `AssetParams` (instance) + `OraclePrice` + `CollateralAsset` | 3 × N |
+/// | Per debt asset: `OraclePrice` + `DebtAsset` | 2 × M |
+/// | **Total** | **2 + 3N + 2M** |
+///
+/// The `cross_asset_health_perf_test` module asserts this budget for
+/// representative values of N and M and must be kept in sync with this comment
+/// whenever the implementation changes.
+///
+/// # Redundant-read note
+///
+/// `compute_aggregate_health_factor` fetches the two asset lists independently
+/// of `get_cross_position_value` and `get_cross_debt_value`.  When all three
+/// are called together (via `get_cross_position_summary`) the lists are read
+/// **three times** instead of once.  This is linear O(N+M), not quadratic, but
+/// carries a 3× constant.  A future single-pass optimisation could merge the
+/// loops and reduce the constant to ≈1× — tracked as a separate issue.
+///
+/// # Formula
+///
+/// ```text
+/// weighted_collateral = Σ  amount_i × price_i × liquidation_threshold_bps_i
+/// total_debt_value    = Σ  effective_debt_j × price_j
+/// health_factor       = weighted_collateral / total_debt_value
+/// ```
+///
+/// # Returns
+/// - `Ok(HEALTH_FACTOR_NO_DEBT)` when the user has no debt.
+/// - `Ok(health_factor)` — scaled integer; values ≥ `HEALTH_FACTOR_SCALE` are healthy.
+/// - `Err(LendingError)` on missing asset params, missing price feed, or overflow.
+///
+/// # See also
+/// - [`cross_asset.md`] — full aggregation pipeline and a worked example.
+/// - [`CROSS_ASSET_HEALTH_PERF.md`] — read-budget rationale and edge-case notes.
 pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128, LendingError> {
+    // Read 1: collateral-asset list
     let collateral_assets = get_user_collateral_assets(env, user);
+    // Read 2: debt-asset list
     let debt_assets = get_user_debt_assets(env, user);
 
     if debt_assets.is_empty() {
@@ -156,10 +245,14 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
     let mut weighted_collateral: i128 = 0;
     let mut total_debt_value: i128 = 0;
 
+    // Reads 3 .. 2 + 3N: per collateral asset — params (instance), price, balance
     for i in 0..collateral_assets.len() {
         let asset = collateral_assets.get(i).unwrap();
+        // Instance read: AssetParams (1 per asset)
         let params = load_asset_params(env, &asset).ok_or(LendingError::AssetNotConfigured)?;
+        // Persistent read: OraclePrice (1 per asset)
         let price_record = get_price_for_asset(env, &asset)?;
+        // Persistent read: CollateralAsset balance (1 per asset)
         let amount = load_collateral_asset(env, user, &asset);
         if amount == 0 {
             continue;
@@ -175,9 +268,12 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
             .ok_or(LendingError::Overflow)?;
     }
 
+    // Reads 3 + 3N .. 2 + 3N + 2M: per debt asset — price, debt position
     for i in 0..debt_assets.len() {
         let asset = debt_assets.get(i).unwrap();
+        // Persistent read: OraclePrice (1 per asset)
         let price_record = get_price_for_asset(env, &asset)?;
+        // Persistent read: DebtAsset position (1 per asset)
         let position = load_debt_asset(env, user, &asset);
         let debt =
             crate::debt::effective_debt(&position, env.ledger().timestamp(), DEFAULT_APR_BPS)
@@ -204,6 +300,19 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
     Ok(health_factor)
 }
 
+/// Return the total USD value of a user's cross-asset collateral positions.
+///
+/// # Read-budget contract
+///
+/// Issues `1 + 2N` persistent-storage reads for a user with **N** collateral
+/// assets:
+/// - 1 read for the collateral-asset list.
+/// - N reads for oracle prices.
+/// - N reads for collateral balances.
+///
+/// # Returns
+/// Total collateral value in protocol units (price × amount ÷ `PRICE_DIVISOR`),
+/// or `Err(LendingError)` on missing price feed or overflow.
 pub fn get_cross_position_value(env: &Env, user: &Address) -> Result<i128, LendingError> {
     let collateral_assets = get_user_collateral_assets(env, user);
     let mut total_collateral = 0i128;
@@ -228,6 +337,18 @@ pub fn get_cross_position_value(env: &Env, user: &Address) -> Result<i128, Lendi
     Ok(total_collateral)
 }
 
+/// Return the total USD value of a user's cross-asset debt positions.
+///
+/// # Read-budget contract
+///
+/// Issues `1 + 2M` persistent-storage reads for a user with **M** debt assets:
+/// - 1 read for the debt-asset list.
+/// - M reads for oracle prices.
+/// - M reads for debt positions.
+///
+/// # Returns
+/// Total debt value in protocol units, or `Err(LendingError)` on missing price
+/// feed or overflow.
 pub fn get_cross_debt_value(env: &Env, user: &Address) -> Result<i128, LendingError> {
     let debt_assets = get_user_debt_assets(env, user);
     let mut total_debt_value = 0i128;
@@ -255,6 +376,12 @@ pub fn get_cross_debt_value(env: &Env, user: &Address) -> Result<i128, LendingEr
     Ok(total_debt_value)
 }
 
+/// Validate that `asset` has been configured and return its [`AssetParams`].
+///
+/// Issues **1 instance-storage read**.
+///
+/// # Errors
+/// Returns [`LendingError::AssetNotConfigured`] if no params entry exists.
 pub fn validate_asset_params_configured(
     env: &Env,
     asset: &Address,
@@ -262,11 +389,23 @@ pub fn validate_asset_params_configured(
     load_asset_params(env, asset).ok_or(LendingError::AssetNotConfigured)
 }
 
+/// Persist risk parameters for `asset`.
+///
+/// Issues **1 instance-storage write**.
 pub fn set_asset_params_internal(env: &Env, asset: &Address, params: &AssetParams) {
     let key = DataKey::AssetParams(asset.clone());
     env.storage().instance().set(&key, params);
 }
 
+/// Deposit `amount` of `asset` as collateral for `user`.
+///
+/// Validates protocol pause state, checks that `asset` is configured, requires
+/// the user's authorisation, updates the collateral balance, registers the
+/// asset in the user's collateral list, and extends the entry's TTL.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
 pub fn deposit_collateral_asset_internal(
     env: &Env,
     user: &Address,
@@ -293,6 +432,17 @@ pub fn deposit_collateral_asset_internal(
     Ok(new_balance)
 }
 
+/// Withdraw `amount` of collateral `asset` for `user`.
+///
+/// Checks pause state, validates params, requires authorisation, reduces the
+/// collateral balance, removes the asset from the list when balance reaches
+/// zero, and verifies the resulting health factor remains ≥ `HEALTH_FACTOR_SCALE`.
+/// Rolls back the state change if the health-factor check fails.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0` or exceeds current balance.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::HealthFactorTooLow`] if withdrawal would under-collateralise the position.
 pub fn withdraw_asset_internal(
     env: &Env,
     user: &Address,
@@ -336,6 +486,20 @@ pub fn withdraw_asset_internal(
     Ok(new_balance)
 }
 
+/// Borrow `amount` of `asset` for `user`.
+///
+/// Checks pause state, validates params, enforces the minimum-borrow floor,
+/// accrues interest on any existing debt position, creates or updates the debt
+/// entry, verifies the health factor post-borrow, enforces the per-asset and
+/// protocol debt ceilings, and extends the debt entry's TTL.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::BelowMinimumBorrow`] if `amount < min_borrow`.
+/// - [`LendingError::HealthFactorTooLow`] if borrow would under-collateralise the position.
+/// - [`LendingError::DebtCeilingExceeded`] if borrow would exceed the per-asset ceiling.
+/// - [`LendingError::Overflow`] on arithmetic overflow.
 pub fn borrow_asset_internal(
     env: &Env,
     user: &Address,
@@ -435,6 +599,17 @@ pub fn borrow_asset_internal(
     Ok(updated.principal)
 }
 
+/// Repay `amount` of debt `asset` for `user`.
+///
+/// Checks pause state, validates params, requires authorisation, accrues
+/// interest on the existing position, applies the repayment, removes the asset
+/// from the user's debt list when the position reaches zero, and updates both
+/// per-asset and protocol-level total-debt accumulators.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::Overflow`] on arithmetic overflow.
 pub fn repay_asset_internal(
     env: &Env,
     user: &Address,

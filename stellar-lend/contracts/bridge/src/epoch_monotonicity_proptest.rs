@@ -293,7 +293,11 @@ mod tests {
                 // P1: epoch must never decrease.
                 prop_assert!(
                     epoch_after >= prev_epoch,
-                    "step {step} ({attempt:?}): epoch regressed from {prev_epoch} to {epoch_after}"
+                    "step {} ({:?}): epoch regressed from {} to {}",
+                    step,
+                    attempt,
+                    prev_epoch,
+                    epoch_after
                 );
 
                 if succeeded {
@@ -301,8 +305,12 @@ mod tests {
                     prop_assert_eq!(
                         epoch_after,
                         epoch_before + 1,
-                        "step {step} ({attempt:?}): successful rotation must advance epoch by 1 \
-                         (was {epoch_before}, now {epoch_after})"
+                        "step {} ({:?}): successful rotation must advance epoch by 1 \
+                         (was {}, now {})",
+                        step,
+                        attempt,
+                        epoch_before,
+                        epoch_after
                     );
                     success_count += 1;
                     round += 1;
@@ -311,8 +319,12 @@ mod tests {
                     prop_assert_eq!(
                         epoch_after,
                         epoch_before,
-                        "step {step} ({attempt:?}): rejected rotation must not change epoch \
-                         (was {epoch_before}, now {epoch_after})"
+                        "step {} ({:?}): rejected rotation must not change epoch \
+                         (was {}, now {})",
+                        step,
+                        attempt,
+                        epoch_before,
+                        epoch_after
                     );
                 }
 
@@ -323,8 +335,9 @@ mod tests {
             prop_assert_eq!(
                 bridge.epoch,
                 success_count,
-                "final epoch {epoch} must equal success count {success_count}",
-                epoch = bridge.epoch
+                "final epoch {} must equal success count {}",
+                bridge.epoch,
+                success_count
             );
         }
 
@@ -356,7 +369,9 @@ mod tests {
             let large_epoch = bridge.epoch;
             prop_assert_eq!(
                 large_epoch, warm_up_rounds as u64,
-                "after {warm_up_rounds} warm-up rotations epoch must be {warm_up_rounds}"
+                "after {} warm-up rotations epoch must be {}",
+                warm_up_rounds,
+                warm_up_rounds
             );
 
             // Phase 2: apply random fault attempts and verify invariants.
@@ -375,7 +390,11 @@ mod tests {
                 // P1
                 prop_assert!(
                     epoch_after >= prev_epoch,
-                    "large-epoch step {step} ({attempt:?}): epoch regressed {prev_epoch}→{epoch_after}"
+                    "large-epoch step {} ({:?}): epoch regressed {}→{}",
+                    step,
+                    attempt,
+                    prev_epoch,
+                    epoch_after
                 );
 
                 if succeeded {
@@ -383,7 +402,10 @@ mod tests {
                     prop_assert_eq!(
                         epoch_after,
                         epoch_before + 1,
-                        "large-epoch step {step}: success must advance by 1 ({epoch_before}→{epoch_after})"
+                        "large-epoch step {}: success must advance by 1 ({}→{})",
+                        step,
+                        epoch_before,
+                        epoch_after
                     );
                     round += 1;
                 } else {
@@ -391,7 +413,10 @@ mod tests {
                     prop_assert_eq!(
                         epoch_after,
                         epoch_before,
-                        "large-epoch step {step}: rejection must not change epoch ({epoch_before}→{epoch_after})"
+                        "large-epoch step {}: rejection must not change epoch ({}→{})",
+                        step,
+                        epoch_before,
+                        epoch_after
                     );
                 }
 
@@ -460,7 +485,8 @@ mod tests {
                     prop_assert_eq!(
                         bridge.epoch,
                         epoch_before_fault + 1,
-                        "interleaved step {step} fault succeeded: epoch must be +1"
+                        "interleaved step {} fault succeeded: epoch must be +1",
+                        step
                     );
                     total_successes += 1;
                     round += 1;
@@ -469,7 +495,8 @@ mod tests {
                     prop_assert_eq!(
                         bridge.epoch,
                         epoch_before_fault,
-                        "interleaved step {step} fault rejected: epoch must be unchanged"
+                        "interleaved step {} fault rejected: epoch must be unchanged",
+                        step
                     );
                 }
 
@@ -496,7 +523,8 @@ mod tests {
                 prop_assert_eq!(
                     bridge.epoch,
                     epoch_before_valid + 1,
-                    "interleaved step {step} valid rotation must advance epoch by 1"
+                    "interleaved step {} valid rotation must advance epoch by 1",
+                    step
                 );
                 total_successes += 1;
                 round += 1;
@@ -506,8 +534,9 @@ mod tests {
             prop_assert_eq!(
                 bridge.epoch,
                 total_successes,
-                "final epoch {epoch} must equal total successes {total_successes}",
-                epoch = bridge.epoch
+                "final epoch {} must equal total successes {}",
+                bridge.epoch,
+                total_successes
             );
         }
     }
