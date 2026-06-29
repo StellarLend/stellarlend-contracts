@@ -6,10 +6,7 @@ mod cross_asset;
 mod deposit;
 mod risk_management;
 
-use cross_asset::{
-    add_to_user_debt_list, get_max_debt_assets_per_user, get_user_debt_assets,
-    set_max_debt_assets_per_user, CrossAssetError,
-};
+use cross_asset::CrossAssetError;
 use deposit::deposit_collateral;
 use risk_management::{
     can_be_liquidated, get_close_factor, get_liquidation_incentive,
@@ -95,6 +92,8 @@ mod twap_read_bench_test;
 mod twap_coverage_test;
 #[cfg(test)]
 mod cross_asset_storage_doc_test;
+#[cfg(test)]
+mod cross_asset_config_bounds_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
@@ -924,13 +923,13 @@ impl HelloContract {
 
     /// Update asset configuration (admin only).
     ///
-    /// `collateral_factor_bps` is bounded to `[0, 10_000]`. Out-of-range
-    /// values are rejected with [`CrossAssetError::InvalidCollateralFactor`].
-    /// See [`stellar_lend::collateral_factor_tiers`] for the formula and
-    /// worked example.
+    /// `caller` must be the stored protocol admin.
+    /// `collateral_factor_bps` is bounded to `[0, 10_000]` and must not
+    /// exceed `liquidation_threshold`. `price_decimals` must be in `1..=38`.
     #[allow(clippy::too_many_arguments)]
     pub fn update_asset_config(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         collateral_factor_bps: Option<i128>,
         liquidation_threshold: Option<i128>,
@@ -938,9 +937,11 @@ impl HelloContract {
         max_borrow: Option<i128>,
         can_collateralize: Option<bool>,
         can_borrow: Option<bool>,
+        price_decimals: Option<u32>,
     ) -> Result<(), CrossAssetError> {
         update_asset_config(
             &env,
+            &caller,
             asset,
             collateral_factor_bps,
             liquidation_threshold,
@@ -948,6 +949,7 @@ impl HelloContract {
             max_borrow,
             can_collateralize,
             can_borrow,
+            price_decimals,
         )
     }
 
