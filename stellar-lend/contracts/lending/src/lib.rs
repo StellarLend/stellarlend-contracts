@@ -80,6 +80,8 @@ mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod max_borrow_proptest;
 #[cfg(test)]
+mod compound_interest_proptest;
+#[cfg(test)]
 mod property_invariants_test;
 #[cfg(test)]
 mod oracle_staleness_test;
@@ -3406,3 +3408,5 @@ pub(crate) mod test {
 }
 #[cfg(test)]
 mod max_borrow_proptest;
+#[cfg(test)]
+mod compound_interest_proptest;

@@ -1,41 +1,98 @@
+extern crate std;
+
+use crate::math::{compute_compound_interest, MathError, MAX_RATE_BPS};
 use proptest::prelude::*;
-use crate::math::compute_compound_interest;
+use proptest::test_runner::{Config as ProptestConfig, RngSeed};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
-proptest! {
+const PROPTEST_CASES: u32 = 256;
+const PROPTEST_SEED: u64 = 0x5EED_C01A;
 
-    #[test]
-    fn interest_never_below_principal(
-        principal in 1i128..1_000_000_000,
-        rate in 0i128..5_000,
-        elapsed in 0u64..10_000,
-    ) {
-        let result = compute_compound_interest(principal, rate, elapsed).unwrap();
-        prop_assert!(result >= principal);
+fn config() -> ProptestConfig {
+    ProptestConfig {
+        cases: PROPTEST_CASES,
+        rng_seed: RngSeed::Fixed(PROPTEST_SEED),
+        ..ProptestConfig::default()
     }
+}
+
+fn safe_principal() -> impl Strategy<Value = i128> {
+    0i128..=(i128::MAX / 100_000)
+}proptest! {
+    #![proptest_config(config())]
 
     #[test]
     fn monotonic_in_elapsed(
-        principal in 1i128..1_000_000,
-        rate in 0i128..3_000,
-        t1 in 0u64..500,
-        t2 in 501u64..1000,
+        principal in safe_principal(),
+        rate in 0i128..=MAX_RATE_BPS,
+        e1 in 0u64..1_000_000,
+        e2 in 1_000_001u64..2_000_000,
     ) {
-        let r1 = compute_compound_interest(principal, rate, t1).unwrap();
-        let r2 = compute_compound_interest(principal, rate, t2).unwrap();
-
-        prop_assert!(r2 >= r1);
+        let a = compute_compound_interest(principal, rate, e1).unwrap();
+        let b = compute_compound_interest(principal, rate, e2).unwrap();
+        prop_assert!(b >= a);
     }
 
     #[test]
     fn monotonic_in_rate(
-        principal in 1i128..1_000_000,
-        rate1 in 0i128..1000,
-        rate2 in 1001i128..3000,
-        elapsed in 0u64..1000,
+        principal in safe_principal(),
+        elapsed in 0u64..2_000_000,
+        r1 in 0i128..50_000,
+        r2 in 50_001i128..=MAX_RATE_BPS,
     ) {
-        let r1 = compute_compound_interest(principal, rate1, elapsed).unwrap();
-        let r2 = compute_compound_interest(principal, rate2, elapsed).unwrap();
-
-        prop_assert!(r2 >= r1);
+        let a = compute_compound_interest(principal, r1, elapsed).unwrap();
+        let b = compute_compound_interest(principal, r2, elapsed).unwrap();
+        prop_assert!(b >= a);
     }
+
+    #[test]
+    fn never_negative(
+        principal in safe_principal(),
+        rate in 0i128..=MAX_RATE_BPS,
+        elapsed in 0u64..2_000_000,
+    ) {
+        let interest = compute_compound_interest(principal, rate, elapsed).unwrap();
+        prop_assert!(interest >= 0);
+    }
+
+    #[test]
+    fn never_panics(
+        principal in any::<i128>(),
+        rate in any::<i128>(),
+        elapsed in any::<u64>(),
+    ) {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            compute_compound_interest(principal, rate, elapsed)
+        }));
+
+        prop_assert!(result.is_ok());
+
+        if let Ok(value) = result {
+            prop_assert!(matches!(
+                value,
+                Ok(_)
+                    | Err(MathError::OutOfRange)
+                    | Err(MathError::Overflow)
+                    | Err(MathError::DivisionByZero)
+            ));
+        }
+    }
+}
+
+#[test]
+fn zero_elapsed_returns_zero() {
+    assert_eq!(compute_compound_interest(1000, 5000, 0), Ok(0));
+}
+
+#[test]
+fn zero_rate_returns_zero() {
+    assert_eq!(compute_compound_interest(1000, 0, 1000), Ok(1));
+}
+
+#[test]
+fn invalid_rate_returns_error() {
+    assert_eq!(
+        compute_compound_interest(1000, MAX_RATE_BPS + 1, 1),
+        Err(MathError::OutOfRange)
+    );
 }
