@@ -87,6 +87,39 @@ pub struct Bridge {
 /// Default rolling window length: one day, in seconds.
 pub const DEFAULT_INBOUND_WINDOW_SECS: u64 = 86_400;
 
+/// Maximum tolerance, in epochs, for accepting inbound messages whose signed
+/// epoch is in the future relative to the bridge's current view of `self.epoch`.
+///
+/// # Why a tolerance exists
+///
+/// Validators sign payloads at the moment of signature generation, but the
+/// on-chain rotation that retires the old set and installs the new one is
+/// only finalized *after* the transaction containing the rotation proof is
+/// applied. A message that was signed slightly before a rotation was
+/// finalized therefore carries `signed_epoch == self.epoch + 1` even though
+/// the validator set has already authorised it. Without any tolerance the
+/// bridge would reject every such in-flight message, which is unnecessarily
+/// destructive for the typical rotation transition window.
+///
+/// # Why the tolerance is bounded and small
+///
+/// The tolerance exists only to absorb the in-flight transition window
+/// described above. Anything beyond `self.epoch + 1` claims authority from a
+/// validator set that the bridge has not yet rotated to. Honoring such a
+/// message would:
+///   1. extend trust to an as-yet-uninstalled validator set, and
+///   2. create a *replay window*: once the future epoch actually arrives
+///      (through a legitimate rotation), the same signed message would become
+///      valid under the now-active set without any new signer involvement.
+///
+/// Bounding the tolerance to `1` therefore closes the replay window while
+/// still permitting the legitimate transition-window case.
+///
+/// SECURITY: increasing this constant is a protocol-level security decision
+/// and must be accompanied by a corresponding update to the rotation-event
+/// timing model described in `SECURITY_NOTES.md`.
+pub const MAX_FUTURE_EPOCH_TOLERANCE: u64 = 1;
+
 impl Bridge {
     /// Construct a new bridge. Inbound value transfer is **fail-closed by
     /// default**: `max_per_window` starts at `0`, so [`Bridge::admit_inbound`]
@@ -152,10 +185,67 @@ impl Bridge {
         Ok(())
     }
 
-    /// Verify inbound message signature epoch. Messages signed with an epoch < current epoch are rejected.
+    /// Verify that `signed_epoch` lies within the *active epoch window* for
+    /// inbound messages.
+    ///
+    /// # Active epoch window
+    ///
+    /// Let `current = self.epoch` and `tolerance = MAX_FUTURE_EPOCH_TOLERANCE`.
+    /// A message is accepted **iff**:
+    ///
+    /// ```text
+    ///     current ≤ signed_epoch ≤ current + tolerance
+    /// ```
+    ///
+    /// # Rejection reasons (non-exhaustive, ordered)
+    ///
+    /// - `signed_epoch < current` — the message was signed by a validator
+    ///   set that has already been rotated out. The bridge must never honour
+    ///   such a payload, because the signing keys may be compromised or
+    ///   simply no longer trusted.
+    ///   → returns `message signed by retired validator set (epoch too old)`.
+    /// - `signed_epoch > current + tolerance` — the message claims authority
+    ///   from a validator set that has not yet been activated on this bridge.
+    ///   Honoring it would (a) extend trust to an unrotated-out set and
+    ///   (b) open a replay window when the future epoch eventually arrives.
+    ///   → returns
+    ///   `message signed by not-yet-active validator set (epoch too far in the future)`.
+    ///
+    /// # Worked example
+    ///
+    /// With `self.epoch = 5, MAX_FUTURE_EPOCH_TOLERANCE = 1`:
+    ///
+    /// | `signed_epoch` | Verdict                                |
+    /// |----------------|----------------------------------------|
+    /// | `3`            | **Rejected** — retired (epoch too old)|
+    /// | `4`            | **Rejected** — retired (epoch too old)|
+    /// | `5`            | **Accepted** — current                |
+    /// | `6`            | **Accepted** — within tolerance (in-flight rotation) |
+    /// | `7`            | **Rejected** — not-yet-active (epoch too far in the future) |
+    /// | `10_000`       | **Rejected** — same as above          |
+    ///
+    /// # Security note
+    ///
+    /// Rotation in this codebase requires `epoch == current + 1`. The
+    /// tolerance above matches exactly that transition step, so a signed
+    /// `signed_epoch = current + 1` payload can only exist if the *current*
+    /// validator set signed it; the future-epoch replay window therefore
+    /// closes cleanly once the tolerance is exceeded.
+    ///
+    /// # Arithmetic
+    ///
+    /// The upper bound check uses `self.epoch.saturating_add(tolerance)` so
+    /// that the (unreachable in practice but defensively handled) case
+    /// `self.epoch == u64::MAX` does not panic on the comparison.
     pub fn validate_inbound_epoch(&self, signed_epoch: u64) -> Result<()> {
         if signed_epoch < self.epoch {
             return Err(anyhow!("message signed by retired validator set (epoch too old)"));
+        }
+        let upper = self.epoch.saturating_add(MAX_FUTURE_EPOCH_TOLERANCE);
+        if signed_epoch > upper {
+            return Err(anyhow!(
+                "message signed by not-yet-active validator set (epoch too far in the future)"
+            ));
         }
         Ok(())
     }
@@ -256,6 +346,9 @@ mod window_guard_test;
 mod validatorset_proptest;
 
 #[cfg(test)]
+mod inbound_epoch_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ed25519_dalek::{Keypair, Signer};
@@ -294,11 +387,18 @@ mod tests {
         bridge.rotate_validators(new_set.clone(), epoch, proofs).expect("rotation failed");
         assert_eq!(bridge.epoch, 1);
 
-        // messages signed with epoch 0 should be rejected
+        // messages signed with epoch 0 should be rejected (retired validator set)
         assert!(bridge.validate_inbound_epoch(0).is_err());
-        // messages signed with epoch 1 are accepted
+        // messages signed with epoch 1 (current) are accepted
         assert!(bridge.validate_inbound_epoch(1).is_ok());
-        assert!(bridge.validate_inbound_epoch(2).is_ok(), "future epochs allowed by this check (policy dependent)");
+        // Full policy coverage (past/current/within-tolerance/far-future) lives
+        // in the dedicated inbound_epoch_test module — kept here only so the
+        // boundary-check sits next to the rotation that produces this epoch.
+        assert!(
+            bridge.validate_inbound_epoch(2).is_ok(),
+            "current + 1 must be accepted within MAX_FUTURE_EPOCH_TOLERANCE \
+             (see inbound_epoch_test.rs for the full boundary sweep)"
+        );
     }
 
     #[test]
