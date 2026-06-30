@@ -1,8 +1,6 @@
-
 #[cfg(test)]
 mod effective_supply_rate_tests {
     use crate::debt::{effective_supply_rate, DebtError};
-
 
     #[test]
     fn zero_utilization_yields_zero_supply_rate() {
@@ -27,7 +25,6 @@ mod effective_supply_rate_tests {
         }
     }
 
- 
     #[test]
     fn supply_rate_never_exceeds_borrow_rate() {
         let borrow_rates = [0i128, 1, 100, 500, 1_700, 3_700, 10_000];
@@ -49,14 +46,13 @@ mod effective_supply_rate_tests {
         }
     }
 
-  
     #[test]
     fn zero_reserve_factor_yields_at_least_as_much_as_nonzero() {
         let borrow_rate = 1_000i128; // 10% APR
         let utilization = 7_000i128; // 70%
 
-        let rate_zero_rf = effective_supply_rate(borrow_rate, utilization, 0)
-            .expect("zero rf should not error");
+        let rate_zero_rf =
+            effective_supply_rate(borrow_rate, utilization, 0).expect("zero rf should not error");
 
         for nonzero_rf in [1u32, 100, 500, 1_000, 2_000, 5_000, 9_999, 10_000] {
             let rate_nonzero = effective_supply_rate(borrow_rate, utilization, nonzero_rf)
@@ -77,8 +73,8 @@ mod effective_supply_rate_tests {
         let mut prev = i128::MAX;
 
         for &rf in &ordered_rfs {
-            let rate = effective_supply_rate(borrow_rate, utilization, rf)
-                .expect("should not error");
+            let rate =
+                effective_supply_rate(borrow_rate, utilization, rf).expect("should not error");
             assert!(
                 rate <= prev,
                 "supply rate increased as rf grew: rf={rf} gave {rate} > prev {prev}"
@@ -90,8 +86,7 @@ mod effective_supply_rate_tests {
     #[test]
     fn zero_reserve_full_utilization_equals_borrow_rate() {
         let borrow_rate = 500i128;
-        let rate = effective_supply_rate(borrow_rate, 10_000, 0)
-            .expect("should not error");
+        let rate = effective_supply_rate(borrow_rate, 10_000, 0).expect("should not error");
         assert_eq!(
             rate, borrow_rate,
             "at 100% util with 0% reserve, supply rate must equal borrow rate"
@@ -101,8 +96,7 @@ mod effective_supply_rate_tests {
     #[test]
     fn full_reserve_factor_supply_rate_is_zero() {
         for util in [1_000i128, 5_000, 8_000, 10_000] {
-            let rate = effective_supply_rate(500, util, 10_000)
-                .expect("should not error");
+            let rate = effective_supply_rate(500, util, 10_000).expect("should not error");
             assert_eq!(
                 rate, 0,
                 "supply rate must be 0 when reserve=100% (util={util})"
@@ -112,8 +106,7 @@ mod effective_supply_rate_tests {
 
     #[test]
     fn worked_example_half_util_half_reserve() {
-        let rate = effective_supply_rate(400, 5_000, 5_000)
-            .expect("should not error");
+        let rate = effective_supply_rate(400, 5_000, 5_000).expect("should not error");
         assert_eq!(rate, 100);
     }
 
@@ -172,8 +165,7 @@ mod effective_supply_rate_tests {
     fn zero_borrow_rate_always_yields_zero() {
         for util in [0i128, 1_000, 5_000, 10_000] {
             for rf in [0u32, 1_000, 5_000, 10_000] {
-                let rate = effective_supply_rate(0, util, rf)
-                    .expect("should not error");
+                let rate = effective_supply_rate(0, util, rf).expect("should not error");
                 assert_eq!(
                     rate, 0,
                     "supply rate must be 0 when borrow_rate=0 (util={util}, rf={rf})"

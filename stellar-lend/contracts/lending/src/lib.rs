@@ -33,6 +33,8 @@ mod deposit_accounting_test;
 #[cfg(test)]
 mod deposit_cap_race_test;
 #[cfg(test)]
+mod effective_supply_rate_test;
+#[cfg(test)]
 mod emergency_state_matrix_test;
 #[cfg(test)]
 mod error_codes_test;
@@ -67,13 +69,13 @@ mod liquidate_transfer_test;
 #[cfg(test)]
 mod liquidation_bonus_proptest;
 #[cfg(test)]
-mod mul_div_proptest;
-#[cfg(test)]
 mod liquidation_branch_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod max_borrow_proptest;
+#[cfg(test)]
+mod mul_div_proptest;
 #[cfg(test)]
 mod oracle_payload_binding_test;
 #[cfg(test)]
@@ -87,9 +89,9 @@ mod rate_cache_test;
 #[cfg(test)]
 mod rate_hysteresis_test;
 #[cfg(test)]
-mod rate_smoothing_state_test;
-#[cfg(test)]
 mod rate_persistence_test;
+#[cfg(test)]
+mod rate_smoothing_state_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
@@ -102,8 +104,6 @@ mod rounding_drift_test;
 mod self_liquidation_test;
 #[cfg(test)]
 mod supply_rate_split_test;
-#[cfg(test)]
-mod effective_supply_rate_test;
 #[cfg(test)]
 mod utilization_history_test;
 

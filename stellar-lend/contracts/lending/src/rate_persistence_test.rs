@@ -5,14 +5,9 @@
 //! state stored under [`RateModelKey`] survives in Soroban storage and is
 //! reloaded on the next call, rather than re-initializing to a fresh default.
 
-use crate::rate_model::{
-    compute_smoothed_rate, update_and_get_rate, RateModelKey, RateParams,
-};
+use crate::rate_model::{compute_smoothed_rate, update_and_get_rate, RateModelKey, RateParams};
 use crate::LendingContract;
-use soroban_sdk::{
-    testutils::Ledger,
-    Address, Env,
-};
+use soroban_sdk::{testutils::Ledger, Address, Env};
 
 /// Registers the lending contract and runs the closure inside its storage
 /// context so that `update_and_get_rate`'s instance storage is addressable.

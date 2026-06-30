@@ -119,9 +119,7 @@ mod liquidation_branch_tests {
 
         // Round 1
         let debt_r1 = client.get_debt_position(&borrower).principal;
-        let repay_r1 = client
-            .liquidate(&liquidator, &borrower, &debt_r1)
-            .unwrap();
+        let repay_r1 = client.liquidate(&liquidator, &borrower, &debt_r1).unwrap();
         assert_eq!(repay_r1, debt_r1 * 5_000 / 10_000);
         let debt_after_r1 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r1, debt_r1 - repay_r1);
@@ -131,9 +129,7 @@ mod liquidation_branch_tests {
 
         // Round 2
         let debt_r2 = client.get_debt_position(&borrower).principal;
-        let repay_r2 = client
-            .liquidate(&liquidator, &borrower, &debt_r2)
-            .unwrap();
+        let repay_r2 = client.liquidate(&liquidator, &borrower, &debt_r2).unwrap();
         assert_eq!(repay_r2, debt_r2 * 5_000 / 10_000);
         let debt_after_r2 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r2, debt_r2 - repay_r2);

@@ -61,9 +61,23 @@ fn setup() -> (
     client.initialize(&admin);
 
     // 75 % LTV / 80 % liquidation threshold for collateral asset
-    client.set_asset_params(&admin, &asset_col, &7500, &8000, &1_000_000_000_000i128, &0i128);
+    client.set_asset_params(
+        &admin,
+        &asset_col,
+        &7500,
+        &8000,
+        &1_000_000_000_000i128,
+        &0i128,
+    );
     // 60 % LTV / 70 % liquidation threshold for debt asset
-    client.set_asset_params(&admin, &asset_dbt, &6000, &7000, &1_000_000_000_000i128, &0i128);
+    client.set_asset_params(
+        &admin,
+        &asset_dbt,
+        &6000,
+        &7000,
+        &1_000_000_000_000i128,
+        &0i128,
+    );
 
     // Initial prices: both assets at $1.00
     set_price(&env, &id, &asset_col, 10_000_000);
@@ -455,7 +469,14 @@ fn e2e_two_collateral_one_debt_shock() {
 
     // Register a third asset as second collateral
     let asset_col2 = env.register(MockAsset, ());
-    client.set_asset_params(&admin, &asset_col2, &7500, &8000, &1_000_000_000_000i128, &0i128);
+    client.set_asset_params(
+        &admin,
+        &asset_col2,
+        &7500,
+        &8000,
+        &1_000_000_000_000i128,
+        &0i128,
+    );
     set_price(&env, &id, &asset_col2, 10_000_000); // $1.00
 
     // Deposit both collateral assets

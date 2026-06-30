@@ -74,7 +74,14 @@ fn test_set_asset_params_stores_and_reads() {
 #[test]
 fn test_set_asset_params_rejects_invalid_ltv() {
     let (_env, client, _id, admin, _user, asset_a, _asset_b) = setup();
-    let res = client.try_set_asset_params(&admin, &asset_a, &15000i128, &8000i128, &1_000_000i128, &0i128);
+    let res = client.try_set_asset_params(
+        &admin,
+        &asset_a,
+        &15000i128,
+        &8000i128,
+        &1_000_000i128,
+        &0i128,
+    );
     assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
@@ -303,7 +310,14 @@ fn test_missing_price_feed_rejects_withdraw() {
 #[test]
 fn test_zero_ltv_asset_cannot_borrow_against_it() {
     let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
-    client.set_asset_params(&admin, &asset_a, &0i128, &0i128, &1_000_000_000_000i128, &0i128);
+    client.set_asset_params(
+        &admin,
+        &asset_a,
+        &0i128,
+        &0i128,
+        &1_000_000_000_000i128,
+        &0i128,
+    );
     client.deposit_collateral_asset(&user, &asset_a, &1000i128);
     client.deposit_collateral_asset(&user, &asset_b, &1i128);
     // weighted collateral = asset_b only: 1*2000*0.7 = 1400
@@ -323,7 +337,14 @@ fn test_set_asset_params_rejects_unauthorized() {
     let asset = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin);
-    let res = client.try_set_asset_params(&attacker, &asset, &5000i128, &6000i128, &1_000_000i128, &0i128);
+    let res = client.try_set_asset_params(
+        &attacker,
+        &asset,
+        &5000i128,
+        &6000i128,
+        &1_000_000i128,
+        &0i128,
+    );
     assert!(res.is_err());
 }
 
