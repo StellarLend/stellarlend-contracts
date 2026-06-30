@@ -2,20 +2,67 @@
 use soroban_sdk::{contracttype, Env};
 use stellar_lend_common::BPS_DENOM;
 
+/// Configuration parameters for the two-slope kink interest-rate model.
+///
+/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for the full piecewise formula, curve
+/// sketch, and worked examples at representative utilizations.
+///
+/// All fields are expressed in basis points (bps), where `100 bps = 1%` and
+/// `10,000 bps = 100%`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RateParams {
+    /// Base rate (bps) applied at zero utilization. Always added to the computed rate
+    /// before applying floor/ceiling clamping.
     pub base_rate_bps: i128,
+
+    /// Utilization threshold (bps) where the slope changes. Below this point, the
+    /// multiplier is [`multiplier_bps`](Self::multiplier_bps); above, it is
+    /// [`jump_multiplier_bps`](Self::jump_multiplier_bps).
     pub kink_utilization_bps: i128,
+
+    /// Slope (rate per bps of utilization) below the kink. Multiplied by utilization
+    /// and divided by `BPS_DENOM = 10_000` to compute the pre-kink rate component.
     pub multiplier_bps: i128,
+
+    /// Slope (rate per bps of utilization) above the kink. Multiplied by the excess
+    /// utilization above [`kink_utilization_bps`](Self::kink_utilization_bps) and
+    /// divided by `BPS_DENOM = 10_000` to compute the post-kink jump component.
     pub jump_multiplier_bps: i128,
+
+    /// Minimum effective borrow rate (bps). Applied as a floor after raw rate computation.
     pub rate_floor_bps: i128,
+
+    /// Maximum effective borrow rate (bps). Applied as a ceiling after raw rate computation.
     pub rate_ceiling_bps: i128,
+
+    /// Maximum allowed rate change per ledger (bps). When combined with elapsed ledgers,
+    /// caps the per-ledger rate change. Set to `i128::MAX` to disable per-ledger smoothing.
     pub max_rate_change_per_ledger_bps: i128,
+
+    /// Hysteresis band (bps). When the target rate differs from the current rate by less
+    /// than this band, the current rate is held steady. Set to `0` to disable hysteresis.
     pub hysteresis_bps: i128,
 }
 
 impl Default for RateParams {
+    /// Returns the default rate model configuration.
+    ///
+    /// # Default Values
+    ///
+    /// | Parameter | Value | Interpretation |
+    /// |-----------|-------|---|
+    /// | `base_rate_bps` | 100 | 1% APR base rate |
+    /// | `kink_utilization_bps` | 8,000 | 80% utilization kink |
+    /// | `multiplier_bps` | 2,000 | 0.2% rate per 1% utilization below kink |
+    /// | `jump_multiplier_bps` | 10,000 | 1% rate per 1% utilization above kink |
+    /// | `rate_floor_bps` | 50 | 0.5% minimum rate |
+    /// | `rate_ceiling_bps` | 10,000 | 100% maximum rate |
+    /// | `max_rate_change_per_ledger_bps` | `i128::MAX` | No per-ledger limit |
+    /// | `hysteresis_bps` | 0 | No hysteresis band |
+    ///
+    /// This configuration incentivizes capital utilization up to 80%, then steeply penalizes
+    /// scarcity beyond that point. See [`RATE_MODEL.md`](./RATE_MODEL.md) for curve analysis.
     fn default() -> Self {
         Self {
             base_rate_bps: 100,
@@ -30,6 +77,59 @@ impl Default for RateParams {
     }
 }
 
+/// Computes the target borrow rate given utilization and rate model parameters.
+///
+/// Implements a two-slope piecewise linear model with a kink point. Below the kink,
+/// the rate increases gently; above it, the slope increases sharply to incentivize
+/// capital efficiency and protect against runaway scarcity.
+///
+/// # Formula
+///
+/// Let `u` be utilization (bps) and `BPS_DENOM = 10,000`.
+///
+/// **Pre-kink rate** (always computed):
+/// ```text
+/// r_pre = base_rate + (min(u, kink_utilization) × multiplier) / BPS_DENOM
+/// ```
+///
+/// **Raw rate** (before clamping):
+/// ```text
+/// If u ≤ kink_utilization:
+///     r_raw = r_pre
+/// If u > kink_utilization:
+///     excess = u - kink_utilization
+///     jump = (excess × jump_multiplier) / BPS_DENOM
+///     r_raw = r_pre + jump
+/// ```
+///
+/// **Final rate** (after clamping):
+/// ```text
+/// r = max(floor, min(raw, ceiling))
+/// ```
+///
+/// # Arguments
+///
+/// * `utilization_bps` — The protocol utilization as a basis point (0 to 10,000).
+/// * `params` — [`RateParams`] struct containing all model coefficients.
+///
+/// # Returns
+///
+/// The computed borrow rate in basis points, clamped to `[params.rate_floor_bps, params.rate_ceiling_bps]`.
+///
+/// # Examples
+///
+/// Using [`RateParams::default()`]:
+///
+/// - At 0% utilization: `100 bps` (base rate)
+/// - At 80% utilization (kink): `1,700 bps`
+/// - At 100% utilization: `3,700 bps` (maximum non-ceiling-limited rate)
+///
+/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for detailed curve sketch and additional worked examples.
+///
+/// # Panics
+///
+/// Panics if checked arithmetic overflows (which should not occur with valid utilization
+/// values and reasonable parameter ranges).
 pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
     let pre_kink_rate = params
         .base_rate_bps
