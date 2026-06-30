@@ -111,9 +111,7 @@ mod self_liquidation_test;
 mod supply_rate_split_test;
 #[cfg(test)]
 mod utilization_history_test;
-use crate::events::{
-    emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw,
-};
+use crate::events::{emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw};
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,

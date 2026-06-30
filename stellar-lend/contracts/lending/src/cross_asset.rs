@@ -565,7 +565,7 @@ pub fn borrow_asset_internal(
 
     let hf = compute_aggregate_health_factor(env, user)?;
 
-        if hf < HEALTH_FACTOR_SCALE {
+    if hf < HEALTH_FACTOR_SCALE {
         save_debt_asset(
             env,
             user,
