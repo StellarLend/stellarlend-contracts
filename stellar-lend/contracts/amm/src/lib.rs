@@ -21,8 +21,12 @@ mod flash_swap_test;
 mod mint_shares_proptest;
 #[cfg(test)]
 mod sqrt_precision_test;
+#[cfg(test)]
+mod volume_stats_test;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+};
 
 pub struct FeeTier {
     pub min_reserve: u128,
@@ -122,6 +126,29 @@ const KEY_FEE_B: (&str, &str) = ("pool", "fee_b");
 // admin call is `DEFAULT_FEE_BPS` (30 bps = 0.30 %).
 const KEY_FEE_BPS: (&str, &str) = ("pool", "fee_bps");
 
+// Cumulative trade-volume and last-execution-price counters.
+//
+// These power the read-only [`AmmContract::get_volume_stats`] observability
+// view that indexers consume for analytics. They are pure counters — no
+// events are emitted and the swap math is unaffected.
+//
+// `KEY_VOL_A` accumulates the gross input amount routed through
+// `swap_a_for_b` (asset-A side), and `KEY_VOL_B` the gross input routed
+// through `swap_b_for_a` (asset-B side). Both use **saturating** addition so
+// that at the extreme they pin to `i128::MAX` instead of panicking and
+// halting the pool.
+//
+// `KEY_LAST_PRICE_NUM` / `KEY_LAST_PRICE_DEN` record the most recent swap's
+// execution price as an exact rational `num / den`, expressed in the pool's
+// canonical convention of **units of B per unit of A** (the same convention
+// used by the price-impact guard above). Storing a numerator/denominator
+// pair avoids precision loss from integer division. A denominator of `0` is
+// the sentinel for "no priced swap has occurred yet".
+const KEY_VOL_A: (&str, &str) = ("pool", "vol_a");
+const KEY_VOL_B: (&str, &str) = ("pool", "vol_b");
+const KEY_LAST_PRICE_NUM: (&str, &str) = ("pool", "lp_num");
+const KEY_LAST_PRICE_DEN: (&str, &str) = ("pool", "lp_den");
+
 /// Maximum fee the admin may configure (50 % = 5 000 bps).
 pub const MAX_FEE_BPS: i128 = 5_000;
 
@@ -149,6 +176,33 @@ pub enum AmmPoolError {
     FeeBpsOutOfRange = 8,
 }
 
+/// Read-only snapshot of cumulative trade volume and the last execution
+/// price, returned by [`AmmContract::get_volume_stats`].
+///
+/// This is a stable, `#[contracttype]`-encoded struct intended for off-chain
+/// indexers: field order and types are part of the view's wire contract and
+/// must not change incompatibly.
+///
+/// # Fields
+/// * `cumulative_volume_a_in` — total asset-A input ever routed through
+///   [`swap_a_for_b`](AmmContract::swap_a_for_b). Monotonic non-decreasing,
+///   saturating at `i128::MAX`.
+/// * `cumulative_volume_b_in` — total asset-B input ever routed through
+///   [`swap_b_for_a`](AmmContract::swap_b_for_a). Monotonic non-decreasing,
+///   saturating at `i128::MAX`.
+/// * `last_price_num` / `last_price_denom` — the last swap's execution price
+///   as an exact rational `num / denom`, in **units of B per unit of A**.
+///   `last_price_denom == 0` means no priced swap has occurred yet (and the
+///   ratio must not be evaluated).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VolumeStats {
+    pub cumulative_volume_a_in: i128,
+    pub cumulative_volume_b_in: i128,
+    pub last_price_num: i128,
+    pub last_price_denom: i128,
+}
+
 #[contract]
 pub struct AmmContract;
 
@@ -160,13 +214,19 @@ impl AmmContract {
     /// initiated on a stale pool cannot be silently clobbered by a
     /// follow-up `init_pool` from the same transaction.
     ///
-    /// Resets both fee accumulators to zero.
+    /// Resets both fee accumulators to zero, along with the cumulative
+    /// volume counters and the last-execution-price record (see
+    /// [`get_volume_stats`](AmmContract::get_volume_stats)).
     pub fn init_pool(env: Env, a: i128, b: i128) -> Result<(), AmmPoolError> {
         Self::assert_no_active_flash_swap(&env)?;
         env.storage().persistent().set(&KEY_RES_A, &a);
         env.storage().persistent().set(&KEY_RES_B, &b);
         env.storage().persistent().set(&KEY_FEE_A, &0_i128);
         env.storage().persistent().set(&KEY_FEE_B, &0_i128);
+        env.storage().persistent().set(&KEY_VOL_A, &0_i128);
+        env.storage().persistent().set(&KEY_VOL_B, &0_i128);
+        env.storage().persistent().set(&KEY_LAST_PRICE_NUM, &0_i128);
+        env.storage().persistent().set(&KEY_LAST_PRICE_DEN, &0_i128);
         Ok(())
     }
 
@@ -244,7 +304,7 @@ impl AmmContract {
     /// when `KEY_FLASH_ACTIVE == true`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Reentrancy Guard](../FLASH_SWAP_PROTOCOL.md)
-    fn assert_no_active_flash_swap(env: &Env) {
+    fn assert_no_active_flash_swap(env: &Env) -> Result<(), AmmPoolError> {
         let active: bool = env
             .storage()
             .instance()
@@ -299,8 +359,18 @@ impl AmmContract {
     /// The fee accumulator (`KEY_FEE_A`) uses saturating addition. If the
     /// counter reaches `i128::MAX` it stops incrementing but never panics.
     /// This guarantees the swap cannot be halted by fee-accumulation overflow.
-    pub fn swap_a_for_b(env: Env, amount_in: i128) -> i128 {
-        Self::assert_no_active_flash_swap(&env);
+    ///
+    /// # Observability
+    ///
+    /// On every successful swap this also advances the A-side cumulative
+    /// volume counter by `amount_in` (saturating at `i128::MAX`) and records
+    /// the realized execution price as `amount_out / amount_in` (units of B
+    /// per A). Both are exposed via
+    /// [`get_volume_stats`](AmmContract::get_volume_stats). Counters are only
+    /// updated after the price-impact guard passes, so a rejected swap leaves
+    /// the stats untouched.
+    pub fn swap_a_for_b(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
+        Self::assert_no_active_flash_swap(&env)?;
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -370,9 +440,23 @@ impl AmmContract {
             }
         }
 
+        // ---- Observability counters (no effect on swap math) ----
+        // A-side input volume, saturating so an extreme cumulative total
+        // pins to i128::MAX instead of panicking the pool.
+        let vol_a: i128 = env.storage().persistent().get(&KEY_VOL_A).unwrap_or(0);
+        let new_vol_a = vol_a.saturating_add(amount_in);
+
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
         env.storage().persistent().set(&KEY_RES_B, &new_rb);
         env.storage().persistent().set(&KEY_FEE_A, &new_fee_a);
+        env.storage().persistent().set(&KEY_VOL_A, &new_vol_a);
+        // Last execution price in B-per-A: amount_out (B) received per
+        // amount_in (A) supplied. Only recorded when output is non-zero so a
+        // dust swap that rounds to zero output cannot blank the price.
+        if amount_out > 0 {
+            env.storage().persistent().set(&KEY_LAST_PRICE_NUM, &amount_out);
+            env.storage().persistent().set(&KEY_LAST_PRICE_DEN, &amount_in);
+        }
         Ok(amount_out)
     }
 
@@ -404,7 +488,16 @@ impl AmmContract {
     ///
     /// Identical to [`swap_a_for_b`]: the fee accumulator saturates at
     /// `i128::MAX` and never panics on addition.
-    pub fn swap_b_for_a(env: Env, amount_in: i128) -> i128 {
+    ///
+    /// # Observability
+    ///
+    /// On every successful swap this advances the B-side cumulative volume
+    /// counter by `amount_in` (saturating at `i128::MAX`) and records the
+    /// realized execution price as `amount_in / amount_out` — i.e. units of B
+    /// supplied per unit of A received, the same B-per-A convention used by
+    /// [`swap_a_for_b`]. Exposed via
+    /// [`get_volume_stats`](AmmContract::get_volume_stats).
+    pub fn swap_b_for_a(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -443,9 +536,21 @@ impl AmmContract {
         let accrued_fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
         let new_fee_b = accrued_fee_b.saturating_add(fee);
 
+        // ---- Observability counters (no effect on swap math) ----
+        let vol_b: i128 = env.storage().persistent().get(&KEY_VOL_B).unwrap_or(0);
+        let new_vol_b = vol_b.saturating_add(amount_in);
+
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
         env.storage().persistent().set(&KEY_RES_B, &new_rb);
         env.storage().persistent().set(&KEY_FEE_B, &new_fee_b);
+        env.storage().persistent().set(&KEY_VOL_B, &new_vol_b);
+        // Last execution price in B-per-A: amount_in (B) supplied per
+        // amount_out (A) received. Guarded against zero output so a dust swap
+        // cannot store a zero denominator.
+        if amount_out > 0 {
+            env.storage().persistent().set(&KEY_LAST_PRICE_NUM, &amount_in);
+            env.storage().persistent().set(&KEY_LAST_PRICE_DEN, &amount_out);
+        }
         Ok(amount_out)
     }
 
@@ -508,7 +613,11 @@ impl AmmContract {
     /// - `"Insufficient reserves: amount_out would drain reserve_b"` — `amount_out ≥ reserve_b`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
-    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> i128 {
+    pub fn flash_swap_a_for_b(
+        env: Env,
+        amount_out: i128,
+        params: Bytes,
+    ) -> Result<i128, AmmPoolError> {
         // `params` is reserved for a future callback variant.  Bound to
         // a local so the parameter is used (no dead-binding lint).
         let _ = params;
@@ -580,7 +689,7 @@ impl AmmContract {
     ///   Soroban then rolls back all storage changes, including the Op-1 debit.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Verify-K Repay Invariant](../FLASH_SWAP_PROTOCOL.md)
-    pub fn repay_flash_swap(env: Env, amount_in: i128) {
+    pub fn repay_flash_swap(env: Env, amount_in: i128) -> Result<(), AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -679,6 +788,41 @@ impl AmmContract {
         (fee_a, fee_b)
     }
 
+    /// Read-only observability view exposing cumulative trade volume per side
+    /// and the last execution price.
+    ///
+    /// Returns a [`VolumeStats`] populated from the per-side volume counters
+    /// (advanced on each [`swap_a_for_b`](AmmContract::swap_a_for_b) /
+    /// [`swap_b_for_a`](AmmContract::swap_b_for_a)) and the last recorded
+    /// execution price. Indexers use this for analytics without needing to
+    /// replay individual swap events.
+    ///
+    /// # Semantics
+    /// - `cumulative_volume_a_in` / `cumulative_volume_b_in` — gross input per
+    ///   side; monotonic and saturating at `i128::MAX`.
+    /// - `last_price_num` / `last_price_denom` — last execution price as an
+    ///   exact rational in units of **B per A**. Before any priced swap both
+    ///   the numerator and denominator are `0`; a `0` denominator means the
+    ///   ratio is undefined and must not be evaluated.
+    ///
+    /// This view performs no state mutation and never affects swap math.
+    pub fn get_volume_stats(env: Env) -> VolumeStats {
+        VolumeStats {
+            cumulative_volume_a_in: env.storage().persistent().get(&KEY_VOL_A).unwrap_or(0),
+            cumulative_volume_b_in: env.storage().persistent().get(&KEY_VOL_B).unwrap_or(0),
+            last_price_num: env
+                .storage()
+                .persistent()
+                .get(&KEY_LAST_PRICE_NUM)
+                .unwrap_or(0),
+            last_price_denom: env
+                .storage()
+                .persistent()
+                .get(&KEY_LAST_PRICE_DEN)
+                .unwrap_or(0),
+        }
+    }
+
     /// Record a time-weighted spot-price observation for off-chain TWAP reconstruction.
     ///
     /// Each call appends `(timestamp, cumulative_num, cumulative_denom)` to the
@@ -769,7 +913,7 @@ fn assert_k_monotonic(
 ///
 /// Uses checked arithmetic; panics on overflow.
 fn compute_fee(amount_in: i128, fee_bps: i128) -> Result<i128, AmmPoolError> {
-    amount_in.checked_mul(fee_bps).ok_or(AmmPoolError::Overflow)? / 10_000
+    Ok(amount_in.checked_mul(fee_bps).ok_or(AmmPoolError::Overflow)? / 10_000)
 }
 
 /// Inverse of the verify-k condition: returns the **minimum** `amount_in`
@@ -830,7 +974,7 @@ mod test {
         for &ra in reserve_sizes.iter() {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
-                    client.init_pool(&ra, &rb).unwrap();
+                    client.init_pool(&ra, &rb);
                     // swap using stored fee (default 30 bps)
                     let _out = client.swap_a_for_b(&amt);
                     let (new_ra, new_rb) = client.get_reserves();
@@ -857,7 +1001,7 @@ mod test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        client.init_pool(&1000, &2000).unwrap();
+        client.init_pool(&1000, &2000);
         client.add_liquidity(&100, &200);
         let (ra1, rb1) = client.get_reserves();
         let k1 = ra1.checked_mul(rb1).unwrap();
