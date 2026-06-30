@@ -111,6 +111,9 @@ mod self_liquidation_test;
 mod supply_rate_split_test;
 #[cfg(test)]
 mod utilization_history_test;
+use crate::events::{
+    emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw,
+};
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,
@@ -208,6 +211,8 @@ pub enum DataKey {
     IsolationDebt(Address),
     /// Ring-buffered protocol utilization samples, stored oldest-first.
     UtilizationHistory,
+    /// List of all borrowers tracked for position migration.
+    BorrowerList,
     /// Governed close-factor cap (basis points) consulted by `liquidate` to
     /// limit the maximum portion of a borrower's debt repayable in a single
     /// call. Bounds: `(0, 10000]`. Defaults to [`DEFAULT_CLOSE_FACTOR_BPS`]
@@ -332,7 +337,9 @@ pub enum LendingError {
     InvalidFeeBps = 2005,
     InvalidFlashUtilizationBps = 2006,
     InsufficientCollateral = 2007,
-    InvalidLiquidationParams = 2010,
+    SelfLiquidation = 2008,
+    IsolationCeilingExceeded = 2009,
+    InvalidIsolationCeiling = 2010,
     InvalidOracleSignature = 5001,
     PriceOutOfBounds = 3004,
     PriceUnavailable = 3005,
@@ -521,6 +528,7 @@ pub struct CrossWithdrawEvent {
 pub struct LendingContract;
 
 #[contractimpl]
+#[allow(clippy::too_many_arguments)]
 impl LendingContract {
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
@@ -1039,7 +1047,7 @@ impl LendingContract {
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
 
-        new_balance
+        Ok(new_balance)
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
@@ -1075,7 +1083,7 @@ impl LendingContract {
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
 
-        new_balance
+        Ok(new_balance)
     }
 
     /// Set the configured valuation collateral asset for the legacy single-asset flows.
@@ -1143,11 +1151,14 @@ impl LendingContract {
         let _ = Self::get_collateral_price_internal(&env)?;
 
         let now = env.ledger().timestamp();
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
 
         let total_debt: i128 = env
@@ -1219,6 +1230,7 @@ impl LendingContract {
         let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
         save_debt(&env, &user, &updated);
 
@@ -1277,6 +1289,7 @@ impl LendingContract {
         let updated = repay_amount(position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
         save_debt(&env, &user, &updated);
 
@@ -1376,6 +1389,7 @@ impl LendingContract {
 
             require_no_active_flash_loan(&env);
 
+            let col_key = DataKey::Collateral(borrower.clone());
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
             let position = load_debt(&env, &borrower);
             let now = env.ledger().timestamp();
@@ -1390,6 +1404,8 @@ impl LendingContract {
                 settle_and_accrue_insurance(&env, &position, now, DEFAULT_APR_BPS)
                     .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
+
+            let debt = settled_position.principal;
 
             // Health-factor computation: floor rounding.
             // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
@@ -1480,6 +1496,7 @@ impl LendingContract {
 
             let updated_position = DebtPosition {
                 principal: new_debt,
+                borrow_index_snapshot: settled_position.borrow_index_snapshot,
                 last_update: settled_position.last_update,
             };
             save_debt(&env, &borrower, &updated_position);
@@ -1560,6 +1577,15 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Return the effective liquidation threshold (basis points) used for
+    /// health-factor computations.
+    ///
+    /// Currently returns the compile-time constant [`LIQUIDATION_THRESHOLD_BPS`]
+    /// (8000 = 80 %). This will become a governed parameter in a future upgrade.
+    pub fn get_liquidation_threshold_bps(_env: &Env) -> i128 {
+        LIQUIDATION_THRESHOLD_BPS
+    }
+
     /// Return the effective liquidation incentive (basis points) used by
     /// `liquidate` — the bonus, on top of the repaid debt, paid to the
     /// liquidator in seized collateral.
@@ -1603,11 +1629,14 @@ impl LendingContract {
         require_no_active_flash_loan(&env);
         user.require_auth();
         let now = env.ledger().timestamp();
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
         save_debt(&env, &user, &updated);
 
@@ -1627,7 +1656,7 @@ impl LendingContract {
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
 
-        updated.principal
+        Ok(updated.principal)
     }
 
     pub fn get_debt_position(env: Env, user: Address) -> DebtPosition {
@@ -1868,6 +1897,7 @@ impl LendingContract {
     ///
     /// Only the protocol admin can call this.
     /// Emits an `AssetParamsSetEvent` on success.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_asset_params(
         env: Env,
         admin: Address,
@@ -1913,6 +1943,7 @@ impl LendingContract {
             liquidation_threshold_bps,
             debt_ceiling,
             borrow_cap,
+            supply_cap,
         }
         .publish(&env);
 

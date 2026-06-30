@@ -54,6 +54,7 @@ pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPositi
         .get(&key)
         .unwrap_or(DebtPosition {
             principal: 0,
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
             last_update: env.ledger().timestamp(),
         })
 }
@@ -564,13 +565,14 @@ pub fn borrow_asset_internal(
 
     let hf = compute_aggregate_health_factor(env, user)?;
 
-    if hf < HEALTH_FACTOR_SCALE {
+        if hf < HEALTH_FACTOR_SCALE {
         save_debt_asset(
             env,
             user,
             asset,
             &DebtPosition {
                 principal: prev_principal,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );
@@ -599,6 +601,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );
@@ -615,6 +618,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );

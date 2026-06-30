@@ -8,6 +8,9 @@ use stellar_lend_common::BPS_DENOM;
 /// Default APR when no dynamic rate is available: 5% (500 bps).
 pub const DEFAULT_APR_BPS: i128 = 500;
 
+/// Index scale for the global borrow index: 10^18.
+pub const INDEX_SCALE: i128 = 1_000_000_000_000_000_000;
+
 /// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
 ///
 /// Keeping the default at zero preserves existing behaviour for any call site
@@ -346,10 +349,40 @@ pub fn settle_accrual_split(
 
     let updated = DebtPosition {
         principal,
+        borrow_index_snapshot: position.borrow_index_snapshot,
         last_update: now,
     };
 
     Ok((updated, split))
+}
+
+/// Settle a position using the global borrow index ratio instead of time-based
+/// interest accrual.  Used by index-aware borrow/repay paths.
+///
+/// `current_index` is the latest global borrow index.  When the position's
+/// `borrow_index_snapshot` is zero (legacy pre-migration position), falls back
+/// to [`settle_accrual`] with [`DEFAULT_APR_BPS`].
+pub fn settle_position(
+    position: &DebtPosition,
+    current_index: i128,
+    now: u64,
+) -> Result<DebtPosition, DebtError> {
+    if position.borrow_index_snapshot == 0 || position.borrow_index_snapshot == INDEX_SCALE {
+        // Legacy or unindexed position — use time-based accrual at default rate.
+        return settle_accrual(position, now, DEFAULT_APR_BPS);
+    }
+    // indexed_principal = principal * current_index / snapshot
+    let principal = position
+        .principal
+        .checked_mul(current_index)
+        .ok_or(DebtError::Overflow)?
+        .checked_div(position.borrow_index_snapshot)
+        .ok_or(DebtError::Overflow)?;
+    Ok(DebtPosition {
+        principal,
+        borrow_index_snapshot: current_index,
+        last_update: now,
+    })
 }
 
 // ─── View helpers ─────────────────────────────────────────────────────────────
