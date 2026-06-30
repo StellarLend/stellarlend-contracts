@@ -81,7 +81,7 @@ mod validator_pause_tests {
     }
 
     fn sign_rotation(new_set: &ValidatorSet, epoch: u64, signers: &[&Keypair]) -> Vec<(ed25519_dalek::PublicKey, Signature)> {
-        let payload = bincode::serialize(&(new_set.to_bytes_vec(), epoch)).unwrap();
+        let payload = Bridge::quorum_proof_payload(&[], new_set, epoch).unwrap();
         signers
             .iter()
             .map(|kp| {
@@ -516,9 +516,9 @@ mod validator_pause_tests {
             .expect("paused-signer garbage must be silently skipped, not poison the proof");
     }
 
-    /// Paused validators are excluded from duplicate counting as well.
+    /// Duplicate paused signers are rejected before paused-signer skipping.
     #[test]
-    fn paused_signer_does_not_count_as_unique_vote() {
+    fn duplicate_paused_signer_is_rejected_up_front() {
         let (mut bridge, validators, guardian) = make_bridge_with_guardian(4, 200);
         let paused = &validators[0].public;
         bridge
@@ -529,21 +529,19 @@ mod validator_pause_tests {
         let new_set = validator_set_from(&next);
         let epoch = 1u64;
 
-        // Submit:
-        //   - paused signer twice (should be skipped both times — counted 0)
-        //   - validators[1] twice (should be deduped — counted 1)
-        //   - validators[2] once (counted 1)
-        // Total unique ACTIVE votes = 2. New threshold for active=3 is 3.
-        // 2 < 3 ⇒ must fail.
+        // The duplicate is rejected before the paused signer can be skipped.
         let mut proofs: Vec<(ed25519_dalek::PublicKey, Signature)> = Vec::new();
         proofs.push(signed_rotation_entry(&validators[0], &new_set, epoch));
         proofs.push(signed_rotation_entry(&validators[0], &new_set, epoch));
         proofs.push(signed_rotation_entry(&validators[1], &new_set, epoch));
-        proofs.push(signed_rotation_entry(&validators[1], &new_set, epoch));
-        proofs.push(signed_rotation_entry(&validators[2], &new_set, epoch));
 
         let result = bridge.rotate_validators(new_set, epoch, proofs);
-        assert!(result.is_err(), "unique active count of 2 < new threshold 3 must fail");
+        assert!(result.is_err(), "duplicate paused signer must be rejected");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("duplicate signer"),
+            "error should mention duplicate signer, got: {msg}"
+        );
     }
 
     fn signed_rotation_entry(
@@ -551,7 +549,7 @@ mod validator_pause_tests {
         new_set: &ValidatorSet,
         epoch: u64,
     ) -> (ed25519_dalek::PublicKey, Signature) {
-        let payload = bincode::serialize(&(new_set.to_bytes_vec(), epoch)).unwrap();
+        let payload = Bridge::quorum_proof_payload(&[], new_set, epoch).unwrap();
         let sig = kp.sign(&payload);
         (kp.public, sig)
     }

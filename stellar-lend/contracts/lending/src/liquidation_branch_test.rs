@@ -63,8 +63,16 @@ mod liquidation_branch_tests {
         assert!(hf < 10_000, "expected liquidatable position; hf={hf}");
 
         let debt_before = client.get_debt_position(&borrower).principal;
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
         let actual_repay = client
-            .liquidate(&liquidator, &borrower, &debt_before)
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_before,
+            )
             .unwrap();
 
         // CLOSE_FACTOR = 5000 BPS
@@ -92,8 +100,16 @@ mod liquidation_branch_tests {
         make_undercollateralised(&env, &client, &borrower, 100, 1_000, 0);
 
         let debt_before = client.get_debt_position(&borrower).principal;
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
         let actual_repay = client
-            .liquidate(&liquidator, &borrower, &debt_before)
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_before,
+            )
             .unwrap();
 
         // repay is still the close-factor-capped amount
@@ -118,8 +134,19 @@ mod liquidation_branch_tests {
         make_undercollateralised(&env, &client, &borrower, 200, 1_000, 0);
 
         // Round 1
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
         let debt_r1 = client.get_debt_position(&borrower).principal;
         let repay_r1 = client.liquidate(&liquidator, &borrower, &debt_r1).unwrap();
+        let repay_r1 = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_r1,
+            )
+            .unwrap();
         assert_eq!(repay_r1, debt_r1 * 5_000 / 10_000);
         let debt_after_r1 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r1, debt_r1 - repay_r1);
@@ -130,6 +157,15 @@ mod liquidation_branch_tests {
         // Round 2
         let debt_r2 = client.get_debt_position(&borrower).principal;
         let repay_r2 = client.liquidate(&liquidator, &borrower, &debt_r2).unwrap();
+        let repay_r2 = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_r2,
+            )
+            .unwrap();
         assert_eq!(repay_r2, debt_r2 * 5_000 / 10_000);
         let debt_after_r2 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r2, debt_r2 - repay_r2);
@@ -150,8 +186,15 @@ mod liquidation_branch_tests {
 
         assert!(client.get_health_factor(&borrower) >= 10_000);
 
-        let result = client.try_liquidate(&liquidator, &borrower, &100);
-        assert_eq!(result, Ok(Err(LendingError::PositionHealthy)));
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let result =
+            client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+        assert!(
+            matches!(result, Err(Ok(LendingError::PositionHealthy))),
+            "expected PositionHealthy error, got {:?}",
+            result
+        );
     }
 
     /// No borrow -> debt == 0: must reject.
@@ -163,7 +206,14 @@ mod liquidation_branch_tests {
 
         client.deposit(&borrower, &1_000).unwrap();
 
-        let result = client.try_liquidate(&liquidator, &borrower, &100);
-        assert_eq!(result, Ok(Err(LendingError::PositionHealthy)));
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let result =
+            client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+        assert!(
+            matches!(result, Err(Ok(LendingError::PositionHealthy))),
+            "expected PositionHealthy error, got {:?}",
+            result
+        );
     }
 }

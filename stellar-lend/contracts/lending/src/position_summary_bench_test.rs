@@ -174,6 +174,8 @@ fn setup_with_n_assets(n: u32) -> (Env, Address, Address, Address, soroban_sdk::
                     ltv_bps: 7500,
                     liquidation_threshold_bps: 8000,
                     debt_ceiling: 1_000_000_000_000i128,
+                     borrow_cap: 0,
+                    supply_cap: 0,
                 },
             );
             env.storage().persistent().set(

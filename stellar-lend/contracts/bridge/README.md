@@ -12,8 +12,10 @@ Key features
 
 | Document | Description |
 |---|---|
+| [ROTATION_PROTOCOL.md](./ROTATION_PROTOCOL.md) | Sequenced validator-set rotation flow, signed payload, quorum math, and inbound epoch handling |
 | [SECURITY_NOTES.md](./SECURITY_NOTES.md) | Bridge validator rotation threat model and inbound-cap security rationale |
 | [INBOUND_WINDOW_TUNING.md](./INBOUND_WINDOW_TUNING.md) | Rolling-window cap algorithm and operator parameter-selection guide |
+| [QUORUM_PROOF_BOUNDS.md](./QUORUM_PROOF_BOUNDS.md) | Quorum-proof vector size and duplicate-signer DoS bounds |
 | [WINDOW_GUARD.md](./WINDOW_GUARD.md) | Window-boundary guard rationale for zero windows, clock rollback, and overflow |
 | [EPOCH_INVARIANTS.md](./EPOCH_INVARIANTS.md) | Epoch monotonicity and retired-validator replay invariants |
 | [VALIDATORSET_INVARIANTS.md](./VALIDATORSET_INVARIANTS.md) | Validator-set deduplication and quorum threshold invariants |
@@ -21,7 +23,7 @@ Key features
 Design notes
 - Validator public keys are stored as raw bytes to keep on-disk/state serialization simple and unambiguous.
 - Quorum threshold is a supermajority > 2/3 of current validators.
-- Signatures are over a canonical payload: `bincode((new_set_bytes_vec, epoch))` — this binds the epoch to the new set.
+- Signatures are over a canonical, domain-separated payload: `bincode((QUORUM_PROOF_DOMAIN, bridge_id, new_set_bytes_vec, epoch))` — this binds the purpose, bridge instance, epoch, and proposed set.
 - This crate is intentionally standalone (off-chain validator/quorum verification logic) and is not a member of the parent Soroban workspace; run `cargo test` from this directory.
 
 See `src/lib.rs` for implementation and unit tests.

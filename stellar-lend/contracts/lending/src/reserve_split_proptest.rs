@@ -63,7 +63,7 @@ fn arb_reserve_factor_bps() -> impl Strategy<Value = u32> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(1024))]
+    #[proptest_config(ProptestConfig::with_cases(1024))]
 
     /// Conservation invariant: depositor_yield + reserve_cut == total_interest.
     ///
@@ -86,7 +86,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(1024))]
+    #[proptest_config(ProptestConfig::with_cases(1024))]
 
     /// Non‑negativity invariant: both split parts must be ≥ 0.
     ///
@@ -105,7 +105,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(512))]
+    #[proptest_config(ProptestConfig::with_cases(512))]
 
     /// Conservative rounding: fractional unit falls to depositor (floor division).
     ///
@@ -135,7 +135,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(512))]
+    #[proptest_config(ProptestConfig::with_cases(512))]
 
     /// Overflow handling: returning MathError::Overflow.
     ///
@@ -155,7 +155,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #[proptest_config(ProptestConfig::with_cases(256))]
 
     /// Zero interest invariants: both parts zero.
     ///
@@ -176,7 +176,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #[proptest_config(ProptestConfig::with_cases(256))]
 
     /// Zero reserve factor: all interest to depositors.
     ///
@@ -200,7 +200,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #[proptest_config(ProptestConfig::with_cases(256))]
 
     /// 100% reserve factor: all interest to protocol.
     ///
@@ -224,7 +224,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #[proptest_config(ProptestConfig::with_cases(256))]
 
     /// Negative interest rejection: MathError::OutOfRange.
     ///
@@ -242,7 +242,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #[proptest_config(ProptestConfig::with_cases(256))]
 
     /// Reserve factor >100% rejection: MathError::OutOfRange.
     ///

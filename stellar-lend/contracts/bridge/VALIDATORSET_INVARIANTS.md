@@ -28,8 +28,8 @@ For every generated validator set:
 
 `len()` now means the number of unique validator public keys, not the raw byte
 vector length. That matches how quorum proofs are counted in
-`Bridge::verify_quorum_proof`, which already deduplicates signers before
-comparing them to the threshold.
+`Bridge::verify_quorum_proof`, which now rejects duplicate proof signers before
+comparing unique valid signatures to the threshold.
 
 ## Worked example
 

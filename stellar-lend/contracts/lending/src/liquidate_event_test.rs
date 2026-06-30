@@ -1,4 +1,6 @@
-use crate::{LendingContract, LendingContractClient, LiquidationEventV1};
+use crate::{
+    debt::DebtPosition, DataKey, LendingContract, LendingContractClient, LiquidationEventV1,
+};
 use soroban_sdk::{
     events::Event,
     testutils::{Address as _, Events},
@@ -45,8 +47,18 @@ fn setup_liquidatable() -> (
 fn liquidate_emits_event_with_correct_fields() {
     let (env, client, cid, user, liquidator, debt_asset, collateral_asset) = setup_liquidatable();
 
-    client.deposit(&user, &100);
-    client.borrow(&user, &200);
+    env.as_contract(&cid, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &100i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(user.clone()),
+            &DebtPosition {
+                principal: 200,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &150);
 
@@ -75,8 +87,18 @@ fn liquidate_emits_event_with_correct_fields() {
 fn liquidate_event_close_factor_limits_repay() {
     let (env, client, cid, user, liquidator, debt_asset, collateral_asset) = setup_liquidatable();
 
-    client.deposit(&user, &200);
-    client.borrow(&user, &200);
+    env.as_contract(&cid, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &200i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(user.clone()),
+            &DebtPosition {
+                principal: 200,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &150);
 
@@ -107,8 +129,18 @@ fn liquidate_event_close_factor_limits_repay() {
 fn liquidate_event_zero_shortfall() {
     let (env, client, cid, user, liquidator, debt_asset, collateral_asset) = setup_liquidatable();
 
-    client.deposit(&user, &100);
-    client.borrow(&user, &130);
+    env.as_contract(&cid, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &100i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(user.clone()),
+            &DebtPosition {
+                principal: 130,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &50);
 

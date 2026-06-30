@@ -17,7 +17,6 @@
 //! | `new_set` valid mid-size rotation | **Accepted** (if quorum met) |
 
 use crate::{Bridge, BridgeError, ValidatorSet, MIN_VALIDATORS, MAX_VALIDATORS};
-use bincode;
 use ed25519_dalek::{Keypair, Signature, Signer};
 
 // ---------------------------------------------------------------------------
@@ -58,14 +57,14 @@ fn validator_set_from(kps: &[Keypair]) -> ValidatorSet {
     }
 }
 
-/// Sign the rotation payload `(new_set_bytes, epoch)` with a subset of keypairs.
+/// Sign the canonical rotation payload with a subset of keypairs.
 /// Returns the proof vector expected by `rotate_validators`.
 fn sign_rotation(
     new_set: &ValidatorSet,
     epoch: u64,
     signers: &[&Keypair],
 ) -> Vec<(ed25519_dalek::PublicKey, Signature)> {
-    let payload = bincode::serialize(&(new_set.to_bytes_vec(), epoch))
+    let payload = Bridge::quorum_proof_payload(&[], new_set, epoch)
         .expect("serialization must not fail");
     signers
         .iter()

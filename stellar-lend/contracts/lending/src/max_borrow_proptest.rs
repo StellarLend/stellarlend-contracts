@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 extern crate std;
 
 use super::math::{compute_max_borrow, MathError, BPS_SCALE};

@@ -465,3 +465,71 @@ fn test_get_cross_position_summary_returns_non_zero() {
     assert!(summary.total_debt_usd > 0);
     assert!(summary.health_factor > 10000);
 }
+
+// ── withdraw_asset_internal — aggregate HF blocking ──────────────────────────
+//
+// These tests verify that withdraw_asset_internal correctly blocks a
+// withdrawal when removing collateral would push the aggregate health factor
+// below HEALTH_FACTOR_SCALE (1.0), even across a multi-asset position.
+
+/// Withdraw of primary collateral blocked when user has cross-asset borrow.
+///
+/// Setup: user deposits 1000 asset_a (value $1 each = $1000), borrows 800
+/// asset_a (75% LTV means $750 max, but we set up so withdrawing all of
+/// asset_a leaves the borrow under-collateralised).
+#[test]
+fn test_withdraw_blocked_by_aggregate_hf_single_collateral_with_debt() {
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
+    client.deposit_collateral_asset(&user, &asset_a, &1000i128);
+    client.borrow_asset(&user, &asset_a, &700i128);
+    // Withdrawing 500 would leave 500 collateral against 700 debt → HF < 1
+    let res = client.try_withdraw_asset(&user, &asset_a, &500i128);
+    assert!(
+        matches!(res, Err(Ok(LendingError::HealthFactorTooLow))),
+        "Withdrawal reducing aggregate HF below 1.0 must be blocked"
+    );
+}
+
+/// Cross-asset scenario: user uses asset_b as collateral for asset_a borrow.
+/// Withdrawing asset_b collapses the only collateral → aggregate HF drops below 1.
+#[test]
+fn test_withdraw_blocked_when_cross_collateral_removed_with_active_debt() {
+    let (_env, client, _id, _admin, user, asset_a, asset_b) = setup();
+    // Deposit asset_b as collateral (price = $2000 per unit, so 1 unit = $2000)
+    client.deposit_collateral_asset(&user, &asset_b, &1i128);
+    // Borrow asset_a against the asset_b collateral (price $1/unit)
+    client.borrow_asset(&user, &asset_a, &1000i128);
+    // Withdrawing asset_b collapses collateral; aggregate HF → 0 → blocked
+    let res = client.try_withdraw_asset(&user, &asset_b, &1i128);
+    assert!(
+        matches!(res, Err(Ok(LendingError::HealthFactorTooLow))),
+        "Removing cross-collateral with open borrow must fail with HealthFactorTooLow"
+    );
+}
+
+/// Partial withdrawal that still leaves HF ≥ 1 must succeed.
+#[test]
+fn test_partial_withdraw_allowed_when_hf_stays_above_one() {
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
+    // Deposit 1000 asset_a, borrow 100 (well within LTV)
+    client.deposit_collateral_asset(&user, &asset_a, &1000i128);
+    client.borrow_asset(&user, &asset_a, &100i128);
+    // Withdraw 100 — leaves 900 collateral vs 100 debt; HF ≫ 1
+    let new_bal = client.withdraw_asset(&user, &asset_a, &100i128);
+    assert_eq!(new_bal, 900, "Partial withdrawal that keeps HF above 1 must succeed");
+}
+
+/// State is rolled back after a blocked withdrawal: collateral balance unchanged.
+#[test]
+fn test_blocked_withdraw_does_not_mutate_collateral_state() {
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
+    client.deposit_collateral_asset(&user, &asset_a, &1000i128);
+    client.borrow_asset(&user, &asset_a, &700i128);
+    let balance_before = client.get_collateral_asset_balance(&user, &asset_a);
+    let _ = client.try_withdraw_asset(&user, &asset_a, &500i128);
+    let balance_after = client.get_collateral_asset_balance(&user, &asset_a);
+    assert_eq!(
+        balance_before, balance_after,
+        "Blocked withdrawal must not mutate on-chain collateral balance"
+    );
+}

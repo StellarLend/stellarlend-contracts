@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, Env, Map, Vec};
 
 use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
 use crate::{
@@ -206,12 +206,18 @@ fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
 /// | Collateral-asset list (`UserCollateralAssets`) | 1 |
 /// | Debt-asset list (`UserDebtAssets`) | 1 |
 /// | Per collateral asset: `AssetParams` (instance) + `OraclePrice` + `CollateralAsset` | 3 × N |
-/// | Per debt asset: `OraclePrice` + `DebtAsset` | 2 × M |
-/// | **Total** | **2 + 3N + 2M** |
+/// | Per debt asset: `OraclePrice` (if not cached) + `DebtAsset` | 2 × M (worst case) |
+/// | **Total** | **2 + 3N + 2M - C** (where C is the number of overlapping assets) |
 ///
 /// The `cross_asset_health_perf_test` module asserts this budget for
 /// representative values of N and M and must be kept in sync with this comment
 /// whenever the implementation changes.
+///
+/// # Price Cache
+///
+/// This function uses a local `Map<Address, PriceRecord>` to cache prices fetched
+/// during the cross-asset evaluation. If an asset appears in both the collateral and
+/// debt lists, its price is fetched from persistent storage only once, saving a read.
 ///
 /// # Redundant-read note
 ///
@@ -251,13 +257,23 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
     let mut weighted_collateral: i128 = 0;
     let mut total_debt_value: i128 = 0;
 
+    // Cache to prevent duplicate price fetches for assets on both sides.
+    let mut price_cache: Map<Address, PriceRecord> = Map::new(env);
+
     // Reads 3 .. 2 + 3N: per collateral asset — params (instance), price, balance
     for i in 0..collateral_assets.len() {
         let asset = collateral_assets.get(i).unwrap();
         // Instance read: AssetParams (1 per asset)
         let params = load_asset_params(env, &asset).ok_or(LendingError::AssetNotConfigured)?;
-        // Persistent read: OraclePrice (1 per asset)
-        let price_record = get_price_for_asset(env, &asset)?;
+        // Persistent read: OraclePrice (1 per asset, cached locally)
+        let price_record = match price_cache.get(asset.clone()) {
+            Some(cached) => cached,
+            None => {
+                let fetched = get_price_for_asset(env, &asset)?;
+                price_cache.set(asset.clone(), fetched.clone());
+                fetched
+            }
+        };
         // Persistent read: CollateralAsset balance (1 per asset)
         let amount = load_collateral_asset(env, user, &asset);
         if amount == 0 {
@@ -277,8 +293,15 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
     // Reads 3 + 3N .. 2 + 3N + 2M: per debt asset — price, debt position
     for i in 0..debt_assets.len() {
         let asset = debt_assets.get(i).unwrap();
-        // Persistent read: OraclePrice (1 per asset)
-        let price_record = get_price_for_asset(env, &asset)?;
+        // Persistent read: OraclePrice (1 per asset, cached locally)
+        let price_record = match price_cache.get(asset.clone()) {
+            Some(cached) => cached,
+            None => {
+                let fetched = get_price_for_asset(env, &asset)?;
+                price_cache.set(asset.clone(), fetched.clone());
+                fetched
+            }
+        };
         // Persistent read: DebtAsset position (1 per asset)
         let position = load_debt_asset(env, user, &asset);
         let debt =

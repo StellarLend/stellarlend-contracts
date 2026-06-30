@@ -43,7 +43,8 @@
 /// eviction only removes data that is older than the longest supported query window, ensuring
 /// every valid `get_twap` call can still find a start snapshot.
 ///
-/// See `docs/TWAP_SNAPSHOT_POLICY.md` for the full rationale.
+/// See `docs/TWAP_SNAPSHOT_POLICY.md` for the storage rationale and
+/// `docs/TWAP_READ_PERF.md` for the read-cost budget.
 ///
 /// # Storage keys
 ///
@@ -92,6 +93,19 @@ pub const MAX_TWAP_WINDOW_SECS: u64 = 86_400;
 /// Eviction only removes the single oldest entry once the cap is hit, keeping
 /// the amortised write cost at O(1) per snapshot interval.
 pub const MAX_SNAPSHOTS: u32 = 1_440;
+
+/// Maximum snapshot comparisons performed by one `get_twap` lookup.
+///
+/// `find_snapshot_at_or_before` uses binary search, whose worst-case cost for
+/// the capped ring is `ceil(log2(MAX_SNAPSHOTS + 1))`:
+///
+/// ```text
+/// ceil(log2(1_440 + 1)) = 11
+/// ```
+///
+/// Tests exercise increasing ring sizes and targets at both ends and the
+/// middle so a regression to a linear scan cannot silently exceed this budget.
+pub const TWAP_READ_SEARCH_COMPARISON_BUDGET: u32 = 11;
 
 /// Safety multiplier used during eviction to guarantee the oldest retained
 /// snapshot is never within the maximum query window.

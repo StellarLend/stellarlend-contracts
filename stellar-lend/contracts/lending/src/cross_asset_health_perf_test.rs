@@ -6,21 +6,22 @@
 //!
 //! ## Read-cost model for `compute_aggregate_health_factor`
 //!
-//! For a user with **N** collateral assets and **M** debt assets:
+//! For a user with **N** collateral assets and **M** debt assets, and **C** assets that overlap:
+//! (*Note: **C** is defined as the number of distinct overlapping assets—i.e., assets present in both the collateral and debt lists. Because each list only contains unique assets, C also exactly equals the number of cache hits / avoided persistent storage reads for `OraclePrice`.*)
 //!
 //! | Operation | Reads |
 //! |-----------|-------|
 //! | Collateral-asset list | 1 |
 //! | Debt-asset list | 1 |
 //! | Per collateral asset: `AssetParams` + `OraclePrice` + `CollateralAsset` | 3 × N |
-//! | Per debt asset: `OraclePrice` + `DebtAsset` | 2 × M |
-//! | **Total** | **2 + 3N + 2M** |
+//! | Per debt asset: `OraclePrice` (if not cached) + `DebtAsset` | 2 × M (worst case) |
+//! | **Total** | **2 + 3N + 2M - C** |
 //!
 //! ## Budget ceiling
 //!
 //! ```text
-//! budget(N, M) = HF_BUDGET_FIXED + N × HF_BUDGET_PER_COLLATERAL + M × HF_BUDGET_PER_DEBT
-//!             = 4 + N × 5 + M × 3
+//! budget(N, M, C) = HF_BUDGET_FIXED + N × HF_BUDGET_PER_COLLATERAL + M × HF_BUDGET_PER_DEBT - C
+//!             = 4 + N × 5 + M × 3 - C
 //! ```
 //!
 //! The ceiling is set slightly above the formula to allow for minor future
@@ -73,51 +74,55 @@ pub const HF_BUDGET_PER_DEBT: u32 = 3;
 // ─── Budget helpers ───────────────────────────────────────────────────────────
 
 /// Compute the read-budget ceiling for `n_col` collateral assets and `n_debt`
-/// debt assets.
+/// debt assets, with `c_overlap` assets present in both.
 ///
 /// Formula:
 /// ```text
-/// budget(N, M) = HF_BUDGET_FIXED + N × HF_BUDGET_PER_COLLATERAL + M × HF_BUDGET_PER_DEBT
-///             = 4 + 5N + 3M
+/// budget(N, M, C) = HF_BUDGET_FIXED + N × HF_BUDGET_PER_COLLATERAL + M × HF_BUDGET_PER_DEBT - C
+///                 = 4 + 5N + 3M - C
 /// ```
-///
-/// | N  | M  | ceiling |
-/// |----|----|---------|
-/// | 0  | 0  | 4       |
-/// | 1  | 0  | 9       |
-/// | 1  | 1  | 12      |
-/// | 5  | 3  | 33      |
-/// | 10 | 10 | 84      |
-/// | 20 | 20 | 164     |
+fn hf_read_budget_with_overlap(n_col: u32, n_debt: u32, c_overlap: u32) -> u32 {
+    HF_BUDGET_FIXED + n_col * HF_BUDGET_PER_COLLATERAL + n_debt * HF_BUDGET_PER_DEBT - c_overlap
+}
+
 fn hf_read_budget(n_col: u32, n_debt: u32) -> u32 {
-    HF_BUDGET_FIXED + n_col * HF_BUDGET_PER_COLLATERAL + n_debt * HF_BUDGET_PER_DEBT
+    hf_read_budget_with_overlap(n_col, n_debt, 0)
 }
 
 /// Derive the expected worst-case reads from the source-code formula.
 ///
 /// ```text
-/// expected(N, M) = 2      // both asset lists
-///               + 3 × N   // params + price + balance per collateral asset
-///               + 2 × M   // price + debt position per debt asset
+/// expected(N, M, C) = 2      // both asset lists
+///                  + 3 × N   // params + price + balance per collateral asset
+///                  + 2 × M   // price + debt position per debt asset
+///                  - C       // cached price reads
 /// ```
 ///
 /// This is a whitebox derivation that must be kept in sync with the
 /// implementation in [`cross_asset.rs`].
-fn hf_expected_reads(n_col: u32, n_debt: u32) -> u32 {
-    2 + 3 * n_col + 2 * n_debt
+fn hf_expected_reads_with_overlap(n_col: u32, n_debt: u32, c_overlap: u32) -> u32 {
+    2 + 3 * n_col + 2 * n_debt - c_overlap
 }
 
-/// Assert that `hf_expected_reads(n_col, n_debt) ≤ hf_read_budget(n_col, n_debt)`.
-fn assert_hf_within_budget(n_col: u32, n_debt: u32) {
-    let actual = hf_expected_reads(n_col, n_debt);
-    let ceiling = hf_read_budget(n_col, n_debt);
+fn hf_expected_reads(n_col: u32, n_debt: u32) -> u32 {
+    hf_expected_reads_with_overlap(n_col, n_debt, 0)
+}
+
+/// Assert that `hf_expected_reads_with_overlap(n_col, n_debt, c_overlap) ≤ hf_read_budget_with_overlap(...)`.
+pub(crate) fn assert_hf_within_budget_with_overlap(n_col: u32, n_debt: u32, c_overlap: u32) {
+    let actual = hf_expected_reads_with_overlap(n_col, n_debt, c_overlap);
+    let ceiling = hf_read_budget_with_overlap(n_col, n_debt, c_overlap);
     assert!(
         actual <= ceiling,
-        "HF read-budget exceeded for ({n_col} col, {n_debt} debt): \
+        "HF read-budget exceeded for ({n_col} col, {n_debt} debt, {c_overlap} overlap): \
          expected_reads={actual} > budget_ceiling={ceiling}. \
          Update HF_BUDGET_PER_COLLATERAL or HF_BUDGET_PER_DEBT if the \
          implementation legitimately requires more reads."
     );
+}
+
+fn assert_hf_within_budget(n_col: u32, n_debt: u32) {
+    assert_hf_within_budget_with_overlap(n_col, n_debt, 0)
 }
 
 // ─── Test environment setup ───────────────────────────────────────────────────
@@ -159,6 +164,8 @@ fn setup_hf_with_n_assets(n: u32) -> (Env, Address, Address, Address, soroban_sd
                     ltv_bps: 7500,
                     liquidation_threshold_bps: 8000,
                     debt_ceiling: 1_000_000_000_000i128,
+                     borrow_cap: 0,
+                     supply_cap: 0,
                 },
             );
             env.storage().persistent().set(

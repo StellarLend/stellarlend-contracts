@@ -11,10 +11,10 @@ The Problem
 liquidation path.  Before this document was written, the function had no
 measured or enforced read budget — the cost grew linearly with N (assets held)
 with no ceiling and no test to catch regressions.
-For a user holding N collateral assets and M debt assets, the function issues:
+For a user holding N collateral assets, M debt assets, and C assets present in both lists, the function issues:
 ```
-reads = 1 (col-list) + 1 (debt-list) + 3N (params + price + balance) + 2M (price + debt)
-      = 2 + 3N + 2M
+reads = 1 (col-list) + 1 (debt-list) + 3N (params + price + balance) + 2M (price + debt) - C (cached prices)
+      = 2 + 3N + 2M - C
 ```
 At the expected maximum of 20 collateral + 20 debt assets this is 102 reads
 per health-factor check.  On Soroban, ledger-entry reads are metered by the
@@ -30,28 +30,25 @@ module that asserts the formula stays within the documented ceiling for
 representative portfolio sizes.
 This document — rationale, worked example, edge-case notes.
 Redundant-Read Note
-When `compute_aggregate_health_factor` is called alongside
-`get_cross_position_value` and `get_cross_debt_value` (e.g., via
-`get_cross_position_summary`), the two asset lists are fetched three times
-instead of once.  This is linear O(N+M), not quadratic, but carries a 3×
-constant factor on the list reads.  A future single-pass optimisation could
-merge the three loops, reducing the list-read constant from 3 to 1.  That
-optimisation is tracked separately; this document and its tests cover only
-`compute_aggregate_health_factor` in isolation.
+`compute_aggregate_health_factor` fetches prices within a single pass, and caching now eliminates duplicate persistent-storage reads for assets that appear in both the collateral and debt lists. This resolves the within-pass overlap gap.
+
+However, when `compute_aggregate_health_factor` is called alongside `get_cross_position_value` and `get_cross_debt_value` (e.g., via `get_cross_position_summary`), the two asset lists are fetched three times instead of once. This cross-function list-refetch redundancy is linear O(N+M), not quadratic, but carries a 3× constant factor on the list reads. A future single-pass optimisation could merge the three loops, reducing the list-read constant from 3 to 1. That optimisation is tracked separately; this document and its tests cover only `compute_aggregate_health_factor` in isolation.
 ---
 Per-Call Read Budget
 Formula
-For N collateral assets and M debt assets:
+For N collateral assets, M debt assets, and C overlapping assets:
+*(Note: **C** is defined as the number of distinct overlapping assets—i.e., assets present in both the collateral and debt lists. Because each list only contains unique assets, C exactly equals the number of cache hits / avoided persistent storage reads for `OraclePrice`.)*
 ```
-reads(N, M) = 2 + 3N + 2M
+reads(N, M, C) = 2 + 3N + 2M - C
 ```
 Breakdown:
 Operation	Reads
 `UserCollateralAssets` list	1
 `UserDebtAssets` list	1
 Per collateral asset: `AssetParams` (instance) + `OraclePrice` + `CollateralAsset`	3 × N
-Per debt asset: `OraclePrice` + `DebtAsset`	2 × M
-Total	2 + 3N + 2M
+Per debt asset: `OraclePrice` (if not cached) + `DebtAsset`	2 × M (worst case)
+Cached overlap: `OraclePrice` skipped for assets already seen	- C
+Total	2 + 3N + 2M - C
 Budget Ceiling Constants
 The test file defines the following ceiling constants:
 Constant	Value	Covers
@@ -60,17 +57,18 @@ Constant	Value	Covers
 `HF_BUDGET_PER_DEBT`	3	2 reads + 1 spare
 Ceiling formula:
 ```
-budget(N, M) = HF_BUDGET_FIXED + N × HF_BUDGET_PER_COLLATERAL + M × HF_BUDGET_PER_DEBT
-             = 4 + 5N + 3M
+budget(N, M, C) = HF_BUDGET_FIXED + N × HF_BUDGET_PER_COLLATERAL + M × HF_BUDGET_PER_DEBT - C
+                = 4 + 5N + 3M - C
 ```
-Worked ceiling examples:
-N	M	expected reads	ceiling
-0	0	2	4
-1	0	5	9
-1	1	7	12
-5	3	23	38
-10	10	52	84
-20	20	102	164
+Worked ceiling examples (assuming C=0 unless stated):
+N	M	C	expected reads	ceiling
+0	0	0	2	4
+1	0	0	5	9
+1	1	0	7	12
+1	1	1	6	11
+5	3	0	23	38
+10	10	5	47	79
+20	20	0	102	164
 ---
 Worked Example
 Consider a user with two collateral assets (XLM, BTC) and two debt assets
@@ -122,6 +120,8 @@ ETH:
 total_debt_value = 30_000_000_000_000_000 + 30_000_000_000_000_000
                  = 60_000_000_000_000_000
 ```
+*(If USDC or ETH had appeared in the collateral list as well, their `OraclePrice` read in Step 3 would have been skipped due to the local price cache, reducing the total reads).*
+
 Step 4 — Health factor
 ```
 health_factor = weighted_collateral / total_debt_value
@@ -135,8 +135,8 @@ without dividing by BPS_DENOM (10_000).  The health-factor value returned
 is therefore already inflated by the BPS multiplier.  Callers compare against
 `HEALTH_FACTOR_SCALE × BPS_DENOM` when checking liquidation eligibility, which
 is documented in `CROSS_ASSET_RULES.md` and `cross_asset.md`.
-Total reads: 12 (= 2 + 3×2 + 2×2)
-This is well within the budget ceiling of `4 + 5×2 + 3×2 = 20`.
+Total reads: 12 (= 2 + 3×2 + 2×2 - 0)
+This is well within the budget ceiling of `4 + 5×2 + 3×2 - 0 = 20`.
 ---
 Edge Cases
 Empty position (N=0, M=0)

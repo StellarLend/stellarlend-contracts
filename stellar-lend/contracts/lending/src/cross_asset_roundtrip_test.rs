@@ -68,7 +68,7 @@ fn setup() -> (
 
 #[test]
 fn test_cross_asset_borrow_repay_roundtrip() {
-    let (env, client, id, admin, user, asset_a, asset_b) = setup();
+    let (env, client, id, _admin, user, asset_a, asset_b) = setup();
 
     // 1. Initial State
     // User deposits asset_b as collateral

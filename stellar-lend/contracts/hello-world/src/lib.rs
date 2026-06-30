@@ -2,9 +2,21 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, Map,
-    Symbol, Vec,
+mod cross_asset;
+mod deposit;
+mod risk_management;
+
+use cross_asset::{
+    add_to_user_debt_list, get_max_debt_assets_per_user, get_user_debt_assets,
+    set_max_debt_assets_per_user, CrossAssetError,
+};
+use deposit::deposit_collateral;
+use risk_management::{
+    can_be_liquidated, get_close_factor, get_liquidation_incentive,
+    get_liquidation_incentive_amount, get_liquidation_threshold, get_max_liquidatable_amount,
+    get_min_collateral_ratio, initialize_risk_management, is_emergency_paused, is_operation_paused,
+    require_min_collateral_ratio, set_emergency_pause, set_pause_switch, set_pause_switches,
+    set_risk_params, RiskConfig, RiskManagementError,
 };
 
 #[contracterror]
@@ -76,9 +88,9 @@ mod cross_asset_ltv_test;
 #[cfg(test)]
 mod rate_clamp_test;
 #[cfg(test)]
-mod twap_view_test;
-#[cfg(test)]
 mod twap_maxbuffer_perf_test;
+#[cfg(test)]
+mod twap_read_bench_test;
 #[cfg(test)]
 mod twap_coverage_test;
 #[cfg(test)]
@@ -1286,12 +1298,66 @@ impl HelloContract {
     pub fn gov_can_vote(env: Env, voter: Address, proposal_id: u64) -> bool {
         governance::can_vote(&env, voter, proposal_id)
     }
+
+    /// Set the maximum number of distinct debt assets a user may hold simultaneously (admin only).
+    ///
+    /// Pass `None` to remove the cap (unlimited).  When a value is provided it must be >= 1.
+    ///
+    /// # Arguments
+    /// * `caller` - Must be the admin address
+    /// * `max`    - New cap, or None to disable
+    ///
+    /// # Returns
+    /// Returns Ok(()) on success
+    pub fn set_max_debt_assets_per_user(
+        env: Env,
+        caller: Address,
+        max: Option<u32>,
+    ) -> Result<(), CrossAssetError> {
+        set_max_debt_assets_per_user(&env, &caller, max)
+    }
+
+    /// Get the current maximum-distinct-debt-assets cap.
+    ///
+    /// Returns None when no cap is configured (unlimited behaviour).
+    pub fn get_max_debt_assets_per_user(env: Env) -> Option<u32> {
+        get_max_debt_assets_per_user(&env)
+    }
+
+    /// Record that `user` now has an active borrow in `asset`.
+    ///
+    /// Enforces the borrow-isolation tier if a cap is configured.
+    /// This must be called from `borrow_asset_internal` whenever a borrow
+    /// would introduce a *new* debt asset for the user.
+    ///
+    /// Repay / withdraw paths must never call this function — they are
+    /// never restricted by the isolation tier.
+    ///
+    /// # Arguments
+    /// * `user`  - The borrowing user
+    /// * `asset` - The asset being borrowed (None = native XLM)
+    ///
+    /// # Returns
+    /// Returns the updated count of distinct debt assets, or an error
+    pub fn add_to_user_debt_list(
+        env: Env,
+        user: Address,
+        asset: Option<Address>,
+    ) -> Result<u32, CrossAssetError> {
+        add_to_user_debt_list(&env, &user, &asset)
+    }
+
+    /// Return the list of distinct debt assets currently tracked for `user`.
+    ///
+    /// # Arguments
+    /// * `user` - The user whose debt list to query
+    pub fn get_user_debt_assets(env: Env, user: Address) -> soroban_sdk::Vec<Option<Address>> {
+        get_user_debt_assets(&env, &user)
+    }
 }
 
 #[cfg(test)]
-mod flash_loan_test;
-#[cfg(test)]
-mod test_reentrancy;
+mod test;
 
 #[cfg(test)]
 mod amm_pause_integration_test;

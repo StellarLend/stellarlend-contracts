@@ -268,7 +268,7 @@ fn test_deposit_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(DepositReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "deposit during flash loan must fail");
@@ -285,7 +285,9 @@ fn test_withdraw_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(WithdrawReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
+
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "withdraw during flash loan must fail");
@@ -303,7 +305,8 @@ fn test_borrow_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes()
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "borrow during flash loan must fail");
@@ -320,7 +323,9 @@ fn test_repay_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(RepayReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
+
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "repay during flash loan must fail");
@@ -337,7 +342,9 @@ fn test_liquidate_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(LiquidateReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
+
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "liquidate during flash loan must fail");
@@ -354,7 +361,9 @@ fn test_nested_flash_loan_blocked() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(NestedFlashReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
+
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "nested flash loan must fail");
@@ -371,7 +380,9 @@ fn test_operations_resume_after_blocked_reentry() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
+
 
     // Attempt reentrant borrow — fails.
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);

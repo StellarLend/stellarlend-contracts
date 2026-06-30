@@ -61,7 +61,7 @@ fn test_flash_swap_debits_reserve_b() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 332;
-    let result = client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+    let result = client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
     assert_eq!(result, amount_out);
 
     let (ra, rb) = client.get_reserves();
@@ -77,7 +77,7 @@ fn test_flash_swap_arms_flash_active() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     assert!(!client.is_flash_active(), "initially false");
-    client.flash_swap_a_for_b(&100, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
     assert!(client.is_flash_active(), "true after flash_swap_a_for_b");
 }
 
@@ -93,7 +93,7 @@ fn test_flash_then_repay_recovers_state() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 332;
-    client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     let amount_in: i128 = inverse_swap_in(1_000_i128, 1_000_i128, amount_out, FEE_BPS);
     client.repay_flash_swap(&amount_in);
@@ -128,7 +128,7 @@ fn test_over_repay_yields_extra_fee() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 100;
-    client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     let exact_in: i128 = inverse_swap_in(1_000_i128, 1_000_i128, amount_out, FEE_BPS);
     let over_in: i128 = exact_in.saturating_mul(2);
@@ -152,7 +152,7 @@ fn test_under_repay_panics_k_violation() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 332;
-    client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     let exact_in: i128 = inverse_swap_in(1_000_i128, 1_000_i128, amount_out, FEE_BPS);
     let under_in: i128 = exact_in - 1;
@@ -206,7 +206,7 @@ impl ProxyContract {
     pub fn do_flash_and_repay(env: Env, amm: Address, amount_out: i128, amount_in: i128) {
         let bytes = Bytes::new(&env);
         let client = AmmContractClient::new(&env, &amm);
-        client.flash_swap_a_for_b(&amount_out, &FEE_BPS_VAL, &bytes);
+        client.flash_swap_a_for_b(&amount_out, &bytes);
         client.repay_flash_swap(&amount_in);
     }
 }
@@ -225,7 +225,7 @@ fn test_zero_fee_flash_swap_succeeds() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 100;
-    client.flash_swap_a_for_b(&amount_out, &0_i128, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, 0_i128);
     client.repay_flash_swap(&amount_in);
@@ -249,7 +249,7 @@ fn test_reentrancy_blocks_add() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
     client.add_liquidity(&1_i128, &1_i128);
 }
 
@@ -259,7 +259,7 @@ fn test_reentrancy_blocks_remove() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
     client.remove_liquidity(&1_i128, &1_i128);
 }
 
@@ -269,8 +269,8 @@ fn test_reentrancy_blocks_swap() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100, &FEE_BPS, &Bytes::new(&env));
-    client.swap_a_for_b(&1_i128, &FEE_BPS);
+    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
+    client.swap_a_for_b(&1_i128);
 }
 
 #[test]
@@ -279,8 +279,8 @@ fn test_reentrancy_blocks_nested() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100, &FEE_BPS, &Bytes::new(&env));
-    client.flash_swap_a_for_b(&1_i128, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&1_i128, &Bytes::new(&env));
 }
 
 // =========================================================================
@@ -302,7 +302,7 @@ fn test_repay_zero_amount_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
     client.repay_flash_swap(&0_i128);
 }
 
@@ -312,7 +312,7 @@ fn test_zero_amount_out_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&0_i128, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&0_i128, &Bytes::new(&env));
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn test_invalid_fee_bps_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100_i128, &10_000_i128, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&100_i128, &Bytes::new(&env));
 }
 
 #[test]
@@ -331,7 +331,7 @@ fn test_drain_rejected() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     // amount_out == reserve_b is forbidden (must be strictly less).
-    client.flash_swap_a_for_b(&1_000_i128, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&1_000_i128, &Bytes::new(&env));
 }
 
 // =========================================================================
@@ -346,13 +346,13 @@ fn test_consecutive_flash_swaps_succeed() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out_1: i128 = 100;
-    client.flash_swap_a_for_b(&amount_out_1, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out_1, &Bytes::new(&env));
     let in_1: i128 = inverse_swap_in(1_000, 1_000, amount_out_1, FEE_BPS);
     client.repay_flash_swap(&in_1);
     assert!(!client.is_flash_active());
 
     let amount_out_2: i128 = 50;
-    client.flash_swap_a_for_b(&amount_out_2, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out_2, &Bytes::new(&env));
     // The first flash grew k from 1,000,000 to ~1,000,800 and changed
     // reserves to (~1_112, 900), so the second flash must use the
     // *post-first-repay* reserves when computing the inverse formula.
@@ -372,7 +372,7 @@ fn test_params_payload_flows_through() {
 
     // Single-byte payload (Soroban Bytes must be at least 1 byte).
     let params = Bytes::from_array(&env, &[0x42]);
-    let out = client.flash_swap_a_for_b(&100, &FEE_BPS, &params);
+    let out = client.flash_swap_a_for_b(&100, &params);
     assert_eq!(out, 100);
     let (ra, rb) = client.get_reserves();
     assert_eq!(ra, 1_000);

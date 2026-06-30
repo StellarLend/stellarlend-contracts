@@ -318,7 +318,8 @@ pub fn compute_borrow_rate(
             )
             .ok_or(InterestRateError::Overflow)?
     } else if utilization <= config.kink2_bps {
-        let post_kink_denominator = config.kink2_bps
+        let post_kink_denominator = config
+            .kink2_bps
             .checked_sub(config.kink_utilization_bps)
             .ok_or(InterestRateError::DivisionByZero)?;
         config

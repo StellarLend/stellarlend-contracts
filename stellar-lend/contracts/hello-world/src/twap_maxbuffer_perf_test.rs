@@ -15,9 +15,8 @@ mod tests {
     use crate::amm_twap::{
         get_snapshots, get_twap, snapshot_search_metrics_for_test, update_twap_accumulators,
         MAX_SNAPSHOTS, MIN_WINDOW_SECS, PRICE_SCALE, SNAPSHOT_INTERVAL_SECS,
+        TWAP_READ_SEARCH_COMPARISON_BUDGET,
     };
-
-    const LOOKUP_COMPARISON_BUDGET: u32 = 11;
 
     /// Advances the mock ledger by `secs` seconds.
     fn advance(env: &Env, secs: u64) {
@@ -66,8 +65,8 @@ mod tests {
         let start_snap = start_snap.expect("full ring should have a bounding snapshot");
 
         assert!(
-            comparisons <= LOOKUP_COMPARISON_BUDGET,
-            "expected <= {LOOKUP_COMPARISON_BUDGET} comparisons, got {comparisons}"
+            comparisons <= TWAP_READ_SEARCH_COMPARISON_BUDGET,
+            "expected <= {TWAP_READ_SEARCH_COMPARISON_BUDGET} comparisons, got {comparisons}"
         );
         assert_eq!(
             comparisons,
@@ -102,8 +101,8 @@ mod tests {
         let start_snap = start_snap.expect("full ring should have a long-window anchor");
 
         assert!(
-            comparisons <= LOOKUP_COMPARISON_BUDGET,
-            "expected <= {LOOKUP_COMPARISON_BUDGET} comparisons, got {comparisons}"
+            comparisons <= TWAP_READ_SEARCH_COMPARISON_BUDGET,
+            "expected <= {TWAP_READ_SEARCH_COMPARISON_BUDGET} comparisons, got {comparisons}"
         );
         assert_eq!(comparisons, binary_search_budget(MAX_SNAPSHOTS));
         assert!(start_snap.timestamp <= target_start);
@@ -133,7 +132,7 @@ mod tests {
             MAX_SNAPSHOTS
         );
         assert!(
-            comparisons <= LOOKUP_COMPARISON_BUDGET,
+            comparisons <= TWAP_READ_SEARCH_COMPARISON_BUDGET,
             "comparison count should stay within the documented budget"
         );
     }

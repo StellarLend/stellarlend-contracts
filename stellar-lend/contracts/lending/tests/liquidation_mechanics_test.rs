@@ -4,7 +4,7 @@
 mod tests {
     use stellar_lend_common::BPS_DENOM;
     use stellarlend_lending::math;
-    use stellarlend_lending::{CLOSE_FACTOR, LIQUIDATION_THRESHOLD_BPS};
+    use stellarlend_lending::{DEFAULT_CLOSE_FACTOR_BPS, LIQUIDATION_THRESHOLD_BPS};
 
     // Helper to compute seized collateral based on actual repay
     fn compute_seized(actual_repay: i128) -> i128 {
@@ -25,7 +25,8 @@ mod tests {
         assert!(hf < 10_000);
 
         // Close factor cap
-        let max_repay = math::checked_mul_div_floor(debt, CLOSE_FACTOR, BPS_DENOM).unwrap();
+        let max_repay =
+            math::checked_mul_div_floor(debt, DEFAULT_CLOSE_FACTOR_BPS, BPS_DENOM).unwrap();
         assert_eq!(max_repay, 5_000);
         let actual_repay = std::cmp::min(requested, max_repay);
         assert_eq!(actual_repay, 5_000);
@@ -49,7 +50,8 @@ mod tests {
         assert!(hf < 10_000);
 
         // Close factor cap
-        let max_repay = math::checked_mul_div_floor(debt, CLOSE_FACTOR, BPS_DENOM).unwrap();
+        let max_repay =
+            math::checked_mul_div_floor(debt, DEFAULT_CLOSE_FACTOR_BPS, BPS_DENOM).unwrap();
         assert_eq!(max_repay, 6_000);
         let actual_repay = std::cmp::min(requested, max_repay);
         assert_eq!(actual_repay, 6_000);

@@ -67,7 +67,7 @@ mod price_impact_tests {
         let (_env, client) = setup();
         client.init_pool(&1_000, &1_000);
         // ~50 % of reserve_a — huge price impact
-        let out = client.swap_a_for_b(&500, &30);
+        let out = client.swap_a_for_b(&500);
         assert!(out > 0);
         // Guard is still reporting the sentinel
         // (no set_max_impact_bps called)
@@ -84,7 +84,7 @@ mod price_impact_tests {
         assert_eq!(client.get_max_impact_bps(), IMPACT_GUARD_DISABLED);
 
         client.init_pool(&1_000, &1_000);
-        let out = client.swap_a_for_b(&800, &30);
+        let out = client.swap_a_for_b(&800);
         assert!(out > 0);
     }
 
@@ -111,7 +111,7 @@ mod price_impact_tests {
 
         client.set_max_impact_bps(&admin, &cap);
         client.init_pool(&ra, &rb);
-        let out = client.swap_a_for_b(&amount_in, &fee_bps);
+        let out = client.swap_a_for_b(&amount_in);
 
         // Pool must have updated correctly
         let (new_ra, new_rb) = client.get_reserves();
@@ -140,11 +140,14 @@ mod price_impact_tests {
         // that exact value — the guard uses strict `>`, so impact == cap must
         // be allowed.
         let impact = expected_impact_bps(ra, rb, amount_in, fee_bps);
-        assert!(impact > 0, "need non-zero impact for this test to be meaningful");
+        assert!(
+            impact > 0,
+            "need non-zero impact for this test to be meaningful"
+        );
 
         client.set_max_impact_bps(&admin, &(impact as u32));
         client.init_pool(&ra, &rb);
-        let out = client.swap_a_for_b(&amount_in, &fee_bps);
+        let out = client.swap_a_for_b(&amount_in);
         assert!(out > 0);
 
         // One bps tighter must reject
@@ -177,7 +180,7 @@ mod price_impact_tests {
         client.set_max_impact_bps(&admin, &cap);
         client.init_pool(&ra, &rb);
         // Must panic with "PriceImpactExceeded"
-        client.swap_a_for_b(&amount_in, &fee_bps);
+        client.swap_a_for_b(&amount_in);
     }
 
     /// When the guard rejects a swap the reserves must stay at their
@@ -198,7 +201,7 @@ mod price_impact_tests {
         client.init_pool(&1_000, &1_000);
 
         let (ra_before, rb_before) = client.get_reserves();
-        let out = client.swap_a_for_b(&5, &30); // tiny swap ~0.5 %
+        let out = client.swap_a_for_b(&5); // tiny swap ~0.5 %
         let (ra_after, rb_after) = client.get_reserves();
 
         assert!(out > 0);
@@ -241,7 +244,7 @@ mod price_impact_tests {
         client.set_max_impact_bps(&admin, &50_u32);
         client.init_pool(&1_000_000, &1_000_000);
         // amount_in = 50 → impact ≈ 50 / 1_000_050 * 10_000 ≈ 0.5 bps → passes
-        let out = client.swap_a_for_b(&50, &0);
+        let out = client.swap_a_for_b(&50);
         assert!(out > 0);
     }
 
@@ -254,6 +257,6 @@ mod price_impact_tests {
         client.set_max_impact_bps(&admin, &50_u32);
         client.init_pool(&1_000_000, &1_000_000);
         // amount_in = 10_000 → impact ≈ 100 bps → fails 50 bps cap
-        client.swap_a_for_b(&10_000, &0);
+        client.swap_a_for_b(&10_000);
     }
 }

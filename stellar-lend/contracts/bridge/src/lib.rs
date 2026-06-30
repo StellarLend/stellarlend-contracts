@@ -1,340 +1,100 @@
-use anyhow::{anyhow, Result};
-use bincode;
-use ed25519_dalek::{PublicKey, Signature, Verifier};
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+#![no_std]
+use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Env, Map};
 
-/// Minimum number of validators required for a secure validator set.
-///
-/// A set with fewer than this many validators has an unacceptably low
-/// supermajority threshold — a single compromised key or node outage can
-/// halt or subvert the bridge.  The value `3` ensures the supermajority
-/// threshold is at least 3, matching the BFT assumption that fewer than
-/// 1/3 of validators may be Byzantine.
-pub const MIN_VALIDATORS: usize = 3;
-
-/// Maximum number of validators permitted in a single set.
-///
-/// This limit bounds the proof‑verification cost of a quorum check and
-/// prevents unbounded storage growth.  The value `32` is a generous
-/// upper bound that accommodates most real‑world bridge deployments
-/// while keeping per‑rotation verification within reasonable limits.
-pub const MAX_VALIDATORS: usize = 32;
-
-/// Typed contract errors to represent specific domain violations.
-#[derive(Debug, PartialEq, Eq)]
+/// Error codes for Bridge contract operations.
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BridgeError {
-    /// Emitted when attempting to configure a rolling window of length 0.
-    InvalidWindowSize,
-    /// Emitted when `rotate_validators` receives a `new_set` whose effective
-    /// (deduplicated) validator count is below [`MIN_VALIDATORS`].
-    ValidatorSetTooSmall,
-    /// Emitted when `rotate_validators` receives a `new_set` whose effective
-    /// (deduplicated) validator count exceeds [`MAX_VALIDATORS`].
-    ValidatorSetTooLarge,
-    /// Emitted when `rotate_validators` receives a `new_set` containing
-    /// duplicate public keys.
-    DuplicateValidatorKey,
-    /// No guardian key has been configured for this bridge. Pause / unpause
-    /// requires a guardian to be set via [`Bridge::set_guardian`].
-    NoGuardianConfigured,
-    /// The signature supplied to authorise a guardian action (pause, unpause,
-    /// or future guardian-protected operations) did not verify against the
-    /// configured guardian key over the expected action-bound payload.
-    InvalidGuardianSignature,
-    /// The caller asked us to pause / unpause a validator whose public key is
-    /// not in the current validator set.
-    UnknownValidator,
-    /// Pausing this validator would drop the active validator count below the
-    /// effective supermajority quorum threshold, so quorum would become
-    /// unreachable. Rejected (fail-closed) — the bridge prefers to remain
-    /// live with a known-compromised key over freezing itself.
-    PauseWouldBreakQuorum,
-    /// The validator requested for pause was already in the paused set.
-    AlreadyPaused,
-    /// The validator requested for unpause was not in the paused set.
-    NotPaused,
-    /// Emitted when an outbound admission would exceed the configured cap.
-    OutboundCapExceeded,
+    /// Nonce overflow: destination nonce has reached u64::MAX and cannot be incremented.
+    NonceOverflow = 1,
 }
 
-impl std::fmt::Display for BridgeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BridgeError::InvalidWindowSize => {
-                write!(f, "InvalidWindowSize: window_size must be > 0")
-            }
-            BridgeError::ValidatorSetTooSmall => {
-                write!(
-                    f,
-                    "ValidatorSetTooSmall: validator set must have at least {MIN_VALIDATORS} unique validators"
-                )
-            }
-            BridgeError::ValidatorSetTooLarge => {
-                write!(
-                    f,
-                    "ValidatorSetTooLarge: validator set must have at most {MAX_VALIDATORS} unique validators"
-                )
-            }
-            BridgeError::DuplicateValidatorKey => {
-                write!(
-                    f,
-                    "DuplicateValidatorKey: new_set contains duplicate public keys"
-                )
-            }
-            BridgeError::NoGuardianConfigured => {
-                write!(f, "NoGuardianConfigured: bridge has no guardian key set")
-            }
-            BridgeError::InvalidGuardianSignature => {
-                write!(f, "InvalidGuardianSignature: guardian signature did not verify")
-            }
-            BridgeError::UnknownValidator => {
-                write!(f, "UnknownValidator: target validator not in current validator set")
-            }
-            BridgeError::PauseWouldBreakQuorum => write!(
-                f,
-                "PauseWouldBreakQuorum: pausing this validator would leave active count below the effective quorum threshold"
-            ),
-            BridgeError::AlreadyPaused => write!(f, "AlreadyPaused: validator is already paused"),
-            BridgeError::NotPaused => write!(f, "NotPaused: validator is not currently paused"),
-            BridgeError::OutboundCapExceeded => {
-                write!(f, "OutboundCapExceeded: outbound admission would exceed the configured cap")
-            }
-        }
-    }
+/// Ledger storage key for the outbound nonce map.
+#[contracttype]
+pub enum BridgeDataKey {
+    /// Maps destination network ID (u32) to its next outbound nonce (u64).
+    OutboundNonces,
 }
 
-impl std::error::Error for BridgeError {}
-/// Events emitted by guardian-gated validator-pause operations. Callers (e.g.
-/// off-chain tooling, audit pipelines, or a Soroban host adapter) are expected
-/// to serialize or log these events so downstream consumers can react (alert,
-/// rotate keys, fan out to other nodes, etc.).
+/// Emitted when an outbound bridge message is created.
+/// Carries the destination network and the nonce assigned to this message,
+/// giving relayers and the destination chain a unique, ordered identity.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundMessageEvent {
+    /// Destination network identifier.
+    pub dest: u32,
+    /// Monotonically increasing nonce for this destination.
+    pub nonce: u64,
+}
+
+/// Bridge contract with per-destination outbound nonce sequencing.
 ///
-/// In this off-chain Rust crate we do not have a host-managed event log; we
-/// return the typed event from the operation so callers can persist it
-/// however they store the bridge. The on-the-wire shape is determined by the
-/// caller's chosen encoder.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ValidatorEvent {
-    /// A validator has been paused by the guardian. Signatures from this key
-    /// are now ignored in `verify_quorum_proof` and the effective quorum
-    /// threshold is recomputed against the remaining active validators.
-    Paused {
-        /// Raw byte encoding of the paused validator's public key, so the
-        /// event is self-describing for layers that don't have direct access
-        /// to the `ValidatorSet`.
-        validator: Vec<u8>,
-        /// Bridge epoch at the time the pause became effective.
-        epoch: u64,
-    },
-    /// A previously paused validator has been resumed. The key is counted
-    /// toward quorum again from this point forward.
-    Unpaused {
-        validator: Vec<u8>,
-        epoch: u64,
-    },
-}
+/// Each outbound transfer is assigned a strictly-increasing nonce keyed by
+/// destination network. This gives relayers and downstream chains a
+/// replay-resistant, deterministically ordered message identity.
+#[contract]
+pub struct Bridge;
 
-impl std::fmt::Display for ValidatorEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ValidatorEvent::Paused { validator, epoch } => write!(
-                f,
-                "ValidatorPaused(epoch={epoch}, pk=0x{})",
-                lowercase_hex(validator)
-            ),
-            ValidatorEvent::Unpaused { validator, epoch } => write!(
-                f,
-                "ValidatorUnpaused(epoch={epoch}, pk=0x{})",
-                lowercase_hex(validator)
-            ),
-        }
-    }
-}
-
-/// Store validator public keys as raw bytes so the struct remains serde-friendly
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ValidatorSet {
-    pub validators: Vec<Vec<u8>>, // each is PublicKey::to_bytes()
-}
-
-impl ValidatorSet {
-    /// Returns the effective validator count used for quorum decisions.
-    ///
-    /// Duplicate byte-encoded keys collapse to a single logical validator so a
-    /// malformed set cannot silently raise the quorum threshold by repeating the
-    /// same public key multiple times.
-    pub fn len(&self) -> usize {
-        self.validators
-            .iter()
-            .map(|validator| validator.as_slice())
-            .collect::<HashSet<_>>()
-            .len()
-    }
-
-    /// Returns the strict supermajority quorum threshold for this set.
-    ///
-    /// The threshold is computed from the deduplicated validator count exposed
-    /// by [`ValidatorSet::len`], so repeated keys never inflate the required
-    /// number of unique signatures.
-    pub fn threshold(&self) -> usize {
-        // Supermajority: > 2/3 of validators
-        let n = self.len();
-        (n * 2) / 3 + 1
-    }
-
-    /// Returns `true` when `pk` is present anywhere in the raw validator list.
-    pub fn contains_pk(&self, pk: &PublicKey) -> bool {
-        let b = pk.to_bytes();
-        self.validators.iter().any(|v| v.as_slice() == b.as_ref())
-    }
-
-    /// Returns the raw byte-encoded validator list in storage order.
-    pub fn to_bytes_vec(&self) -> Vec<Vec<u8>> {
-        self.validators.clone()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Bridge {
-    pub epoch: u64,
-    pub validators: ValidatorSet,
-    /// Maximum cumulative inbound value (in the bridge's native token unit,
-    /// matching the `i128` amount convention used elsewhere in this workspace)
-    /// that may be admitted within a single rolling window.
-    ///
-    /// A value of `0` means "no inbound" (fail-closed) — not "unlimited".
-    /// Defaults to `0` so a freshly constructed `Bridge` admits no inbound
-    /// value until an operator explicitly opts in via [`Bridge::set_inbound_cap`].
-    pub max_per_window: i128,
-    /// Length of the rolling inbound-value window, in ledger-time seconds
-    /// (e.g. `86_400` for a calendar-day window). Must be > 0 once configured.
-    pub window_size: u64,
-    /// Ledger time at which the current window began.
-    pub window_start: u64,
-    /// Cumulative inbound value admitted so far within `[window_start, window_start + window_size)`.
-    pub window_inbound_total: i128,
-    /// Set of byte-encoded public keys of validators that the guardian has
-    /// paused. Signatures from paused validators are silently skipped
-    /// (not counted toward quorum, not verified) in
-    /// [`Bridge::verify_quorum_proof`], and the effective quorum threshold is
-    /// recomputed against the active (non-paused) subset.
-    ///
-    /// Pauses are scoped to the current validator set: a successful call to
-    /// [`Bridge::rotate_validators`] clears this set, since the new validator
-    /// set implies fresh key material and stale pause flags are meaningless.
-    /// See [`VALIDATOR_PAUSE.md`](https://example.invalid/VALIDATOR_PAUSE.md)
-    /// for the full rationale.
-    pub paused_validators: HashSet<Vec<u8>>,
-    /// Guardian public key authorised to pause / unpause individual
-    /// validators. `None` means the bridge has no guardian configured;
-    /// [`Bridge::pause_validator`] and [`Bridge::unpause_validator`] are both
-    /// rejected with [`BridgeError::NoGuardianConfigured`] until a guardian is
-    /// configured via [`Bridge::set_guardian`].
-    pub guardian: Option<PublicKey>,
-    /// Maximum cumulative outbound value that may be admitted within a single
-    /// rolling window. Behaves like `max_per_window` for inbound: `0` means
-    /// fail-closed until `set_outbound_cap` is called with a positive value.
-    pub max_outbound_per_window: i128,
-    /// Length of the rolling outbound-value window, in ledger-time seconds.
-    pub outbound_window_size: u64,
-    /// Ledger time at which the current outbound window began.
-    pub outbound_window_start: u64,
-    /// Cumulative outbound value admitted so far within
-    /// `[outbound_window_start, outbound_window_start + outbound_window_size)`.
-    pub window_outbound_total: i128,
-    /// Per-instance domain identifier mixed into every quorum-proof payload
-    /// (issue #1146). Two bridge instances that share the same validator set and
-    /// epoch but have different `bridge_id`s produce different signing payloads,
-    /// so a signature collected for one instance cannot be replayed against the
-    /// other. Defaults to empty for [`Bridge::new`]; set a unique value per
-    /// deployment via [`Bridge::new_with_id`].
-    pub bridge_id: Vec<u8>,
-    /// Maximum number of validator changes (added + removed) allowed in a single rotation.
-    ///
-    /// If `None`, the churn limit is disabled (default).
-    pub max_churn: Option<u32>,
-}
-
-/// Default rolling window length: one day, in seconds.
-pub const DEFAULT_INBOUND_WINDOW_SECS: u64 = 86_400;
-/// Default rolling window length for outbound caps: one day, in seconds.
-pub const DEFAULT_OUTBOUND_WINDOW_SECS: u64 = 86_400;
-
-/// Domain separator tags prepended to guardian-signed payloads for
-/// pause / unpause authorisations. Binding the tag into the signed payload
-/// prevents replay of a `pause_validator` signature against
-/// `unpause_validator` (or vice versa) and prevents cross-action confusion.
-const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
-const UNPAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_UNPAUSE:";
-
-/// Constant domain-separation tag (the "purpose" tag) prefixed onto every
-/// quorum-proof signing payload (issue #1146).
-///
-/// Including a fixed, purpose-specific tag ensures a validator signature
-/// produced for **validator-set rotation** can never be reinterpreted as a
-/// signature over some other message that happened to share the same byte
-/// layout — a cross-context / cross-purpose signature-reuse attack. Bumping the
-/// trailing version (`v1`) cleanly invalidates every previously collected
-/// signature if the payload format ever changes.
-pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
-
+#[contractimpl]
 impl Bridge {
-    /// Construct a new bridge. Inbound value transfer is **fail-closed by
-    /// default**: `max_per_window` starts at `0`, so [`Bridge::admit_inbound`]
-    /// rejects everything until [`Bridge::set_inbound_cap`] is called with a
-    /// non-zero cap.
-    ///
-    /// A freshly constructed `Bridge` has no guardian (so pause / unpause
-    /// calls are rejected) and an empty paused set. Operators must opt in
-    /// to guardian-gated operations via [`Bridge::set_guardian`].
-    pub fn new(initial: ValidatorSet) -> Self {
-        Self::new_with_id(initial, Vec::new())
+    /// Retrieve the current outbound nonce map from storage, or return an empty map.
+    fn load_nonces(env: &Env) -> Map<u32, u64> {
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, Map<u32, u64>>(&BridgeDataKey::OutboundNonces)
+            .unwrap_or_else(|| Map::new(env))
     }
 
-    /// Construct a new bridge with an explicit per-instance `bridge_id` used for
-    /// quorum-proof domain separation (issue #1146).
-    ///
-    /// Use a value that is unique per bridge deployment (e.g. an encoded
-    /// chain id + bridge contract address). Quorum signatures are bound to this
-    /// id, so a proof gathered for one instance will not verify against another.
-    pub fn new_with_id(initial: ValidatorSet, bridge_id: Vec<u8>) -> Self {
-        Bridge {
-            epoch: 0,
-            validators: initial,
-            max_per_window: 0,
-            window_size: DEFAULT_INBOUND_WINDOW_SECS,
-            window_start: 0,
-            window_inbound_total: 0,
-            paused_validators: HashSet::new(),
-            guardian: None,
-            max_outbound_per_window: 0,
-            outbound_window_size: DEFAULT_OUTBOUND_WINDOW_SECS,
-            outbound_window_start: 0,
-            window_outbound_total: 0,
-            bridge_id,
-            max_churn: None,
-        }
+    /// Persist the outbound nonce map to storage.
+    fn save_nonces(env: &Env, nonces: &Map<u32, u64>) {
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundNonces, nonces);
     }
 
-    /// Configure the guardian public key authorised to pause / unpause
-    /// individual validators.
+    /// Return the next outbound nonce for `dest`, then increment it.
     ///
-    /// Although this method has no signature check (the bridge is a
-    /// pure-Rust data structure with no built-in notion of a privileged
-    /// host), operational guidance is to call it exactly once, on a trusted
-    /// host, immediately after [`Bridge::new`]. Replacing the guardian
-    /// later must only be done on the same trusted path; there is no
-    /// built-in two-step handover — if you need one, build it on top of
-    /// `set_guardian`.
-    pub fn set_guardian(&mut self, guardian: PublicKey) {
-        self.guardian = Some(guardian);
+    /// The first call for a fresh destination returns `0`.
+    /// Subsequent calls return strictly increasing values.
+    /// Panics with `BridgeError::NonceOverflow` if the nonce would exceed `u64::MAX`.
+    ///
+    /// # Arguments
+    /// * `dest` - Destination network identifier (u32).
+    ///
+    /// # Returns
+    /// The nonce assigned to this outbound message.
+    pub fn next_outbound_nonce(env: Env, dest: u32) -> Result<u64, BridgeError> {
+        let mut nonces = Self::load_nonces(&env);
+        let current = nonces.get(dest).unwrap_or(0u64);
+        let next = current.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        nonces.set(dest, next);
+        Self::save_nonces(&env, &nonces);
+
+        // Emit outbound event so relayers can track the message identity.
+        env.events().publish(
+            (soroban_sdk::symbol_short!("outbound"),),
+            OutboundMessageEvent {
+                dest,
+                nonce: current,
+            },
+        );
+
+        Ok(current)
     }
 
-    /// Returns `Some(&guardian_public_key)` if a guardian has been
-    /// configured, otherwise `None`.
-    pub fn guardian(&self) -> Option<&PublicKey> {
-        self.guardian.as_ref()
+    /// Return the next nonce that will be assigned for `dest` without incrementing.
+    ///
+    /// Returns `0` if no messages have been sent to `dest` yet.
+    ///
+    /// # Arguments
+    /// * `dest` - Destination network identifier (u32).
+    ///
+    /// # Returns
+    /// The nonce that the next `next_outbound_nonce` call will return for this destination.
+    pub fn peek_outbound_nonce(env: Env, dest: u32) -> u64 {
+        let nonces = Self::load_nonces(&env);
+        nonces.get(dest).unwrap_or(0u64)
     }
 
     /// Returns the number of active (non-paused) validators.
@@ -391,27 +151,21 @@ impl Bridge {
         self.paused_validators.iter().cloned().collect()
     }
 
-    /// Verify a quorum proof from the current validator set over the (new_set, epoch) payload.
-    ///
-    /// Paused validator signatures are *silently skipped* — they are neither
-    /// verified nor counted toward the quorum, and they do not cause the
-    /// overall proof to fail. Skipping (rather than rejecting on sight) is a
-    /// deliberate choice: a compromised key may still be present in the
-    /// relay-network gossip, so silently ignoring it lets a bridge keep
-    /// operating under quorum with a known-compromised signer excluded. The
-    /// effective quorum threshold is recomputed from the active (non-paused)
-    /// validator subset.
-    /// Builds the canonical, domain-separated payload that quorum proofs sign
-    /// over (issue #1146):
+    /// Builds the canonical, domain-separated payload for a validator-set
+    /// rotation quorum proof.
     ///
     /// ```text
     ///   payload = bincode((QUORUM_PROOF_DOMAIN, bridge_id, new_set_bytes, epoch))
     /// ```
     ///
-    /// Prefixing the constant [`QUORUM_PROOF_DOMAIN`] tag and the per-instance
-    /// `bridge_id` makes a signature valid **only** for this bridge instance and
-    /// this purpose. Signers and verifiers must both go through this function so
-    /// the bytes always match.
+    /// `bridge_id` identifies the deployment, `new_set_bytes` preserves the
+    /// proposed set's storage order, and `epoch` is the exact successor epoch.
+    /// Current active validators must all sign the identical bytes returned by
+    /// this function; changing any field invalidates the signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the payload cannot be serialized.
     pub fn quorum_proof_payload(
         bridge_id: &[u8],
         new_set: &ValidatorSet,
@@ -425,11 +179,19 @@ impl Bridge {
         ))?)
     }
 
-    /// Verify a quorum proof from the current validator set over the (new_set, epoch) payload.
+    /// Verifies that current active validators authorized `new_set` for
+    /// `epoch` with a strict supermajority quorum proof.
     ///
     /// Paused validator signatures are *silently skipped* — they are neither
     /// verified nor counted toward the quorum, and they do not cause the
     /// overall proof to fail.
+    ///
+    /// The supplied proof vector is attacker-influenced, so it is bounded before
+    /// any signature verification work runs. A proof cannot contain more
+    /// entries than there are unique validators in the current set, and each
+    /// signer public key may appear at most once. These checks cap verifier
+    /// work at O(current validator set size) and reject duplicate-laden proofs
+    /// before they can burn CPU on redundant signature checks.
     fn verify_quorum_proof(
         &self,
         new_set: &ValidatorSet,
@@ -438,6 +200,23 @@ impl Bridge {
     ) -> Result<()> {
         if proofs.is_empty() {
             return Err(anyhow!("empty proofs"));
+        }
+
+        let max_proofs = self.validators.len();
+        if proofs.len() > max_proofs {
+            return Err(anyhow!(
+                "quorum proof has {} entries but current validator set has {} unique validators",
+                proofs.len(),
+                max_proofs
+            ));
+        }
+
+        let mut seen_proof_signers: HashSet<Vec<u8>> = HashSet::new();
+        for (pk, _) in proofs.iter() {
+            let key_bytes = pk.to_bytes().to_vec();
+            if !seen_proof_signers.insert(key_bytes) {
+                return Err(anyhow!("quorum proof contains duplicate signer"));
+            }
         }
 
         // Domain-separated payload: bincode(domain_tag, bridge_id, new_set_bytes, epoch).
@@ -465,11 +244,6 @@ impl Bridge {
                 continue;
             }
 
-            // Deduplicate within the active subset.
-            if unique_active_signers.contains(&key_bytes) {
-                continue;
-            }
-
             pk.verify(&payload, sig).map_err(|e| anyhow!(e.to_string()))?;
             unique_active_signers.insert(key_bytes);
         }
@@ -488,8 +262,11 @@ impl Bridge {
         self.max_churn = max_churn;
     }
 
-    /// Rotate validators to `new_set` at `next_epoch` if `proofs` from current set form a quorum.
-    /// The `epoch` must be exactly current_epoch + 1.
+    /// Applies a validator-set rotation authorized by the current active set.
+    ///
+    /// `epoch` must equal `self.epoch + 1`. `proofs` must contain a strict
+    /// supermajority of unique valid signatures from current active validators
+    /// over the canonical `(domain, bridge_id, new_set, epoch)` payload.
     ///
     /// # Security validation
     ///
@@ -518,7 +295,18 @@ impl Bridge {
     /// Also enforces the `max_churn` limit (if configured) on the symmetric difference
     /// between the current validator set and the new validator set.
     ///
-    /// Returns the computed churn count on success.
+    /// On success, the validator set and epoch advance atomically and stale
+    /// pause flags are cleared. On failure, those fields remain unchanged.
+    ///
+    /// # Returns
+    ///
+    /// Returns the symmetric-difference churn count between the old and new
+    /// validator sets.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-successor epoch, an out-of-bounds or duplicate-key set, a
+    /// churn-limit violation, or an invalid/insufficient quorum proof.
     pub fn rotate_validators(
         &mut self,
         new_set: ValidatorSet,
@@ -529,20 +317,8 @@ impl Bridge {
             return Err(anyhow!("invalid epoch: must be current_epoch + 1"));
         }
 
-        // ── Validate new_set size bounds ──────────────────────────────────
-        let unique_count = new_set.len();
-        if unique_count < MIN_VALIDATORS {
-            return Err(anyhow!("{}", BridgeError::ValidatorSetTooSmall));
-        }
-        if unique_count > MAX_VALIDATORS {
-            return Err(anyhow!("{}", BridgeError::ValidatorSetTooLarge));
-        }
-
-        // ── Validate no duplicate keys ────────────────────────────────────
-        // We check the *raw* (pre-dedup) list.  The `len()` method deduplicates
-        // internally, but we also want to reject sets that contain any duplicate
-        // entries at all — they are never legitimate and always indicate an
-        // operator error.
+        // Reject raw duplicate keys before size checks so callers get the
+        // most specific error for malformed validator-set input.
         {
             let mut seen = std::collections::HashSet::new();
             for key_bytes in &new_set.validators {
@@ -550,6 +326,15 @@ impl Bridge {
                     return Err(anyhow!("{}", BridgeError::DuplicateValidatorKey));
                 }
             }
+        }
+
+        // ── Validate new_set size bounds ──────────────────────────────────
+        let unique_count = new_set.len();
+        if unique_count < MIN_VALIDATORS {
+            return Err(anyhow!("{}", BridgeError::ValidatorSetTooSmall));
+        }
+        if unique_count > MAX_VALIDATORS {
+            return Err(anyhow!("{}", BridgeError::ValidatorSetTooLarge));
         }
 
         // Compute churn: symmetric difference size between current set and new set.
@@ -701,7 +486,11 @@ impl Bridge {
         })
     }
 
-    /// Verify inbound message signature epoch. Messages signed with an epoch < current epoch are rejected.
+    /// Rejects an inbound message epoch that belongs to a retired validator set.
+    ///
+    /// An epoch lower than [`Bridge::epoch`] fails. The current epoch and future
+    /// epochs pass this narrow guard, so callers must separately authenticate
+    /// the inbound message and enforce equality if their policy requires it.
     pub fn validate_inbound_epoch(&self, signed_epoch: u64) -> Result<()> {
         if signed_epoch < self.epoch {
             return Err(anyhow!("message signed by retired validator set (epoch too old)"));
@@ -882,10 +671,19 @@ fn lowercase_hex(bytes: &[u8]) -> String {
 mod rotation_test;
 
 #[cfg(test)]
+mod rotation_doc_test;
+
+#[cfg(test)]
 mod domain_separation_test;
 
 #[cfg(test)]
+mod quorum_proof_bound_test;
+
+#[cfg(test)]
 mod inbound_cap_test;
+
+#[cfg(test)]
+mod window_rollover_test;
 
 #[cfg(test)]
 mod validator_bounds_test;

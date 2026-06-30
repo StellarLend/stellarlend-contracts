@@ -21,11 +21,11 @@ fn test_error_paths() {
     let client = AmmContractClient::new(&env, &id);
 
     // Test NonPositiveAmount in swap_a_for_b
-    let res = client.swap_a_for_b(&0, &30);
+    let res = client.swap_a_for_b(&0);
     assert_eq!(res, Err(AmmPoolError::NonPositiveAmount));
 
     // Test EmptyPool in swap_a_for_b
-    let res = client.swap_a_for_b(&100, &30);
+    let res = client.swap_a_for_b(&100);
     assert_eq!(res, Err(AmmPoolError::EmptyPool));
 
     client.init_pool(&1000, &1000).unwrap();
@@ -46,7 +46,7 @@ fn test_error_paths() {
 
     // Test ReentrantFlashSwap
     client.init_pool(&1000, &1000).unwrap();
-    client.flash_swap_a_for_b(&100, &30, &Bytes::new());
-    let res = client.swap_a_for_b(&100, &30);
+    client.flash_swap_a_for_b(&100, &Bytes::new());
+    let res = client.swap_a_for_b(&100);
     assert_eq!(res, Err(AmmPoolError::ReentrantFlashSwap));
 }

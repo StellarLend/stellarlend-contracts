@@ -1,10 +1,11 @@
-# TODO: cross-asset health perf benchmark + read budget
+# TODO - Liquidation parameter setters + storage-backed reads
 
-- [ ] Analyze `compute_aggregate_health_factor` storage access pattern (confirm redundant reads)
-- [ ] Implement trimmed-read optimization in `stellar-lend/contracts/lending/src/cross_asset.rs` (no behavior change)
-- [ ] Add benchmark/budget regression test: `stellar-lend/contracts/lending/src/cross_asset_health_perf_test.rs`
-- [ ] Add docs: `stellar-lend/contracts/lending/CROSS_ASSET_HEALTH_PERF.md`
-- [ ] Wire test module in `stellar-lend/contracts/lending/src/lib.rs`
-- [ ] Run `cargo test -p stellarlend-lending cross_asset_health_perf`
-- [ ] If needed, update budget constants / formulas to match implementation
+- [ ] Implement DataKey variants for liquidation threshold, close factor, and liquidation incentive (defaults to current constants)
+- [ ] Add LendingError variants (or reuse existing) for invalid liquidation parameters
+- [ ] Add admin-only setter functions + getters for these parameters
+- [ ] Update `liquidate` to read threshold/close factor/incentive from storage (not hardcoded constants)
+- [ ] Update `get_position` and `get_health_factor` to use storage-backed liquidation threshold
+- [ ] Add/adjust unit tests to cover: defaults, setters bounds validation, and liquidation/health-factor behavior changes
+- [ ] Update `stellar-lend/contracts/lending/README.md` and `docs/interface_quick_reference.md` to reflect new public API
+- [ ] Run `cargo test -p stellarlend-lending`
 

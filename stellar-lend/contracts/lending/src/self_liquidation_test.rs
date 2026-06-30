@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{LendingContract, LendingContractClient, LendingError};
+use crate::{debt::DebtPosition, DataKey, LendingContract, LendingContractClient, LendingError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup() -> (
@@ -37,8 +37,18 @@ fn setup() -> (
 fn self_liquidation_is_rejected_before_any_state_change() {
     let (env, client, borrower, liquidator, _admin, debt_asset, collateral_asset) = setup();
 
-    client.deposit(&borrower, &100);
-    client.borrow(&borrower, &200);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &100i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     let before_collateral = client.get_position(&borrower).collateral;
     let before_debt = client.get_position(&borrower).debt;
@@ -65,10 +75,20 @@ fn self_liquidation_is_rejected_before_any_state_change() {
 
 #[test]
 fn unhealthy_self_position_is_rejected_even_when_position_is_underwater() {
-    let (_env, client, borrower, liquidator, _admin, debt_asset, collateral_asset) = setup();
+    let (env, client, borrower, liquidator, _admin, debt_asset, collateral_asset) = setup();
 
-    client.deposit(&borrower, &100);
-    client.borrow(&borrower, &200);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &100i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
 

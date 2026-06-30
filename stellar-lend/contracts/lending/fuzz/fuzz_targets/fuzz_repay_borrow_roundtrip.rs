@@ -123,6 +123,7 @@ fuzz_target!(|input: RoundtripInput| {
     let mut now: u64 = 0;
     let mut position = DebtPosition {
         principal: 0,
+        borrow_index_snapshot: stellarlend_lending::debt::INDEX_SCALE,
         last_update: 0,
     };
     // Baseline for the monotonic-effective-debt check; reset after every
@@ -158,6 +159,9 @@ fuzz_target!(|input: RoundtripInput| {
                     Err(DebtError::InvalidAmount) => {
                         panic!("unexpected InvalidAmount for positive borrow amount {}", step.amount);
                     }
+                    Err(DebtError::IndexInvariantViolated) => {
+                        // Should not occur in the legacy path; treat as unexpected overflow.
+                    }
                 },
                 Action::Repay => {
                     let debt_before = effective_debt(&position, now, input.rate_bps);
@@ -192,6 +196,9 @@ fuzz_target!(|input: RoundtripInput| {
                         }
                         Err(DebtError::InvalidAmount) => {
                             panic!("unexpected InvalidAmount for positive repay amount {}", step.amount);
+                        }
+                        Err(DebtError::IndexInvariantViolated) => {
+                            // Should not occur in the legacy path.
                         }
                     }
                 }

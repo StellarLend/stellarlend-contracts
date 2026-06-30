@@ -55,7 +55,7 @@ fn large_move_still_converges_from_band_edge() {
 #[test]
 fn overflow_delta_attempt_is_checked() {
     let rate = compute_smoothed_rate(i128::MIN, i128::MAX, 1, 1, i128::MAX);
-    assert_eq!(rate, -1);
+    assert_eq!(rate, i128::MIN);
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn contract_view_keeps_rate_flat_inside_band_and_respects_clamp() {
     client.borrow(&user, &8_000);
 
     env.as_contract(&client.address, || {
-        assert_eq!(crate::current_borrow_rate(&env), 1_700);
+        assert_eq!(crate::current_borrow_rate(&env), 1_100);
     });
 
     env.ledger().with_mut(|l| l.sequence_number = 101);

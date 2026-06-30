@@ -97,6 +97,21 @@ enum CrossAssetDataKey {
 // Types
 // ---------------------------------------------------------------------------
 
+/// Per-asset borrow-power breakdown entry for `get_borrow_power_by_asset`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AssetBorrowPower {
+    /// Asset key identifying the collateral asset.
+    pub asset_key: AssetKey,
+    /// Collateral value of this asset (normalised, 18-dp).
+    pub collateral_value: i128,
+    /// Borrow capacity contributed by this asset
+    /// = collateral_value × collateral_factor_bps / 10_000.
+    pub borrow_capacity: i128,
+    /// Collateral factor in basis points for this asset.
+    pub collateral_factor_bps: i128,
+}
+
 /// Configuration for a single asset registered in the protocol.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -539,6 +554,54 @@ pub fn get_user_position_summary(
         borrow_capacity,
         is_healthy,
     })
+}
+
+/// Return per-asset borrow-power breakdown for `user`.
+///
+/// For each registered asset where the user has supplied collateral and
+/// `can_collateralize == true`, returns an `AssetBorrowPower` entry with the
+/// collateral value and borrow capacity contributed by that asset.
+///
+/// Assets with zero supplied balance are omitted. Useful for front-ends
+/// that need to display "how much each collateral is backing" or to detect
+/// under-utilised capacity.
+pub fn get_borrow_power_by_asset(
+    env: &Env,
+    user: &Address,
+) -> Result<Vec<AssetBorrowPower>, CrossAssetError> {
+    let list = load_asset_list(env);
+    let mut result = Vec::new(env);
+
+    for i in 0..list.len() {
+        let key = list.get(i).unwrap();
+        let cfg = load_config(env, &key)?;
+        let pos = load_user_position(env, &key, user);
+
+        if pos.supplied == 0 || !cfg.can_collateralize {
+            continue;
+        }
+
+        let norm_price =
+            normalize_price(cfg.price, cfg.price_decimals).ok_or(CrossAssetError::Overflow)?;
+
+        let collateral_value = (pos.supplied as i128)
+            .checked_mul(norm_price)
+            .ok_or(CrossAssetError::Overflow)?
+            / pow10_checked(INTERNAL_DECIMALS).ok_or(CrossAssetError::Overflow)?;
+
+        let borrow_capacity = collateral_value
+            .checked_mul(cfg.collateral_factor_bps)
+            .ok_or(CrossAssetError::Overflow)?
+            / 10_000;
+
+        result.push_back(AssetBorrowPower {
+            asset_key: key,
+            collateral_value,
+            borrow_capacity,
+            collateral_factor_bps: cfg.collateral_factor_bps,
+        });
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------

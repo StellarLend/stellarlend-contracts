@@ -5,7 +5,7 @@
 //!   - Non-incrementing epoch rejection (same epoch, stale epoch, jump >1)
 //!   - Exactly-threshold acceptance
 //!   - Below-threshold rejection (threshold - 1 proofs)
-//!   - Duplicate signer in proof set (counted only once)
+//!   - Duplicate signer in proof set rejection
 //!   - Signer not in current validator set
 //!   - Empty proof list
 //!   - Replay of inbound message signed under a rotated-out validator set
@@ -14,7 +14,6 @@
 #[cfg(test)]
 mod rotation_tests {
     use crate::{Bridge, ValidatorSet};
-    use bincode;
     use ed25519_dalek::{Keypair, Signature, Signer};
 
     // ---------------------------------------------------------------------------
@@ -234,11 +233,10 @@ mod rotation_tests {
     // Duplicate signer tests
     // ---------------------------------------------------------------------------
 
-    /// Duplicate entries for the same signer must be deduplicated — they should
-    /// count as only one vote. If deduplication causes the count to drop below
-    /// the quorum threshold the rotation must be rejected.
+    /// Duplicate entries for the same signer are rejected before quorum
+    /// counting or signature verification.
     #[test]
-    fn test_duplicate_signer_counts_once_below_threshold() {
+    fn test_duplicate_signer_rejected_before_quorum_counting() {
         // 4 validators → threshold = 3
         // Provide 3 proof entries but two of them are for the same keypair → unique = 2 < 3
         let kps = det_keypairs(4);
@@ -259,16 +257,18 @@ mod rotation_tests {
         proofs.push((kps[1].public, kps[1].sign(&payload)));
 
         let result = bridge.rotate_validators(new_set, epoch, proofs);
+        assert!(result.is_err(), "duplicate signer must be rejected");
+        let msg = result.unwrap_err().to_string();
         assert!(
-            result.is_err(),
-            "duplicate signer must not inflate quorum count"
+            msg.contains("duplicate signer"),
+            "error should mention duplicate signer, got: {msg}"
         );
     }
 
-    /// Even with a duplicate, if the remaining unique signers still meet the
-    /// threshold the rotation should succeed.
+    /// Duplicate entries are rejected even if the remaining unique signers
+    /// would otherwise meet the quorum threshold.
     #[test]
-    fn test_duplicate_signer_still_meets_threshold() {
+    fn test_duplicate_signer_rejected_even_if_unique_signers_meet_threshold() {
         // 4 validators → threshold = 3
         // Provide 4 entries: kps[0] twice, kps[1] once, kps[2] once → 3 unique = threshold
         let kps = det_keypairs(4);
@@ -289,10 +289,17 @@ mod rotation_tests {
         proofs.push((kps[1].public, kps[1].sign(&payload)));
         proofs.push((kps[2].public, kps[2].sign(&payload)));
 
-        bridge
-            .rotate_validators(new_set, epoch, proofs)
-            .expect("3 unique valid signers must meet threshold for 4-validator set");
-        assert_eq!(bridge.epoch, 1);
+        let result = bridge.rotate_validators(new_set, epoch, proofs);
+        assert!(
+            result.is_err(),
+            "duplicate signer must reject even when unique signers meet threshold"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("duplicate signer"),
+            "error should mention duplicate signer, got: {msg}"
+        );
+        assert_eq!(bridge.epoch, 0);
     }
 
     // ---------------------------------------------------------------------------

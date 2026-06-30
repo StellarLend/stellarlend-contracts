@@ -54,7 +54,7 @@ fn doc_test_full_sequence() {
 
     // ---- Op 1: optimistic debit ----
     assert!(!client.is_flash_active(), "guard off before flash");
-    let returned = client.flash_swap_a_for_b(&amount_out, &fee_bps, &Bytes::new(&env));
+    let returned = client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
     assert_eq!(returned, amount_out, "return value must equal amount_out");
 
     // reserve_b must be debited; reserve_a untouched.
@@ -66,7 +66,10 @@ fn doc_test_full_sequence() {
     // ---- §Minimum Repayment Formula verification ----
     // amount_in_min = ⌈1_000 × 100 / 900⌉ = 112
     let amount_in = inverse_swap_in(1_000, 1_000, amount_out, fee_bps);
-    assert_eq!(amount_in, 112, "inverse formula gives 112 for worked example");
+    assert_eq!(
+        amount_in, 112,
+        "inverse formula gives 112 for worked example"
+    );
 
     // ---- Op 3: repayment + verify-k ----
     client.repay_flash_swap(&amount_in);
@@ -105,7 +108,7 @@ pub struct DocProxyContract;
 impl DocProxyContract {
     pub fn do_flash_and_repay(env: Env, amm: Address, amount_out: i128, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
-        client.flash_swap_a_for_b(&amount_out, &30_i128, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
         client.repay_flash_swap(&amount_in);
     }
 }
@@ -135,13 +138,22 @@ fn doc_test_under_repay_rollback() {
     let proxy = DocProxyContractClient::new(&env, &proxy_id);
 
     let result = proxy.try_do_flash_and_repay(&amm_id, &amount_out, &under_in);
-    assert!(result.is_err(), "under-repay must return Err (panic captured)");
+    assert!(
+        result.is_err(),
+        "under-repay must return Err (panic captured)"
+    );
 
     // Full atomicity: both writes rolled back.
     let (ra, rb) = amm_client.get_reserves();
     assert_eq!(ra, 1_000, "reserve_a fully restored by rollback");
-    assert_eq!(rb, 1_000, "reserve_b fully restored (optimistic debit undone)");
-    assert!(!amm_client.is_flash_active(), "FlashActive must be false after rollback");
+    assert_eq!(
+        rb, 1_000,
+        "reserve_b fully restored (optimistic debit undone)"
+    );
+    assert!(
+        !amm_client.is_flash_active(),
+        "FlashActive must be false after rollback"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -164,26 +176,32 @@ fn doc_test_reentrancy_guard() {
     {
         let (env, amm_id) = make_pool(1_000, 1_000);
         let client = AmmContractClient::new(&env, &amm_id);
-        client.flash_swap_a_for_b(&100, &30, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&100, &Bytes::new(&env));
         let result = client.try_add_liquidity(&1, &1);
-        assert!(result.is_err(), "add_liquidity must be blocked while FlashActive");
+        assert!(
+            result.is_err(),
+            "add_liquidity must be blocked while FlashActive"
+        );
     }
 
     // remove_liquidity blocked
     {
         let (env, amm_id) = make_pool(1_000, 1_000);
         let client = AmmContractClient::new(&env, &amm_id);
-        client.flash_swap_a_for_b(&100, &30, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&100, &Bytes::new(&env));
         let result = client.try_remove_liquidity(&1, &1);
-        assert!(result.is_err(), "remove_liquidity must be blocked while FlashActive");
+        assert!(
+            result.is_err(),
+            "remove_liquidity must be blocked while FlashActive"
+        );
     }
 
     // swap_a_for_b blocked
     {
         let (env, amm_id) = make_pool(1_000, 1_000);
         let client = AmmContractClient::new(&env, &amm_id);
-        client.flash_swap_a_for_b(&100, &30, &Bytes::new(&env));
-        let result = client.try_swap_a_for_b(&1, &30);
+        client.flash_swap_a_for_b(&100, &Bytes::new(&env));
+        let result = client.try_swap_a_for_b(&1);
         assert!(result.is_err(), "swap_a_for_b must be blocked while FlashActive");
     }
 
@@ -191,8 +209,8 @@ fn doc_test_reentrancy_guard() {
     {
         let (env, amm_id) = make_pool(1_000, 1_000);
         let client = AmmContractClient::new(&env, &amm_id);
-        client.flash_swap_a_for_b(&100, &30, &Bytes::new(&env));
-        let result = client.try_flash_swap_a_for_b(&1, &30, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&100, &Bytes::new(&env));
+        let result = client.try_flash_swap_a_for_b(&1, &Bytes::new(&env));
         assert!(result.is_err(), "nested flash_swap_a_for_b must be blocked while FlashActive");
     }
 }
@@ -215,13 +233,19 @@ fn doc_test_fee_zero_and_max() {
         let client = AmmContractClient::new(&env, &amm_id);
         let amount_out: i128 = 100;
 
-        client.flash_swap_a_for_b(&amount_out, &0_i128, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
         let amount_in = inverse_swap_in(1_000, 1_000, amount_out, 0);
         client.repay_flash_swap(&amount_in);
 
         let (ra, rb) = client.get_reserves();
-        assert!(ra * rb >= 1_000 * 1_000, "fee=0: k-monotonicity must still hold");
-        assert!(!client.is_flash_active(), "fee=0: guard cleared after repay");
+        assert!(
+            ra * rb >= 1_000 * 1_000,
+            "fee=0: k-monotonicity must still hold"
+        );
+        assert!(
+            !client.is_flash_active(),
+            "fee=0: guard cleared after repay"
+        );
     }
 
     // fee_bps = 9_999 (maximum valid)
@@ -230,12 +254,18 @@ fn doc_test_fee_zero_and_max() {
         let client = AmmContractClient::new(&env, &amm_id);
         let amount_out: i128 = 50;
 
-        client.flash_swap_a_for_b(&amount_out, &9_999_i128, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
         let amount_in = inverse_swap_in(1_000, 1_000, amount_out, 9_999);
         client.repay_flash_swap(&amount_in);
 
         let (ra, rb) = client.get_reserves();
-        assert!(ra * rb >= 1_000 * 1_000, "fee=9999: k-monotonicity must still hold");
-        assert!(!client.is_flash_active(), "fee=9999: guard cleared after repay");
+        assert!(
+            ra * rb >= 1_000 * 1_000,
+            "fee=9999: k-monotonicity must still hold"
+        );
+        assert!(
+            !client.is_flash_active(),
+            "fee=9999: guard cleared after repay"
+        );
     }
 }

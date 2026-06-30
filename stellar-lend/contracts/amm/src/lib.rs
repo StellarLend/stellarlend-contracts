@@ -6,6 +6,8 @@ pub mod math;
 #[cfg(test)]
 mod fee_accrual_overflow_test;
 #[cfg(test)]
+mod stored_fee_test;
+#[cfg(test)]
 mod fee_accrual_test;
 #[cfg(test)]
 mod flash_swap_atomicity_test;
@@ -29,6 +31,7 @@ pub struct FeeTier {
 
 const FEE_TIERS_KEY: &str = "fee_tiers";
 
+
 // ---------------------------------------------------------------------------
 // Storage keys
 // ---------------------------------------------------------------------------
@@ -37,6 +40,11 @@ const FEE_TIERS_KEY: &str = "fee_tiers";
 // integer-only `init_pool(a, b)` and the swap-bounds proptest suite).
 const KEY_RES_A: (&str, &str) = ("pool", "a");
 const KEY_RES_B: (&str, &str) = ("pool", "b");
+
+// TWAP observation ring-buffer. Each observation stores (timestamp, cumulative_price_numerator,
+// cumulative_price_denominator) so off-chain consumers can compute time-weighted average prices.
+const KEY_TWAP_OBS: (&str, &str) = ("pool", "twap_obs");
+const KEY_TWAP_LAST_TS: (&str, &str) = ("pool", "twap_last_ts");
 
 // Price-impact guard.
 //
@@ -103,6 +111,23 @@ const KEY_FLASH_INITIATOR: (&str, &str) = ("pool", "flash_initiator");
 const KEY_FEE_A: (&str, &str) = ("pool", "fee_a");
 const KEY_FEE_B: (&str, &str) = ("pool", "fee_b");
 
+// Admin-configured stored swap fee.
+//
+// `KEY_FEE_BPS` stores the protocol-owned swap fee in basis points.
+// This replaces the per-call `fee_bps` argument: the pool admin sets it
+// once via `set_fee_bps`, and every swap reads it from storage.  Callers
+// can no longer pass `fee_bps = 0` to bypass the fee.
+//
+// Valid range: `0..=MAX_FEE_BPS` (inclusive).  The default before any
+// admin call is `DEFAULT_FEE_BPS` (30 bps = 0.30 %).
+const KEY_FEE_BPS: (&str, &str) = ("pool", "fee_bps");
+
+/// Maximum fee the admin may configure (50 % = 5 000 bps).
+pub const MAX_FEE_BPS: i128 = 5_000;
+
+/// Default fee applied when no admin has called `set_fee_bps`.
+pub const DEFAULT_FEE_BPS: i128 = 30;
+
 #[contracterror]
 #[derive(Eq, PartialEq, Debug)]
 pub enum AmmPoolError {
@@ -120,6 +145,8 @@ pub enum AmmPoolError {
     ReentrantFlashSwap = 6,
     /// Caller is not the flash-swap initiator
     UnauthorizedCaller = 7,
+    /// fee_bps is out of the valid range `0..=MAX_FEE_BPS`
+    FeeBpsOutOfRange = 8,
 }
 
 #[contract]
@@ -169,6 +196,41 @@ impl AmmContract {
             .persistent()
             .get(&KEY_MAX_IMPACT_BPS)
             .unwrap_or(IMPACT_GUARD_DISABLED)
+    }
+
+    /// Set the protocol-owned swap fee in basis points (admin only).
+    ///
+    /// This is the single authoritative swap fee for all AMM swaps.
+    /// Once set, `swap_a_for_b`, `swap_b_for_a`, and
+    /// `flash_swap_a_for_b` read the fee from storage rather than
+    /// accepting it as a caller-supplied argument, preventing
+    /// fee-free swaps by passing `fee_bps = 0`.
+    ///
+    /// # Arguments
+    /// * `admin`   — address that must authorize the call.
+    /// * `fee_bps` — new fee in basis points; must be in `0..=MAX_FEE_BPS`.
+    ///
+    /// # Errors
+    /// Returns [`AmmPoolError::FeeBpsOutOfRange`] when `fee_bps > MAX_FEE_BPS`.
+    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: i128) -> Result<(), AmmPoolError> {
+        admin.require_auth();
+        if fee_bps < 0 || fee_bps > MAX_FEE_BPS {
+            return Err(AmmPoolError::FeeBpsOutOfRange);
+        }
+        env.storage().persistent().set(&KEY_FEE_BPS, &fee_bps);
+        Ok(())
+    }
+
+    /// Return the current stored swap fee in basis points.
+    ///
+    /// Returns [`DEFAULT_FEE_BPS`] (30 bps) when no admin has called
+    /// [`set_fee_bps`](AmmContract::set_fee_bps) yet, ensuring pools are
+    /// not accidentally free-to-use before configuration.
+    pub fn get_fee_bps(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&KEY_FEE_BPS)
+            .unwrap_or(DEFAULT_FEE_BPS)
     }
 
     /// Reentrancy guard — panics if a flash swap is currently in flight.
@@ -225,15 +287,19 @@ impl AmmContract {
         Ok(())
     }
 
-    /// Swap from A -> B using Uniswap-style formula with fee (fee_bps out
-    /// of 10_000).  Returns amount_out.
+    /// Swap from A -> B using Uniswap-style formula with the stored fee.
+    ///
+    /// The fee is read from [`KEY_FEE_BPS`] (set by the admin via
+    /// [`set_fee_bps`](AmmContract::set_fee_bps)) rather than accepted as a
+    /// caller argument.  This prevents callers from routing fee-free by
+    /// supplying `fee_bps = 0`.  Returns amount_out.
     ///
     /// # Overflow policy
     ///
     /// The fee accumulator (`KEY_FEE_A`) uses saturating addition. If the
     /// counter reaches `i128::MAX` it stops incrementing but never panics.
     /// This guarantees the swap cannot be halted by fee-accumulation overflow.
-    pub fn swap_a_for_b(env: Env, amount_in: i128, fee_bps: i128) -> i128 {
+    pub fn swap_a_for_b(env: Env, amount_in: i128) -> i128 {
         Self::assert_no_active_flash_swap(&env);
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
@@ -243,6 +309,13 @@ impl AmmContract {
         if ra <= 0 || rb <= 0 {
             return Err(AmmPoolError::EmptyPool);
         }
+
+        // Read the protocol-owned fee from storage (never caller-supplied).
+        let fee_bps: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_BPS)
+            .unwrap_or(DEFAULT_FEE_BPS);
 
         let fee = compute_fee(amount_in, fee_bps)?;
 
@@ -304,7 +377,10 @@ impl AmmContract {
     }
 
     /// Swap from B -> A using the same Uniswap-v2 constant-product formula and
-    /// fee model as [`swap_a_for_b`], with token roles reversed.
+    /// stored fee model as [`swap_a_for_b`], with token roles reversed.
+    ///
+    /// The fee is read from [`KEY_FEE_BPS`] in storage (admin-set), not from
+    /// a caller-supplied argument.
     ///
     /// # Formula
     ///
@@ -328,7 +404,7 @@ impl AmmContract {
     ///
     /// Identical to [`swap_a_for_b`]: the fee accumulator saturates at
     /// `i128::MAX` and never panics on addition.
-    pub fn swap_b_for_a(env: Env, amount_in: i128, fee_bps: i128) -> i128 {
+    pub fn swap_b_for_a(env: Env, amount_in: i128) -> i128 {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -337,6 +413,13 @@ impl AmmContract {
         if ra <= 0 || rb <= 0 {
             return Err(AmmPoolError::EmptyPool);
         }
+
+        // Read the protocol-owned fee from storage (never caller-supplied).
+        let fee_bps: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_FEE_BPS)
+            .unwrap_or(DEFAULT_FEE_BPS);
 
         let fee = compute_fee(amount_in, fee_bps)?;
 
@@ -403,8 +486,6 @@ impl AmmContract {
     /// # Arguments
     /// * `amount_out` — units of asset B to optimistically debit.  Must
     ///                  satisfy `0 < amount_out < reserve_b`.
-    /// * `fee_bps`    — protocol fee in basis points out of `10_000`.
-    ///                  Must satisfy `0 ≤ fee_bps ≤ 9_999`.
     /// * `params`     — opaque user payload, kept for forward-compatibility
     ///                  with a future cross-contract callback variant.
     ///                  Today the AMM itself does **not** invoke any
@@ -414,18 +495,20 @@ impl AmmContract {
     ///                  operation.  The value is bound to a local to
     ///                  keep it in the parameter surface.
     ///
+    /// The fee is read from [`KEY_FEE_BPS`] in storage (admin-set via
+    /// [`set_fee_bps`](AmmContract::set_fee_bps)), not from a caller argument.
+    ///
     /// # Returns
     /// `amount_out` — the number of asset-B units debited from the pool.
     ///
     /// # Panics
     /// - `"ReentrantFlashSwap"` — a flash swap is already in flight.
     /// - `"amount_out must be positive"` — `amount_out ≤ 0`.
-    /// - `"invalid fee_bps (must be in [0, 9999])"` — out-of-range fee.
     /// - `"empty pool"` — either reserve is zero.
     /// - `"Insufficient reserves: amount_out would drain reserve_b"` — `amount_out ≥ reserve_b`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
-    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, fee_bps: i128, params: Bytes) -> i128 {
+    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> i128 {
         // `params` is reserved for a future callback variant.  Bound to
         // a local so the parameter is used (no dead-binding lint).
         let _ = params;
@@ -434,10 +517,6 @@ impl AmmContract {
 
         if amount_out <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
-        }
-        if fee_bps < 0 || fee_bps > 9_999 {
-            // Using InvariantViolation as it's an invalid parameter range
-            return Err(AmmPoolError::InvariantViolation);
         }
 
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
@@ -599,6 +678,62 @@ impl AmmContract {
         let fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
         (fee_a, fee_b)
     }
+
+    /// Record a time-weighted spot-price observation for off-chain TWAP reconstruction.
+    ///
+    /// Each call appends `(timestamp, cumulative_num, cumulative_denom)` to the
+    /// persistent observation buffer. Off-chain indexers can fetch the full buffer
+    /// via `get_twap_observations()` and compute TWAP over any sub-window as:
+    ///
+    ///   TWAP = (cum_num[t1] - cum_num[t0]) / (cum_denom[t1] - cum_denom[t0])
+    ///
+    /// where `cum_denom` is cumulative time (seconds) and `cum_num` is cumulative
+    /// `reserve_b * dt / reserve_a` (price of A in units of B weighted by time).
+    ///
+    /// Only callable internally by swap functions; exposed here for testability.
+    fn record_twap_observation(env: &Env) {
+        let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(1);
+        let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(1);
+        let now: u64 = env.ledger().timestamp();
+
+        let last_ts: u64 = env
+            .storage()
+            .persistent()
+            .get(&KEY_TWAP_LAST_TS)
+            .unwrap_or(now);
+
+        let dt = now.saturating_sub(last_ts) as i128;
+
+        let mut obs: Vec<(u64, i128, i128)> = env
+            .storage()
+            .persistent()
+            .get(&KEY_TWAP_OBS)
+            .unwrap_or_else(|| Vec::new(env));
+
+        let prev_num: i128 = obs.last().map(|(_, n, _)| n).unwrap_or(0);
+        let prev_denom: i128 = obs.last().map(|(_, _, d)| d).unwrap_or(0);
+
+        // Accumulate price * time (price = rb / ra; avoid division, store numerator * dt separately)
+        let new_num = prev_num.saturating_add(rb.saturating_mul(dt));
+        let new_denom = prev_denom.saturating_add(ra.saturating_mul(dt));
+
+        obs.push_back((now, new_num, new_denom));
+
+        env.storage().persistent().set(&KEY_TWAP_OBS, &obs);
+        env.storage().persistent().set(&KEY_TWAP_LAST_TS, &now);
+    }
+
+    /// Return the full TWAP observation buffer as `Vec<(timestamp, cumulative_num, cumulative_denom)>`.
+    ///
+    /// Off-chain consumers can reconstruct any-window TWAP:
+    ///   TWAP_price_of_A_in_B = Δnum / Δdenom
+    /// where Δnum = cum_num[t1] - cum_num[t0] and Δdenom = cum_denom[t1] - cum_denom[t0].
+    pub fn get_twap_observations(env: Env) -> Vec<(u64, i128, i128)> {
+        env.storage()
+            .persistent()
+            .get(&KEY_TWAP_OBS)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -696,8 +831,8 @@ mod test {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
                     client.init_pool(&ra, &rb).unwrap();
-                    // swap with 30 bps fee
-                    let _out = client.swap_a_for_b(&amt, &30);
+                    // swap using stored fee (default 30 bps)
+                    let _out = client.swap_a_for_b(&amt);
                     let (new_ra, new_rb) = client.get_reserves();
                     let k_before = ra.checked_mul(rb).unwrap();
                     let k_after = new_ra.checked_mul(new_rb).unwrap();
@@ -755,3 +890,5 @@ pub fn get_fee_tiers(env: Env) -> Vec<u128> {
 }
 #[cfg(test)]
 mod dynamic_fee_test;
+#[cfg(test)]
+mod inverse_swap_proptest;

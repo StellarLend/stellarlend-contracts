@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod liquidate_pause_test {
-    use crate::{EmergencyState, LendingContract, LendingContractClient, PauseType};
+    use crate::{
+        debt::DebtPosition, DataKey, EmergencyState, LendingContract, LendingContractClient,
+        PauseType,
+    };
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     fn setup() -> (

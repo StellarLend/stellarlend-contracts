@@ -33,7 +33,10 @@ mod inbound_cap_tests {
         assert_eq!(bridge.max_per_window, 0, "cap must default to 0 (fail-closed)");
 
         let err = bridge.admit_inbound(1, 1_000).unwrap_err();
-        assert!(err.to_string().contains("fail-closed"));
+        assert_eq!(
+            err.downcast_ref::<crate::BridgeError>(),
+            Some(&crate::BridgeError::InboundCapExceeded),
+        );
         assert_eq!(bridge.window_inbound_total, 0, "rejected call must not mutate state");
     }
 

@@ -68,12 +68,12 @@ pub struct FlashProxy;
 impl FlashProxy {
     pub fn open_flash(env: Env, amm: Address, amount_out: i128) {
         let client = AmmContractClient::new(&env, &amm);
-        client.flash_swap_a_for_b(&amount_out, &FEE_BPS_VAL, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
     }
 
     pub fn open_and_repay(env: Env, amm: Address, amount_out: i128, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
-        client.flash_swap_a_for_b(&amount_out, &FEE_BPS_VAL, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
         client.repay_flash_swap(&amount_in);
     }
 }
@@ -103,7 +103,7 @@ fn test_initiator_can_repay() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 200;
-    client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
     client.repay_flash_swap(&amount_in);
@@ -132,7 +132,7 @@ fn test_non_initiator_rejected() {
     let amm_client = AmmContractClient::new(&env, &amm_id);
     let amount_out: i128 = 200;
     amm_client
-        .flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+        .flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     // The interloper tries to repay -- must be rejected.
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
@@ -151,7 +151,7 @@ fn test_initiator_cleared_on_success() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 100;
-    client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
     client.repay_flash_swap(&amount_in);
@@ -165,7 +165,7 @@ fn test_initiator_cleared_on_success() {
     let new_client = AmmContractClient::new(&new_env, &new_id);
     new_client.init_pool(&1_000, &1_000).unwrap();
     new_client
-        .flash_swap_a_for_b(&50, &FEE_BPS, &Bytes::new(&new_env));
+        .flash_swap_a_for_b(&50, &Bytes::new(&new_env));
     new_client.repay_flash_swap(&inverse_swap_in(1_000, 1_000, 50, FEE_BPS));
 }
 
@@ -175,9 +175,9 @@ fn test_reentrancy_blocks_flash() {
     let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
     // Nested flash swap must be rejected by the reentrancy guard.
-    let res = client.try_flash_swap_a_for_b(&1, &FEE_BPS, &Bytes::new(&env));
+    let res = client.try_flash_swap_a_for_b(&1, &Bytes::new(&env));
     assert!(res.is_err(), "nested flash swap must be rejected");
 }
 
@@ -188,7 +188,7 @@ fn test_k_invariant_preserved() {
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 300;
-    client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
     let exact_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
     let under_in: i128 = exact_in - 1;
@@ -248,7 +248,7 @@ fn test_consecutive_swaps_same_initiator() {
 
     for i in 0..3u32 {
         let amount_out: i128 = 50 + (i as i128) * 20;
-        client.flash_swap_a_for_b(&amount_out, &FEE_BPS, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
 
         let (ra_pre, rb_pre) = client.get_reserves();
         let rb_before_debit = rb_pre + amount_out;

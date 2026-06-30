@@ -13,6 +13,7 @@
 //! Every test probes sub-unit boundaries where truncation matters.
 
 use super::*;
+use crate::debt::{save_debt, DebtPosition};
 use soroban_sdk::testutils::Address as _;
 
 // ---------------------------------------------------------------------------
@@ -48,8 +49,20 @@ fn make_unhealthy_position(
     collateral: i128,
     debt: i128,
 ) {
-    client.deposit(user, &collateral);
-    client.borrow(user, &debt);
+    let now = env.ledger().timestamp();
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &collateral);
+        save_debt(
+            env,
+            user,
+            &DebtPosition {
+                principal: debt,
+                last_update: now,
+            },
+        );
+    });
 }
 
 // ---------------------------------------------------------------------------
