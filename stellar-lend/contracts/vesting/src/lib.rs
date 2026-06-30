@@ -61,7 +61,7 @@ pub struct Grant {
 }
 
 impl Grant {
-    /// Compute how many tokens have vested by `effective_now`.
+    /// Compute how many tokens have vested by `effective_now`, avoiding intermediate overflow.
     ///
     /// The caller must pass an already pause-adjusted effective timestamp so that
     /// paused intervals are not counted toward vesting accrual.
@@ -75,6 +75,9 @@ impl Grant {
         if self.revoked {
             return self.claimed_amount;
         }
+        if self.total_amount <= 0 {
+            return 0;
+        }
         if effective_now < self.start_ts.saturating_add(self.cliff_secs) {
             return 0;
         }
@@ -82,11 +85,31 @@ impl Grant {
         if elapsed >= self.duration_secs {
             return self.total_amount;
         }
-        // Linear vesting: total_amount * elapsed / duration_secs
-        (self.total_amount as u64)
-            .checked_mul(elapsed)
-            .map(|v| (v / self.duration_secs) as i128)
-            .unwrap_or(self.total_amount)
+        
+        // Partitioned division to avoid intermediate u128 multiplication overflow:
+        // elapsed * total_amount / duration_secs
+        // Since elapsed < duration_secs, we partition total_amount (positive i128 as u128)
+        // into quotient and remainder:
+        // total_amount = q * duration_secs + r
+        // elapsed * total_amount / duration_secs = elapsed * q + (elapsed * r) / duration_secs
+        let principal = self.total_amount as u128;
+        let elapsed_u128 = elapsed as u128;
+        let duration_u128 = self.duration_secs as u128;
+        
+        let q = principal / duration_u128;
+        let r = principal % duration_u128;
+        
+        let val1 = elapsed_u128 * q;
+        let val2 = (elapsed_u128 * r) / duration_u128;
+        
+        let vested = val1 + val2;
+        
+        // Guard to ensure vested never exceeds principal and is safe to cast back
+        if vested > principal {
+            self.total_amount
+        } else {
+            vested as i128
+        }
     }
 
     /// How many tokens are claimable right now (vested minus already claimed).
@@ -368,56 +391,10 @@ impl VestingContract {
         env.events().publish(topics, data);
     }
 
-    /// Merge all active (non-revoked) grants for `grantee` into a single consolidated grant.
-    ///
-    /// The resulting grant has:
-    /// - `total` = sum of all active grants' remaining (`total - claimed`) amounts
-    /// - `claimed` = 0 (fresh start on the merged grant)
-    /// - `start_seconds` = current `now`
-    /// - `duration_seconds` = `merge_duration`
-    /// - `cliff_seconds` = 0 (no cliff on merged grant — vesting started already)
-    ///
-    /// All original active grants are revoked and replaced by the single merged grant.
-    /// Returns the merged grant's total, or `VestingError::NoSuchGrant` if the grantee
-    /// has no active grants.
-    pub fn merge_grants(
-        &mut self,
-        caller: &str,
-        grantee: &str,
-        now: u64,
-        merge_duration: u64,
-    ) -> Result<u128, VestingError> {
-        if self.admin != caller {
-            return Err(VestingError::Unauthorized);
-        }
-        let grants = self.grants.get_mut(grantee).ok_or(VestingError::NoSuchGrant)?;
 
-        let mut merged_total: u128 = 0;
-        for grant in grants.iter_mut() {
-            if !grant.revoked {
-                let remaining = grant.total.saturating_sub(grant.claimed);
-                merged_total = merged_total.saturating_add(remaining);
-                grant.revoked = true;
-            }
-        }
-        if merged_total == 0 {
-            return Err(VestingError::NoSuchGrant);
-        }
-
-        let merged = Grant {
-            grantee: grantee.to_string(),
-            total: merged_total,
-            claimed: 0,
-            released: 0,
-            start_seconds: now,
-            duration_seconds: merge_duration,
-            cliff_seconds: 0,
-            revoked: false,
-        };
-        grants.push(merged);
-        Ok(merged_total)
-    }
 }
 
 #[cfg(test)]
 mod pause_offset_test;
+#[cfg(test)]
+mod vested_at_overflow_test;
