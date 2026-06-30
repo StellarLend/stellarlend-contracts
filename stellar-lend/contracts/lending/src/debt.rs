@@ -473,12 +473,7 @@ const KEY_ACCRUAL_LOG: &str = "accrual_log";
 /// Call this immediately after `settle_accrual_split` so the split is
 /// recorded for both on-chain history (via `get_accrual_split_log`) and
 /// off-chain TWAP/revenue attribution consumers.
-pub fn record_accrual_split(
-    env: &Env,
-    borrower: &Address,
-    timestamp: u64,
-    split: &InterestSplit,
-) {
+pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split: &InterestSplit) {
     let entry = AccrualSplitEntry {
         borrower: borrower.clone(),
         timestamp,
@@ -499,7 +494,11 @@ pub fn record_accrual_split(
 
     env.events().publish(
         (symbol_short!("accrual"), borrower.clone()),
-        (split.total_interest, split.depositor_yield, split.reserve_cut),
+        (
+            split.total_interest,
+            split.depositor_yield,
+            split.reserve_cut,
+        ),
     );
 }
 
