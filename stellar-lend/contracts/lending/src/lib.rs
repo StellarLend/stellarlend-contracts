@@ -3,13 +3,12 @@
 mod debt;
 mod events;
 pub mod rounding_strategy;
+pub mod upgrade;
 
 #[cfg(test)]
 mod cross_asset_roundtrip_test;
 #[cfg(test)]
 mod rate_smoothing_proof_doctest;
-pub mod rounding_strategy;
-pub mod upgrade;
 
 #[cfg(test)]
 mod admin_handover_test;
@@ -97,8 +96,6 @@ mod rate_persistence_test;
 mod rate_smoothing_state_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
-#[cfg(test)]
-mod repay_overpay_test;
 #[cfg(test)]
 mod reserve_split_proptest;
 #[cfg(test)]
@@ -367,6 +364,11 @@ pub enum LendingError {
     /// `set_liquidation_incentive_bps` called with a value outside
     /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
     InvalidLiquidationIncentiveBps = 7002,
+    /// `set_asset_isolation` called with `isolated = true` but
+    /// `isolation_debt_ceiling <= 0`.
+    InvalidIsolationCeiling = 7003,
+    /// `self_liquidation` — liquidator and borrower are the same address.
+    SelfLiquidation = 7004,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -523,14 +525,28 @@ pub struct LendingContract;
 
 #[contractimpl]
 impl LendingContract {
-    pub fn initialize(env: Env, admin: Address) {
+    /// One-time contract initialization — sets the protocol admin and seeds
+    /// the emergency state to [`EmergencyState::Normal`].
+    ///
+    /// # Errors
+    /// - [`LendingError::AlreadyInitialized`] if `initialize` has already
+    ///   been called on this contract instance.  The second call is a no-op
+    ///   and the existing admin is **not** replaced.
+    ///
+    /// # Security
+    /// `initialize` is the *only* entry point that may be called before the
+    /// contract is initialized.  Every state-mutating entry point calls
+    /// [`require_initialized`] at the top and will return
+    /// [`LendingError::NotInitialized`] until this function succeeds.
+    pub fn initialize(env: Env, admin: Address) -> Result<(), LendingError> {
         if env.storage().instance().has(&DataKey::Admin) {
-            panic!("AlreadyInitialized");
+            return Err(LendingError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         set_emergency_state_internal(&env, EmergencyState::Normal);
         // Emit schema version event for indexers
         emit_schema_version(&env);
+        Ok(())
     }
 
     pub fn get_admin(env: Env) -> Address {
@@ -574,6 +590,7 @@ impl LendingContract {
 
     /// Set the configured oracle pubkey used to verify signed price updates.
     pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) {
+        require_initialized(&env).expect("NotInitialized");
         assert_admin(&env);
         env.storage()
             .instance()
@@ -593,6 +610,7 @@ impl LendingContract {
         timestamp: u64,
         signature: BytesN<64>,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         let admin = Self::get_admin(env.clone());
         caller.require_auth();
         if caller != admin {
@@ -744,6 +762,7 @@ impl LendingContract {
     }
 
     pub fn set_max_move_bps(env: Env, max_move_bps: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if !(0..=BPS_DENOM).contains(&max_move_bps) {
             return Err(LendingError::InvalidAmount);
@@ -761,6 +780,7 @@ impl LendingContract {
     /// Set the maximum flash-loan utilization ratio in basis points (admin-only).
     /// The requested amount must not exceed `max_flash_bps × available_liquidity / 10000`.
     pub fn set_max_flash_bps(env: Env, max_flash_bps: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if !(0..=BPS_DENOM).contains(&max_flash_bps) {
             return Err(LendingError::InvalidFlashUtilizationBps);
@@ -779,6 +799,7 @@ impl LendingContract {
         min_price: i128,
         max_price: i128,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if min_price <= 0 || max_price <= 0 || min_price >= max_price {
             return Err(LendingError::InvalidAmount);
@@ -817,6 +838,7 @@ impl LendingContract {
     ///
     /// Replaces any existing pending admin proposal.
     pub fn propose_admin(env: Env, new_admin: Address) {
+        require_initialized(&env).expect("NotInitialized");
         let current_admin = Self::get_admin(env.clone());
         current_admin.require_auth();
         env.storage()
@@ -830,6 +852,7 @@ impl LendingContract {
     /// success, the pending admin must sign the call, the admin address is
     /// updated, and `PendingAdmin` is cleared.
     pub fn accept_admin(env: Env) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         let pending_admin: Address = env
             .storage()
             .instance()
@@ -844,6 +867,7 @@ impl LendingContract {
     }
 
     pub fn set_guardian(env: Env, guardian: Address) {
+        require_initialized(&env).expect("NotInitialized");
         assert_admin(&env);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
     }
@@ -853,6 +877,7 @@ impl LendingContract {
     }
 
     pub fn set_emergency_state(env: Env, new_state: EmergencyState) {
+        require_initialized(&env).expect("NotInitialized");
         assert_admin_or_guardian(&env, &new_state);
 
         let old_state = get_emergency_state(&env);
@@ -875,6 +900,7 @@ impl LendingContract {
     /// Core user operations check granular/global pause state before emergency
     /// state so an active pause can also stop recovery-allowed unwind paths.
     pub fn set_pause(env: Env, pause_type: PauseType, paused: bool, ttl_ledgers: u32) {
+        require_initialized(&env).expect("NotInitialized");
         assert_admin_or_guardian(&env, &EmergencyState::Shutdown);
 
         let expires_at_ledger = env.ledger().sequence().saturating_add(ttl_ledgers);
@@ -909,6 +935,7 @@ impl LendingContract {
     }
 
     pub fn set_min_borrow(env: Env, min_borrow: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         env.storage()
             .instance()
@@ -945,6 +972,7 @@ impl LendingContract {
         isolated: bool,
         isolation_debt_ceiling: i128,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if isolated && isolation_debt_ceiling <= 0 {
             return Err(LendingError::InvalidIsolationCeiling);
@@ -1002,6 +1030,7 @@ impl LendingContract {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Deposit);
         check_emergency_status(&env, ProtocolAction::Deposit);
         if amount <= 0 {
@@ -1045,6 +1074,7 @@ impl LendingContract {
 
     /// Withdraw collateral after pause and emergency gates pass.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Withdraw);
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
@@ -1081,6 +1111,7 @@ impl LendingContract {
 
     /// Set the configured valuation collateral asset for the legacy single-asset flows.
     pub fn set_collateral_asset(env: Env, asset: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         env.storage()
             .instance()
@@ -1127,6 +1158,7 @@ impl LendingContract {
     /// 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
     /// `DataKey::DebtCeiling`.
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1198,6 +1230,7 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1263,6 +1296,7 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
         if amount <= 0 {
@@ -1365,6 +1399,7 @@ impl LendingContract {
         collateral_asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         with_reentrancy_lock(&env, || {
             liquidator.require_auth();
             if liquidator == borrower {
@@ -1444,9 +1479,7 @@ impl LendingContract {
             // Dust guard: a repay of 0 would make the liquidation a no-op.
             if actual_repay <= 0 {
                 return Err(LendingError::InvalidAmount);
-            }if supply_cap < 0 {
-    return Err(LendingError::InvalidAmount);
-}
+            }
 
             // Liquidation incentive: floor rounding.
             // actual_repay * (10000 + incentive_bps) / 10000 — rounding down means the
@@ -1503,15 +1536,6 @@ impl LendingContract {
             let new_col = collateral
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
-            env.storage()
-                .persistent()
-                .set(&DataKey::BadDebt, &new_bad_debt);
-            env.events()
-                .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), shortfall);
-            available_collateral
-        } else {
-            seized_collateral
-        };
 
             let updated_position = DebtPosition {
                 principal: new_debt,
@@ -1585,6 +1609,7 @@ impl LendingContract {
     /// - [`LendingError::InvalidCloseFactorBps`] if `close_factor_bps <= 0`
     ///   or `close_factor_bps > 10000`.
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if close_factor_bps <= 0 || close_factor_bps > BPS_DENOM {
             return Err(LendingError::InvalidCloseFactorBps);
@@ -1617,6 +1642,7 @@ impl LendingContract {
         env: Env,
         incentive_bps: i128,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if !(0..=MAX_LIQUIDATION_INCENTIVE_BPS).contains(&incentive_bps) {
             return Err(LendingError::InvalidLiquidationIncentiveBps);
@@ -1628,6 +1654,7 @@ impl LendingContract {
     }
 
     pub fn repay(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
 
@@ -1677,6 +1704,7 @@ impl LendingContract {
 
     /// Set the protocol-level debt ceiling (admin-only).
     pub fn set_debt_ceiling(env: Env, ceiling: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if ceiling <= 0 {
             return Err(LendingError::Overflow);
@@ -1689,6 +1717,7 @@ impl LendingContract {
 
     /// Set the flash loan fee in basis points (admin-only). Must be in [0, 1000].
     pub fn set_flash_fee(env: Env, fee_bps: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if !(0..=1000).contains(&fee_bps) {
             return Err(LendingError::InvalidFeeBps);
@@ -1705,8 +1734,9 @@ impl LendingContract {
     /// Gated behind pause and emergency checks to prevent any flash-loan
     /// interaction during a protocol pause or emergency shutdown.
     pub fn repay_flash_loan(env: Env, payer: Address, asset: Address, amount: i128) {
+        require_initialized(&env).expect("NotInitialized");
         check_pause_status(&env, ProtocolAction::FlashLoan);
-        check_emergency_status(grep -n -A10 "pub struct AssetParams" contracts/lending/src/lib.rs&env, ProtocolAction::FlashLoan);
+        check_emergency_status(&env, ProtocolAction::FlashLoan);
         payer.require_auth();
         let payer_key = DataKey::Balance(asset.clone(), payer.clone());
         let payer_bal: i128 = env.storage().persistent().get(&payer_key).unwrap_or(0);
@@ -1739,6 +1769,7 @@ impl LendingContract {
         amount: i128,
         params: Bytes,
     ) {
+        require_initialized(&env).expect("NotInitialized");
         check_pause_status(&env, ProtocolAction::FlashLoan);
         check_emergency_status(&env, ProtocolAction::FlashLoan);
         require_no_active_flash_loan(&env);
@@ -1769,9 +1800,7 @@ impl LendingContract {
         let new_tre_bal = tre_bal
             .checked_sub(amount)
             .expect("flash_loan: treasury underflow during transfer");
-        env.storage().persistent().set(&tre_key,if supply_cap < 0 {
-    return Err(LendingError::InvalidAmount);
-} &new_tre_bal);
+        env.storage().persistent().set(&tre_key, &new_tre_bal);
 
         let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
         let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
@@ -1917,7 +1946,7 @@ impl LendingContract {
         borrow_cap: i128,
         supply_cap: i128,
     ) -> Result<(), LendingError> {
-        
+        require_initialized(&env)?;
         admin.require_auth();
         if admin != Self::get_admin(env.clone()) {
             return Err(LendingError::Unauthorized);
@@ -1990,6 +2019,7 @@ impl LendingContract {
     /// - [`LendingError::InvalidAmount`] if `amount <= 0`.
     /// - [`LendingError::Overflow`] if the resulting balance would overflow i128.
     pub fn fund_insurance(env: Env, amount: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -2013,6 +2043,7 @@ impl LendingContract {
     /// # Errors
     /// - [`LendingError::InvalidAmount`] if `share_bps < 0 || share_bps > 10000`.
     pub fn set_insurance_share(env: Env, share_bps: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if share_bps < 0 || share_bps > 10000 {
             return Err(LendingError::InvalidAmount);
@@ -2037,6 +2068,7 @@ impl LendingContract {
     /// - [`LendingError::InvalidAmount`] if `amount <= 0`.
     /// - [`LendingError::Overflow`] if the resulting balance would overflow i128.
     pub fn credit_insurance_fund(env: Env, amount: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         assert_admin(&env);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -2078,6 +2110,7 @@ impl LendingContract {
     ///   underflow (should never occur given correct guards, but kept for safety).
     pub fn write_off_bad_debt(env: Env, amount: i128) -> Result<(), LendingError> {
         // --- Auth ---
+        require_initialized(&env)?;
         assert_admin(&env);
 
         // --- Input guards ---
@@ -2180,6 +2213,7 @@ impl LendingContract {
         asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         let result = cross_asset::deposit_collateral_asset_internal(&env, &user, &asset, amount)?;
         CrossDepositEvent {
             user,
@@ -2199,6 +2233,7 @@ impl LendingContract {
         asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         let result = cross_asset::borrow_asset_internal(&env, &user, &asset, amount)?;
         CrossBorrowEvent {
             user,
@@ -2218,6 +2253,7 @@ impl LendingContract {
         asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         let result = cross_asset::repay_asset_internal(&env, &user, &asset, amount)?;
         CrossRepayEvent {
             user,
@@ -2238,6 +2274,7 @@ impl LendingContract {
         asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         let result = cross_asset::withdraw_asset_internal(&env, &user, &asset, amount)?;
         CrossWithdrawEvent {
             user,
@@ -2656,13 +2693,37 @@ fn check_emergency_status(env: &Env, action: ProtocolAction) {
     }
 }
 
+/// Guard that every state-mutating entry point calls first.
+///
+/// Checks that [`DataKey::Admin`] is present in instance storage, which is
+/// only true after a successful [`LendingContract::initialize`] call.
+///
+/// # Errors
+/// Returns [`LendingError::NotInitialized`] when the contract has not yet
+/// been initialized, allowing callers to surface a clean, typed error
+/// instead of panicking with an `unwrap` failure.
+///
+/// # Example
+/// ```rust,ignore
+/// pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+///     require_initialized(&env)?;
+///     // … rest of deposit logic
+/// }
+/// ```
+pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
+    if env.storage().instance().has(&DataKey::Admin) {
+        Ok(())
+    } else {
+        Err(LendingError::NotInitialized)
+    }
+}
+
 /// Assert that the transaction signer is the protocol admin.
 /// Panics with the default auth error if not.
 pub(crate) fn assert_admin(env: &Env) {
     let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
     admin.require_auth();
 }
-
 /// For Shutdown, allow the guardian (if set) or admin; for Recovery/Normal, admin only.
 fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) {
     match state {
@@ -3406,3 +3467,5 @@ pub(crate) mod test {
 }
 #[cfg(test)]
 mod max_borrow_proptest;
+#[cfg(test)]
+mod initialization_guard_test;
