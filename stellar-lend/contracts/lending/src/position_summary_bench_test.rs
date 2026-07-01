@@ -226,6 +226,7 @@ fn populate_positions(
             &asset,
             &debt::DebtPosition {
                 principal: 100i128 * (i as i128 + 1),
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -430,6 +431,7 @@ fn bench_mixed_zero_nonzero_positions_within_budget() {
                 &asset,
                 &debt::DebtPosition {
                     principal: 200i128,
+                    borrow_index_snapshot: 0,
                     last_update: env.ledger().timestamp(),
                 },
             );

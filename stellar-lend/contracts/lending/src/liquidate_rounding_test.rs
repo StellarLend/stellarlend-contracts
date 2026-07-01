@@ -59,6 +59,7 @@ fn make_unhealthy_position(
             user,
             &DebtPosition {
                 principal: debt,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -320,11 +321,11 @@ fn repeated_dust_liquidations_dont_leak_value() {
 /// result.  This pins that the helpers don't introduce spurious rounding.
 #[test]
 fn exact_division_rounding_is_idempotent() {
-    // 100 * 11000 / 10000 = 1100 → exact
+    // 100 * 11000 / 10000 = 110 → exact
     let floor_result = math::checked_mul_div_floor(100, 11000, 10000).unwrap();
     let ceil_result = math::checked_mul_div_ceil(100, 11000, 10000).unwrap();
-    assert_eq!(floor_result, 1100, "floor exact");
-    assert_eq!(ceil_result, 1100, "ceil exact");
+    assert_eq!(floor_result, 110, "floor exact");
+    assert_eq!(ceil_result, 110, "ceil exact");
 }
 
 // ---------------------------------------------------------------------------
