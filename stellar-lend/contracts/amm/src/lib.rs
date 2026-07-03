@@ -147,6 +147,7 @@ pub enum AmmPoolError {
     UnauthorizedCaller = 7,
     /// fee_bps is out of the valid range `0..=MAX_FEE_BPS`
     FeeBpsOutOfRange = 8,
+    ZeroOutputSwap = 9,
 }
 
 #[contract]
@@ -332,6 +333,9 @@ impl AmmContract {
             .ok_or(AmmPoolError::Overflow)?;
 
         let amount_out = numerator / denominator;
+        if amount_out == 0 {
+            return Err(AmmPoolError::ZeroOutputSwap);
+        }
 
         let new_ra = ra.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?;
         let new_rb = rb.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?;
@@ -435,6 +439,9 @@ impl AmmContract {
             .ok_or(AmmPoolError::Overflow)?;
 
         let amount_out = numerator / denominator; // floor — pool never over-pays
+        if amount_out == 0 {
+            return Err(AmmPoolError::ZeroOutputSwap);
+        }
 
         let new_rb = rb.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?;
         let new_ra = ra.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?;
