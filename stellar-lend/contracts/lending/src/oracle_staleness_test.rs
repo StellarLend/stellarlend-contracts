@@ -20,18 +20,34 @@ impl MockLiquidationToken {
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
         let key = Symbol::new(&env, "bal");
-        let from_bal: i128 = env.storage().persistent().get(&(key.clone(), from.clone())).unwrap_or(0);
+        let from_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), from.clone()))
+            .unwrap_or(0);
         if from_bal < amount {
             panic!("insufficient balance");
         }
-        env.storage().persistent().set(&(key.clone(), from.clone()), &(from_bal - amount));
-        let to_bal: i128 = env.storage().persistent().get(&(key.clone(), to.clone())).unwrap_or(0);
-        env.storage().persistent().set(&(key, to), &(to_bal + amount));
+        env.storage()
+            .persistent()
+            .set(&(key.clone(), from.clone()), &(from_bal - amount));
+        let to_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&(key, to), &(to_bal + amount));
     }
 
     pub fn mint(env: Env, to: Address, amount: i128) {
         let key = Symbol::new(&env, "bal");
-        let bal: i128 = env.storage().persistent().get(&(key.clone(), to.clone())).unwrap_or(0);
+        let bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), to.clone()))
+            .unwrap_or(0);
         env.storage().persistent().set(&(key, to), &(bal + amount));
     }
 }

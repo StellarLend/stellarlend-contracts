@@ -16,8 +16,8 @@
 mod liquidation_branch_tests {
     use crate::debt::{accrue_interest, DEFAULT_APR_BPS};
     use crate::{LendingContract, LendingContractClient, LendingError};
-    use soroban_sdk::token::StellarAssetClient;
     use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
+    use soroban_sdk::token::StellarAssetClient;
     use soroban_sdk::{Address, Env};
 
     fn setup() -> (Env, LendingContractClient<'static>) {
@@ -103,13 +103,8 @@ mod liquidation_branch_tests {
         let max_repay = settled * 5_000 / 10_000;
         let seized = max_repay * 11_000 / 10_000;
 
-        let (debt_asset, collateral_asset) = setup_tokens(
-            &env,
-            &client.address,
-            &liquidator,
-            max_repay,
-            seized,
-        );
+        let (debt_asset, collateral_asset) =
+            setup_tokens(&env, &client.address, &liquidator, max_repay, seized);
 
         let actual_repay = client.liquidate(
             &liquidator,
