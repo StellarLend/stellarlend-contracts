@@ -459,6 +459,9 @@ mod tests {
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
 
+        // Deposit collateral so borrow succeeds.
+        client.deposit(&user, &10_000i128);
+
         // Plain borrow bypasses isolation tracking.
         client.borrow(&user, &5_000i128);
         assert_eq!(client.get_isolation_debt(&tok), 0);

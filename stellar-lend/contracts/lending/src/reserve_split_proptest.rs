@@ -55,8 +55,11 @@ fn arb_total_interest_safe() -> impl Strategy<Value = i128> {
 }
 
 /// Overflow strategy: force overflow in total_interest * reserve_factor_bps.
+/// The minimum reserve factor used in the test is 1001, so we need
+/// total_interest * 1001 > i128::MAX → total_interest > i128::MAX / 1001.
+/// Use i128::MAX / 1000 to be safe and avoid edge cases.
 fn arb_total_interest_overflow() -> impl Strategy<Value = i128> {
-    (i128::MAX / 10_000 + 1)..=i128::MAX
+    (i128::MAX / 1000 + 1)..=i128::MAX
 }
 
 /// Reserve factor strategy: valid basis points range 0‑10_000 (0‑100%).

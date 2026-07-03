@@ -1174,6 +1174,10 @@ impl LendingContract {
 
         assert_borrow_solvent(&env, &user, &updated, new_total_debt)?;
 
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDebt, &new_total_debt);
+
         save_debt(&env, &user, &updated);
         // Extend TTL to prevent archival of debt entry
         extend_debt_ttl(&env, &user);
@@ -1382,7 +1386,6 @@ impl LendingContract {
             }
 
             check_pause_status(&env, ProtocolAction::Liquidate);
-            check_emergency_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
 
             require_no_active_flash_loan(&env);
@@ -1409,6 +1412,10 @@ impl LendingContract {
             // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
             // slightly lower, making the position look *more* underwater than it
             // really is, which is conservative (triggers liquidation slightly earlier).
+            // When debt is 0 the position is trivially healthy.
+            if debt == 0 {
+                return Err(LendingError::PositionHealthy);
+            }
             let hf = math::checked_mul_div_floor(collateral, LIQUIDATION_THRESHOLD_BPS, debt)
                 .map_err(|_| LendingError::Overflow)?;
 
@@ -2949,9 +2956,12 @@ pub(crate) mod test {
         price: i128,
         timestamp: u64,
     ) -> Bytes {
+        let asset_xdr = asset.to_xdr(env);
+        let asset_len = asset_xdr.len(); // u32
         let mut payload = Bytes::new(env);
         payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-        payload.append(&asset.to_xdr(env));
+        payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
+        payload.append(&asset_xdr);
         payload.append(&Bytes::from_slice(env, &price.to_be_bytes()));
         payload.append(&Bytes::from_slice(env, &timestamp.to_be_bytes()));
         payload

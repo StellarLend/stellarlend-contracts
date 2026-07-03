@@ -77,11 +77,17 @@ proptest! {
         liquidation_bonus_bps in 1u32..=BPS_SCALE,
     ) {
         let result = compute_liquidation_bonus(debt_to_cover, liquidation_bonus_bps);
-        assert!(
-            matches!(result, Err(MathError::Overflow)),
-            "overflowing multiply should return MathError::Overflow, got {:?}",
-            result
-        );
+        // Overflow occurs when debt_to_cover * liquidation_bonus_bps > i128::MAX.
+        let threshold = i128::MAX / liquidation_bonus_bps as i128;
+        if debt_to_cover > threshold {
+            assert!(
+                matches!(result, Err(MathError::Overflow)),
+                "overflowing multiply should return MathError::Overflow, got {:?}",
+                result
+            );
+        } else {
+            assert!(result.is_ok(), "non-overflowing multiply should succeed");
+        }
     }
 }
 
@@ -94,10 +100,16 @@ proptest! {
         ltv_bps in 1u32..=BPS_SCALE,
     ) {
         let result = compute_max_borrow(collateral_value, ltv_bps);
-        assert!(
-            matches!(result, Err(MathError::Overflow)),
-            "overflowing multiply should return MathError::Overflow, got {:?}",
-            result
-        );
+        // Overflow occurs when collateral_value * ltv_bps > i128::MAX.
+        let threshold = i128::MAX / ltv_bps as i128;
+        if collateral_value > threshold {
+            assert!(
+                matches!(result, Err(MathError::Overflow)),
+                "overflowing multiply should return MathError::Overflow, got {:?}",
+                result
+            );
+        } else {
+            assert!(result.is_ok(), "non-overflowing multiply should succeed");
+        }
     }
 }

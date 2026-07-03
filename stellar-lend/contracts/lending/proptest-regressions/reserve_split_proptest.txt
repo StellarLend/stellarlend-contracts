@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 3c14b47e2dbc21d7bbe14b7b51b91dbd939ce877e541d7666c146790b3399b45 # shrinks to total_interest = -1
+cc 73bc6e18fd9755c93357a7ea33e8334d227a21df5412cab776d8aaedbbf8a367 # shrinks to total_interest = 17014118346046923173168730371588411, reserve_factor_bps = 1001
