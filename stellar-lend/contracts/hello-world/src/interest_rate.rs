@@ -419,3 +419,51 @@ pub fn emit_rate_config_updated(env: &Env, min_rate_bps: i128, max_rate_bps: i12
         (min_rate_bps, max_rate_bps),
     );
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clamp_rate_below_floor() {
+        // rate < floor → return floor
+        assert_eq!(clamp_rate(50, 100, 1000), 100);
+    }
+
+    #[test]
+    fn test_clamp_rate_above_ceiling() {
+        // rate > ceiling → return ceiling
+        assert_eq!(clamp_rate(2000, 100, 1000), 1000);
+    }
+
+    #[test]
+    fn test_clamp_rate_in_band() {
+        // floor < rate < ceiling → pass through
+        assert_eq!(clamp_rate(500, 100, 1000), 500);
+    }
+
+    #[test]
+    fn test_clamp_rate_at_floor() {
+        // rate == floor → return floor
+        assert_eq!(clamp_rate(100, 100, 1000), 100);
+    }
+
+    #[test]
+    fn test_clamp_rate_at_ceiling() {
+        // rate == ceiling → return ceiling
+        assert_eq!(clamp_rate(1000, 100, 1000), 1000);
+    }
+
+    #[test]
+    fn test_clamp_rate_floor_equals_ceiling() {
+        // Single-band: everything clamps to that value
+        assert_eq!(clamp_rate(300, 500, 500), 500);
+        assert_eq!(clamp_rate(800, 500, 500), 500);
+    }
+
+    #[test]
+    fn test_clamp_rate_floor_greater_than_ceiling() {
+        // Degenerate: floor > ceiling, result is floor
+        // (max(f, r).min(c) = f when f > c)
+        assert_eq!(clamp_rate(200, 800, 500), 800);
+    }
+}
