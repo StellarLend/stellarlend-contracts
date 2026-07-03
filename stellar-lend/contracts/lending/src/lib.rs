@@ -729,7 +729,7 @@ impl LendingContract {
         payload
     }
 
-    fn get_flash_fee_bps(env: &Env) -> i128 {
+    pub fn get_flash_fee_bps(env: Env) -> i128 {
         env.storage()
             .instance()
             .get(&DataKey::FlashFeeBps)
@@ -852,10 +852,15 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Guardian)
     }
 
+    /// Get the deposit cap. Returns DEFAULT_DEPOSIT_CAP if never configured.
+    pub fn get_deposit_cap(env: Env) -> i128 {
+        env.storage().instance().get(&DataKey::DepositCap).unwrap_or(DEFAULT_DEPOSIT_CAP)
+    }
+
     pub fn set_emergency_state(env: Env, new_state: EmergencyState) {
         assert_admin_or_guardian(&env, &new_state);
 
-        let old_state = get_emergency_state(&env);
+        let old_state = get_emergency_state(env.clone());
         set_emergency_state_internal(&env, new_state);
         EmergencyStateChangedEvent {
             old_state,
@@ -1685,6 +1690,11 @@ impl LendingContract {
             .instance()
             .set(&DataKey::DebtCeiling, &ceiling);
         Ok(())
+    }
+
+    /// Get the current protocol-level debt ceiling.
+    pub fn get_debt_ceiling(env: Env) -> Option<i128> {
+        env.storage().instance().get(&DataKey::DebtCeiling)
     }
 
     /// Set the flash loan fee in basis points (admin-only). Must be in [0, 1000].
@@ -2632,7 +2642,7 @@ fn check_pause_status(env: &Env, action: ProtocolAction) {
     }
 }
 
-fn get_emergency_state(env: &Env) -> EmergencyState {
+pub fn get_emergency_state(env: Env) -> EmergencyState {
     env.storage()
         .instance()
         .get(&DataKey::EmergencyState)
