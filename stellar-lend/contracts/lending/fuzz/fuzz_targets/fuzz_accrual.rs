@@ -8,7 +8,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use stellar_lend_contract::math::{
+use stellarlend_lending::math::{
     compute_compound_interest,
     MathError,
     MAX_RATE_BPS,

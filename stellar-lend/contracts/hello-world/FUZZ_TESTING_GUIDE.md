@@ -206,18 +206,20 @@ Strategy: deterministic xorshift64 PRNG, 500 random seeds × 200 ops,
 5. **No floating point**: all arithmetic uses integer fixed-point (×10⁶) to match
    Soroban's integer-only environment.
 
-   # Fuzz Testing Guide
+## cargo-fuzz: pure-math & debt-accounting targets
 
 ## Overview
 
 This project uses `cargo-fuzz` with `libFuzzer` to continuously fuzz the
-pure-math helpers in the lending crate. Fuzzing targets are located in
-`stellar-lend/contracts/lending/fuzz/`.
+pure-math helpers and core debt accounting in the lending crate. Fuzzing
+targets are located in `stellar-lend/contracts/lending/fuzz/`.
 
 ## Prerequisites
 
 ```bash
-# Install nightly Rust toolchain
+# Install nightly Rust toolchain (required by cargo-fuzz's sanitizer
+# coverage instrumentation — the workspace itself stays pinned to the
+# stable toolchain declared in stellar-lend/rust-toolchain.toml)
 rustup install nightly
 
 # Install cargo-fuzz
@@ -226,3 +228,55 @@ cargo install cargo-fuzz
 # Verify installation
 cargo +nightly --version
 cargo fuzz --version
+```
+
+## Available targets
+
+| Target | Drives | Critical invariant |
+|--------|--------|---------------------|
+| `fuzz_accrual` | `math::compute_compound_interest` | interest ≥ 1 whenever principal > 0 && elapsed > 0 |
+| `fuzz_borrow_rate` | `math::compute_borrow_rate` | rate stays within `[0, MAX_RATE_BPS]` |
+| `fuzz_health_factor` | `math::compute_health_factor` | health factor ≥ 0; `MAX` when debt == 0 |
+| `fuzz_liquidation` | `math::compute_liquidation_bonus`, `math::compute_max_borrow` | bonus ≤ debt; max borrow ≤ collateral |
+| `fuzz_supply_rate` | `math::compute_supply_rate` | supply rate ≤ borrow rate |
+| `fuzz_utilization` | `math::compute_utilization` | `0% ≤ utilization ≤ 100%` |
+| `fuzz_repay_borrow_roundtrip` | `debt::borrow_amount`, `debt::repay_amount`, `debt::effective_debt` | principal never negative; full repay zeroes principal; partial repay leaves exactly `owed - amount`; `effective_debt` is monotonically non-decreasing between repayments |
+
+The last target is the highest-value one: it drives randomized
+`(action, amount, elapsed)` sequences through the real `borrow_amount` /
+`repay_amount` state machine in `debt.rs` (interleaving time advances),
+rather than fuzzing a single pure-math function in isolation. See the
+`///` doc comments at the top of
+`fuzz/fuzz_targets/fuzz_repay_borrow_roundtrip.rs` for the full invariant
+list and the bounded/bimodal input distribution used to reach deep state
+sequences while still exercising the extreme-principal overflow path.
+
+## Running a target
+
+```bash
+cd stellar-lend/contracts/lending/fuzz
+
+# Short, bounded session (good for local sanity checks / CI smoke runs)
+cargo +nightly fuzz run fuzz_repay_borrow_roundtrip -- -runs=200000 -max_total_time=60
+
+# Open-ended session (until Ctrl-C or a crash is found)
+cargo +nightly fuzz run fuzz_repay_borrow_roundtrip
+```
+
+Replace the target name to run any of the other entries in the table
+above. A failing invariant aborts with a panic message and cargo-fuzz
+writes the minimized failing input under `fuzz/artifacts/<target>/`,
+which can be replayed directly:
+
+```bash
+cargo +nightly fuzz run fuzz_repay_borrow_roundtrip fuzz/artifacts/fuzz_repay_borrow_roundtrip/<crash-file>
+```
+
+## Seed corpus
+
+`fuzz/corpus/fuzz_repay_borrow_roundtrip/` seeds the borrow→repay
+round-trip target with a handful of hand-picked byte sequences covering
+the edge cases called out in the invariant list (repay before any
+borrow, zero elapsed, alternating borrow/repay, full repay then borrow
+again). `cargo fuzz run` reads and grows this directory automatically;
+commit new regression inputs here whenever a crash is fixed.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::debt::{save_debt, DebtPosition};
 use soroban_sdk::testutils::Address as _;
 
 fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
@@ -39,17 +40,15 @@ fn health_factor_no_debt_uses_healthy_sentinel() {
     assert_health_factor_consistency(&client, &user, HEALTH_FACTOR_NO_DEBT);
 }
 
-/// Zero collateral with non-zero debt must be liquidatable at an exact zero
-/// health factor, not the no-debt sentinel.
+/// Zero collateral cannot open debt through `borrow`; the entrypoint rejects
+/// before storage is mutated.
 #[test]
 fn health_factor_zero_collateral_nonzero_debt_is_zero() {
     let (_env, client, _id, user) = setup();
-    client.borrow(&user, &125);
-
-    let position = client.get_position(&user);
-    assert_eq!(position.collateral, 0);
-    assert_eq!(position.debt, 125);
-    assert_health_factor_consistency(&client, &user, 0);
+    let res = client.try_borrow(&user, &125);
+    assert!(matches!(res, Err(Ok(LendingError::InsufficientCollateral))));
+    assert_eq!(client.get_position(&user).debt, 0);
+    assert_health_factor_consistency(&client, &user, HEALTH_FACTOR_NO_DEBT);
 }
 
 /// The liquidation threshold boundary is exact: 100 collateral and 80 debt
@@ -63,8 +62,8 @@ fn health_factor_at_liquidation_threshold_is_exactly_scaled_one() {
     assert_health_factor_consistency(&client, &user, HEALTH_FACTOR_SCALE);
 }
 
-/// A collateral amount just past the checked-multiply boundary must not wrap;
-/// both view paths intentionally return i128::MAX as the overflow sentinel.
+/// Collateral large enough to overflow `collateral * LIQUIDATION_THRESHOLD_BPS`
+/// must be rejected at borrow time with `Overflow`.
 #[test]
 fn health_factor_overflow_returns_i128_max_sentinel() {
     let (env, client, id, user) = setup();
@@ -75,10 +74,21 @@ fn health_factor_overflow_returns_i128_max_sentinel() {
             .persistent()
             .set(&DataKey::Collateral(user.clone()), &overflowing_collateral);
     });
-    client.borrow(&user, &1);
 
-    let position = client.get_position(&user);
-    assert_eq!(position.collateral, overflowing_collateral);
-    assert_eq!(position.debt, 1);
+    let res = client.try_borrow(&user, &1);
+    assert!(matches!(res, Err(Ok(LendingError::Overflow))));
+    assert_eq!(client.get_position(&user).debt, 0);
+
+    env.as_contract(&id, || {
+        save_debt(
+            &env,
+            &user,
+            &DebtPosition {
+                principal: 1,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
+
     assert_health_factor_consistency(&client, &user, i128::MAX);
 }

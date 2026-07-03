@@ -1,17 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
+  "contracts/amm",
   "contracts/common",
   "contracts/hello-world",
   "contracts/lending",
-  "contracts/multisig",
   "contracts/vesting",
+  "contracts/multisig",
+  "cross_asset_test",
 ]
 
 [workspace.dependencies]
 # Keep shared Soroban and test dependency versions pinned in one place.
-soroban-sdk = "=25.3.0"
-soroban-token-sdk = "=25.3.0"
+soroban-sdk = "=25.3.1"
+soroban-token-sdk = "=25.3.1"
 proptest = "1.5"
 
 [profile.release]

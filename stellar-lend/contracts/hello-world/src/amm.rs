@@ -142,7 +142,10 @@ fn save_reserves(env: &Env, asset: &Address, reserves: &PoolReserves) {
 /// After any reserve mutation, persist the new state and update the TWAP
 /// accumulator. Both operations are atomic within the same contract invocation.
 fn commit_reserves(env: &Env, asset: &Address, r: &PoolReserves) {
-    assert!(r.reserve0 > 0 && r.reserve1 > 0, "reserves must stay non-zero");
+    assert!(
+        r.reserve0 > 0 && r.reserve1 > 0,
+        "reserves must stay non-zero"
+    );
     save_reserves(env, asset, r);
     amm_twap::update_twap_accumulators(env, asset, r.reserve0, r.reserve1);
 }

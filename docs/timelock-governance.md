@@ -4,6 +4,8 @@
 
 This document provides operational guidance for using the timelock governance system in StellarLend. The timelock introduces delayed execution for high-risk parameter changes while maintaining emergency response capabilities.
 
+For a deep-dive into the multisig two-phase change lifecycle (state diagrams, ETA formulas, event schema, and cancellation rules), see the [Multisig Change Lifecycle Guide](../stellar-lend/contracts/multisig/docs/CHANGE_LIFECYCLE.md).
+
 ## Quick Reference
 
 ### Operation Classifications
@@ -121,6 +123,8 @@ stellar contract invoke \
 ```
 
 ### 5. Multisig Threshold Changes (7-day timelock)
+
+> See also: [Multisig Change Lifecycle Guide](../stellar-lend/contracts/multisig/docs/CHANGE_LIFECYCLE.md) for state diagrams, full event schema, signer-change flow, and cancellation rules.
 
 **Security Rationale**: Threshold changes control the minimum number of signatures required to authorize multisig operations. A compromised quorum could lower the threshold and immediately execute a malicious proposal in the same transaction. The 7-day timelock prevents same-ledger takeover by enforcing a mandatory delay between queuing and applying the threshold change.
 

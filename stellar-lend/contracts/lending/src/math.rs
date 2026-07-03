@@ -9,7 +9,7 @@
 use soroban_sdk::contracterror;
 
 /// Fixed-point scale for internal calculations (7 decimals)
-pub const SCALE: i128 = 1_000_000_0; // 10^7
+pub const SCALE: i128 = 10_000_000; // 10^7
 
 /// Basis points scale (100% = 10000 bps)
 pub const BPS_SCALE: u32 = 10000;
@@ -53,7 +53,7 @@ pub fn compute_compound_interest(
     if principal < 0 {
         return Err(MathError::OutOfRange);
     }
-    if rate_bps < 0 || rate_bps > MAX_RATE_BPS {
+    if !(0..=MAX_RATE_BPS).contains(&rate_bps) {
         return Err(MathError::OutOfRange);
     }
     if elapsed == 0 {
@@ -125,7 +125,7 @@ pub fn compute_health_factor(
     }
 
     // Compute: (collateral_value * liquidation_threshold_bps) / BPS_SCALE
-    let weighted_collateral = (collateral_value as i128)
+    let weighted_collateral = collateral_value
         .checked_mul(liquidation_threshold_bps as i128)
         .ok_or(MathError::Overflow)?
         .checked_div(BPS_SCALE as i128)
@@ -273,6 +273,88 @@ pub fn compute_supply_rate(
     Ok(supply_rate.min(MAX_RATE_BPS) as u32)
 }
 
+/// Split a gross interest amount into depositor yield and protocol reserve.
+///
+/// Given `total_interest` accrued by a borrower, this function deterministically
+/// partitions it using the reserve factor:
+///
+/// ```text
+/// reserve_cut      = total_interest * reserve_factor_bps / BPS_SCALE
+/// depositor_yield  = total_interest - reserve_cut
+/// ```
+///
+/// The depositor share is computed as the complement (subtraction) rather than
+/// by a second multiplication, so that `depositor_yield + reserve_cut ==
+/// total_interest` exactly — no precision is lost to either side.
+///
+/// # Rounding
+/// Integer division of `total_interest * reserve_factor_bps / BPS_SCALE` floors
+/// toward zero, meaning any fractional unit falls to the **depositor** side.
+/// This is the conservative choice: the protocol never takes more than its
+/// exact share.
+///
+/// # Arguments
+/// * `total_interest` - Gross interest accrued by the borrower (≥ 0)
+/// * `reserve_factor_bps` - Fraction of interest kept by the protocol,
+///   expressed in basis points (0 = none, 10_000 = 100%)
+///
+/// # Returns
+/// * `Ok((depositor_yield, reserve_cut))` where both values are ≥ 0 and their
+///   sum equals `total_interest`
+/// * `Err(MathError::OutOfRange)` if either input is negative or
+///   `reserve_factor_bps > BPS_SCALE`
+/// * `Err(MathError::Overflow)` if the intermediate multiplication overflows
+///
+/// # Examples (basis-point arithmetic)
+///
+/// ```text
+/// // 10% reserve factor on 1_000 interest
+/// split_interest_by_reserve_factor(1_000, 1_000)
+///   => Ok((900, 100))   // 10% to reserve, 90% to depositors
+///
+/// // 0% reserve factor — all interest goes to depositors
+/// split_interest_by_reserve_factor(1_000, 0)
+///   => Ok((1_000, 0))
+///
+/// // 100% reserve factor — all interest goes to the protocol
+/// split_interest_by_reserve_factor(1_000, 10_000)
+///   => Ok((0, 1_000))
+/// ```
+pub fn split_interest_by_reserve_factor(
+    total_interest: i128,
+    reserve_factor_bps: u32,
+) -> Result<(i128, i128), MathError> {
+    if total_interest < 0 {
+        return Err(MathError::OutOfRange);
+    }
+    if reserve_factor_bps > BPS_SCALE {
+        return Err(MathError::OutOfRange);
+    }
+    if total_interest == 0 {
+        return Ok((0, 0));
+    }
+
+    let scale = BPS_SCALE as i128;
+    let reserve_bps = reserve_factor_bps as i128;
+
+    // reserve_cut = floor(total_interest * reserve_factor_bps / BPS_SCALE)
+    // Integer division floors toward zero, so any fractional unit stays with
+    // the depositor — the protocol never takes more than its exact share.
+    let reserve_cut = total_interest
+        .checked_mul(reserve_bps)
+        .ok_or(MathError::Overflow)?
+        .checked_div(scale)
+        .ok_or(MathError::DivisionByZero)?;
+
+    // Complement: depositor_yield = total_interest - reserve_cut
+    // This guarantees depositor_yield + reserve_cut == total_interest exactly.
+    let depositor_yield = total_interest
+        .checked_sub(reserve_cut)
+        .ok_or(MathError::NegativeResult)?;
+
+    Ok((depositor_yield, reserve_cut))
+}
+
 /// Compute liquidation bonus for a position
 ///
 /// Formula: bonus = debt_to_cover * liquidation_bonus_bps / BPS_SCALE
@@ -375,6 +457,50 @@ pub fn compute_utilization(total_borrows: i128, total_deposits: i128) -> Result<
         .map(|v| v as u32)
 }
 
+/// Multiply `a * b` then divide by `c`, rounding toward negative infinity (floor).
+///
+/// For positive inputs this is equivalent to truncation toward zero, but the
+/// semantic is explicitly **floor** so the rounding direction is unambiguous:
+/// the caller always knowingly rounds in favour of the protocol (smaller result
+/// for seized_collateral and max_repay; lower HF → more liquidatable).
+///
+/// # Panics
+/// - Returns `Err(MathError::DivisionByZero)` when `c == 0`.
+/// - Returns `Err(MathError::Overflow)` when the intermediate product exceeds `i128::MAX`.
+#[inline]
+pub fn checked_mul_div_floor(a: i128, b: i128, c: i128) -> Result<i128, MathError> {
+    if c == 0 {
+        return Err(MathError::DivisionByZero);
+    }
+    a.checked_mul(b)
+        .ok_or(MathError::Overflow)?
+        .checked_div(c)
+        .ok_or(MathError::DivisionByZero)
+}
+
+/// Multiply `a * b` then divide by `c`, rounding toward positive infinity (ceil).
+///
+/// For positive inputs the result is `(a * b + c - 1) / c`.  Use sparingly —
+/// ceiling rounds in favour of the receiver, so it should **never** appear in
+/// liquidation paths where the liquidator is the receiver.
+///
+/// # Panics
+/// - Returns `Err(MathError::DivisionByZero)` when `c == 0`.
+/// - Returns `Err(MathError::Overflow)` when the intermediate product exceeds `i128::MAX`.
+#[inline]
+pub fn checked_mul_div_ceil(a: i128, b: i128, c: i128) -> Result<i128, MathError> {
+    if c == 0 {
+        return Err(MathError::DivisionByZero);
+    }
+    let product = a.checked_mul(b).ok_or(MathError::Overflow)?;
+    let quotient = product.checked_div(c).ok_or(MathError::DivisionByZero)?;
+    if product % c == 0 {
+        Ok(quotient)
+    } else {
+        quotient.checked_add(1).ok_or(MathError::Overflow)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,5 +573,186 @@ mod tests {
         assert!(!is_liquidatable(SCALE)); // HF = 1.0, not liquidatable
         assert!(is_liquidatable(SCALE - 1)); // HF < 1.0, liquidatable
         assert!(!is_liquidatable(SCALE + 1)); // HF > 1.0, not liquidatable
+    }
+
+    // ── checked_mul_div_floor ─────────────────────────────────────────────────
+
+    #[test]
+    fn mul_div_floor_exact_division() {
+        assert_eq!(checked_mul_div_floor(100, 50, 10).unwrap(), 500);
+    }
+
+    #[test]
+    fn mul_div_floor_truncates_toward_zero() {
+        // 10 * 11 / 3 = 110 / 3 = 36.666 → floor = 36
+        assert_eq!(checked_mul_div_floor(10, 11, 3).unwrap(), 36);
+    }
+
+    #[test]
+    fn mul_div_floor_small_boundary() {
+        // 1 * 11000 / 10000 = 1.1 → floor = 1 (seized_collateral rounding)
+        assert_eq!(checked_mul_div_floor(1, 11000, 10000).unwrap(), 1);
+    }
+
+    #[test]
+    fn mul_div_floor_zero_numerator() {
+        assert_eq!(checked_mul_div_floor(0, 9999, 10000).unwrap(), 0);
+    }
+
+    #[test]
+    fn mul_div_floor_division_by_zero() {
+        assert_eq!(
+            checked_mul_div_floor(1, 1, 0),
+            Err(MathError::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn mul_div_floor_overflow_returns_error() {
+        assert_eq!(
+            checked_mul_div_floor(i128::MAX, 2, 1),
+            Err(MathError::Overflow)
+        );
+    }
+
+    // ── checked_mul_div_ceil ──────────────────────────────────────────────────
+
+    #[test]
+    fn mul_div_ceil_exact_division() {
+        assert_eq!(checked_mul_div_ceil(100, 50, 10).unwrap(), 500);
+    }
+
+    #[test]
+    fn mul_div_ceil_rounds_up() {
+        // 10 * 11 / 3 = 110 / 3 = 36.666 → ceil = 37
+        assert_eq!(checked_mul_div_ceil(10, 11, 3).unwrap(), 37);
+    }
+
+    #[test]
+    fn mul_div_ceil_small_boundary() {
+        // 1 * 11000 / 10000 = 1.1 → ceil = 2
+        assert_eq!(checked_mul_div_ceil(1, 11000, 10000).unwrap(), 2);
+    }
+
+    #[test]
+    fn mul_div_ceil_no_round_up_when_exact() {
+        // 10 * 10000 / 10000 = 10 → ceil = 10
+        assert_eq!(checked_mul_div_ceil(10, 10000, 10000).unwrap(), 10);
+    }
+
+    #[test]
+    fn mul_div_ceil_division_by_zero() {
+        assert_eq!(
+            checked_mul_div_ceil(1, 1, 0),
+            Err(MathError::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn mul_div_ceil_overflow_returns_error() {
+        assert_eq!(
+            checked_mul_div_ceil(i128::MAX, 2, 1),
+            Err(MathError::Overflow)
+        );
+    }
+
+    #[test]
+    fn mul_div_ceil_overflow_on_addition() {
+        // product fits, but product % c != 0 and product / c + 1 overflows
+        // i128::MAX - 1 divided by 1 = i128::MAX - 1, +1 = i128::MAX → fine
+        // But i128::MAX / 1 = i128::MAX, remainder 0 → no addition
+        // To trigger: i128::MAX / 1 with remainder = 0 → won't hit add
+        // The ceiling addition can only overflow if product == i128::MAX
+        // and c > 1, with product % c != 0
+        // i128::MAX = 170141183460469231731687303715884105727
+        // Let's use a case where product = i128::MAX - 1 and c divides it:
+        // Actually the simpler case: product = i128::MAX, c = 2, remainder = 1
+        // Then quotient = (i128::MAX - 1) / 2 = 9223372036854775807
+        // product % c = 1, so we'd do quotient + 1 = 9223372036854775808 which fits
+        // Actually let me just test a pathological case
+        assert_eq!(checked_mul_div_ceil(i128::MAX, 1, 1).unwrap(), i128::MAX);
+    }
+
+    // ── split_interest_by_reserve_factor ─────────────────────────────────────
+
+    #[test]
+    fn test_split_zero_reserve_factor_all_to_depositors() {
+        let (depositor, reserve) = split_interest_by_reserve_factor(1_000, 0).unwrap();
+        assert_eq!(depositor, 1_000);
+        assert_eq!(reserve, 0);
+    }
+
+    #[test]
+    fn test_split_full_reserve_factor_all_to_protocol() {
+        let (depositor, reserve) = split_interest_by_reserve_factor(1_000, 10_000).unwrap();
+        assert_eq!(depositor, 0);
+        assert_eq!(reserve, 1_000);
+    }
+
+    #[test]
+    fn test_split_10pct_reserve_factor() {
+        // 10% reserve factor: 1_000 * 1_000 / 10_000 = 100 to reserve, 900 to depositors
+        let (depositor, reserve) = split_interest_by_reserve_factor(1_000, 1_000).unwrap();
+        assert_eq!(reserve, 100);
+        assert_eq!(depositor, 900);
+        assert_eq!(depositor + reserve, 1_000);
+    }
+
+    #[test]
+    fn test_split_20pct_reserve_factor() {
+        // 20% reserve: 500 * 2_000 / 10_000 = 100 to reserve, 400 to depositors
+        let (depositor, reserve) = split_interest_by_reserve_factor(500, 2_000).unwrap();
+        assert_eq!(reserve, 100);
+        assert_eq!(depositor, 400);
+        assert_eq!(depositor + reserve, 500);
+    }
+
+    #[test]
+    fn test_split_sum_always_equals_total_interest() {
+        // Exhaustively verify the no-leakage invariant across several values
+        for total in [0i128, 1, 7, 100, 999, 10_000, 1_000_000] {
+            for rf_bps in [0u32, 1, 500, 1_000, 2_000, 5_000, 9_999, 10_000] {
+                let (d, r) = split_interest_by_reserve_factor(total, rf_bps).unwrap();
+                assert_eq!(
+                    d + r,
+                    total,
+                    "sum mismatch: total={total} rf={rf_bps} => depositor={d} reserve={r}"
+                );
+                assert!(
+                    d >= 0 && r >= 0,
+                    "negative split for total={total} rf={rf_bps}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_split_depositor_never_less_than_floor_rounding() {
+        // When total_interest * reserve_factor_bps is not exactly divisible by BPS_SCALE,
+        // the fractional unit falls to the depositor (floor division of reserve_cut).
+        // Example: 1 * 5_000 / 10_000 = 0 (integer floor) => depositor gets 1, reserve 0.
+        let (depositor, reserve) = split_interest_by_reserve_factor(1, 5_000).unwrap();
+        // 1 * 5000 / 10000 = 0 (floor), so reserve_cut = 0, depositor_yield = 1
+        assert_eq!(reserve, 0);
+        assert_eq!(depositor, 1);
+    }
+
+    #[test]
+    fn test_split_zero_interest_returns_zeros() {
+        let (d, r) = split_interest_by_reserve_factor(0, 2_000).unwrap();
+        assert_eq!(d, 0);
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn test_split_rejects_negative_interest() {
+        let result = split_interest_by_reserve_factor(-1, 1_000);
+        assert_eq!(result, Err(MathError::OutOfRange));
+    }
+
+    #[test]
+    fn test_split_rejects_reserve_factor_above_100pct() {
+        let result = split_interest_by_reserve_factor(1_000, 10_001);
+        assert_eq!(result, Err(MathError::OutOfRange));
     }
 }

@@ -182,10 +182,7 @@ mod tests {
         let twap = get_twap(&env, &asset, MIN_WINDOW_SECS);
         // Price should be approximately 1:1 (tiny swaps barely move the reserves).
         let price = twap as f64 / PRICE_SCALE as f64;
-        assert!(
-            (price - 1.0_f64).abs() < 0.01,
-            "expected ~1.0, got {price}"
-        );
+        assert!((price - 1.0_f64).abs() < 0.01, "expected ~1.0, got {price}");
     }
 
     #[test]
@@ -196,10 +193,7 @@ mod tests {
 
         let twap = get_twap(&env, &asset, 150); // 30 ledgers
         let price = twap as f64 / PRICE_SCALE as f64;
-        assert!(
-            (price - 1.0_f64).abs() < 0.01,
-            "expected ~1.0, got {price}"
-        );
+        assert!((price - 1.0_f64).abs() < 0.01, "expected ~1.0, got {price}");
     }
 
     #[test]
@@ -210,10 +204,7 @@ mod tests {
 
         let twap = get_twap(&env, &asset, 1500); // 300 ledgers — use all available history
         let price = twap as f64 / PRICE_SCALE as f64;
-        assert!(
-            (price - 1.0_f64).abs() < 0.02,
-            "expected ~1.0, got {price}"
-        );
+        assert!((price - 1.0_f64).abs() < 0.02, "expected ~1.0, got {price}");
     }
 
     // -----------------------------------------------------------------------
@@ -394,6 +385,47 @@ mod tests {
 
         // Should not panic.
         let _ = get_twap(&env, &asset, MIN_WINDOW_SECS);
+    }
+
+    #[test]
+    fn test_same_timestamp_update_does_not_change_accumulator() {
+        let env = Env::default();
+        let asset = mock_asset(&env);
+
+        env.ledger().set_timestamp(1_000);
+
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        let before = amm_twap::get_pool_state(&env, &asset).unwrap();
+
+        // Same timestamp
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        let after = amm_twap::get_pool_state(&env, &asset).unwrap();
+
+        assert_eq!(before.price0_cumulative, after.price0_cumulative);
+        assert_eq!(before.price1_cumulative, after.price1_cumulative);
+    }
+
+    #[test]
+    fn test_equal_timestamp_twap_query() {
+        let env = Env::default();
+        let asset = mock_asset(&env);
+
+        env.ledger().set_timestamp(1_000);
+
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        advance_time(&env, MIN_WINDOW_SECS);
+
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        // Same timestamp again
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        let twap = get_twap(&env, &asset, MIN_WINDOW_SECS);
+
+        assert!(twap > 0);
     }
 
     // -----------------------------------------------------------------------
