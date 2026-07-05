@@ -173,9 +173,12 @@ impl FlashReceiverOk {
         env.as_contract(&lending, || {
             let tre_key = crate::DataKey::Treasury(asset);
             let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
+            let new_tre_bal = tre_bal
+                .checked_add(total)
+                .expect("flash repayment overflow");
             env.storage()
                 .persistent()
-                .set(&tre_key, &(tre_bal + total));
+                .set(&tre_key, &new_tre_bal);
         });
     }
 }
