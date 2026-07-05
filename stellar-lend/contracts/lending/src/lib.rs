@@ -8,7 +8,6 @@ pub mod rounding_strategy;
 mod cross_asset_roundtrip_test;
 #[cfg(test)]
 mod rate_smoothing_proof_doctest;
-pub mod rounding_strategy;
 pub mod upgrade;
 
 #[cfg(test)]
