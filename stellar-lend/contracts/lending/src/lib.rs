@@ -8,7 +8,6 @@ pub mod rounding_strategy;
 mod cross_asset_roundtrip_test;
 #[cfg(test)]
 mod rate_smoothing_proof_doctest;
-pub mod rounding_strategy;
 pub mod upgrade;
 
 #[cfg(test)]
@@ -1377,12 +1376,7 @@ impl LendingContract {
 
             require_no_active_flash_loan(&env);
 
-        let threshold_bps = Self::get_liquidation_threshold_bps(&env);
-        let hf = collateral
-            .checked_mul(threshold_bps)
-            .and_then(|v| v.checked_div(debt))
-            .ok_or(LendingError::Overflow)?;
-
+            let col_key = DataKey::Balance(collateral_asset.clone(), borrower.clone());
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
             let position = load_debt(&env, &borrower);
             let now = env.ledger().timestamp();
@@ -1397,23 +1391,7 @@ impl LendingContract {
                 settle_and_accrue_insurance(&env, &position, now, DEFAULT_APR_BPS)
                     .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
-
-        let close_factor_bps = Self::get_close_factor_bps(&env);
-        let max_repay = debt
-            .checked_mul(close_factor_bps)
-            .and_then(|v| v.checked_div(10000))
-            .ok_or(LendingError::Overflow)?;
-        let actual_repay = if amount > max_repay {
-            max_repay
-        } else {
-            amount
-        };
-
-        let incentive_bps = Self::get_liquidation_incentive_bps(&env);
-        let seized_collateral = actual_repay
-            .checked_mul(10000 + incentive_bps)
-            .and_then(|v| v.checked_div(10000))
-            .ok_or(LendingError::Overflow)?;
+            let debt = settled_position.principal;
 
             // Health-factor computation: floor rounding.
             // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
@@ -1444,9 +1422,7 @@ impl LendingContract {
             // Dust guard: a repay of 0 would make the liquidation a no-op.
             if actual_repay <= 0 {
                 return Err(LendingError::InvalidAmount);
-            }if supply_cap < 0 {
-    return Err(LendingError::InvalidAmount);
-}
+            }
 
             // Liquidation incentive: floor rounding.
             // actual_repay * (10000 + incentive_bps) / 10000 — rounding down means the
@@ -1503,15 +1479,6 @@ impl LendingContract {
             let new_col = collateral
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
-            env.storage()
-                .persistent()
-                .set(&DataKey::BadDebt, &new_bad_debt);
-            env.events()
-                .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), shortfall);
-            available_collateral
-        } else {
-            seized_collateral
-        };
 
             let updated_position = DebtPosition {
                 principal: new_debt,
@@ -1706,7 +1673,7 @@ impl LendingContract {
     /// interaction during a protocol pause or emergency shutdown.
     pub fn repay_flash_loan(env: Env, payer: Address, asset: Address, amount: i128) {
         check_pause_status(&env, ProtocolAction::FlashLoan);
-        check_emergency_status(grep -n -A10 "pub struct AssetParams" contracts/lending/src/lib.rs&env, ProtocolAction::FlashLoan);
+        check_emergency_status(&env, ProtocolAction::FlashLoan);
         payer.require_auth();
         let payer_key = DataKey::Balance(asset.clone(), payer.clone());
         let payer_bal: i128 = env.storage().persistent().get(&payer_key).unwrap_or(0);
@@ -1769,9 +1736,7 @@ impl LendingContract {
         let new_tre_bal = tre_bal
             .checked_sub(amount)
             .expect("flash_loan: treasury underflow during transfer");
-        env.storage().persistent().set(&tre_key,if supply_cap < 0 {
-    return Err(LendingError::InvalidAmount);
-} &new_tre_bal);
+        env.storage().persistent().set(&tre_key, &new_tre_bal);
 
         let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
         let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
