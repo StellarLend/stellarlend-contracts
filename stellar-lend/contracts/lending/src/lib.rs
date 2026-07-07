@@ -84,6 +84,8 @@ mod property_invariants_test;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
+mod partial_staleness_guard_test;
+#[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
 mod repay_overpay_test;

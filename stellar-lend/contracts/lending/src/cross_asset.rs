@@ -551,6 +551,14 @@ pub fn borrow_asset_internal(
 
     user.require_auth();
 
+    // Fail closed on partial oracle staleness: reject the borrow if *any*
+    // collateral or debt asset already on the user's cross-asset position has
+    // a stale price. This hardens the borrow path so a single stale leg cannot
+    // enable an under-collateralised borrow, independent of the health-factor
+    // computation. Repay is intentionally not gated here (reducing risk must
+    // always succeed). See PARTIAL_STALENESS_POLICY.md.
+    ensure_position_prices_fresh(env, user)?;
+
     let now = env.ledger().timestamp();
 
     let rate = crate::current_borrow_rate(env);
@@ -642,6 +650,38 @@ pub fn borrow_asset_internal(
     extend_debt_asset_ttl(env, user, asset);
 
     Ok(updated.principal)
+}
+
+/// Reject (fail closed) a borrow when *any* collateral or debt asset on the
+/// user's cross-asset position carries a stale oracle price.
+///
+/// `get_price_for_asset` returns [`LendingError::StaleOracleTimestamp`] for an
+/// aged price, so scanning every leg here makes the borrow path fail closed on
+/// *partial* staleness: a single stale collateral or debt asset cannot enable
+/// an under-collateralised borrow even when the borrowed asset's own price is
+/// fresh.
+///
+/// Repay is intentionally *not* gated by this helper — reducing a position's
+/// risk must always be permitted, matching the fail-open-on-staleness policy
+/// documented in `PARTIAL_STALENESS_POLICY.md`.
+fn ensure_position_prices_fresh(env: &Env, user: &Address) -> Result<(), LendingError> {
+    let collateral_assets = get_user_collateral_assets(env, user);
+    let mut i: u32 = 0;
+    while i < collateral_assets.len() {
+        let asset = collateral_assets.get(i).unwrap();
+        get_price_for_asset(env, &asset)?;
+        i = i.saturating_add(1);
+    }
+
+    let debt_assets = get_user_debt_assets(env, user);
+    let mut j: u32 = 0;
+    while j < debt_assets.len() {
+        let asset = debt_assets.get(j).unwrap();
+        get_price_for_asset(env, &asset)?;
+        j = j.saturating_add(1);
+    }
+
+    Ok(())
 }
 
 /// Repay `amount` of debt `asset` for `user`.
