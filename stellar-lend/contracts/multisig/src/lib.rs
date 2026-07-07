@@ -1,7 +1,16 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Symbol, Vec,
 };
+
+/// Domain separator for approval-authorization payloads (issue #1278).
+///
+/// Every approval binding is hashed as
+/// `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || approver)` so a
+/// signature/approval gathered for one proposal can never satisfy quorum on a
+/// different proposal created in the same context. Bump the `_V1` suffix on any
+/// breaking change to the payload layout.
+pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V1";
 
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
 /// The payload_hash binds the approved action so it cannot be swapped between
@@ -61,6 +70,13 @@ pub enum MultisigDataKey {
     Signers,
     ProposalCount,
     Proposal(u64),
+    /// Domain-separated approval binding for `(proposal_id, approver)`.
+    ///
+    /// Stores `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || approver)`
+    /// at approval time so an approval can be cryptographically scoped to exactly
+    /// one proposal and verified out-of-band (see issue #1278 and
+    /// `APPROVAL_DOMAIN_BINDING.md`).
+    ApprovalBinding(u64, Address),
 }
 
 /// Multisig errors.
@@ -167,6 +183,26 @@ impl MultisigContract {
         }
     }
 
+    /// Builds the domain-separated approval-authorization payload for
+    /// `(proposal_id, approver)`:
+    /// `DOMAIN_SEPARATOR || contract_id || proposal_id || approver`.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    fn approval_binding_payload(env: &Env, proposal_id: u64, approver: &Address) -> Bytes {
+        let mut payload = Bytes::new(env);
+        payload = payload.append(&Bytes::from_slice(env, APPROVAL_DOMAIN_SEPARATOR));
+        payload = payload.append(&env.current_contract_address().to_xdr(env));
+        payload = payload.append(&Bytes::from_slice(env, &proposal_id.to_be_bytes()));
+        payload = payload.append(&approver.to_xdr(env));
+        payload
+    }
+
+    /// `sha256` of [`Self::approval_binding_payload`].
+    fn approval_binding_hash(env: &Env, proposal_id: u64, approver: &Address) -> Bytes {
+        let payload = Self::approval_binding_payload(env, proposal_id, approver);
+        env.crypto().sha256(&payload)
+    }
+
     // -----------------------------------------------------------------------
     // Proposal lifecycle
     // -----------------------------------------------------------------------
@@ -236,6 +272,15 @@ impl MultisigContract {
         }
 
         proposal.approvals.push_back(caller);
+
+        // Domain-separated approval binding (issue #1278): cryptographically
+        // scope this approval to (this contract, this proposal_id, this caller)
+        // so it can never be replayed to satisfy quorum on a different proposal.
+        let binding = Self::approval_binding_hash(&env, id, &caller);
+        env.storage().persistent().set(
+            &MultisigDataKey::ApprovalBinding(id, caller.clone()),
+            &binding,
+        );
 
         let threshold = Self::fetch_threshold(&env) as usize;
         if proposal.approvals.len() as usize >= threshold {
@@ -357,6 +402,29 @@ impl MultisigContract {
             panic!("ProposalNotPassed");
         }
     }
+
+    /// Returns the stored domain-separated approval binding hash for
+    /// `(id, approver)`, if an approval was recorded.
+    ///
+    /// See issue #1278.
+    pub fn get_approval_binding(env: Env, id: u64, approver: Address) -> Option<Bytes> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ApprovalBinding(id, approver))
+    }
+
+    /// Verifies that the recorded approval binding for `(id, approver)` matches
+    /// the domain-separated hash `sha256(DOMAIN_SEPARATOR || contract_id ||
+    /// id || approver)`. Returns `false` when no approval exists or the binding
+    /// does not match — i.e. an approval intended for a different proposal.
+    ///
+    /// See issue #1278.
+    pub fn verify_approval_binding(env: Env, id: u64, approver: Address) -> bool {
+        match Self::get_approval_binding(env.clone(), id, approver.clone()) {
+            Some(stored) => stored == Self::approval_binding_hash(&env, id, &approver),
+            None => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -419,3 +487,6 @@ mod tests {
 
 #[cfg(test)]
 mod execution_router_test;
+
+#[cfg(test)]
+mod approval_binding_test;
