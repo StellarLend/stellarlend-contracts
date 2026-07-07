@@ -90,6 +90,8 @@ mod repay_overpay_test;
 #[cfg(test)]
 mod rate_cache_test;
 #[cfg(test)]
+mod per_asset_rate_params_test;
+#[cfg(test)]
 mod rate_hysteresis_test;
 #[cfg(test)]
 mod rate_persistence_test;
@@ -583,6 +585,31 @@ impl LendingContract {
     /// Returns the currently configured oracle pubkey, if set.
     pub fn get_oracle_pubkey(env: Env) -> Option<BytesN<32>> {
         env.storage().instance().get(&DataKey::OraclePubKey)
+    }
+
+    /// Admin-gated setter for a per-asset borrow-rate curve override.
+    ///
+    /// When set, [`get_effective_rate_params`] (and any future per-asset rate
+    /// path) returns `params` for `asset` instead of the global default. The
+    /// supplied `params` are validated; an invalid configuration panics.
+    ///
+    /// See issue #1258.
+    pub fn set_asset_rate_params(env: Env, asset: Address, params: rate_model::RateParams) {
+        assert_admin(&env);
+        if !rate_model::validate_rate_params(&params) {
+            panic!("set_asset_rate_params: invalid RateParams (floor>ceiling, kink out of 0..=10000, or negative slope/bound)");
+        }
+        rate_model::set_asset_rate_params(&env, &asset, &params);
+    }
+
+    /// Read-only resolver returning the effective [`rate_model::RateParams`] for
+    /// `asset`: the per-asset override when present, otherwise the global
+    /// default stored under `DataKey::RateParams` (or [`rate_model::RateParams::default`]
+    /// if never initialized).
+    ///
+    /// See issue #1258.
+    pub fn get_effective_rate_params(env: Env, asset: Address) -> rate_model::RateParams {
+        rate_model::get_effective_rate_params(&env, &asset)
     }
 
     pub fn set_price(

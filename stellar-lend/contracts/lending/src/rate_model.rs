@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use soroban_sdk::{contracttype, Env};
+use soroban_sdk::{contracttype, Address, Env};
 use stellar_lend_common::BPS_DENOM;
 
 #[contracttype]
@@ -67,6 +67,68 @@ pub enum RateModelKey {
     LastRate,
     LastTargetRate,
     LastRateLedger,
+    /// Per-asset rate-params override. When present for an asset, it
+    /// supersedes the global [`DataKey::RateParams`] for that asset's
+    /// borrow-rate computation. See [`get_effective_rate_params`].
+    AssetParams(Address),
+}
+
+/// Validates a [`RateParams`] override before it is persisted.
+///
+/// Rejects configs that would produce a non-monotonic or nonsensical curve:
+/// * `rate_floor_bps` must be `<= rate_ceiling_bps`,
+/// * `kink_utilization_bps` must lie in `0..=10_000`,
+/// * all slopes / bounds / step sizes must be non-negative.
+pub fn validate_rate_params(params: &RateParams) -> bool {
+    if params.rate_floor_bps > params.rate_ceiling_bps {
+        return false;
+    }
+    if params.kink_utilization_bps < 0 || params.kink_utilization_bps > 10_000 {
+        return false;
+    }
+    if params.base_rate_bps < 0
+        || params.multiplier_bps < 0
+        || params.jump_multiplier_bps < 0
+        || params.rate_floor_bps < 0
+        || params.rate_ceiling_bps < 0
+        || params.max_rate_change_per_ledger_bps < 0
+        || params.hysteresis_bps < 0
+    {
+        return false;
+    }
+    true
+}
+
+/// Persists a per-asset rate-params override.
+///
+/// Admin authorization and parameter validation are the caller's
+/// responsibility (see the `set_asset_rate_params` entrypoint). This helper
+/// only owns the storage write so it can be reused by tests and future code.
+pub fn set_asset_rate_params(env: &Env, asset: &Address, params: &RateParams) {
+    env.storage()
+        .instance()
+        .set(&RateModelKey::AssetParams(asset.clone()), params);
+}
+
+/// Resolves the effective [`RateParams`] for `asset`.
+///
+/// Returns the per-asset override when one is stored, otherwise falls back to
+/// the global default stored under `DataKey::RateParams` (or
+/// [`RateParams::default`] when the global has never been initialized). The
+/// global borrow-rate computation is *not* changed by this function, so assets
+/// without an override continue to produce byte-identical rates to today.
+pub fn get_effective_rate_params(env: &Env, asset: &Address) -> RateParams {
+    if let Some(override_params) =
+        env.storage()
+            .instance()
+            .get(&RateModelKey::AssetParams(asset.clone()))
+    {
+        return override_params;
+    }
+    env.storage()
+        .instance()
+        .get(&crate::DataKey::RateParams)
+        .unwrap_or_default()
 }
 
 pub fn apply_hysteresis(current: i128, target: i128, band: i128) -> i128 {
