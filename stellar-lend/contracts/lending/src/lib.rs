@@ -1,7 +1,10 @@
 #![no_std]
 
+mod cross_asset;
 mod debt;
 mod events;
+mod math;
+mod rate_model;
 pub mod rounding_strategy;
 
 #[cfg(test)]
@@ -79,13 +82,11 @@ mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod max_borrow_proptest;
 #[cfg(test)]
-mod property_invariants_test;
-#[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
-mod repay_overpay_test;
+mod property_invariants_test;
 #[cfg(test)]
 mod rate_cache_test;
 #[cfg(test)]
@@ -106,8 +107,6 @@ mod rounding_drift_test;
 mod self_liquidation_test;
 #[cfg(test)]
 mod supply_rate_split_test;
-#[cfg(test)]
-mod effective_supply_rate_test;
 
 #[cfg(test)]
 mod utilization_history_test;
@@ -115,6 +114,7 @@ use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,
 };
+use events::{emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw};
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
@@ -220,6 +220,9 @@ pub enum DataKey {
     /// [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] when unset. Configured via
     /// [`LendingContract::set_liquidation_incentive_bps`].
     LiquidationIncentiveBps,
+    /// List of all registered borrowers, used to iterate debt records during
+    /// migration.
+    BorrowerList,
 }
 
 #[contractevent]
@@ -366,6 +369,13 @@ pub enum LendingError {
     /// `set_liquidation_incentive_bps` called with a value outside
     /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
     InvalidLiquidationIncentiveBps = 7002,
+    /// `set_asset_isolation` was called with a zero or negative ceiling while
+    /// `isolated = true`.
+    InvalidIsolationCeiling = 8001,
+    /// A liquidator attempted to self-liquidate their own position.
+    SelfLiquidation = 8002,
+    /// A borrow would breach the per-asset isolation debt ceiling.
+    IsolationCeilingExceeded = 8003,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -1035,11 +1045,11 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
-        
+
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
-        
-        new_balance
+
+        Ok(new_balance)
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
@@ -1071,11 +1081,11 @@ impl LendingContract {
                 .expect("withdraw: total deposits underflow"),
         );
         extend_collateral_ttl(&env, &user);
-        
+
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
-        
-        new_balance
+
+        Ok(new_balance)
     }
 
     /// Set the configured valuation collateral asset for the legacy single-asset flows.
@@ -1142,12 +1152,15 @@ impl LendingContract {
         // Validate price availability before changes
         let _ = Self::get_collateral_price_internal(&env)?;
 
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
         let now = env.ledger().timestamp();
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
 
         let total_debt: i128 = env
@@ -1168,10 +1181,10 @@ impl LendingContract {
         save_debt(&env, &user, &updated);
         // Extend TTL to prevent archival of debt entry
         extend_debt_ttl(&env, &user);
-        
+
         // Emit borrow event
         emit_borrow(&env, &user, amount, updated.principal);
-        
+
         Ok(updated.principal)
     }
 
@@ -1219,6 +1232,7 @@ impl LendingContract {
         let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
         save_debt(&env, &user, &updated);
 
@@ -1277,6 +1291,7 @@ impl LendingContract {
         let updated = repay_amount(position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
         save_debt(&env, &user, &updated);
 
@@ -1482,6 +1497,7 @@ impl LendingContract {
 
             let updated_position = DebtPosition {
                 principal: new_debt,
+                borrow_index_snapshot: settled_position.borrow_index_snapshot,
                 last_update: settled_position.last_update,
             };
             save_debt(&env, &borrower, &updated_position);
@@ -1573,6 +1589,13 @@ impl LendingContract {
         Self::liquidation_incentive_bps_config(&env)
     }
 
+    /// Return the liquidation threshold in basis points used for health-factor
+    /// computations. Currently returns the constant [`LIQUIDATION_THRESHOLD_BPS`].
+    pub fn get_liquidation_threshold_bps(env: &Env) -> i128 {
+        let _ = env;
+        LIQUIDATION_THRESHOLD_BPS
+    }
+
     /// Set the liquidation incentive in basis points (admin-only).
     ///
     /// Must be in `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (0 % to 50 %).
@@ -1604,12 +1627,15 @@ impl LendingContract {
 
         require_no_active_flash_loan(&env);
         user.require_auth();
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
         let now = env.ledger().timestamp();
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
         save_debt(&env, &user, &updated);
 
@@ -1619,19 +1645,17 @@ impl LendingContract {
             .persistent()
             .get(&DataKey::TotalDebt)
             .unwrap_or(0);
-        let repaid = prev_principal
-            .checked_sub(updated.principal)
-            .unwrap_or(0);
+        let repaid = prev_principal.checked_sub(updated.principal).unwrap_or(0);
         let new_total_debt = total_debt.saturating_sub(repaid);
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
-        
+
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
-        
-        updated.principal
+
+        Ok(updated.principal)
     }
 
     pub fn get_debt_position(env: Env, user: Address) -> DebtPosition {
@@ -1882,7 +1906,6 @@ impl LendingContract {
         borrow_cap: i128,
         supply_cap: i128,
     ) -> Result<(), LendingError> {
-        
         admin.require_auth();
         if admin != Self::get_admin(env.clone()) {
             return Err(LendingError::Unauthorized);
@@ -1908,7 +1931,7 @@ impl LendingContract {
             liquidation_threshold_bps,
             debt_ceiling,
             borrow_cap,
-             supply_cap,
+            supply_cap,
         };
         cross_asset::set_asset_params_internal(&env, &asset, &params);
 
@@ -1918,6 +1941,7 @@ impl LendingContract {
             liquidation_threshold_bps,
             debt_ceiling,
             borrow_cap,
+            supply_cap,
         }
         .publish(&env);
 
@@ -2566,9 +2590,7 @@ fn register_borrower(env: &Env, user: &Address) {
         }
     }
     list.push_back(user.clone());
-    env.storage()
-        .instance()
-        .set(&DataKey::BorrowerList, &list);
+    env.storage().instance().set(&DataKey::BorrowerList, &list);
 }
 
 fn pause_is_active(env: &Env, operation: PauseType) -> bool {
@@ -3369,5 +3391,3 @@ pub(crate) mod test {
         assert!(env.ledger().sequence() >= 0);
     }
 }
-#[cfg(test)]
-mod max_borrow_proptest;

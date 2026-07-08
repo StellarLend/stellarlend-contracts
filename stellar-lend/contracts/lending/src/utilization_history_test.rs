@@ -6,7 +6,8 @@ use crate::{
     write_utilization_sample, DataKey, LendingContract, LendingContractClient, UtilizationSample,
     UTILIZATION_HISTORY_CAPACITY,
 };
-use soroban_sdk::{testutils::Ledger, Address, Env};
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{Address, Env};
 
 fn setup() -> (Env, Address, LendingContractClient<'static>) {
     let env = Env::default();

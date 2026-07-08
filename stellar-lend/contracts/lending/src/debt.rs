@@ -14,6 +14,11 @@ pub const DEFAULT_APR_BPS: i128 = 500;
 /// that has not been updated to pass an explicit reserve factor.
 pub const DEFAULT_RESERVE_FACTOR_BPS: u32 = 0;
 
+/// Initial value for the global borrow index (1.0 in fixed-point).
+/// The borrow index grows over time as interest accrues and is used to
+/// compute the inflation-adjusted principal of each position.
+pub const INDEX_SCALE: i128 = 10_000_000;
+
 // ─── Core position type ───────────────────────────────────────────────────────
 
 #[contracttype]
@@ -346,6 +351,7 @@ pub fn settle_accrual_split(
 
     let updated = DebtPosition {
         principal,
+        borrow_index_snapshot: position.borrow_index_snapshot,
         last_update: now,
     };
 
@@ -473,12 +479,7 @@ const KEY_ACCRUAL_LOG: &str = "accrual_log";
 /// Call this immediately after `settle_accrual_split` so the split is
 /// recorded for both on-chain history (via `get_accrual_split_log`) and
 /// off-chain TWAP/revenue attribution consumers.
-pub fn record_accrual_split(
-    env: &Env,
-    borrower: &Address,
-    timestamp: u64,
-    split: &InterestSplit,
-) {
+pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split: &InterestSplit) {
     let entry = AccrualSplitEntry {
         borrower: borrower.clone(),
         timestamp,
@@ -499,7 +500,11 @@ pub fn record_accrual_split(
 
     env.events().publish(
         (symbol_short!("accrual"), borrower.clone()),
-        (split.total_interest, split.depositor_yield, split.reserve_cut),
+        (
+            split.total_interest,
+            split.depositor_yield,
+            split.reserve_cut,
+        ),
     );
 }
 
@@ -552,6 +557,35 @@ pub fn repay_amount(
     };
     settled.last_update = now;
     Ok(settled)
+}
+
+/// Settle a debt position by applying the borrow index ratio.
+///
+/// Scales the principal by `current_index / borrow_index_snapshot` so the
+/// inflation-adjusted value reflects accrued interest since the last touch.
+/// When `borrow_index_snapshot` is zero (pre-migration position), it is
+/// treated as `INDEX_SCALE`.
+fn settle_position(
+    position: &DebtPosition,
+    current_index: i128,
+    now: u64,
+) -> Result<DebtPosition, DebtError> {
+    let snapshot = if position.borrow_index_snapshot == 0 {
+        INDEX_SCALE
+    } else {
+        position.borrow_index_snapshot
+    };
+    let scaled = position
+        .principal
+        .checked_mul(current_index)
+        .ok_or(DebtError::Overflow)?
+        .checked_div(snapshot)
+        .ok_or(DebtError::Overflow)?;
+    Ok(DebtPosition {
+        principal: scaled,
+        borrow_index_snapshot: current_index,
+        last_update: now,
+    })
 }
 
 /// Index-aware borrow: settle via index ratio, then add `amount`.
