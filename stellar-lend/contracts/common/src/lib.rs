@@ -173,3 +173,7 @@ mod tests {
         assert_eq!(LendingError::InvalidFeeBps as u32, 2005);
     }
 }
+
+#[cfg(test)]
+#[path = "bps_roundtrip_test.rs"]
+mod bps_roundtrip_tests;
