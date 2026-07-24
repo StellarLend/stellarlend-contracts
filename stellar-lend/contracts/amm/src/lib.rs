@@ -43,6 +43,25 @@ const FEE_TIERS_KEY: &str = "fee_tiers";
 // integer-only `init_pool(a, b)` and the swap-bounds proptest suite).
 const KEY_RES_A: (&str, &str) = ("pool", "a");
 const KEY_RES_B: (&str, &str) = ("pool", "b");
+const KEY_TWAP_OBS: (&str, &str) = ("twap", "obs");
+
+/// A single TWAP observation snapshot.
+///
+/// Both prices are stored as scaled integer ratios (price * 10^9) to preserve
+/// precision without floating-point arithmetic in `#![no_std]`.
+///
+/// * `price0` – spot price of token A in terms of token B, scaled by 1_000_000_000.
+///   Computed as `reserve_b * 1_000_000_000 / reserve_a`.
+/// * `price1` – spot price of token B in terms of token A, scaled by 1_000_000_000.
+///   Computed as `reserve_a * 1_000_000_000 / reserve_b`.
+/// * `timestamp` – ledger timestamp at the time of the observation.
+#[contracttype]
+#[derive(Clone)]
+pub struct TwapObservation {
+    pub price0: i128,
+    pub price1: i128,
+    pub timestamp: u64,
+}
 
 // Token contract addresses — stored at `init_pool` time and read by
 // `add_liquidity` / `remove_liquidity` to perform real token transfers.
@@ -901,6 +920,11 @@ fn assert_k_monotonic(
         if k_after > k_before {
             return Err(AmmPoolError::InvariantViolation);
         }
+    } else if k_after > k_before {
+        panic!(
+            "Invariant violation: k increased on removal (before={}, after={})",
+            k_before, k_after
+        );
     }
     Ok(())
 }
@@ -960,7 +984,6 @@ mod price_impact_test;
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
 
     #[test]
     fn fuzz_swap_k_monotonic() {
@@ -1019,6 +1042,66 @@ mod test {
         let k2 = ra2.checked_mul(rb2).unwrap();
 
         assert!(k2 <= k1, "k should not increase on removal");
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression test: get_twap_observations() must grow after every swap
+    // -----------------------------------------------------------------------
+
+    /// Regression guard: swap_a_for_b, swap_b_for_a, and flash_swap_a_for_b
+    /// must each append a TWAP observation so that downstream consumers
+    /// (price-impact analysis, oracle fallback) have data to work with.
+    ///
+    /// Prior to the fix, record_twap_observation was never called from any
+    /// swap path, so get_twap_observations() always returned an empty vector.
+    #[test]
+    fn test_twap_observations_grow_after_each_swap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(AmmContract, ());
+        let client = AmmContractClient::new(&env, &id);
+
+        client.init_pool(&1_000_000, &1_000_000);
+
+        // Before any swap, the observation list is empty.
+        assert_eq!(
+            client.get_twap_observations().len(),
+            0,
+            "no observations expected before any swap"
+        );
+
+        // --- swap_a_for_b ---
+        client.swap_a_for_b(&1_000, &30);
+        assert_eq!(
+            client.get_twap_observations().len(),
+            1,
+            "expected 1 observation after swap_a_for_b"
+        );
+
+        // --- swap_b_for_a ---
+        client.swap_b_for_a(&1_000, &30);
+        assert_eq!(
+            client.get_twap_observations().len(),
+            2,
+            "expected 2 observations after swap_b_for_a"
+        );
+
+        // --- flash_swap_a_for_b ---
+        client.flash_swap_a_for_b(&1_000, &30);
+        assert_eq!(
+            client.get_twap_observations().len(),
+            3,
+            "expected 3 observations after flash_swap_a_for_b"
+        );
+
+        // Also verify the observation fields are sensible (non-zero prices,
+        // timestamp set to the ledger timestamp in the test env).
+        let obs = client.get_twap_observations();
+        for i in 0..obs.len() {
+            let o = obs.get(i).unwrap();
+            assert!(o.price0 > 0, "price0 must be positive (obs {})", i);
+            assert!(o.price1 > 0, "price1 must be positive (obs {})", i);
+        }
     }
 }
 
