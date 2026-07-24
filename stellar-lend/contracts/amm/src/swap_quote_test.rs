@@ -24,7 +24,9 @@ fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>) {
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    client.init_pool(&ra, &rb).unwrap();
+    let token_a = soroban_sdk::Address::generate(&env);
+    let token_b = soroban_sdk::Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
     // SAFETY: env is returned alongside the client and outlives this call.
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client)
