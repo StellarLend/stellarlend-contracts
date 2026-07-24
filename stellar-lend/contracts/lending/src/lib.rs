@@ -2309,18 +2309,6 @@ impl LendingContract {
     /// Initialize timelocked multisig upgrade governance (admin-only, once).
     pub fn upgrade_init(
         env: Env,
-        initiator: Address,
-        receiver: Address,
-        asset: Address,
-        amount: i128,
-        params: Bytes,
-    ) {
-        check_emergency_status(&env, ProtocolAction::FlashLoan);
-        let tre_key = DataKey::Treasury(asset.clone());
-        let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-        if amount > tre_bal {
-            panic!("InsufficientLiquidity");
-        }
         caller: Address,
         current_wasm_hash: BytesN<32>,
         required_approvals: u32,
