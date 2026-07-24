@@ -12,9 +12,10 @@ fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) {
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    client.init_pool(&ra, &rb).unwrap();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
     let admin = Address::generate(&env);
-    // SAFETY: the env lives for the duration of the test via the returned value
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
@@ -118,8 +119,12 @@ fn test_symmetric_output_equal_reserves() {
     let id_ba = env.register(AmmContract, ());
     let c_ab = AmmContractClient::new(&env, &id_ab);
     let c_ba = AmmContractClient::new(&env, &id_ba);
-    c_ab.init_pool(&50_000, &50_000).unwrap();
-    c_ba.init_pool(&50_000, &50_000).unwrap();
+    let ta1 = Address::generate(&env);
+    let tb1 = Address::generate(&env);
+    let ta2 = Address::generate(&env);
+    let tb2 = Address::generate(&env);
+    c_ab.init_pool(&50_000, &50_000, &ta1, &tb1).unwrap();
+    c_ba.init_pool(&50_000, &50_000, &ta2, &tb2).unwrap();
 
     let out_ab = c_ab.swap_a_for_b(&1_000);
     let out_ba = c_ba.swap_b_for_a(&1_000);

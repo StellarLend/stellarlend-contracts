@@ -24,6 +24,7 @@ mod mint_shares_proptest;
 #[cfg(test)]
 mod sqrt_precision_test;
 
+use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec};
 
 pub struct FeeTier {
@@ -42,6 +43,11 @@ const FEE_TIERS_KEY: &str = "fee_tiers";
 // integer-only `init_pool(a, b)` and the swap-bounds proptest suite).
 const KEY_RES_A: (&str, &str) = ("pool", "a");
 const KEY_RES_B: (&str, &str) = ("pool", "b");
+
+// Token contract addresses — stored at `init_pool` time and read by
+// `add_liquidity` / `remove_liquidity` to perform real token transfers.
+const KEY_TOKEN_A: (&str, &str) = ("pool", "token_a");
+const KEY_TOKEN_B: (&str, &str) = ("pool", "token_b");
 
 // TWAP observation ring-buffer. Each observation stores (timestamp, cumulative_price_numerator,
 // cumulative_price_denominator) so off-chain consumers can compute time-weighted average prices.
@@ -181,11 +187,15 @@ impl AmmContract {
     /// initiated on a stale pool cannot be silently clobbered by a
     /// follow-up `init_pool` from the same transaction.
     ///
-    /// Resets both fee accumulators to zero.
-    pub fn init_pool(env: Env, a: i128, b: i128) -> Result<(), AmmPoolError> {
+    /// Stores the token contract addresses for A and B so that
+    /// `add_liquidity` and `remove_liquidity` can perform real token
+    /// transfers.  Resets both fee accumulators to zero.
+    pub fn init_pool(env: Env, a: i128, b: i128, token_a: Address, token_b: Address) -> Result<(), AmmPoolError> {
         Self::assert_no_active_flash_swap(&env)?;
         env.storage().persistent().set(&KEY_RES_A, &a);
         env.storage().persistent().set(&KEY_RES_B, &b);
+        env.storage().persistent().set(&KEY_TOKEN_A, &token_a);
+        env.storage().persistent().set(&KEY_TOKEN_B, &token_b);
         env.storage().persistent().set(&KEY_FEE_A, &0_i128);
         env.storage().persistent().set(&KEY_FEE_B, &0_i128);
         Ok(())
@@ -277,23 +287,42 @@ impl AmmContract {
         Ok(())
     }
 
-    /// Simple add liquidity: increase reserves and assert k monotonicity
-    /// (k must not decrease).
-    pub fn add_liquidity(env: Env, add_a: i128, add_b: i128) -> Result<(), AmmPoolError> {
+    /// Add liquidity: the caller transfers `add_a` units of token A and
+    /// `add_b` units of token B into the contract, and the reserve counters
+    /// are increased by those same amounts.
+    ///
+    /// Requires the caller's authorization and performs real token transfers
+    /// so that reported reserves always reflect actual on-chain balances.
+    /// Also asserts k-monotonicity (k must not decrease).
+    pub fn add_liquidity(env: Env, caller: Address, add_a: i128, add_b: i128) -> Result<(), AmmPoolError> {
+        caller.require_auth();
         Self::assert_no_active_flash_swap(&env)?;
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
         let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
         let new_ra = ra.checked_add(add_a).ok_or(AmmPoolError::Overflow)?;
         let new_rb = rb.checked_add(add_b).ok_or(AmmPoolError::Overflow)?;
         assert_k_monotonic(ra, rb, new_ra, new_rb, true)?;
+
+        // Transfer tokens from the caller into this contract before updating reserves.
+        let token_a: Address = env.storage().persistent().get(&KEY_TOKEN_A).ok_or(AmmPoolError::EmptyPool)?;
+        let token_b: Address = env.storage().persistent().get(&KEY_TOKEN_B).ok_or(AmmPoolError::EmptyPool)?;
+        TokenClient::new(&env, &token_a).transfer(&caller, &env.current_contract_address(), &add_a);
+        TokenClient::new(&env, &token_b).transfer(&caller, &env.current_contract_address(), &add_b);
+
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
         env.storage().persistent().set(&KEY_RES_B, &new_rb);
         Ok(())
     }
 
-    /// Simple remove liquidity: decrease reserves and assert k monotonicity
-    /// (k must not increase).
-    pub fn remove_liquidity(env: Env, rem_a: i128, rem_b: i128) -> Result<(), AmmPoolError> {
+    /// Remove liquidity: the contract transfers `rem_a` units of token A and
+    /// `rem_b` units of token B back to the caller, and the reserve counters
+    /// are decreased by those same amounts.
+    ///
+    /// Requires the caller's authorization and performs real token transfers
+    /// so that reported reserves always reflect actual on-chain balances.
+    /// Also asserts k-monotonicity (k must not increase).
+    pub fn remove_liquidity(env: Env, caller: Address, rem_a: i128, rem_b: i128) -> Result<(), AmmPoolError> {
+        caller.require_auth();
         Self::assert_no_active_flash_swap(&env)?;
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
         let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
@@ -303,8 +332,18 @@ impl AmmContract {
         let new_ra = ra - rem_a;
         let new_rb = rb - rem_b;
         assert_k_monotonic(ra, rb, new_ra, new_rb, false)?;
+
+        // Update reserves before transferring out to follow the
+        // checks-effects-interactions pattern.
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
         env.storage().persistent().set(&KEY_RES_B, &new_rb);
+
+        // Transfer tokens from this contract back to the caller.
+        let token_a: Address = env.storage().persistent().get(&KEY_TOKEN_A).ok_or(AmmPoolError::EmptyPool)?;
+        let token_b: Address = env.storage().persistent().get(&KEY_TOKEN_B).ok_or(AmmPoolError::EmptyPool)?;
+        TokenClient::new(&env, &token_a).transfer(&env.current_contract_address(), &caller, &rem_a);
+        TokenClient::new(&env, &token_b).transfer(&env.current_contract_address(), &caller, &rem_b);
+
         Ok(())
     }
 
@@ -930,13 +969,16 @@ mod test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
+        let token_a = soroban_sdk::testutils::Address::generate(&env);
+        let token_b = soroban_sdk::testutils::Address::generate(&env);
+
         let reserve_sizes = [1_000_i128, 10_000, 100_000, 1_000_000];
         let amounts = [1_i128, 10, 100, 1_000, 10_000];
 
         for &ra in reserve_sizes.iter() {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
-                    client.init_pool(&ra, &rb).unwrap();
+                    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
                     // swap using stored fee (default 30 bps)
                     let _out = client.swap_a_for_b(&amt);
                     let (new_ra, new_rb) = client.get_reserves();
@@ -963,12 +1005,16 @@ mod test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        client.init_pool(&1000, &2000).unwrap();
-        client.add_liquidity(&100, &200);
+        let token_a = soroban_sdk::testutils::Address::generate(&env);
+        let token_b = soroban_sdk::testutils::Address::generate(&env);
+        let caller = soroban_sdk::testutils::Address::generate(&env);
+
+        client.init_pool(&1000, &2000, &token_a, &token_b).unwrap();
+        client.add_liquidity(&caller, &100, &200);
         let (ra1, rb1) = client.get_reserves();
         let k1 = ra1.checked_mul(rb1).unwrap();
 
-        client.remove_liquidity(&50, &100);
+        client.remove_liquidity(&caller, &50, &100);
         let (ra2, rb2) = client.get_reserves();
         let k2 = ra2.checked_mul(rb2).unwrap();
 
