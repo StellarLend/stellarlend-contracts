@@ -2526,29 +2526,6 @@ fn extend_debt_ttl(env: &Env, user: &Address) {
     }
 }
 
-/// Append `user` to the `BorrowerList` stored in instance storage, if not
-/// already present.  This list is used by `migrate_positions` to iterate
-/// over all debt records.
-fn register_borrower(env: &Env, user: &Address) {
-    let mut list: soroban_sdk::Vec<Address> = env
-        .storage()
-        .instance()
-        .get(&DataKey::BorrowerList)
-        .unwrap_or_else(|| soroban_sdk::vec![env]);
-
-    // Linear scan is acceptable: the list is bounded by the number of unique
-    // borrowers and is read/written only on borrow (not every tx).
-    for i in 0..list.len() {
-        if list.get(i).unwrap() == *user {
-            return; // already registered
-        }
-    }
-    list.push_back(user.clone());
-    env.storage()
-        .instance()
-        .set(&DataKey::BorrowerList, &list);
-}
-
 fn pause_is_active(env: &Env, operation: PauseType) -> bool {
     let key = DataKey::PauseState(operation);
     env.storage()
