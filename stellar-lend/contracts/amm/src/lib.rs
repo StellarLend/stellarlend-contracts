@@ -1,4 +1,33 @@
 #![no_std]
+//! `stellarlend-amm` — minimal Soroban AMM contract for the StellarLend protocol.
+//!
+//! The contract exposes a constant‑product (`x · y = k`) pool with two reserves
+//! and operates entirely on integer arithmetic (Soroban `i128`). All swaps use
+//! the Uniswap‑v2 formula with a fee expressed in basis points (`fee_bps`, with
+//! `10000` representing 100%):
+//!
+//! ```text
+//! amount_in_with_fee = amount_in * (10000 − fee_bps)
+//! amount_out          = (amount_in_with_fee * reserve_out)
+//!                       / (reserve_in * 10000 + amount_in_with_fee)
+//! ```
+//!
+//! Equivalently: `amount_out = (amount_in · (10000 − fee_bps) · reserve_out) /
+//! (reserve_in · 10000 + amount_in · (10000 − fee_bps))`.
+//!
+//! Public entry points (`pub fn`, no auth required):
+//! - [`init_pool`] — initialise reserves A/B. Returns `()`.
+//! - [`add_liquidity`] / [`remove_liquidity`] — mutate reserves while keeping `k` monotonic. Return `()`.
+//! - [`swap_a_for_b`] — fee‑adjusted constant‑product swap A → B. Returns `i128` (amount_out).
+//! - [`get_reserves`] — read both reserves for inspection / tests. Returns `(i128, i128)`.
+//!
+//! Notes for downstream callers:
+//! - Input validation is enforced via `panic!` (this is a test‑grade surface, not a production safety
+//!   wrapper); callers should pre‑validate non‑negative amounts and `0 ≤ fee_bps ≤ 10000` off‑chain.
+//! - The k‑invariant is enforced by [`assert_k_monotonic`] after every reserve mutation.
+//! - Flash‑swap APIs (e.g. `flash_swap_a_for_b`, `repay_flash_swap`) and a dedicated `AmmPoolError`
+//!   type are **not implemented** in this crate; do not reference them until they are introduced
+//!   through a tracked protocol change.
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
