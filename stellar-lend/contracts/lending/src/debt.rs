@@ -106,6 +106,12 @@ impl From<&'static str> for DebtError {
     }
 }
 
+impl From<rate_model::RateModelError> for DebtError {
+    fn from(_: rate_model::RateModelError) -> Self {
+        DebtError::Overflow
+    }
+}
+
 impl From<RoundingError> for DebtError {
     fn from(_: RoundingError) -> Self {
         DebtError::Overflow
@@ -567,7 +573,7 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
 
     let rate_bps = match &snapshot.params {
         Some(p) => {
-            let target_rate = rate_model::compute_borrow_rate(utilization_bps, p);
+            let target_rate = rate_model::compute_borrow_rate(utilization_bps, p)?;
             crate::rate_model::update_and_get_rate(env, target_rate, p)
         }
         None => DEFAULT_APR_BPS,

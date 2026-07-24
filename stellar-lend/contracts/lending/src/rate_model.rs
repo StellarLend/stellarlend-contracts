@@ -77,6 +77,13 @@ impl Default for RateParams {
     }
 }
 
+/// Errors that can occur during borrow-rate computation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateModelError {
+    /// An intermediate arithmetic operation overflowed.
+    Overflow,
+}
+
 /// Computes the target borrow rate given utilization and rate model parameters.
 ///
 /// Implements a two-slope piecewise linear model with a kink point. Below the kink,
@@ -114,7 +121,12 @@ impl Default for RateParams {
 ///
 /// # Returns
 ///
-/// The computed borrow rate in basis points, clamped to `[params.rate_floor_bps, params.rate_ceiling_bps]`.
+/// `Ok(rate_bps)` — the computed borrow rate in basis points, clamped to
+/// `[params.rate_floor_bps, params.rate_ceiling_bps]`.
+///
+/// `Err(RateModelError::Overflow)` — if any intermediate arithmetic product
+/// overflows `i128`.  Callers should propagate this as a typed error rather
+/// than allowing the transaction to abort.
 ///
 /// # Examples
 ///
@@ -125,40 +137,40 @@ impl Default for RateParams {
 /// - At 100% utilization: `3,700 bps` (maximum non-ceiling-limited rate)
 ///
 /// See [`RATE_MODEL.md`](./RATE_MODEL.md) for detailed curve sketch and additional worked examples.
-///
-/// # Panics
-///
-/// Panics if checked arithmetic overflows (which should not occur with valid utilization
-/// values and reasonable parameter ranges).
-pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
+pub fn compute_borrow_rate(
+    utilization_bps: i128,
+    params: &RateParams,
+) -> Result<i128, RateModelError> {
     let pre_kink_rate = params
         .base_rate_bps
         .checked_add(
             utilization_bps
                 .min(params.kink_utilization_bps)
                 .checked_mul(params.multiplier_bps)
-                .unwrap()
+                .ok_or(RateModelError::Overflow)?
                 .checked_div(BPS_DENOM)
-                .unwrap(),
+                .ok_or(RateModelError::Overflow)?,
         )
-        .unwrap();
+        .ok_or(RateModelError::Overflow)?;
 
     let raw_rate = if utilization_bps > params.kink_utilization_bps {
         let excess = utilization_bps
             .checked_sub(params.kink_utilization_bps)
-            .unwrap();
+            .ok_or(RateModelError::Overflow)?;
         let jump = excess
             .checked_mul(params.jump_multiplier_bps)
-            .unwrap()
+            .ok_or(RateModelError::Overflow)?
             .checked_div(BPS_DENOM)
-            .unwrap();
-        pre_kink_rate.checked_add(jump).unwrap()
+            .ok_or(RateModelError::Overflow)?;
+        pre_kink_rate
+            .checked_add(jump)
+            .ok_or(RateModelError::Overflow)?
     } else {
         pre_kink_rate
     };
-    raw_rate
+    Ok(raw_rate
         .max(params.rate_floor_bps)
-        .min(params.rate_ceiling_bps)
+        .min(params.rate_ceiling_bps))
 }
 
 #[contracttype]
@@ -267,4 +279,56 @@ pub fn update_and_get_rate(env: &Env, target_rate: i128, params: &RateParams) ->
         .instance()
         .set(&RateModelKey::LastRateLedger, &current_ledger);
     clamped_rate
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Normal inputs should still produce the expected rate without error.
+    #[test]
+    fn test_compute_borrow_rate_normal() {
+        let params = RateParams::default();
+        // At 80% utilization (kink), rate = base + kink * multiplier / BPS_DENOM
+        // = 100 + 8000 * 2000 / 10000 = 100 + 1600 = 1700 bps
+        let rate = compute_borrow_rate(8_000, &params).unwrap();
+        assert_eq!(rate, 1_700);
+    }
+
+    /// An extremely large multiplier_bps combined with a large utilization_bps
+    /// causes an i128 overflow in the intermediate product.  The function must
+    /// return Err(RateModelError::Overflow) instead of panicking.
+    #[test]
+    fn test_compute_borrow_rate_overflow_returns_error() {
+        let params = RateParams {
+            // Use i128::MAX for multiplier — multiplying any positive
+            // utilization by this will overflow.
+            multiplier_bps: i128::MAX,
+            ..RateParams::default()
+        };
+        let result = compute_borrow_rate(1, &params);
+        assert_eq!(
+            result,
+            Err(RateModelError::Overflow),
+            "Expected Overflow error for out-of-range params, got {:?}",
+            result
+        );
+    }
+
+    /// jump_multiplier_bps overflows when utilization is above the kink.
+    #[test]
+    fn test_compute_borrow_rate_jump_overflow_returns_error() {
+        let params = RateParams {
+            jump_multiplier_bps: i128::MAX,
+            ..RateParams::default()
+        };
+        // Utilization above kink triggers the jump branch.
+        let result = compute_borrow_rate(9_000, &params);
+        assert_eq!(
+            result,
+            Err(RateModelError::Overflow),
+            "Expected Overflow error in jump branch, got {:?}",
+            result
+        );
+    }
 }
