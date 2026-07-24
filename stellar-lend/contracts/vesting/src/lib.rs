@@ -392,6 +392,7 @@ impl VestingContract {
     }
 }
 
+// Test modules for vesting contract behavior.
 #[cfg(test)]
 mod accelerate_test;
 #[cfg(test)]
