@@ -101,6 +101,8 @@ mod rate_persistence_test;
 #[cfg(test)]
 mod rate_smoothing_state_test;
 #[cfg(test)]
+mod rate_updated_event_test;
+#[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
 mod reserve_split_proptest;
