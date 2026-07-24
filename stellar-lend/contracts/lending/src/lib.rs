@@ -111,6 +111,8 @@ mod self_liquidation_test;
 mod supply_rate_split_test;
 #[cfg(test)]
 mod effective_supply_rate_test;
+#[cfg(test)]
+mod withdraw_overflow_test;
 
 #[cfg(test)]
 mod utilization_history_test;
@@ -1060,25 +1062,27 @@ impl LendingContract {
         if amount > current {
             return Err(LendingError::InvalidAmount);
         }
-        let new_balance = current.checked_sub(amount).expect("withdraw: underflow");
+        let new_balance = current
+            .checked_sub(amount)
+            .ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&key, &new_balance);
         let total_deposits: i128 = env
             .storage()
             .persistent()
             .get(&DataKey::TotalDeposits)
             .unwrap_or(0);
-        env.storage().persistent().set(
-            &DataKey::TotalDeposits,
-            &total_deposits
-                .checked_sub(amount)
-                .expect("withdraw: total deposits underflow"),
-        );
+        let new_total = total_deposits
+            .checked_sub(amount)
+            .ok_or(LendingError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
         
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
         
-        new_balance
+        Ok(new_balance)
     }
 
     /// Set the configured valuation collateral asset for the legacy single-asset flows.
