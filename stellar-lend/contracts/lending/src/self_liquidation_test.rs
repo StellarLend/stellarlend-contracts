@@ -1,6 +1,10 @@
 #![cfg(test)]
 
-use crate::{debt::DebtPosition, DataKey, LendingContract, LendingContractClient, LendingError};
+use crate::{
+    debt::DebtPosition,
+    liquidate_transfer_test::{MockToken, MockTokenClient},
+    DataKey, LendingContract, LendingContractClient, LendingError,
+};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup() -> (
@@ -19,9 +23,11 @@ fn setup() -> (
     let admin = Address::generate(&env);
     let borrower = Address::generate(&env);
     let liquidator = borrower.clone();
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
     client.initialize(&admin);
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
     (
         env,
         client,
@@ -45,6 +51,7 @@ fn self_liquidation_is_rejected_before_any_state_change() {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -59,7 +66,9 @@ fn self_liquidation_is_rejected_before_any_state_change() {
     assert_eq!(client.get_position(&borrower).collateral, before_collateral);
     assert_eq!(client.get_position(&borrower).debt, before_debt);
 
+    // The distinct-address liquidator needs debt tokens to repay.
     let other_liquidator = Address::generate(&env);
+    MockTokenClient::new(&env, &debt_asset).mint(&other_liquidator, &1_000);
     let success = client.try_liquidate(
         &other_liquidator,
         &borrower,
@@ -85,6 +94,7 @@ fn unhealthy_self_position_is_rejected_even_when_position_is_underwater() {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );

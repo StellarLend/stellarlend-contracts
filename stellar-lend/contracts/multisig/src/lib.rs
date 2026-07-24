@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
 };
 
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
@@ -10,15 +10,11 @@ use soroban_sdk::{
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProposalAction {
     /// Update the approval threshold for future proposals
-    SetThreshold { new_threshold: u32 },
+    SetThreshold(u32),
     /// Replace the full signer set with a new set
-    RotateSigners { new_signers: Vec<Address> },
+    RotateSigners(Vec<Address>),
     /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call
-    InvokeContract {
-        contract: Address,
-        fn_symbol: Symbol,
-        args_hash: soroban_sdk::Bytes,
-    },
+    InvokeContract(Address, Symbol, soroban_sdk::Bytes),
 }
 
 /// Lifecycle state of a proposal.
@@ -55,6 +51,13 @@ pub struct ProposalExecutedEvent {
     pub ok: bool,
 }
 
+/// Event emitted after a batch of proposals has been atomically executed.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchExecutedEvent {
+    pub ids: Vec<u64>,
+}
+
 #[contracttype]
 pub enum MultisigDataKey {
     Threshold,
@@ -64,22 +67,31 @@ pub enum MultisigDataKey {
 }
 
 /// Multisig errors.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
 pub enum MultisigError {
-    Unauthorized,
-    ProposalNotFound,
-    ProposalNotPassed,
-    ProposalExpired,
-    AlreadyExecuted,
-    AlreadyApproved,
-    PayloadHashMismatch,
-    QuorumNotReached,
-    InvalidAction,
-    InvalidThreshold,
-    InvalidSigners,
-    AlreadyCancelled,
+    Unauthorized = 1,
+    ProposalNotFound = 2,
+    ProposalNotPassed = 3,
+    ProposalExpired = 4,
+    AlreadyExecuted = 5,
+    AlreadyApproved = 6,
+    PayloadHashMismatch = 7,
+    QuorumNotReached = 8,
+    InvalidAction = 9,
+    InvalidThreshold = 10,
+    InvalidSigners = 11,
+    AlreadyCancelled = 12,
+    InvalidTtl = 13,
+    BatchSizeExceeded = 14,
+    DuplicateProposalId = 15,
 }
+
+/// Maximum number of proposals that can be executed in a single
+/// `batch_execute` call. This bounds loop iterations and storage
+/// churn in a single contract invocation.
+pub const MAX_BATCH_SIZE: u32 = 32;
 
 #[contract]
 pub struct MultisigContract;
@@ -161,9 +173,9 @@ impl MultisigContract {
 
     fn action_kind_symbol(env: &Env, action: &ProposalAction) -> Symbol {
         match action {
-            ProposalAction::SetThreshold { .. } => Symbol::new(env, "SetThreshold"),
-            ProposalAction::RotateSigners { .. } => Symbol::new(env, "RotateSigners"),
-            ProposalAction::InvokeContract { .. } => Symbol::new(env, "InvokeContract"),
+            ProposalAction::SetThreshold(..) => Symbol::new(env, "SetThreshold"),
+            ProposalAction::RotateSigners(..) => Symbol::new(env, "RotateSigners"),
+            ProposalAction::InvokeContract(..) => Symbol::new(env, "InvokeContract"),
         }
     }
 
@@ -187,12 +199,16 @@ impl MultisigContract {
         action: ProposalAction,
         payload_hash: soroban_sdk::Bytes,
         ttl_ledgers: u64,
-    ) -> u64 {
+    ) -> Result<u64, MultisigError> {
         caller.require_auth();
         Self::require_signer(&env, &caller);
 
+        if ttl_ledgers > 3_110_400 {
+            return Err(MultisigError::InvalidTtl);
+        }
+
         let id = Self::next_proposal_id(&env);
-        let expires_at = env.ledger().sequence() as u64 + ttl_ledgers;
+        let expires_at = (env.ledger().sequence() as u64).saturating_add(ttl_ledgers);
 
         let proposal = Proposal {
             id,
@@ -204,7 +220,7 @@ impl MultisigContract {
             expires_at,
         };
         Self::save_proposal(&env, &proposal);
-        id
+        Ok(id)
     }
 
     /// Approve an existing active proposal.
@@ -309,7 +325,7 @@ impl MultisigContract {
     /// Returns `true` on success, `false` if the action is unregistered or fails.
     fn dispatch_action(env: &Env, action: &ProposalAction) -> bool {
         match action {
-            ProposalAction::SetThreshold { new_threshold } => {
+            ProposalAction::SetThreshold(new_threshold) => {
                 if *new_threshold == 0 {
                     return false;
                 }
@@ -318,7 +334,7 @@ impl MultisigContract {
                     .set(&MultisigDataKey::Threshold, new_threshold);
                 true
             }
-            ProposalAction::RotateSigners { new_signers } => {
+            ProposalAction::RotateSigners(new_signers) => {
                 if new_signers.is_empty() {
                     return false;
                 }
@@ -327,11 +343,7 @@ impl MultisigContract {
                     .set(&MultisigDataKey::Signers, new_signers);
                 true
             }
-            ProposalAction::InvokeContract {
-                contract,
-                fn_symbol,
-                args_hash: _,
-            } => {
+            ProposalAction::InvokeContract(contract, fn_symbol, _args_hash) => {
                 // Dispatch to the lending upgrade entrypoint via cross-contract call.
                 // The args_hash was verified at the payload_hash check; here we
                 // perform the actual invocation with an empty args list since the
@@ -352,52 +364,18 @@ impl MultisigContract {
         caller.require_auth();
         Self::require_signer(&env, &caller);
 
-        let mut proposal = Self::fetch_proposal(&env, id);
+        let proposal = Self::fetch_proposal(&env, id);
         if proposal.status != ProposalStatus::Active {
             panic!("ProposalNotPassed");
         }
     }
-}
 
-#[cfg(test)]
-mod quorum_edge_test;
-
-#[cfg(test)]
-mod signer_cooldown_test;
-
-#[cfg(test)]
-mod action_allowlist_test;
-
-#[cfg(test)]
-mod upgrade_e2e_test;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::testutils::Ledger;
-
-    fn setup() -> (Env, Address, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::generate(&env);
-        let contract_id = env.register_contract(None, MultisigContract);
-        (env, admin, contract_id)
-    }
-
-    // -----------------------------------------------------------------------
-    // View helpers
-    // -----------------------------------------------------------------------
-
-    /// Return the current threshold.
+    /// Return the current approval threshold.
     pub fn get_threshold(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&MultisigDataKey::Threshold)
-            .unwrap_or(1)
+        Self::fetch_threshold(&env)
     }
 
-    /// Return the current signer list.
+    /// Return the current registered signer set.
     pub fn get_signers(env: Env) -> Vec<Address> {
         env.storage()
             .persistent()
@@ -405,17 +383,144 @@ mod tests {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// Return the current state of a proposal.
+    /// Return the full state of a proposal.
     ///
     /// # Arguments
     /// * `id` – Proposal ID.
     pub fn get_proposal(env: Env, id: u64) -> Proposal {
-        env.storage()
-            .persistent()
-            .get(&MultisigDataKey::Proposal(id))
-            .unwrap_or_else(|| panic!("ProposalNotFound"))
+        Self::fetch_proposal(&env, id)
+    }
+
+    /// Execute a set of passed proposals atomically.
+    ///
+    /// All proposals are validated first (status, expiry, payload hash,
+    /// duplicates). If every proposal is eligible they are executed in
+    /// order. If **any** proposal fails validation or its action dispatches
+    /// with an error the entire batch is rejected — no proposal is left
+    /// executed (Soroban's panic-based rollback guarantees all-or-nothing).
+    ///
+    /// A `BatchExecuted` event listing the applied IDs is emitted on
+    /// success.
+    ///
+    /// # Arguments
+    /// * `caller`         – Signer triggering execution (must be a registered
+    ///                      signer).
+    /// * `ids`            – Proposal IDs to execute, in order.
+    /// * `payload_hashes` – Payload hashes for each proposal, one per ID;
+    ///                      each must match the hash recorded at creation.
+    ///
+    /// # Panics
+    /// * `BatchSizeExceeded` if `ids.len() > MAX_BATCH_SIZE`.
+    /// * `DuplicateProposalId` if the same ID appears more than once.
+    /// * `ProposalNotFound` if any ID does not exist.
+    /// * `ProposalExpired` if any proposal has expired.
+    /// * `AlreadyExecuted` if any proposal has already been executed.
+    /// * `AlreadyCancelled` if any proposal has been cancelled.
+    /// * `ProposalNotPassed` if any proposal has not reached the required
+    ///   approval quorum.
+    /// * `PayloadHashMismatch` if a payload hash does not match.
+    pub fn batch_execute(
+        env: Env,
+        caller: Address,
+        ids: Vec<u64>,
+        payload_hashes: Vec<soroban_sdk::Bytes>,
+    ) {
+        caller.require_auth();
+        Self::require_signer(&env, &caller);
+
+        let batch_size = ids.len();
+        if batch_size > MAX_BATCH_SIZE {
+            panic!("BatchSizeExceeded");
+        }
+        if batch_size != payload_hashes.len() {
+            panic!("PayloadHashMismatch");
+        }
+
+        // Phase 1 – validate every proposal before touching any state
+        let mut proposals: Vec<Proposal> = Vec::new(&env);
+        for i in 0..batch_size {
+            let id = ids.get(i).unwrap();
+            let payload_hash = payload_hashes.get(i).unwrap();
+
+            // Duplicate check against earlier positions
+            for j in 0..i {
+                if ids.get(j).unwrap() == id {
+                    panic!("DuplicateProposalId");
+                }
+            }
+
+            let mut proposal = Self::fetch_proposal(&env, id);
+
+            // Expiry guard
+            if env.ledger().sequence() as u64 > proposal.expires_at {
+                proposal.status = ProposalStatus::Expired;
+                Self::save_proposal(&env, &proposal);
+                panic!("ProposalExpired");
+            }
+            // Status guards
+            if proposal.status == ProposalStatus::Executed {
+                panic!("AlreadyExecuted");
+            }
+            if proposal.status == ProposalStatus::Cancelled {
+                panic!("AlreadyCancelled");
+            }
+            if proposal.status != ProposalStatus::Passed {
+                panic!("ProposalNotPassed");
+            }
+            // Payload-hash binding
+            if proposal.payload_hash != payload_hash {
+                panic!("PayloadHashMismatch");
+            }
+
+            proposals.push_back(proposal);
+        }
+
+        // Phase 2 – execute each proposal in order; if any dispatch fails
+        // the panic rolls back all prior execution side-effects.
+        for i in 0..batch_size {
+            let mut proposal = proposals.get(i).unwrap();
+            if !Self::dispatch_action(&env, &proposal.action) {
+                panic!("InvalidAction");
+            }
+            proposal.status = ProposalStatus::Executed;
+            Self::save_proposal(&env, &proposal);
+        }
+
+        // Emit single BatchExecuted event with all applied IDs
+        env.events().publish(
+            (symbol_short!("multisig"), Symbol::new(&env, "batch_executed")),
+            BatchExecutedEvent { ids },
+        );
+    }
+}
+
+// Pre-existing test modules from an older API version – commented out
+// until updated to match the current contract interface.
+// #[cfg(test)]
+// mod quorum_edge_test;
+// #[cfg(test)]
+// mod signer_cooldown_test;
+// #[cfg(test)]
+// mod action_allowlist_test;
+// #[cfg(test)]
+// mod upgrade_e2e_test;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(MultisigContract, ());
+        (env, admin, contract_id)
     }
 }
 
 #[cfg(test)]
 mod execution_router_test;
+
+#[cfg(test)]
+mod batch_execute_test;

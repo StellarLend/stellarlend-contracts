@@ -6,10 +6,7 @@ mod cross_asset;
 mod deposit;
 mod risk_management;
 
-use cross_asset::{
-    add_to_user_debt_list, get_max_debt_assets_per_user, get_user_debt_assets,
-    set_max_debt_assets_per_user, CrossAssetError,
-};
+use cross_asset::CrossAssetError;
 use deposit::deposit_collateral;
 use risk_management::{
     can_be_liquidated, get_close_factor, get_liquidation_incentive,
@@ -78,6 +75,8 @@ mod bridge_freeze_test;
 mod amm_integration_test;
 
 #[cfg(test)]
+mod clamp_rate_test;
+#[cfg(test)]
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
@@ -95,6 +94,10 @@ mod twap_read_bench_test;
 mod twap_coverage_test;
 #[cfg(test)]
 mod cross_asset_storage_doc_test;
+#[cfg(test)]
+mod cross_asset_config_bounds_test;
+#[cfg(test)]
+mod utilization_clamp_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
@@ -145,8 +148,9 @@ use crate::interest_rate::{
     InterestRateError,
 };
 use crate::liquidate::liquidate;
+use crate::admin::require_admin;
 use crate::risk_management::{
-    require_admin, set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
+    set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
 };
 use crate::risk_params::{
     can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
@@ -310,7 +314,7 @@ impl HelloContract {
         close_factor: Option<i128>,
         liquidation_incentive: Option<i128>,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &caller)?;
+        require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
         check_emergency_pause(&env)?;
         risk_params::set_risk_params(
             &env,
@@ -512,7 +516,7 @@ impl HelloContract {
         admin: Address,
         adjustment_bps: i128,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &admin)?;
+        require_admin(&env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
         interest_rate::set_emergency_rate_adjustment(&env, admin, adjustment_bps)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
@@ -530,7 +534,7 @@ impl HelloContract {
         rate_ceiling: Option<i128>,
         spread: Option<i128>,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &admin)?;
+        require_admin(&env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
         interest_rate::update_interest_rate_config(
             &env,
             admin,
@@ -600,7 +604,7 @@ impl HelloContract {
         _to: Address,
         amount: i128,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &caller)?;
+        require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
 
         let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
         let mut reserve_balance = env
@@ -924,13 +928,13 @@ impl HelloContract {
 
     /// Update asset configuration (admin only).
     ///
-    /// `collateral_factor_bps` is bounded to `[0, 10_000]`. Out-of-range
-    /// values are rejected with [`CrossAssetError::InvalidCollateralFactor`].
-    /// See [`stellar_lend::collateral_factor_tiers`] for the formula and
-    /// worked example.
+    /// `caller` must be the stored protocol admin.
+    /// `collateral_factor_bps` is bounded to `[0, 10_000]` and must not
+    /// exceed `liquidation_threshold`. `price_decimals` must be in `1..=38`.
     #[allow(clippy::too_many_arguments)]
     pub fn update_asset_config(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         collateral_factor_bps: Option<i128>,
         liquidation_threshold: Option<i128>,
@@ -938,9 +942,11 @@ impl HelloContract {
         max_borrow: Option<i128>,
         can_collateralize: Option<bool>,
         can_borrow: Option<bool>,
+        price_decimals: Option<u32>,
     ) -> Result<(), CrossAssetError> {
         update_asset_config(
             &env,
+            &caller,
             asset,
             collateral_factor_bps,
             liquidation_threshold,
@@ -948,6 +954,7 @@ impl HelloContract {
             max_borrow,
             can_collateralize,
             can_borrow,
+            price_decimals,
         )
     }
 

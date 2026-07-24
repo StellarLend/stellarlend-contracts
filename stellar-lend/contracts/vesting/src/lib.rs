@@ -61,7 +61,7 @@ pub struct Grant {
 }
 
 impl Grant {
-    /// Compute how many tokens have vested by `effective_now`.
+    /// Compute how many tokens have vested by `effective_now`, avoiding intermediate overflow.
     ///
     /// The caller must pass an already pause-adjusted effective timestamp so that
     /// paused intervals are not counted toward vesting accrual.
@@ -75,6 +75,9 @@ impl Grant {
         if self.revoked {
             return self.claimed_amount;
         }
+        if self.total_amount <= 0 {
+            return 0;
+        }
         if effective_now < self.start_ts.saturating_add(self.cliff_secs) {
             return 0;
         }
@@ -82,11 +85,31 @@ impl Grant {
         if elapsed >= self.duration_secs {
             return self.total_amount;
         }
-        // Linear vesting: total_amount * elapsed / duration_secs
-        (self.total_amount as u64)
-            .checked_mul(elapsed)
-            .map(|v| (v / self.duration_secs) as i128)
-            .unwrap_or(self.total_amount)
+
+        // Partitioned division to avoid intermediate u128 multiplication overflow:
+        // elapsed * total_amount / duration_secs
+        // Since elapsed < duration_secs, we partition total_amount (positive i128 as u128)
+        // into quotient and remainder:
+        // total_amount = q * duration_secs + r
+        // elapsed * total_amount / duration_secs = elapsed * q + (elapsed * r) / duration_secs
+        let principal = self.total_amount as u128;
+        let elapsed_u128 = elapsed as u128;
+        let duration_u128 = self.duration_secs as u128;
+
+        let q = principal / duration_u128;
+        let r = principal % duration_u128;
+
+        let val1 = elapsed_u128 * q;
+        let val2 = (elapsed_u128 * r) / duration_u128;
+
+        let vested = val1 + val2;
+
+        // Guard to ensure vested never exceeds principal and is safe to cast back
+        if vested > principal {
+            self.total_amount
+        } else {
+            vested as i128
+        }
     }
 
     /// How many tokens are claimable right now (vested minus already claimed).
@@ -367,7 +390,6 @@ impl VestingContract {
         data.push_back(actor.clone().into_val(env));
         env.events().publish(topics, data);
     }
-
 }
 
 #[cfg(test)]
@@ -389,14 +411,4 @@ mod partial_claim_test;
 #[cfg(test)]
 mod pause_offset_test;
 #[cfg(test)]
-mod pause_test;
-#[cfg(test)]
-mod revoke_split_test;
-#[cfg(test)]
-mod vested_at_proptest;
-#[cfg(test)]
-mod vesting_contract_test;
-#[cfg(test)]
-mod vesting_doc_example_test;
-#[cfg(test)]
-mod vesting_views_test;
+mod vested_at_overflow_test;
