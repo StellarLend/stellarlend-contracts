@@ -179,8 +179,8 @@ fn arb_borrow_amount() -> impl Strategy<Value = i128> {
 
 fn make_position(principal: i128, last_update: u64) -> debt::DebtPosition {
     debt::DebtPosition {
-        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal,
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         last_update,
     }
 }

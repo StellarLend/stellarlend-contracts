@@ -120,8 +120,8 @@ fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
         env.storage().persistent().set(
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -166,8 +166,8 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
         env.storage().persistent().set(
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -192,9 +192,10 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
 
 #[test]
 fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
-    let (env, client, _lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
-    let debt_token = MockTokenClient::new(&env, &debt_asset);
-    debt_token.mint(&liquidator, &50);
+    let (env, client, _lending_id, borrower, _liquidator, debt_asset, collateral_asset) = setup();
+
+    // Use a separate poor liquidator that has not been minted any tokens.
+    let poor_liquidator = Address::generate(&env);
 
     env.as_contract(&client.address, || {
         env.storage()
@@ -203,14 +204,20 @@ fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
         env.storage().persistent().set(
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
     });
 
-    let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+    let res = client.try_liquidate(
+        &poor_liquidator,
+        &borrower,
+        &debt_asset,
+        &collateral_asset,
+        &100,
+    );
     assert!(matches!(res, Err(_)));
     let position = client.get_debt_position(&borrower);
     assert_eq!(position.principal, 200);

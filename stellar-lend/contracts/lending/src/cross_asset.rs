@@ -1,6 +1,6 @@
 use soroban_sdk::{Address, Env, Map, Vec};
 
-use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
+use crate::debt::{DebtPosition, DEFAULT_APR_BPS, INDEX_SCALE};
 use crate::{
     check_emergency_status, check_pause_status, AssetParams, DataKey, LendingError, PriceRecord,
     ProtocolAction, DEFAULT_ORACLE_MAX_AGE_SECS,

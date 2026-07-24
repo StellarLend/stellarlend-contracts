@@ -78,8 +78,8 @@ fn overlapping_asset_triggers_single_read_and_identical_hf() {
             &user,
             &asset,
             &DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 100i128,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -123,8 +123,8 @@ fn single_sided_asset_unaffected() {
             &user,
             &debt_asset,
             &DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 100i128,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -162,8 +162,8 @@ fn no_persistent_or_instance_storage_write_happens_as_side_effect() {
             &user,
             &asset,
             &DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 100i128,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );

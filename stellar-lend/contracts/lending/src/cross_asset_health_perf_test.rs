@@ -164,8 +164,8 @@ fn setup_hf_with_n_assets(n: u32) -> (Env, Address, Address, Address, soroban_sd
                     ltv_bps: 7500,
                     liquidation_threshold_bps: 8000,
                     debt_ceiling: 1_000_000_000_000i128,
-                     borrow_cap: 0,
-                     supply_cap: 0,
+                    borrow_cap: 0,
+                    supply_cap: 0,
                 },
             );
             env.storage().persistent().set(
@@ -210,8 +210,8 @@ fn populate_hf_positions(
             user,
             &asset,
             &debt::DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 100i128 * (i as i128 + 1),
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -527,8 +527,8 @@ fn hf_bench_undercollateralised_position_below_scale() {
             &user,
             &debt_asset,
             &debt::DebtPosition {
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 1_000_000_000i128,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );

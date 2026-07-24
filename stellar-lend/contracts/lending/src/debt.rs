@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::math::split_interest_by_reserve_factor;
 use crate::rounding_strategy::{calculate_interest_with_rounding, RoundingError, RoundingMode};
@@ -21,6 +21,7 @@ pub struct InterestSplit {
     pub reserve_cut: i128,
 }
 
+// ─── Core position type ───────────────────────────────────────────────────────
 
 /// Fixed-point scale for the global borrow index (10^7 = 7 decimal places).
 ///
@@ -353,6 +354,52 @@ pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<
     Ok(result.interest)
 }
 
+/// Compute gross interest for `principal` over `elapsed` seconds at `rate_bps`,
+/// then split it between depositors and the protocol reserve.
+///
+/// # Formula
+///
+/// ```text
+/// total_interest  = accrue_interest(principal, elapsed, rate_bps)
+/// reserve_cut     = floor(total_interest * reserve_factor_bps / 10_000)
+/// depositor_yield = total_interest - reserve_cut
+/// ```
+///
+/// The depositor share is the complement, so `depositor_yield + reserve_cut ==
+/// total_interest` exactly — no precision is lost to either side.
+///
+/// # Arguments
+///
+/// * `principal`           – Current settled principal (≥ 0).
+/// * `elapsed`             – Seconds since last accrual.
+/// * `rate_bps`            – Annual borrow rate in basis points (e.g. 500 = 5 %).
+/// * `reserve_factor_bps`  – Fraction of interest kept by the protocol, in
+///   basis points (0 = none, 10 000 = 100 %).
+///
+/// # Errors
+///
+/// Returns `DebtError::Overflow` on arithmetic overflow or if the reserve factor
+/// exceeds 10 000 bps.
+pub fn accrue_interest_split(
+    principal: i128,
+    elapsed: u64,
+    rate_bps: i128,
+    reserve_factor_bps: u32,
+) -> Result<InterestSplit, DebtError> {
+    let total_interest = accrue_interest(principal, elapsed, rate_bps)?;
+
+    // Delegate to the pure math helper which validates reserve_factor_bps.
+    let (depositor_yield, reserve_cut) =
+        split_interest_by_reserve_factor(total_interest, reserve_factor_bps)
+            .map_err(|_| DebtError::Overflow)?;
+
+    Ok(InterestSplit {
+        total_interest,
+        depositor_yield,
+        reserve_cut,
+    })
+}
+
 /// Settle interest into `principal` using elapsed-time arithmetic.
 ///
 /// Retained for backward compatibility.
@@ -496,7 +543,7 @@ pub fn load_rate_snapshot(env: &Env) -> RateSnapshot {
 /// Computes the global borrow rate directly from current aggregate storage.
 pub fn uncached_borrow_rate(env: &Env) -> i128 {
     let snapshot = load_rate_snapshot(env);
-    compute_borrow_rate_from_snapshot(&snapshot).rate_bps
+    compute_borrow_rate_from_snapshot(env, &snapshot).rate_bps
 }
 
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.
@@ -504,6 +551,7 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// Utilization uses checked arithmetic and falls back to zero when supply is
 /// non-positive. Overflow in `debt * 10_000` returns [`DebtError::Overflow`].
 pub(crate) fn try_compute_borrow_rate_from_snapshot(
+    env: &Env,
     snapshot: &RateSnapshot,
 ) -> Result<BorrowRateComputation, DebtError> {
     let utilization_bps = if snapshot.total_supply > 0 {
@@ -518,7 +566,10 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
     };
 
     let rate_bps = match &snapshot.params {
-        Some(p) => rate_model::compute_borrow_rate(utilization_bps, p),
+        Some(p) => {
+            let target_rate = rate_model::compute_borrow_rate(utilization_bps, p);
+            crate::rate_model::update_and_get_rate(env, target_rate, p)
+        }
         None => DEFAULT_APR_BPS,
     };
 
@@ -532,13 +583,13 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
 ///
 /// Panics on arithmetic overflow, matching the existing borrow-rate API shape
 /// while keeping the underlying arithmetic checked.
-pub(crate) fn compute_borrow_rate_from_snapshot(snapshot: &RateSnapshot) -> BorrowRateComputation {
-    try_compute_borrow_rate_from_snapshot(snapshot).expect("borrow-rate utilization overflow")
+pub(crate) fn compute_borrow_rate_from_snapshot(env: &Env, snapshot: &RateSnapshot) -> BorrowRateComputation {
+    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
 }
 
 fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
     let snapshot = load_rate_snapshot(env);
-    compute_borrow_rate_from_snapshot(&snapshot)
+    compute_borrow_rate_from_snapshot(env, &snapshot)
 }
 
 /// Returns the global borrow rate, computing it at most once per ledger.
@@ -599,6 +650,37 @@ pub fn settle_accrual_split(
 
 /// Compute the **depositor supply rate** (in basis points) that corresponds to
 /// the current borrow rate and utilization after applying the reserve factor.
+///
+/// This derives the supply-side APR that depositors *effectively* earn, using
+/// the same scale constants as the borrow side so the two rates are always
+/// consistent.
+///
+/// # Formula
+///
+/// ```text
+/// supply_rate_bps = borrow_rate_bps
+///                   * utilization_bps / 10_000
+///                   * (10_000 − reserve_factor_bps) / 10_000
+/// ```
+///
+/// When `reserve_factor_bps == 0` the formula reduces to
+/// `borrow_rate * utilization / 10_000`, which is the full utilization-weighted
+/// borrow rate — identical to the previous (no-reserve) behaviour.
+///
+/// # Arguments
+///
+/// * `borrow_rate_bps`    – Current borrow APR in basis points.
+/// * `utilization_bps`    – Current utilization in basis points
+///   (total_borrows * 10_000 / total_deposits).
+/// * `reserve_factor_bps` – Fraction of interest retained by the protocol, in
+///   basis points (0 = none, 10 000 = 100 %).
+///
+/// # Returns
+///
+/// The supply APR in basis points.
+///
+/// Returns `DebtError::Overflow` if any intermediate calculation overflows or
+/// an input is out of range.
 pub fn effective_supply_rate(
     borrow_rate_bps: i128,
     utilization_bps: i128,
@@ -654,12 +736,11 @@ const KEY_ACCRUAL_LOG: &str = "accrual_log";
 
 /// Append a settle_accrual_split result to the persistent log and emit a
 /// `settle_accrual_split` contract event for off-chain indexers.
-pub fn record_accrual_split(
-    env: &Env,
-    borrower: &Address,
-    timestamp: u64,
-    split: &InterestSplit,
-) {
+///
+/// Call this immediately after `settle_accrual_split` so the split is
+/// recorded for both on-chain history (via `get_accrual_split_log`) and
+/// off-chain TWAP/revenue attribution consumers.
+pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split: &InterestSplit) {
     let entry = AccrualSplitEntry {
         borrower: borrower.clone(),
         timestamp,
@@ -680,7 +761,11 @@ pub fn record_accrual_split(
 
     env.events().publish(
         (symbol_short!("accrual"), borrower.clone()),
-        (split.total_interest, split.depositor_yield, split.reserve_cut),
+        (
+            split.total_interest,
+            split.depositor_yield,
+            split.reserve_cut,
+        ),
     );
 }
 
