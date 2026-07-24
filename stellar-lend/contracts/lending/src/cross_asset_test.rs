@@ -516,7 +516,10 @@ fn test_partial_withdraw_allowed_when_hf_stays_above_one() {
     client.borrow_asset(&user, &asset_a, &100i128);
     // Withdraw 100 — leaves 900 collateral vs 100 debt; HF ≫ 1
     let new_bal = client.withdraw_asset(&user, &asset_a, &100i128);
-    assert_eq!(new_bal, 900, "Partial withdrawal that keeps HF above 1 must succeed");
+    assert_eq!(
+        new_bal, 900,
+        "Partial withdrawal that keeps HF above 1 must succeed"
+    );
 }
 
 /// State is rolled back after a blocked withdrawal: collateral balance unchanged.
