@@ -166,3 +166,5 @@ mod scaling_demo {
         println!();
     }
 }
+
+fn main() {}

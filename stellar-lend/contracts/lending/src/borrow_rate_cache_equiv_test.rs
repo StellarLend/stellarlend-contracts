@@ -47,7 +47,10 @@ fn cold_cache_matches_uncached_on_first_call() {
         let rate = cached_borrow_rate(&env);
         let expected = uncached_borrow_rate(&env);
 
-        assert_eq!(rate, expected, "first call (cold cache) must match uncached");
+        assert_eq!(
+            rate, expected,
+            "first call (cold cache) must match uncached"
+        );
         assert_eq!(rate, 900, "expected 900 bps for 40% utilization");
 
         // Cache is now stored for this ledger.
@@ -100,7 +103,10 @@ fn totals_change_same_ledger_does_not_recompute_cache() {
         // Change totals mid-ledger — uncached sees the new value.
         set_rate_inputs(&env, 9_000, 10_000, Some(RateParams::default()));
         let uncached_after = uncached_borrow_rate(&env);
-        assert_eq!(uncached_after, 2_700, "90% utilization should give 2_700 bps");
+        assert_eq!(
+            uncached_after, 2_700,
+            "90% utilization should give 2_700 bps"
+        );
 
         // Cached still returns the OLD value (cache hit).
         let cached_after = cached_borrow_rate(&env);

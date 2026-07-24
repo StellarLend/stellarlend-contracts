@@ -12,6 +12,7 @@
 /// - Liquidation threshold is expressed in bps (8_000 = 80%).
 /// - Minimum borrow is 1_000 (raw units) by default.
 use super::*;
+use crate::debt::INDEX_SCALE;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -68,6 +69,7 @@ fn setup() -> (
         &8000,
         &1_000_000_000_000i128,
         &0i128,
+        &0i128,
     );
     // 60 % LTV / 70 % liquidation threshold for debt asset
     client.set_asset_params(
@@ -76,6 +78,7 @@ fn setup() -> (
         &6000,
         &7000,
         &1_000_000_000_000i128,
+        &0i128,
         &0i128,
     );
 
@@ -264,6 +267,7 @@ fn e2e_post_liquidation_invariants_no_value_created() {
             &DataKey::DebtAsset(borrower.clone(), asset_dbt.clone()),
             &DebtPosition {
                 principal: debt_before - repaid_amount,
+                borrow_index_snapshot: INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -374,6 +378,7 @@ fn e2e_deep_underwater_seizure_capped_at_available_collateral() {
             &DataKey::DebtAsset(borrower.clone(), asset_dbt.clone()),
             &DebtPosition {
                 principal: debt_before - repaid,
+                borrow_index_snapshot: INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -426,6 +431,7 @@ fn e2e_partial_liquidation_then_full_repay_and_withdraw() {
             &DataKey::DebtAsset(borrower.clone(), asset_dbt.clone()),
             &DebtPosition {
                 principal: debt_before - repaid,
+                borrow_index_snapshot: INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -475,6 +481,7 @@ fn e2e_two_collateral_one_debt_shock() {
         &7500,
         &8000,
         &1_000_000_000_000i128,
+        &0i128,
         &0i128,
     );
     set_price(&env, &id, &asset_col2, 10_000_000); // $1.00

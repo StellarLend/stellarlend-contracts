@@ -44,8 +44,8 @@ mod liquidation_branch_tests {
         debt: i128,
         elapsed: u64,
     ) {
-        client.deposit(borrower, &col).unwrap();
-        client.borrow(borrower, &debt).unwrap();
+        client.deposit(borrower, &col);
+        client.borrow(borrower, &debt);
         advance_time(env, elapsed);
     }
 
@@ -65,15 +65,13 @@ mod liquidation_branch_tests {
         let debt_before = client.get_debt_position(&borrower).principal;
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
-        let actual_repay = client
-            .liquidate(
-                &liquidator,
-                &borrower,
-                &debt_asset,
-                &collateral_asset,
-                &debt_before,
-            )
-            .unwrap();
+        let actual_repay = client.liquidate(
+            &liquidator,
+            &borrower,
+            &debt_asset,
+            &collateral_asset,
+            &debt_before,
+        );
 
         // CLOSE_FACTOR = 5000 BPS
         let expected_repay = debt_before * 5_000 / 10_000;
@@ -102,15 +100,13 @@ mod liquidation_branch_tests {
         let debt_before = client.get_debt_position(&borrower).principal;
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
-        let actual_repay = client
-            .liquidate(
-                &liquidator,
-                &borrower,
-                &debt_asset,
-                &collateral_asset,
-                &debt_before,
-            )
-            .unwrap();
+        let actual_repay = client.liquidate(
+            &liquidator,
+            &borrower,
+            &debt_asset,
+            &collateral_asset,
+            &debt_before,
+        );
 
         // repay is still the close-factor-capped amount
         assert_eq!(actual_repay, debt_before * 5_000 / 10_000);
@@ -137,15 +133,13 @@ mod liquidation_branch_tests {
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
         let debt_r1 = client.get_debt_position(&borrower).principal;
-        let repay_r1 = client
-            .liquidate(
-                &liquidator,
-                &borrower,
-                &debt_asset,
-                &collateral_asset,
-                &debt_r1,
-            )
-            .unwrap();
+        let repay_r1 = client.liquidate(
+            &liquidator,
+            &borrower,
+            &debt_asset,
+            &collateral_asset,
+            &debt_r1,
+        );
         assert_eq!(repay_r1, debt_r1 * 5_000 / 10_000);
         let debt_after_r1 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r1, debt_r1 - repay_r1);
@@ -155,15 +149,13 @@ mod liquidation_branch_tests {
 
         // Round 2
         let debt_r2 = client.get_debt_position(&borrower).principal;
-        let repay_r2 = client
-            .liquidate(
-                &liquidator,
-                &borrower,
-                &debt_asset,
-                &collateral_asset,
-                &debt_r2,
-            )
-            .unwrap();
+        let repay_r2 = client.liquidate(
+            &liquidator,
+            &borrower,
+            &debt_asset,
+            &collateral_asset,
+            &debt_r2,
+        );
         assert_eq!(repay_r2, debt_r2 * 5_000 / 10_000);
         let debt_after_r2 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r2, debt_r2 - repay_r2);
@@ -179,8 +171,8 @@ mod liquidation_branch_tests {
         let borrower = Address::generate(&env);
         let liquidator = Address::generate(&env);
 
-        client.deposit(&borrower, &10_000).unwrap();
-        client.borrow(&borrower, &100).unwrap();
+        client.deposit(&borrower, &10_000);
+        client.borrow(&borrower, &100);
 
         assert!(client.get_health_factor(&borrower) >= 10_000);
 
@@ -202,7 +194,7 @@ mod liquidation_branch_tests {
         let borrower = Address::generate(&env);
         let liquidator = Address::generate(&env);
 
-        client.deposit(&borrower, &1_000).unwrap();
+        client.deposit(&borrower, &1_000);
 
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
