@@ -178,6 +178,7 @@ fn arb_borrow_amount() -> impl Strategy<Value = i128> {
 }
 
 fn make_position(principal: i128, last_update: u64) -> debt::DebtPosition {
+borrow_index_snapshot: 0,
     debt::DebtPosition {
         principal,
         last_update,
@@ -200,6 +201,7 @@ proptest! {
         if let Ok(settled) = result {
             prop_assert!(settled.principal >= 0,
                 "repay produced negative principal: {}", settled.principal);
+                borrow_index_snapshot: 0,
             prop_assert!(settled.principal <= eff,
                 "repay result {} > effective_debt {}", settled.principal, eff);
         }
@@ -281,6 +283,7 @@ proptest! {
         if let Ok(settled) = result {
             prop_assert!(settled.principal >= principal,
                 "settle_accrual decreased principal: {} < {}", settled.principal, principal);
+                borrow_index_snapshot: 0,
         }
     }
 }

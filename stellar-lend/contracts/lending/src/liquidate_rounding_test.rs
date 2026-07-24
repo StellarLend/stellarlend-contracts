@@ -59,6 +59,7 @@ fn make_unhealthy_position(
             user,
             &DebtPosition {
                 principal: debt,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );

@@ -90,7 +90,7 @@ fn test_liquidation_with_collateral_asset_but_no_price_fails() {
     client.set_collateral_asset(&other_asset);
 
     // Try to liquidate - should fail with PriceUnavailable
-    let res = client.try_liquidate(&liquidator, &borrower, &50);
+    let res = { let _da = Address::generate(&env); let _ca = Address::generate(&env); client.try_liquidate(&liquidator, &borrower, &_da, &_ca, &50) };
     assert!(res.is_err());
     let err = res.err().unwrap();
     assert_eq!(err, Ok(LendingError::PriceUnavailable));
@@ -122,7 +122,7 @@ fn test_liquidation_with_collateral_asset_and_price_succeeds() {
     client.set_price(&admin, &asset, &low_price, &timestamp, &new_signature);
 
     // Liquidation should now succeed
-    let res = client.liquidate(&liquidator, &borrower, &50);
+    let res = { let _da = Address::generate(&env); let _ca = Address::generate(&env); client.liquidate(&liquidator, &borrower, &_da, &_ca, &50) };
     assert!(res > 0);
 }
 

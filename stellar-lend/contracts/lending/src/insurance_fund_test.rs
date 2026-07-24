@@ -143,6 +143,7 @@ fn test_liquidation_empty_insurance_fund() {
             &user,
             &DebtPosition {
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -182,6 +183,7 @@ fn test_liquidation_partial_insurance_coverage() {
             &user,
             &DebtPosition {
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -217,6 +219,7 @@ fn test_liquidation_full_insurance_coverage() {
             &user,
             &DebtPosition {
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

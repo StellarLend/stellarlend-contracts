@@ -161,16 +161,14 @@ proptest! {
     ///
     /// Regardless of reserve factor, zero total interest always produces zero split.
     #[test]
-    fn prop_split_zero_interest() {
+    fn prop_split_zero_interest(rf_bps in 0u32..=10_000) {
         let total_interest = 0i128;
-        prop_for_all!(
-            |rf_bps: u32| {
-                let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
-                    total_interest, rf_bps,
-                ).expect("zero interest should always succeed");
-                assert_eq!(depositor_yield, 0, "depositor yield should be 0");
-                assert_eq!(reserve_cut, 0, "reserve cut should be 0");
-            }
+        let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
+            total_interest, rf_bps,
+        ).expect("zero interest should always succeed");
+        assert_eq!(depositor_yield, 0, "depositor yield should be 0");
+        assert_eq!(reserve_cut, 0, "reserve cut should be 0");
+    }
         );
     }
 }
@@ -182,19 +180,13 @@ proptest! {
     ///
     /// With rf_bps == 0, protocol share is exactly zero.
     #[test]
-    fn prop_split_zero_reserve_factor() {
-        prop_for_all!(
-            |total_interest: i128| {
-                let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
-                    total_interest, 0,
-                ).expect("zero reserve factor should always succeed");
-                assert_eq!(
-                    depositor_yield,
-                    total_interest,
-                    "zero reserve factor should send all to depositors"
-                );
-                assert_eq!(reserve_cut, 0, "zero reserve factor should leave reserve unchanged");
-            }
+    fn prop_split_zero_reserve_factor(total_interest in 0i128..=i128::MAX/10_000) {
+        let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
+            total_interest, 0,
+        ).expect("zero reserve factor should always succeed");
+        assert_eq!(depositor_yield, total_interest);
+        assert_eq!(reserve_cut, 0);
+    }
         );
     }
 }
@@ -206,19 +198,13 @@ proptest! {
     ///
     /// With rf_bps == 10_000, depositors receive nothing.
     #[test]
-    fn prop_split_full_reserve_factor() {
-        prop_for_all!(
-            |total_interest: i128| {
-                let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
-                    total_interest, 10_000,
-                ).expect("full reserve factor should always succeed");
-                assert_eq!(depositor_yield, 0, "full reserve factor should leave depositors empty");
-                assert_eq!(
-                    reserve_cut,
-                    total_interest,
-                    "full reserve factor should send all to reserve"
-                );
-            }
+    fn prop_split_full_reserve_factor(total_interest in 0i128..=i128::MAX/10_000) {
+        let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
+            total_interest, 10_000,
+        ).expect("full reserve factor should always succeed");
+        assert_eq!(depositor_yield, 0);
+        assert_eq!(reserve_cut, total_interest);
+    }
         );
     }
 }
@@ -230,13 +216,10 @@ proptest! {
     ///
     /// Inputs < 0 are explicitly rejected as out of range.
     #[test]
-    fn prop_split_negative_interest_rejected() {
-        let total_interest = -1i128;
-        prop_for_all!(
-            |rf_bps: u32| {
-                let result = split_interest_by_reserve_factor(total_interest, rf_bps);
-                assert_eq!(result, Err(super::math::MathError::OutOfRange));
-            }
+    fn prop_split_negative_interest_rejected(rf_bps in 0u32..=10_000) {
+        let result = split_interest_by_reserve_factor(-1i128, rf_bps);
+        assert_eq!(result, Err(super::math::MathError::OutOfRange));
+    }
         );
     }
 }
@@ -248,12 +231,10 @@ proptest! {
     ///
     /// rf_bps > 10_000 is never accepted.
     #[test]
-    fn prop_split_reserve_factor_above_100pc_rejected() {
-        prop_for_all!(
-            |total_interest: i128| {
-                let result = split_interest_by_reserve_factor(total_interest, 10_001);
-                assert_eq!(result, Err(super::math::MathError::OutOfRange));
-            }
+    fn prop_split_reserve_factor_above_100pc_rejected(total_interest in 0i128..=i128::MAX/10_000) {
+        let result = split_interest_by_reserve_factor(total_interest, 10_001);
+        assert_eq!(result, Err(super::math::MathError::OutOfRange));
+    }
         );
     }
 }

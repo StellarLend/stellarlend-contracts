@@ -164,11 +164,15 @@ fn utilization_history_capacity_boundary_evicts_oldest() {
 
 #[test]
 fn utilization_history_rate_math_reports_overflow() {
-    let snapshot = RateSnapshot {
-        total_debt: i128::MAX,
-        total_supply: 1,
-        params: Some(RateParams::default()),
-    };
-
-    assert!(try_compute_borrow_rate_from_snapshot(&env, &snapshot).is_err());
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    env.as_contract(&contract_id, || {
+        let snapshot = RateSnapshot {
+            total_debt: i128::MAX,
+            total_supply: 1,
+            params: Some(RateParams::default()),
+        };
+        assert!(try_compute_borrow_rate_from_snapshot(&env, &snapshot).is_err());
+    });
 }

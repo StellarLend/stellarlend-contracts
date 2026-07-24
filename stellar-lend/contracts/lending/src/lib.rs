@@ -2969,7 +2969,7 @@ impl MockAsset {}
 pub(crate) mod test {
     use super::*;
     use ed25519_dalek::{Keypair, Signer};
-    use rand::{rngs::StdRng, SeedableRng};
+
     use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 
     fn setup() -> (

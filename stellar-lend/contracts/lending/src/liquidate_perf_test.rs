@@ -32,6 +32,7 @@ fn liquidate_smoke_test() {
             &borrower,
             &DebtPosition {
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

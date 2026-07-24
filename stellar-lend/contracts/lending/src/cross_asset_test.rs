@@ -418,7 +418,7 @@ fn test_hf_below_10000_rejected() {
 #[test]
 fn test_debt_ceiling_rejects_excess() {
     let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
-    client.set_asset_params(&admin, &asset_a, &7500i128, &8000i128, &100i128, &0i128);
+    client.set_asset_params(&admin, &asset_a, &7500i128, &8000i128, &100i128, &0i128, &0i128);
     client.deposit_collateral_asset(&user, &asset_b, &2i128);
     let res = client.try_borrow_asset(&user, &asset_a, &200i128);
     assert!(matches!(res, Err(Ok(LendingError::DebtCeilingExceeded))));

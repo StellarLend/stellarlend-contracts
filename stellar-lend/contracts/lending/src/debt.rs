@@ -22,6 +22,7 @@ pub const DEFAULT_RESERVE_FACTOR_BPS: u32 = 0;
 pub struct DebtPosition {
     /// Recorded principal at last touch (does not include un-accrued interest).
     pub principal: i128,
+    borrow_index_snapshot: 0,
     /// Snapshot of the global borrow index at the time this position was last
     /// modified.  Zero signals "pre-migration; treat as current index".
     pub borrow_index_snapshot: i128,
@@ -238,6 +239,7 @@ pub fn elapsed_seconds(now: u64, last_update: u64) -> u64 {
 ///
 /// Returns `Ok(0)` when either `principal` or `elapsed` is zero.
 pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, DebtError> {
+borrow_index_snapshot: 0,
     if principal == 0 || elapsed == 0 {
         return Ok(0);
     }
@@ -280,6 +282,7 @@ pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<
 /// exceeds 10 000 bps.
 pub fn accrue_interest_split(
     principal: i128,
+    borrow_index_snapshot: 0,
     elapsed: u64,
     rate_bps: i128,
     reserve_factor_bps: u32,
