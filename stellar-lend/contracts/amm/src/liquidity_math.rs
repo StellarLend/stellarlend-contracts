@@ -1,5 +1,3 @@
-#![no_std]
-
 use crate::math::sqrt;
 
 /// Minimum liquidity permanently locked in the pool on the first deposit.
