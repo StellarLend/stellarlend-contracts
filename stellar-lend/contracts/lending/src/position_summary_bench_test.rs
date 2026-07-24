@@ -174,6 +174,8 @@ fn setup_with_n_assets(n: u32) -> (Env, Address, Address, Address, soroban_sdk::
                     ltv_bps: 7500,
                     liquidation_threshold_bps: 8000,
                     debt_ceiling: 1_000_000_000_000i128,
+                    borrow_cap: 0,
+                    supply_cap: 0,
                 },
             );
             env.storage().persistent().set(
@@ -224,6 +226,7 @@ fn populate_positions(
             &asset,
             &debt::DebtPosition {
                 principal: 100i128 * (i as i128 + 1),
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -428,6 +431,7 @@ fn bench_mixed_zero_nonzero_positions_within_budget() {
                 &asset,
                 &debt::DebtPosition {
                     principal: 200i128,
+                    borrow_index_snapshot: crate::debt::INDEX_SCALE,
                     last_update: env.ledger().timestamp(),
                 },
             );

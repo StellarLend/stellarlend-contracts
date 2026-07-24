@@ -31,6 +31,7 @@ fn setup() -> (Env, LendingContractClient<'static>, Address) {
 #[test]
 fn repay_exact_principal_returns_zero_remaining_debt() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &500);
     client.borrow(&user, &200);
 
     let remaining = client.repay(&user, &200);
@@ -52,6 +53,7 @@ fn repay_exact_principal_returns_zero_remaining_debt() {
 #[test]
 fn repay_partial_leaves_positive_remainder() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &500);
     client.borrow(&user, &300);
 
     let remaining = client.repay(&user, &100);
@@ -75,6 +77,7 @@ fn repay_partial_leaves_positive_remainder() {
 #[test]
 fn repay_overpay_clamps_to_zero_not_negative() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
 
     // Repay 3× the outstanding principal
@@ -97,6 +100,7 @@ fn repay_overpay_clamps_to_zero_not_negative() {
 #[test]
 fn repay_max_amount_when_small_debt_clamps_to_zero() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &10);
     client.borrow(&user, &1);
 
     let remaining = client.repay(&user, &i128::MAX);
@@ -145,6 +149,7 @@ fn get_position_debt_is_never_negative() {
         "debt must be >= 0 with no borrow"
     );
 
+    client.deposit(&user, &700);
     client.borrow(&user, &500);
     assert!(
         client.get_position(&user).debt >= 0,
@@ -168,6 +173,7 @@ fn get_debt_position_principal_is_never_negative() {
         "principal must be >= 0 with no borrow"
     );
 
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     client.repay(&user, &999); // overpay
 
@@ -182,6 +188,7 @@ fn get_debt_position_principal_is_never_negative() {
 #[test]
 fn total_debt_metric_never_negative_after_overpay() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
 
     // Overpay

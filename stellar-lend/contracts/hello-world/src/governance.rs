@@ -46,6 +46,8 @@ pub enum GovernanceError {
     VotingNotOpen = 7,
     AlreadyExecuted = 8,
     InvalidConfig = 9,
+    /// Total participation (yes + no votes) is below the configured quorum.
+    QuorumNotMet = 10,
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +117,15 @@ pub fn create_proposal(
     // Only admin or a configured voter may create proposals.
     if proposer != config.admin && !config.voters.contains(&proposer) {
         return Err(GovernanceError::Unauthorized);
+    }
+
+    // Non-admin proposers must hold at least proposal_threshold vote tokens.
+    if proposer != config.admin {
+        let token = soroban_sdk::token::TokenClient::new(env, &config.vote_token);
+        let balance = token.balance(&proposer);
+        if balance < config.proposal_threshold {
+            return Err(GovernanceError::Unauthorized);
+        }
     }
 
     let counter: u64 = env
@@ -265,7 +276,8 @@ pub fn vote(
     }
 
     // Record the vote.
-    let weight = 1i128; // One-person-one-vote for simplicity.
+    let token = soroban_sdk::token::TokenClient::new(env, &config.vote_token);
+    let weight = token.balance(&voter);
     let vote_info = VoteInfo {
         voter: voter.clone(),
         vote_type,
@@ -658,12 +670,37 @@ pub fn get_recovery_approvals(env: &Env) -> Option<Vec<Address>> {
 // ---------------------------------------------------------------------------
 
 /// Queue a proposal for execution (sets the ETA ledger).
+///
+/// # Quorum enforcement
+///
+/// Before queuing, this function verifies that the total participation
+/// (yes_votes + no_votes) meets the configured `quorum_bps` relative to
+/// the eligible voter pool (`voters.len()`).
+///
+/// ```text
+/// participation_bps = (yes_votes + no_votes) * 10_000 / total_voters
+/// ```
+///
+/// The proposal is rejected with [`GovernanceError::QuorumNotMet`] when
+/// `participation_bps < config.quorum_bps`.  Quorum is checked
+/// independently of the approval threshold.
+///
+/// # Errors
+/// - `ProposalNotFound` — no proposal with the given ID.
+/// - `ProposalNotActive` — proposal is executed or cancelled.
+/// - `QuorumNotMet` — total participation is below `config.quorum_bps`.
 pub fn queue_proposal(
     env: &Env,
     caller: Address,
     proposal_id: u64,
 ) -> Result<ProposalOutcome, GovernanceError> {
     caller.require_auth();
+
+    let config: GovernanceConfig = env
+        .storage()
+        .instance()
+        .get(&GovernanceDataKey::Config)
+        .ok_or(GovernanceError::NotInitialized)?;
 
     let mut proposal: Proposal = env
         .storage()
@@ -673,6 +710,16 @@ pub fn queue_proposal(
 
     if proposal.executed || proposal.cancelled {
         return Err(GovernanceError::ProposalNotActive);
+    }
+
+    // Quorum check: participation_bps = (yes + no) * 10_000 / total_voters
+    let total_voters = config.voters.len() as i128;
+    if total_voters > 0 {
+        let participation = proposal.yes_votes.saturating_add(proposal.no_votes);
+        let participation_bps = participation.saturating_mul(10_000) / total_voters;
+        if participation_bps < config.quorum_bps as i128 {
+            return Err(GovernanceError::QuorumNotMet);
+        }
     }
 
     // Mark as approved.
@@ -730,15 +777,13 @@ pub fn approve_proposal(
     vote(env, approver, proposal_id, VoteType::Yes)
 }
 
-/// Return proposal approvals (votes for this proposal).    pub fn get_proposal_approvals(
-        env: &Env,
-        _proposal_id: u64,
-    ) -> Option<Vec<Address>> {
-        // Approval tracking is not yet implemented for the can_vote test focus.
-        // In production, this would return the list of approvers for a proposal.
-        let _ = env;
-        None
-    }
+/// Return proposal approvals (votes for this proposal).
+pub fn get_proposal_approvals(env: &Env, _proposal_id: u64) -> Option<Vec<Address>> {
+    // Approval tracking is not yet implemented for the can_vote test focus.
+    // In production, this would return the list of approvers for a proposal.
+    let _ = env;
+    None
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -894,3 +939,7 @@ pub fn verify_payload(
 #[cfg(test)]
 #[path = "gov_payload_hash_test.rs"]
 mod gov_payload_hash_test;
+
+#[cfg(test)]
+#[path = "gov_quorum_test.rs"]
+mod gov_quorum_test;

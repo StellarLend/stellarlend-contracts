@@ -1,4 +1,4 @@
-use crate::{DataKey, LendingContract, LendingContractClient};
+use crate::{debt::DebtPosition, DataKey, LendingContract, LendingContractClient};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Symbol};
 
 #[contract]
@@ -113,8 +113,19 @@ fn setup() -> (
 fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
     let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    env.as_contract(&lending_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &50i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     let repay_amount =
         client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
@@ -148,8 +159,19 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
     let collateral_token = MockTokenClient::new(&env, &collateral_asset);
     collateral_token.set_fail_transfer(&lending_id, &true);
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    env.as_contract(&lending_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &50i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     let debt_balance_before = MockTokenClient::new(&env, &debt_asset).balance(&liquidator);
     let collateral_before = MockTokenClient::new(&env, &collateral_asset).balance(&lending_id);
@@ -170,14 +192,32 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
 
 #[test]
 fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
-    let (env, client, _lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
-    let debt_token = MockTokenClient::new(&env, &debt_asset);
-    debt_token.mint(&liquidator, &50);
+    let (env, client, _lending_id, borrower, _liquidator, debt_asset, collateral_asset) = setup();
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    // Use a separate poor liquidator that has not been minted any tokens.
+    let poor_liquidator = Address::generate(&env);
 
-    let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &50i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
+
+    let res = client.try_liquidate(
+        &poor_liquidator,
+        &borrower,
+        &debt_asset,
+        &collateral_asset,
+        &100,
+    );
     assert!(matches!(res, Err(_)));
     let position = client.get_debt_position(&borrower);
     assert_eq!(position.principal, 200);

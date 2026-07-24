@@ -18,9 +18,13 @@ fn test_error_code_stability_and_uniqueness() {
         (LendingError::InvalidFlashUtilizationBps, 2006),
         (LendingError::InsufficientCollateral, 2007),
         (LendingError::SelfLiquidation, 2008),
-        (LendingError::InvalidOracleSignature, 5001),
-        (LendingError::StaleOracleTimestamp, 5002),
-        (LendingError::OraclePubkeyNotSet, 5003),
+        (LendingError::IsolationCeilingExceeded, 2009),
+        (LendingError::InvalidIsolationCeiling, 2010),
+        (LendingError::AssetNotConfigured, 3001),
+        (LendingError::PriceFeedNotFound, 3002),
+        (LendingError::HealthFactorTooLow, 3003),
+        (LendingError::PriceOutOfBounds, 3004),
+        (LendingError::PriceUnavailable, 3005),
         (LendingError::UpgradeNotInitialized, 4001),
         (LendingError::ProposalNotFound, 4002),
         (LendingError::ProposalNotReady, 4003),
@@ -32,6 +36,9 @@ fn test_error_code_stability_and_uniqueness() {
         (LendingError::ApproverNotFound, 4009),
         (LendingError::MaxApproversReached, 4010),
         (LendingError::InvalidUpgradeConfig, 4011),
+        (LendingError::InvalidOracleSignature, 5001),
+        (LendingError::StaleOracleTimestamp, 5002),
+        (LendingError::OraclePubkeyNotSet, 5003),
     ];
 
     for i in 0..cases.len() {

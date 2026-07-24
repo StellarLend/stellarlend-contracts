@@ -2,9 +2,18 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, Map,
-    Symbol, Vec,
+mod cross_asset;
+mod deposit;
+mod risk_management;
+
+use cross_asset::CrossAssetError;
+use deposit::deposit_collateral;
+use risk_management::{
+    can_be_liquidated, get_close_factor, get_liquidation_incentive,
+    get_liquidation_incentive_amount, get_liquidation_threshold, get_max_liquidatable_amount,
+    get_min_collateral_ratio, initialize_risk_management, is_emergency_paused, is_operation_paused,
+    require_min_collateral_ratio, set_emergency_pause, set_pause_switch, set_pause_switches,
+    set_risk_params, RiskConfig, RiskManagementError,
 };
 
 #[contracterror]
@@ -66,6 +75,8 @@ mod bridge_freeze_test;
 mod amm_integration_test;
 
 #[cfg(test)]
+mod clamp_rate_test;
+#[cfg(test)]
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
@@ -76,13 +87,17 @@ mod cross_asset_ltv_test;
 #[cfg(test)]
 mod rate_clamp_test;
 #[cfg(test)]
-mod twap_view_test;
-#[cfg(test)]
 mod twap_maxbuffer_perf_test;
+#[cfg(test)]
+mod twap_read_bench_test;
 #[cfg(test)]
 mod twap_coverage_test;
 #[cfg(test)]
 mod cross_asset_storage_doc_test;
+#[cfg(test)]
+mod cross_asset_config_bounds_test;
+#[cfg(test)]
+mod utilization_clamp_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
@@ -133,8 +148,9 @@ use crate::interest_rate::{
     InterestRateError,
 };
 use crate::liquidate::liquidate;
+use crate::admin::require_admin;
 use crate::risk_management::{
-    require_admin, set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
+    set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
 };
 use crate::risk_params::{
     can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
@@ -145,27 +161,6 @@ use crate::types::{
     GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalType, RecoveryRequest,
     VoteInfo, VoteType,
 };
-
-// AMM types (temporary stubs until stellarlend_amm types are made public)
-#[derive(Clone)]
-#[contracttype]
-pub struct AmmProtocolConfig {
-    // Placeholder fields
-}
-
-#[derive(Clone)]
-#[contracttype]
-pub struct SwapParams {
-    // Placeholder fields
-}
-
-#[derive(Clone, Debug)]
-#[contracterror]
-pub enum AmmError {
-    InvalidParams = 1,
-    InsufficientLiquidity = 2,
-    SlippageExceeded = 3,
-}
 
 /// The StellarLend core contract.
 #[contract]
@@ -298,7 +293,7 @@ impl HelloContract {
         close_factor: Option<i128>,
         liquidation_incentive: Option<i128>,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &caller)?;
+        require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
         check_emergency_pause(&env)?;
         risk_params::set_risk_params(
             &env,
@@ -500,7 +495,7 @@ impl HelloContract {
         admin: Address,
         adjustment_bps: i128,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &admin)?;
+        require_admin(&env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
         interest_rate::set_emergency_rate_adjustment(&env, admin, adjustment_bps)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
@@ -518,7 +513,7 @@ impl HelloContract {
         rate_ceiling: Option<i128>,
         spread: Option<i128>,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &admin)?;
+        require_admin(&env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
         interest_rate::update_interest_rate_config(
             &env,
             admin,
@@ -588,7 +583,7 @@ impl HelloContract {
         _to: Address,
         amount: i128,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &caller)?;
+        require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
 
         let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
         let mut reserve_balance = env
@@ -764,41 +759,6 @@ impl HelloContract {
     }
 
     // ============================================================================
-    // AMM Methods
-    // ============================================================================
-
-    /// Initialize AMM settings (admin only).
-    pub fn initialize_amm(
-        env: Env,
-        admin: Address,
-        default_slippage: i128,
-        max_slippage: i128,
-        auto_swap_threshold: i128,
-    ) -> Result<(), amm::AmmError> {
-        amm::initialize_amm(
-            env,
-            admin,
-            default_slippage,
-            max_slippage,
-            auto_swap_threshold,
-        )
-    }
-
-    /// Set AMM pool configuration (admin only).
-    pub fn set_amm_pool(
-        env: Env,
-        admin: Address,
-        protocol_config: amm::AmmProtocolConfig,
-    ) -> Result<(), amm::AmmError> {
-        amm::set_amm_pool(env, admin, protocol_config)
-    }
-
-    /// Execute swap through AMM.
-    pub fn amm_swap(env: Env, user: Address, params: SwapParams) -> Result<i128, AmmError> {
-        amm::amm_swap(env, user, params)
-    }
-
-    // ============================================================================
     // Bridge Methods
     // ============================================================================
 
@@ -912,13 +872,13 @@ impl HelloContract {
 
     /// Update asset configuration (admin only).
     ///
-    /// `collateral_factor_bps` is bounded to `[0, 10_000]`. Out-of-range
-    /// values are rejected with [`CrossAssetError::InvalidCollateralFactor`].
-    /// See [`stellar_lend::collateral_factor_tiers`] for the formula and
-    /// worked example.
+    /// `caller` must be the stored protocol admin.
+    /// `collateral_factor_bps` is bounded to `[0, 10_000]` and must not
+    /// exceed `liquidation_threshold`. `price_decimals` must be in `1..=38`.
     #[allow(clippy::too_many_arguments)]
     pub fn update_asset_config(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         collateral_factor_bps: Option<i128>,
         liquidation_threshold: Option<i128>,
@@ -926,9 +886,11 @@ impl HelloContract {
         max_borrow: Option<i128>,
         can_collateralize: Option<bool>,
         can_borrow: Option<bool>,
+        price_decimals: Option<u32>,
     ) -> Result<(), CrossAssetError> {
         update_asset_config(
             &env,
+            &caller,
             asset,
             collateral_factor_bps,
             liquidation_threshold,
@@ -936,6 +898,7 @@ impl HelloContract {
             max_borrow,
             can_collateralize,
             can_borrow,
+            price_decimals,
         )
     }
 
@@ -1286,12 +1249,66 @@ impl HelloContract {
     pub fn gov_can_vote(env: Env, voter: Address, proposal_id: u64) -> bool {
         governance::can_vote(&env, voter, proposal_id)
     }
+
+    /// Set the maximum number of distinct debt assets a user may hold simultaneously (admin only).
+    ///
+    /// Pass `None` to remove the cap (unlimited).  When a value is provided it must be >= 1.
+    ///
+    /// # Arguments
+    /// * `caller` - Must be the admin address
+    /// * `max`    - New cap, or None to disable
+    ///
+    /// # Returns
+    /// Returns Ok(()) on success
+    pub fn set_max_debt_assets_per_user(
+        env: Env,
+        caller: Address,
+        max: Option<u32>,
+    ) -> Result<(), CrossAssetError> {
+        set_max_debt_assets_per_user(&env, &caller, max)
+    }
+
+    /// Get the current maximum-distinct-debt-assets cap.
+    ///
+    /// Returns None when no cap is configured (unlimited behaviour).
+    pub fn get_max_debt_assets_per_user(env: Env) -> Option<u32> {
+        get_max_debt_assets_per_user(&env)
+    }
+
+    /// Record that `user` now has an active borrow in `asset`.
+    ///
+    /// Enforces the borrow-isolation tier if a cap is configured.
+    /// This must be called from `borrow_asset_internal` whenever a borrow
+    /// would introduce a *new* debt asset for the user.
+    ///
+    /// Repay / withdraw paths must never call this function — they are
+    /// never restricted by the isolation tier.
+    ///
+    /// # Arguments
+    /// * `user`  - The borrowing user
+    /// * `asset` - The asset being borrowed (None = native XLM)
+    ///
+    /// # Returns
+    /// Returns the updated count of distinct debt assets, or an error
+    pub fn add_to_user_debt_list(
+        env: Env,
+        user: Address,
+        asset: Option<Address>,
+    ) -> Result<u32, CrossAssetError> {
+        add_to_user_debt_list(&env, &user, &asset)
+    }
+
+    /// Return the list of distinct debt assets currently tracked for `user`.
+    ///
+    /// # Arguments
+    /// * `user` - The user whose debt list to query
+    pub fn get_user_debt_assets(env: Env, user: Address) -> soroban_sdk::Vec<Option<Address>> {
+        get_user_debt_assets(&env, &user)
+    }
 }
 
 #[cfg(test)]
-mod flash_loan_test;
-#[cfg(test)]
-mod test_reentrancy;
+mod test;
 
 #[cfg(test)]
 mod amm_pause_integration_test;

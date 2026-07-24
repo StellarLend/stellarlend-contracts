@@ -2,7 +2,7 @@
 
 extern crate std;
 
-use super::math::{checked_mul_div_floor, checked_mul_div_ceil, MathError};
+use super::math::{checked_mul_div_ceil, checked_mul_div_floor, MathError};
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, RngSeed};
 

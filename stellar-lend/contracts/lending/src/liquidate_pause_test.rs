@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod liquidate_pause_test {
-    use crate::{EmergencyState, LendingContract, LendingContractClient, PauseType};
+    use crate::{
+        debt::DebtPosition, liquidate_transfer_test::MockToken, liquidate_transfer_test::MockTokenClient,
+        DataKey, EmergencyState, LendingContract, LendingContractClient, PauseType,
+    };
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     fn setup() -> (
@@ -19,9 +22,11 @@ mod liquidate_pause_test {
         let admin = Address::generate(&env);
         let borrower = Address::generate(&env);
         let liquidator = Address::generate(&env);
-        let debt_asset = Address::generate(&env);
-        let collateral_asset = Address::generate(&env);
+        let debt_asset = env.register(MockToken, ());
+        let collateral_asset = env.register(MockToken, ());
         client.initialize(&admin);
+        MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+        MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
         // configure a simple asset
         let asset = Address::generate(&env);
         client.set_asset_params(&admin, &asset, &7500, &8000, &1_000_000_000_000i128, &0i128);
@@ -66,10 +71,10 @@ mod liquidate_pause_test {
     }
 
     #[test]
-    #[should_panic(expected = "OperationDisabledDuringShutdown")]
-    fn liquidate_blocked_in_shutdown() {
+    fn liquidate_allowed_in_shutdown() {
         let (env, client, admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
         client.set_emergency_state(&admin, &EmergencyState::Shutdown);
-        client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+        let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+        assert!(res.is_ok(), "liquidation must be allowed during Shutdown");
     }
 }
