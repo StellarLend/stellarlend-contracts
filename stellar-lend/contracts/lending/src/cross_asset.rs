@@ -572,7 +572,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: INDEX_SCALE,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );
@@ -601,7 +601,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: INDEX_SCALE,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );
@@ -618,7 +618,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: INDEX_SCALE,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );

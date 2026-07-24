@@ -171,5 +171,5 @@ fn utilization_history_rate_math_reports_overflow() {
         params: Some(RateParams::default()),
     };
 
-    assert!(try_compute_borrow_rate_from_snapshot(&snapshot).is_err());
+    assert!(try_compute_borrow_rate_from_snapshot(&env, &snapshot).is_err());
 }
