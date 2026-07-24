@@ -268,7 +268,7 @@ mod interest_ordering_time_tests {
         let env = Env::default();
         let user = Address::generate(&env);
 
-        let initial = DebtPosition { principal: 10_000, last_update: 1_000 };
+        let initial = DebtPosition { borrow_index_snapshot: crate::debt::INDEX_SCALE,  principal: 10_000, last_update: 1_000 };
         save_debt(&env, &user, &initial);
 
         let now = 1_000 + SECONDS_PER_YEAR;
@@ -287,7 +287,7 @@ mod interest_ordering_time_tests {
         let env = Env::default();
         let user = Address::generate(&env);
 
-        let initial = DebtPosition { principal: 0, last_update: 1_000 };
+        let initial = DebtPosition { borrow_index_snapshot: crate::debt::INDEX_SCALE,  principal: 0, last_update: 1_000 };
         save_debt(&env, &user, &initial);
 
         let after_borrow = borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS)

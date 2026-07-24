@@ -145,6 +145,7 @@ fn test_liquidation_empty_insurance_fund() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
@@ -184,6 +185,7 @@ fn test_liquidation_partial_insurance_coverage() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
@@ -219,6 +221,7 @@ fn test_liquidation_full_insurance_coverage() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
