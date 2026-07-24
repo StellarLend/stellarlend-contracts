@@ -15,8 +15,6 @@ pub mod upgrade;
 mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
-#[cfg(test)]
-mod compound_interest_proptest;
 mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
@@ -24,6 +22,8 @@ mod bad_debt_write_off_test;
 mod borrow_health_factor_test;
 #[cfg(test)]
 mod borrow_rate_cache_equiv_test;
+#[cfg(test)]
+mod compound_interest_proptest;
 #[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
@@ -36,6 +36,8 @@ mod cross_asset_test;
 mod deposit_accounting_test;
 #[cfg(test)]
 mod deposit_cap_race_test;
+#[cfg(test)]
+mod effective_supply_rate_test;
 #[cfg(test)]
 mod effective_supply_rate_test;
 #[cfg(test)]
@@ -81,13 +83,11 @@ mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod max_borrow_proptest;
 #[cfg(test)]
-mod property_invariants_test;
-#[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
-mod repay_overpay_test;
+mod property_invariants_test;
 #[cfg(test)]
 mod rate_cache_test;
 #[cfg(test)]
@@ -101,6 +101,8 @@ mod repay_debt_floor_test;
 #[cfg(test)]
 mod repay_overpay_test;
 #[cfg(test)]
+mod repay_overpay_test;
+#[cfg(test)]
 mod reserve_split_proptest;
 #[cfg(test)]
 mod rounding_drift_test;
@@ -108,8 +110,6 @@ mod rounding_drift_test;
 mod self_liquidation_test;
 #[cfg(test)]
 mod supply_rate_split_test;
-#[cfg(test)]
-mod effective_supply_rate_test;
 
 #[cfg(test)]
 mod utilization_history_test;
@@ -760,7 +760,10 @@ impl LendingContract {
 
     /// Admin-only setter for liquidation threshold bps.
     /// Must be in (0, 10000].
-    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
+    pub fn set_liquidation_threshold_bps(
+        env: Env,
+        threshold_bps: i128,
+    ) -> Result<(), LendingError> {
         assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidFeeBps);
@@ -786,7 +789,10 @@ impl LendingContract {
 
     /// Admin-only setter for liquidation incentive bps.
     /// Must be in [0, 5000].
-    pub fn set_liquidation_incentive_bps(env: Env, incentive_bps: i128) -> Result<(), LendingError> {
+    pub fn set_liquidation_incentive_bps(
+        env: Env,
+        incentive_bps: i128,
+    ) -> Result<(), LendingError> {
         assert_admin(&env);
         if incentive_bps < 0 || incentive_bps > 5000 {
             return Err(LendingError::InvalidFeeBps);
@@ -796,7 +802,6 @@ impl LendingContract {
             .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
         Ok(())
     }
-
 
     fn max_flash_bps_config(env: &Env) -> i128 {
         env.storage()
@@ -1098,10 +1103,10 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
-        
+
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
-        
+
         new_balance
     }
 
@@ -1134,10 +1139,10 @@ impl LendingContract {
                 .expect("withdraw: total deposits underflow"),
         );
         extend_collateral_ttl(&env, &user);
-        
+
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
-        
+
         new_balance
     }
 
@@ -1231,10 +1236,10 @@ impl LendingContract {
         save_debt(&env, &user, &updated);
         // Extend TTL to prevent archival of debt entry
         extend_debt_ttl(&env, &user);
-        
+
         // Emit borrow event
         emit_borrow(&env, &user, amount, updated.principal);
-        
+
         Ok(updated.principal)
     }
 
@@ -1651,18 +1656,16 @@ impl LendingContract {
             .persistent()
             .get(&DataKey::TotalDebt)
             .unwrap_or(0);
-        let repaid = prev_principal
-            .checked_sub(updated.principal)
-            .unwrap_or(0);
+        let repaid = prev_principal.checked_sub(updated.principal).unwrap_or(0);
         let new_total_debt = total_debt.saturating_sub(repaid);
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
-        
+
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
-        
+
         updated.principal
     }
 
@@ -1705,7 +1708,7 @@ impl LendingContract {
     /// interaction during a protocol pause or emergency shutdown.
     pub fn repay_flash_loan(env: Env, payer: Address, asset: Address, amount: i128) {
         check_pause_status(&env, ProtocolAction::FlashLoan);
-        check_emergency_status(grep -n -A10 "pub struct AssetParams" contracts/lending/src/lib.rs&env, ProtocolAction::FlashLoan);
+        check_emergency_status(&env, ProtocolAction::FlashLoan);
         payer.require_auth();
         let payer_key = DataKey::Balance(asset.clone(), payer.clone());
         let payer_bal: i128 = env.storage().persistent().get(&payer_key).unwrap_or(0);
@@ -1768,9 +1771,12 @@ impl LendingContract {
         let new_tre_bal = tre_bal
             .checked_sub(amount)
             .expect("flash_loan: treasury underflow during transfer");
-        env.storage().persistent().set(&tre_key,if supply_cap < 0 {
-    return Err(LendingError::InvalidAmount);
-} &new_tre_bal);
+        env.storage().persistent().set(
+            &tre_key,
+            if supply_cap < 0 {
+                return Err(LendingError::InvalidAmount);
+            } & new_tre_bal,
+        );
 
         let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
         let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
@@ -1916,7 +1922,6 @@ impl LendingContract {
         borrow_cap: i128,
         supply_cap: i128,
     ) -> Result<(), LendingError> {
-        
         admin.require_auth();
         if admin != Self::get_admin(env.clone()) {
             return Err(LendingError::Unauthorized);
@@ -1942,7 +1947,7 @@ impl LendingContract {
             liquidation_threshold_bps,
             debt_ceiling,
             borrow_cap,
-             supply_cap,
+            supply_cap,
         };
         cross_asset::set_asset_params_internal(&env, &asset, &params);
 
@@ -2600,9 +2605,7 @@ fn register_borrower(env: &Env, user: &Address) {
         }
     }
     list.push_back(user.clone());
-    env.storage()
-        .instance()
-        .set(&DataKey::BorrowerList, &list);
+    env.storage().instance().set(&DataKey::BorrowerList, &list);
 }
 
 fn pause_is_active(env: &Env, operation: PauseType) -> bool {
