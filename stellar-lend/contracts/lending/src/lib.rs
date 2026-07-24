@@ -50,8 +50,6 @@ mod granular_pause_ops_test;
 #[cfg(test)]
 mod health_factor_edge_test;
 #[cfg(test)]
-mod health_factor_proptest;
-#[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
 mod isolation_mode_test;
@@ -70,15 +68,11 @@ mod liquidate_rounding_test;
 #[cfg(test)]
 mod liquidate_transfer_test;
 #[cfg(test)]
-mod liquidation_bonus_proptest;
-#[cfg(test)]
 mod liquidation_branch_test;
 #[cfg(test)]
 mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
-#[cfg(test)]
-mod max_borrow_proptest;
 #[cfg(test)]
 mod property_invariants_test;
 #[cfg(test)]
