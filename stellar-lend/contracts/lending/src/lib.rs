@@ -1377,11 +1377,7 @@ impl LendingContract {
 
             require_no_active_flash_loan(&env);
 
-        let threshold_bps = Self::get_liquidation_threshold_bps(&env);
-        let hf = collateral
-            .checked_mul(threshold_bps)
-            .and_then(|v| v.checked_div(debt))
-            .ok_or(LendingError::Overflow)?;
+            let col_key = DataKey::Collateral(borrower.clone());
 
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
             let position = load_debt(&env, &borrower);
@@ -1398,22 +1394,11 @@ impl LendingContract {
                     .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
 
-        let close_factor_bps = Self::get_close_factor_bps(&env);
-        let max_repay = debt
-            .checked_mul(close_factor_bps)
-            .and_then(|v| v.checked_div(10000))
-            .ok_or(LendingError::Overflow)?;
-        let actual_repay = if amount > max_repay {
-            max_repay
-        } else {
-            amount
-        };
+            let debt = settled_position.principal;
 
-        let incentive_bps = Self::get_liquidation_incentive_bps(&env);
-        let seized_collateral = actual_repay
-            .checked_mul(10000 + incentive_bps)
-            .and_then(|v| v.checked_div(10000))
-            .ok_or(LendingError::Overflow)?;
+            if debt == 0 {
+                return Err(LendingError::PositionHealthy);
+            }
 
             // Health-factor computation: floor rounding.
             // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
@@ -1444,9 +1429,7 @@ impl LendingContract {
             // Dust guard: a repay of 0 would make the liquidation a no-op.
             if actual_repay <= 0 {
                 return Err(LendingError::InvalidAmount);
-            }if supply_cap < 0 {
-    return Err(LendingError::InvalidAmount);
-}
+            }
 
             // Liquidation incentive: floor rounding.
             // actual_repay * (10000 + incentive_bps) / 10000 — rounding down means the
@@ -1503,15 +1486,6 @@ impl LendingContract {
             let new_col = collateral
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
-            env.storage()
-                .persistent()
-                .set(&DataKey::BadDebt, &new_bad_debt);
-            env.events()
-                .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), shortfall);
-            available_collateral
-        } else {
-            seized_collateral
-        };
 
             let updated_position = DebtPosition {
                 principal: new_debt,
