@@ -566,10 +566,7 @@ pub fn set_primary_oracle(
     asset: Address,
     primary_oracle: Address,
 ) -> Result<(), OracleError> {
-    let admin = get_admin(env).ok_or(OracleError::Unauthorized)?;
-    if caller != admin {
-        return Err(OracleError::Unauthorized);
-    }
+    crate::admin::require_admin(env, &caller).map_err(|_| OracleError::Unauthorized)?;
     let primary_key = OracleDataKey::PrimaryOracle(asset);
     env.storage()
         .persistent()
