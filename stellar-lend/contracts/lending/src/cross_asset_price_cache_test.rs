@@ -41,8 +41,8 @@ fn setup_env(n: u32) -> (Env, Address, Address, Address, Vec<Address>) {
                     ltv_bps: 7500,
                     liquidation_threshold_bps: 8000,
                     debt_ceiling: 1_000_000_000_000i128,
-                    borrow_cap: 0i128,
-                    supply_cap: 0i128,
+                    borrow_cap: 0,
+                    supply_cap: 0,
                 },
             );
             env.storage().persistent().set(
@@ -79,7 +79,7 @@ fn overlapping_asset_triggers_single_read_and_identical_hf() {
             &asset,
             &DebtPosition {
                 principal: 100i128,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -124,7 +124,7 @@ fn single_sided_asset_unaffected() {
             &debt_asset,
             &DebtPosition {
                 principal: 100i128,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -163,7 +163,7 @@ fn no_persistent_or_instance_storage_write_happens_as_side_effect() {
             &asset,
             &DebtPosition {
                 principal: 100i128,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );

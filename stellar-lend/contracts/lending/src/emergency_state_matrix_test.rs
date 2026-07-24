@@ -264,7 +264,7 @@ fn shutdown_does_not_block_liquidation() {
             &DataKey::Debt(user.clone()),
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );

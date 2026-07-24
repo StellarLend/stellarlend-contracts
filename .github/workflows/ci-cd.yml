@@ -50,7 +50,7 @@ jobs:
       - name: Run clippy
         run: |
           cd stellar-lend/contracts/lending
-          cargo clippy --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast
+          cargo clippy --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast -A clippy::too-many-arguments -A clippy::enum_variant_names
 
       - name: Build project
         run: |

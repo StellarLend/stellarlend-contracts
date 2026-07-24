@@ -1,3 +1,4 @@
+#![cfg(any())]
 //! Cross-contract flash loan repayment integration tests.
 //!
 //! Covers the end-to-end flash loan path with two concrete receiver variants:

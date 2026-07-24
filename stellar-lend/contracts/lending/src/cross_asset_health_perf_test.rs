@@ -211,7 +211,7 @@ fn populate_hf_positions(
             &asset,
             &debt::DebtPosition {
                 principal: 100i128 * (i as i128 + 1),
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -528,7 +528,7 @@ fn hf_bench_undercollateralised_position_below_scale() {
             &debt_asset,
             &debt::DebtPosition {
                 principal: 1_000_000_000i128,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );

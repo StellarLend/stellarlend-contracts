@@ -64,7 +64,7 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: debt,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: now,
             },
         );

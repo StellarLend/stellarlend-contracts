@@ -32,7 +32,7 @@ use crate::deposit::DepositDataKey;
 use crate::events::{
     emit_price_updated, emit_twap_fallback_used, PriceUpdatedEvent, PRIMARY_FEED_ABSENT,
 };
-use crate::risk_management::get_admin;
+use crate::admin::get_admin;
 use soroban_sdk::{
     contracterror, contracttype, symbol_short, Address, Env, IntoVal, Map, Symbol, Val, Vec,
 };
@@ -566,10 +566,7 @@ pub fn set_primary_oracle(
     asset: Address,
     primary_oracle: Address,
 ) -> Result<(), OracleError> {
-    let admin = get_admin(env).ok_or(OracleError::Unauthorized)?;
-    if caller != admin {
-        return Err(OracleError::Unauthorized);
-    }
+    crate::admin::require_admin(env, &caller).map_err(|_| OracleError::Unauthorized)?;
     let primary_key = OracleDataKey::PrimaryOracle(asset);
     env.storage()
         .persistent()

@@ -101,7 +101,7 @@ fn test_liquidate_accrual_parity() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: now,
             },
         );
@@ -160,7 +160,7 @@ fn test_liquidate_long_horizon_accrual() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: now,
             },
         );
@@ -216,7 +216,7 @@ fn test_liquidate_health_factor_after_settle_boundary() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: 0,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: now,
             },
         );
