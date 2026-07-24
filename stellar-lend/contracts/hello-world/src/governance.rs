@@ -119,6 +119,15 @@ pub fn create_proposal(
         return Err(GovernanceError::Unauthorized);
     }
 
+    // Non-admin proposers must hold at least proposal_threshold vote tokens.
+    if proposer != config.admin {
+        let token = soroban_sdk::token::TokenClient::new(env, &config.vote_token);
+        let balance = token.balance(&proposer);
+        if balance < config.proposal_threshold {
+            return Err(GovernanceError::Unauthorized);
+        }
+    }
+
     let counter: u64 = env
         .storage()
         .instance()
@@ -267,7 +276,8 @@ pub fn vote(
     }
 
     // Record the vote.
-    let weight = 1i128; // One-person-one-vote for simplicity.
+    let token = soroban_sdk::token::TokenClient::new(env, &config.vote_token);
+    let weight = token.balance(&voter);
     let vote_info = VoteInfo {
         voter: voter.clone(),
         vote_type,

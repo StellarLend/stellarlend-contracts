@@ -64,21 +64,23 @@ pub enum MultisigDataKey {
 }
 
 /// Multisig errors.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
 pub enum MultisigError {
-    Unauthorized,
-    ProposalNotFound,
-    ProposalNotPassed,
-    ProposalExpired,
-    AlreadyExecuted,
-    AlreadyApproved,
-    PayloadHashMismatch,
-    QuorumNotReached,
-    InvalidAction,
-    InvalidThreshold,
-    InvalidSigners,
-    AlreadyCancelled,
+    Unauthorized = 1,
+    ProposalNotFound = 2,
+    ProposalNotPassed = 3,
+    ProposalExpired = 4,
+    AlreadyExecuted = 5,
+    AlreadyApproved = 6,
+    PayloadHashMismatch = 7,
+    QuorumNotReached = 8,
+    InvalidAction = 9,
+    InvalidThreshold = 10,
+    InvalidSigners = 11,
+    AlreadyCancelled = 12,
+    InvalidTtl = 13,
 }
 
 #[contract]
@@ -187,12 +189,16 @@ impl MultisigContract {
         action: ProposalAction,
         payload_hash: soroban_sdk::Bytes,
         ttl_ledgers: u64,
-    ) -> u64 {
+    ) -> Result<u64, MultisigError> {
         caller.require_auth();
         Self::require_signer(&env, &caller);
 
+        if ttl_ledgers > 3_110_400 {
+            return Err(MultisigError::InvalidTtl);
+        }
+
         let id = Self::next_proposal_id(&env);
-        let expires_at = env.ledger().sequence() as u64 + ttl_ledgers;
+        let expires_at = (env.ledger().sequence() as u64).saturating_add(ttl_ledgers);
 
         let proposal = Proposal {
             id,
@@ -204,7 +210,7 @@ impl MultisigContract {
             expires_at,
         };
         Self::save_proposal(&env, &proposal);
-        id
+        Ok(id)
     }
 
     /// Approve an existing active proposal.
