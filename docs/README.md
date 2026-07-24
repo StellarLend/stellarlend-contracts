@@ -105,4 +105,4 @@ Key admin entrypoints (see contract for full list):
 
 ## Documentation
 
-See the [Documentation Index](docs/INDEX.md) for a complete overview of project documentation.
+See the [Documentation Index](INDEX.md) for a complete overview of project documentation.

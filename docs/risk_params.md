@@ -12,8 +12,9 @@ This document provides a consolidated view of all protocol risk parameters, incl
 | **Debt Ceiling** | Maximum total protocol debt allowed across all users | **1 trillion** | > 0 | `set_debt_ceiling(ceiling)` | Limits protocol exposure and blast radius if price oracle fails |
 | **Deposit Cap** | Maximum total protocol deposits allowed across all users | **1 trillion** | > 0 | `set_deposit_cap(cap)` | Limits protocol exposure to asset concentration risk |
 | **Minimum Collateral Ratio** | Minimum ratio of collateral to total debt required for a borrow to succeed, in basis points | **15 000 bps (150 %)** | > 0 | `set_collateral_ratio(admin, ratio)` | Prevents under-collateralised borrowing and protects protocol solvency |
-| Close Factor | Maximum portion of a borrow position that can be liquidated in a single transaction | Defined in code | 0% – 100% | Admin-controlled setter | Prevents full liquidation at once, reducing market shock and cascading failures |
-| Liquidation Threshold | Collateral ratio below which a position becomes eligible for liquidation | Defined in code | Protocol-defined bounds | Admin-controlled setter | Ensures positions remain sufficiently collateralized and protects lenders |
+| Close Factor | Maximum portion of a borrower's debt that can be repaid in a single `liquidate` call, in basis points | **5 000 bps (50 %)** | `(0, 10 000]` | `set_close_factor_bps(close_factor_bps)` | Prevents full liquidation at once, reducing market shock and cascading failures |
+| Liquidation Incentive | Bonus collateral, on top of the repaid debt, paid to the liquidator, in basis points | **1 000 bps (10 %)** | `[0, 5 000]` | `set_liquidation_incentive_bps(incentive_bps)` | Rewards liquidators for clearing bad debt while capping the bonus so it can't be misconfigured into an outsized collateral seizure |
+| Liquidation Threshold | Collateral ratio below which a position becomes eligible for liquidation, in basis points | **8 000 bps (80 %)** | Fixed (`LIQUIDATION_THRESHOLD_BPS` constant) | Not governable — recompile-only | Ensures positions remain sufficiently collateralized and protects lenders |
 | Reserve Factor | Percentage of interest allocated to protocol reserves | Defined in code | 0% – 100% | Admin-controlled setter | Builds reserves for protocol stability and risk mitigation |
 | Supply Cap | Maximum total supply allowed for a specific asset | Defined in code | ≥ 0 | Admin-controlled setter | Limits exposure to any single asset and reduces systemic risk |
 | Borrow Cap | Maximum total borrow allowed for a specific asset | Defined in code | ≥ 0 | Admin-controlled setter | Prevents excessive leverage and liquidity stress |
@@ -58,6 +59,37 @@ where `col_ratio` is stored under the `"col_ratio"` instance-storage key (defaul
 - `TotalDeposits` = sum of all user collateral balances
 - Both totals are updated atomically with per-user state changes
 - Overflow/underflow is prevented via checked arithmetic; operations fail with `LendingError::Overflow`
+
+### Governable Liquidation Parameters (Close Factor & Liquidation Incentive)
+
+`LendingContract::liquidate` (`stellar-lend/contracts/lending/src/lib.rs`) sources its
+close-factor cap and liquidation incentive from governed storage instead of from inline
+`const` literals, so they can be retuned by the admin without a contract upgrade. The
+liquidation threshold remains the fixed `LIQUIDATION_THRESHOLD_BPS` constant — it is not
+governable.
+
+| Parameter | Storage key | Default | Bounds | Setter | Getter |
+|-----------|-------------|---------|--------|--------|--------|
+| Close factor | `DataKey::CloseFactorBps` (instance) | `DEFAULT_CLOSE_FACTOR_BPS` = 5 000 bps (50 %) | `(0, 10 000]` | `set_close_factor_bps(close_factor_bps)` | `get_close_factor_bps()` |
+| Liquidation incentive | `DataKey::LiquidationIncentiveBps` (instance) | `DEFAULT_LIQUIDATION_INCENTIVE_BPS` = 1 000 bps (10 %) | `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (`MAX_LIQUIDATION_INCENTIVE_BPS` = 5 000 bps / 50 %) | `set_liquidation_incentive_bps(incentive_bps)` | `get_liquidation_incentive_bps()` |
+
+**Behaviour:**
+- Both setters call `assert_admin`; a non-admin caller's `liquidate`-affecting setter call
+  fails with the host's auth error (`require_auth` rejection).
+- `set_close_factor_bps` rejects `close_factor_bps <= 0` or `close_factor_bps > 10000` with
+  `LendingError::InvalidCloseFactorBps` (code 7001). Storage is left unchanged on rejection.
+- `set_liquidation_incentive_bps` rejects values outside `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`
+  with `LendingError::InvalidLiquidationIncentiveBps` (code 7002).
+- Until an admin calls a setter, the corresponding getter — and `liquidate` itself —
+  fall back to the default literal, so behaviour is unchanged for deployments that never
+  configure an override (the same 50 % close factor / 10 % incentive as before this change).
+- `liquidate`'s rounding policy is unaffected: `max_repay = debt × close_factor_bps ÷ 10000`
+  and `seized = repay × (10000 + incentive_bps) ÷ 10000` both still floor via
+  `math::checked_mul_div_floor`.
+
+**Source:** `stellar-lend/contracts/lending/src/liquidation_params_test.rs` covers default
+fallthrough, boundary acceptance, out-of-range rejection, unauthorised-caller rejection, and
+that `liquidate` actually reads the overridden values end to end.
 
 ## Implementation Notes
 

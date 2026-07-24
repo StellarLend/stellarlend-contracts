@@ -8,6 +8,131 @@ The Cross-Asset implementation in StellarLend allows users to interact with mult
 - **Risk Management**: Each asset has its own Loan-to-Value (LTV) and Liquidation Threshold (LT).
 - **Asset Specificity**: Supports `set_asset_params` for admin configuration of LTV, LT, and price feeds.
 - **Aggregate Health Factor**: HealthFactor = (Σ CollateralValue_i * LTV_i) / Σ DebtValue_j.
+- **Isolation Mode**: Riskier assets can be flagged as *isolated*, capping their collateral contribution at a per-asset debt ceiling and preventing cross-margining with other collateral.
+
+## Aggregation Pipeline
+
+The cross‑asset module aggregates collateral and debt across multiple assets to compute a unified health factor.
+
+**Per‑Asset Valuation**
+- Collateral amount is multiplied by the oracle price (`price_record.price`) and divided by `PRICE_DIVISOR = 10_000_000` to obtain a USD‑denominated value.
+- The resulting value is then multiplied by the asset's liquidation threshold expressed in basis points (`params.liquidation_threshold_bps`). This yields the *weighted collateral* contribution.
+
+**Debt Valuation**
+- Effective debt is calculated via `crate::debt::effective_debt`, then multiplied by the oracle price and divided by `PRICE_DIVISOR` to obtain USD debt value.
+- All debt values are summed to `total_debt_value`.
+
+**Health Factor Calculation**
+```
+if total_debt_value == 0 {
+    health_factor = HEALTH_FACTOR_NO_DEBT; // sentinel = 100_000_000
+} else {
+    // `weighted_collateral` is the sum of weighted collateral values.
+    health_factor = weighted_collateral / total_debt_value;
+}
+```
+The `HEALTH_FACTOR_SCALE = 10_000` represents a health factor of 1.0 (100 %).
+
+**Worked Example**
+- Collateral: 100 USDC @ $1.00, LT = 90 % (9_000 bps)
+- Collateral: 1 ETH @ $2,000.00, LT = 80 % (8_000 bps)
+- Debt: 1,000 USDC @ $1.00
+
+Calculation:
+- USDC value = 100 * 1_000_0000 / 10_000_000 = 100
+- ETH value = 1 * 2_000_000_000 / 10_000_000 = 2000
+- Weighted collateral = (100 * 9_000) + (2000 * 8_000) = 900_000 + 16_000_000 = 16_900_000
+- Debt value = 1_000 * 1_000_0000 / 10_000_000 = 1_000
+- Health factor = 16_900_000 / 1_000 = 16_900 (i.e., 1.69 × 10_000)
+
+This example matches the computation performed by `compute_aggregate_health_factor`.
+
+## Isolation Mode
+
+### Overview
+
+Isolation mode is a risk-containment control for assets that are volatile, thinly traded, or newly listed. An isolated asset may still be used as collateral, but under two additional constraints:
+
+1. **Debt ceiling** — the total debt backed by that asset across all users cannot exceed `isolation_debt_ceiling` (denominated in the asset's raw units). Borrows that would push past the ceiling are rejected with `IsolationCeilingExceeded`.
+2. **No cross-margining** — when a user posts an isolated asset as their collateral in `borrow_against_collateral`, the ceiling check is applied per-asset. The isolated asset cannot amplify borrowing power through aggregation with other collateral types.
+
+Normal (non-isolated) assets remain fully fungible in the cross-asset position model.
+
+### Isolation-Mode Storage
+
+Two new `DataKey` variants are used:
+
+| Key | Storage tier | Description |
+|-----|-------------|-------------|
+| `AssetIsolation(Address)` | `persistent` | Stores `IsolationConfig { isolated: bool, isolation_debt_ceiling: i128 }` |
+| `IsolationDebt(Address)` | `persistent` | Running total of debt currently backed by this isolated asset |
+
+### Admin API
+
+#### `set_asset_isolation(asset, isolated, isolation_debt_ceiling) -> Result<(), LendingError>`
+
+Enable or disable isolation mode for `asset`. Admin-only.
+
+- `isolated = true, isolation_debt_ceiling > 0` — enables isolation with the given ceiling.
+- `isolated = false` — disables isolation; the ceiling value is stored but ignored.
+- Returns `InvalidIsolationCeiling` if `isolated = true` and `isolation_debt_ceiling ≤ 0`.
+
+#### `get_asset_isolation(asset) -> Option<IsolationConfig>`
+
+Returns the isolation configuration for `asset`. Returns `None` when no configuration has been set.
+
+#### `get_isolation_debt(asset) -> i128`
+
+Returns the current running total of debt backed by `asset` acting as isolated collateral. Returns `0` when unconfigured or when no debt has been recorded.
+
+#### `check_isolation_ceiling(collateral_asset, borrow_amount) -> Result<(), LendingError>`
+
+Read-only view that returns `Ok(())` if the given `borrow_amount` would not breach the ceiling, or `IsolationCeilingExceeded` if it would. Useful for frontends and off-chain tooling to preflight a borrow.
+
+### Cross-Asset Borrow / Repay API
+
+#### `borrow_against_collateral(user, amount, collateral_asset) -> Result<i128, LendingError>`
+
+Isolation-aware borrow. In addition to the standard pause/emergency/min-borrow checks:
+
+1. Calls `check_isolation_ceiling_internal` — rejects with `IsolationCeilingExceeded` if the ceiling would be breached.
+2. On success, increments `IsolationDebt(collateral_asset)` by the net new principal.
+
+Non-isolated assets pass through with no additional overhead.
+
+#### `repay_against_collateral(user, amount, collateral_asset) -> Result<i128, LendingError>`
+
+Isolation-aware repay. On success, decrements `IsolationDebt(collateral_asset)` by the net principal reduction. The counter uses saturating subtraction and will not go below zero.
+
+### Worked Example
+
+```
+Setup:
+  EXOTIC token — isolated = true, isolation_debt_ceiling = 100_000
+
+User A borrows 60_000 against EXOTIC:
+  IsolationDebt(EXOTIC) = 0 + 60_000 = 60_000  ✓ (60_000 ≤ 100_000)
+
+User B borrows 40_000 against EXOTIC:
+  IsolationDebt(EXOTIC) = 60_000 + 40_000 = 100_000  ✓ (100_000 ≤ 100_000)
+
+User C tries to borrow 1 against EXOTIC:
+  IsolationDebt(EXOTIC) = 100_000 + 1 = 100_001  ✗ → IsolationCeilingExceeded
+
+User A repays 30_000:
+  IsolationDebt(EXOTIC) = 100_000 − 30_000 = 70_000
+
+User C tries again with 30_000:
+  IsolationDebt(EXOTIC) = 70_000 + 30_000 = 100_000  ✓
+```
+
+### Security Notes
+
+- **Pre-mutation check**: `check_isolation_ceiling_internal` runs before any state is mutated. If the check fails the borrow is fully rejected — no partial state changes occur.
+- **Ceiling is aggregate, not per-user**: The ceiling applies to the combined outstanding debt across all users who posted the isolated asset as collateral.
+- **Ceiling change is immediate**: Lowering the ceiling below the current `IsolationDebt` does not liquidate existing positions, but it does block further borrowing until the outstanding debt falls back under the new ceiling.
+- **Disabling isolation is immediate**: Setting `isolated = false` removes all ceiling enforcement for subsequent borrows; existing `IsolationDebt` entries are left in storage but no longer consulted.
+- **Non-isolated path unchanged**: `borrow` and `repay` (the original single-collateral functions) do not touch `IsolationDebt`. Only the `_against_collateral` variants participate in isolation tracking.
 
 ## Operations
 
@@ -82,3 +207,4 @@ To ensure safe and deterministic valuation, the oracle must satisfy the followin
 - **Price Feeds**: The implementation relies on price oracles. Ensure oracles are reliable and current.
 - **Rounding**: All calculations use conservative rounding (floor for collateral value and health factor) to protect the protocol.
 - **Auth**: Critical operations require user or admin authorization.
+- **Isolation Mode**: Isolated assets are capped, non-amplifying collateral. The ceiling check is pre-mutation and atomic. See the Isolation Mode section above for full security properties.

@@ -50,3 +50,38 @@ The protocol uses a `FlashLoanRecord` to track active loans.
 Tests run in the Soroban test environment which simulates ledger limits.
 *   **Depth Limit**: Cross-contract calls consume stack depth. The framework tests nested calls (Provider -> Receiver -> Provider).
 *   **Budget**: Tests will fail if they exceed the default test budget. Complex tests implicitly verify we are within limits.
+
+## AMM Cross-Contract Integration (Issue #1144)
+
+`amm_integration_test.rs` proves that the lending `amm_swap` routing layer
+produces results consistent with the standalone `AmmContract` crate.
+
+### Approach
+
+The test file inlines the identical Uniswap-v2 formula used by
+`AmmContract::swap_a_for_b` as a pure Rust function (`expected_swap_out`) and
+cross-checks every assertion independently — the "deployed contract side" and
+the "lending routing side" must agree on every input.
+
+### Formula
+
+```
+amount_in_adj = amount_in × (10_000 − fee_bps)
+amount_out    = ⌊ (amount_in_adj × reserve_b)
+                  / (reserve_a × 10_000 + amount_in_adj) ⌋
+```
+
+### Scenarios covered
+
+| Test | Assertion |
+|------|-----------|
+| `integration_swap_output_matches_amm_formula` | output equals pre-computed formula value |
+| `integration_swap_output_asymmetry_ra_rb` | ra ≠ rb gives different outputs |
+| `integration_reserve_state_consistent_after_swap` | `new_ra = ra + in`, `new_rb = rb − out`, k ↑ |
+| `integration_successive_swaps_use_updated_reserves` | second swap uses post-first-swap reserves |
+| `integration_fee_passthrough_zero_vs_nonzero` | fee forwarded correctly; outputs decrease as fee increases |
+| `integration_fee_at_boundary_9999_bps` | near-100 % fee rounds to 0 output |
+| `integration_empty_pool_returns_none` | zero reserve → error propagated |
+| `integration_zero_amount_in_is_rejected` | zero / negative input rejected |
+| `integration_large_swap_bounded_by_reserve_b` | huge `amount_in` never drains `reserve_b` |
+| `integration_sweep_amounts_and_fees` | sweep of 6 amounts × 8 fees; all bounds hold |

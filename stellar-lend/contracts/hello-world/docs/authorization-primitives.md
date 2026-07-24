@@ -137,6 +137,29 @@ if !multisig_config.admins.contains(&approver) {
 | `approve_recovery()` | Guardian check + `require_auth()` | Only guardians can approve |
 | `execute_recovery()` | `caller.require_auth()` | Anyone can execute approved |
 
+### `gov_can_vote` eligibility rules
+
+`gov_can_vote(voter, proposal_id)` returns `true` when **all** of the following hold:
+
+1. Governance has been initialised (config is stored).
+2. The proposal exists and is **active** — not executed, cancelled, or expired.
+3. The voter is one of:
+   - The protocol **admin** (assigned at initialisation),
+   - A **configured voter** (stored in `GovernanceConfig.voters`),
+   - A **guardian** (stored in `GuardianConfig.guardians`).
+
+**Role matrix**
+
+| Role | Open proposal | Executed proposal | Nonexistent / expired proposal | No config |
+|---|---|---|---|---|
+| Admin | ✅ true | ❌ false | ❌ false | ❌ false |
+| Configured voter | ✅ true | ❌ false | ❌ false | ❌ false |
+| Guardian | ✅ true | ❌ false | ❌ false | ❌ false |
+| Stranger | ❌ false | ❌ false | ❌ false | ❌ false |
+| Removed voter | ❌ false | ❌ false | ❌ false | ❌ false |
+
+The matrix is enforced by an exhaustive test suite in `src/gov_can_vote_test.rs`.
+
 ## Key Security Assumptions
 
 ### Cryptographic Assumptions

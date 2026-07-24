@@ -1,136 +1,184 @@
+//! Shared types and helpers for the StellarLend protocol.
+//!
+//! Provides a canonical `LendingError` enum, the `BPS_DENOM` constant, and
+//! checked `scale` / `unscale` helpers so every crate uses identical definitions.
+
 #![no_std]
-use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Env, Map, Symbol, Val, Vec, IntoVal, TryFromVal
-};
 
-// --- Storage Keys Configuration Definitions ---
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DataKey {
-    Admin,
-    OracleAddress,
-    MaxAge(Address),       // Map configuration per asset address bound
-    Prices(Address),       // Last observed data storage bucket
+use soroban_sdk::contracterror;
+
+/// Denominator for basis-point arithmetic (`10_000` = 100 %).
+pub const BPS_DENOM: i128 = 10_000;
+
+/// Protocol-wide error codes.
+///
+/// All variants carry a stable `u32` discriminant so that on-chain wire codes
+/// remain backward-compatible when new variants are added.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum LendingError {
+    /// Amount must be positive and non-zero.
+    InvalidAmount = 1001,
+    /// Resulting value would exceed `i128::MAX`.
+    Overflow = 1002,
+    /// Caller is not authorised for this operation.
+    Unauthorized = 1003,
+    /// Contract has not been initialised yet.
+    NotInitialized = 1009,
+    /// `initialize` was called a second time.
+    AlreadyInitialized = 1010,
+    /// Requested borrow is below the protocol minimum.
+    BelowMinimumBorrow = 1008,
+    /// Position is adequately collateralised; liquidation not allowed.
+    PositionHealthy = 1011,
+    /// Protocol-level debt ceiling would be exceeded.
+    DebtCeilingExceeded = 2001,
+    /// Asset deposit cap would be exceeded.
+    DepositCapExceeded = 2002,
+    /// Collateral balance is insufficient for the requested withdrawal.
+    InsufficientCollateral = 2007,
+    /// Flash-loan fee is outside the permitted range.
+    InvalidFeeBps = 2005,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PriceData {
-    pub price: i128,
-    pub timestamp: u64,
-    pub decimals: u32,
+/// Multiply `value` by `rate_bps` and divide by [`BPS_DENOM`].
+///
+/// Returns `None` on overflow.
+///
+/// Paired with [`unscale_bps`], the round-trip error is bounded by
+/// `BPS_DENOM / |rate_bps| + 1`; see `BPS_INVERSE_INVARIANTS.md`.
+///
+/// # Examples
+/// ```
+/// use stellar_lend_common::{scale_bps, BPS_DENOM};
+/// // 1_000_000 * 500 BPS (5 %) = 50_000
+/// assert_eq!(scale_bps(1_000_000, 500), Some(50_000));
+/// // 0 rate → 0
+/// assert_eq!(scale_bps(42, 0), Some(0));
+/// ```
+#[inline]
+pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
+    value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
 }
 
-#[contract]
-pub struct LendingContract;
+/// Divide `value` by `rate_bps` and multiply by [`BPS_DENOM`] (inverse of `scale_bps`).
+///
+/// Returns `None` if `rate_bps` is zero or on overflow.
+///
+/// Inverse of [`scale_bps`]; the round-trip error bound is documented in
+/// `BPS_INVERSE_INVARIANTS.md`.
+///
+/// # Examples
+/// ```
+/// use stellar_lend_common::unscale_bps;
+/// // 50_000 / 500 BPS → 1_000_000
+/// assert_eq!(unscale_bps(50_000, 500), Some(1_000_000));
+/// // division by zero → None
+/// assert_eq!(unscale_bps(1, 0), None);
+/// ```
+#[inline]
+pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
+    if rate_bps == 0 {
+        return None;
+    }
+    value.checked_mul(BPS_DENOM)?.checked_div(rate_bps)
+}
 
-#[contractimpl]
-impl LendingContract {
-    /// Initialize Admin Authority
-    pub fn initialize(e: Env, admin: Address) {
-        if e.storage().instance().has(&DataKey::Admin) {
-            panic!("Already initialized");
-        }
-        e.storage().instance().set(&DataKey::Admin, &admin);
+#[cfg(test)]
+mod bps_inverse_proptest;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── scale_bps ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn scale_bps_five_percent() {
+        assert_eq!(scale_bps(1_000_000, 500), Some(50_000));
     }
 
-    /// Admin-gated configuration route to alter reference Oracles
-    pub fn set_oracle(e: Env, caller: Address, oracle: Address) {
-        let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
-        caller.require_auth();
-        if caller != admin {
-            panic!("Unauthorized access: Admin signature required");
-        }
-        e.storage().instance().set(&DataKey::OracleAddress, &oracle);
+    #[test]
+    fn scale_bps_full_hundred_percent() {
+        assert_eq!(scale_bps(1_000_000, BPS_DENOM), Some(1_000_000));
     }
 
-    /// Configure maximum-age safety tolerances per discrete asset
-    pub fn set_max_age(e: Env, caller: Address, asset: Address, max_age_secs: u64) {
-        let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
-        caller.require_auth();
-        if caller != admin {
-            panic!("Unauthorized access: Admin signature required");
-        }
-        e.storage().instance().set(&DataKey::MaxAge(asset), &max_age_secs);
+    #[test]
+    fn scale_bps_zero_rate() {
+        assert_eq!(scale_bps(99_999, 0), Some(0));
     }
 
-    /// Public/Internal pathway tracking current valuations using staleness bounds checks
-    pub fn get_price(e: Env, asset: Address) -> i128 {
-        let oracle_addr: Address = e
-            .storage()
-            .instance()
-            .get(&DataKey::OracleAddress)
-            .expect("Oracle source address mapping not assigned");
-
-        // Invoke external or structural cross-contract call interface mapping against the Oracle instance
-        // For standard Soroban compatibility, we evaluate local storage mock or cross-contract call fallback
-        let price_record: PriceData = match e.storage().temporary().get(&DataKey::Prices(asset.clone())) {
-            Some(data) => data,
-            None => {
-                // Emulate dynamic fallback or direct client invoker call signature pattern matching:
-                // e.invoke_contract(&oracle_addr, &Symbol::new(&e, "get_price"), (asset.clone(),).into_val(&e))
-                panic!("Price entry missing for requested asset reference");
-            }
-        };
-
-        // Staleness evaluation boundary checks
-        let max_age: u64 = e
-            .storage()
-            .instance()
-            .get(&DataKey::MaxAge(asset.clone()))
-            .unwrap_or(3600); // System default to 1 hour fallback threshold if unconfigured
-
-        let current_time = e.ledger().timestamp();
-        if current_time > price_record.timestamp + max_age {
-            panic!("Oracle price rejection: Data stream bounds breach staleness limits");
-        }
-
-        // Decimal unit alignment validation gating (Normalizing output values safely to 7 fixed base decimals)
-        let internal_decimals: u32 = 7;
-        let mut final_price = price_record.price;
-
-        if price_record.decimals > internal_decimals {
-            let diff = price_record.decimals - internal_decimals;
-            let mut divisor = 1i128;
-            for _ in 0..diff { divisor *= 10; }
-            final_price /= divisor;
-        } else if price_record.decimals < internal_decimals {
-            let diff = internal_decimals - price_record.decimals;
-            let mut multiplier = 1i128;
-            for _ in 0..diff { multiplier *= 10; }
-            final_price *= multiplier;
-        }
-
-        if final_price <= 0 {
-            panic!("Invalid numeric data scaling from price source feed");
-        }
-
-        final_price
+    #[test]
+    fn scale_bps_zero_value() {
+        assert_eq!(scale_bps(0, 500), Some(0));
     }
 
-    /// Evaluates dynamic portfolio calculations mapping active collateral structures against systemic debt
-    pub fn evaluate_valuation(e: Env, collateral_asset: Address, collateral_amount: i128, debt_asset: Address, debt_amount: i128) -> bool {
-        let collateral_price = Self::get_price(e.clone(), collateral_asset);
-        let debt_price = Self::get_price(e.clone(), debt_asset);
-
-        let total_collateral_value = collateral_amount * collateral_price;
-        let total_debt_value = debt_amount * debt_price;
-
-        // Returns logical health checks matching collateralization thresholds safely
-        total_collateral_value >= total_debt_value
+    #[test]
+    fn scale_bps_overflow_returns_none() {
+        // i128::MAX * 1 overflows in checked_mul → None
+        assert_eq!(scale_bps(i128::MAX, 2), None);
     }
 
-    /// Update internal mock states for off-chain or testing price pushes
-    pub fn update_price_feed(e: Env, oracle: Address, asset: Address, price: i128, timestamp: u64, decimals: u32) {
-        let configured_oracle: Address = e.storage().instance().get(&DataKey::OracleAddress).unwrap();
-        oracle.require_auth();
-        if oracle != configured_oracle {
-            panic!("Unauthorized tracking context: Untrusted pricing updater");
-        }
-        
-        e.storage().temporary().set(
-            &DataKey::Prices(asset),
-            &PriceData { price, timestamp, decimals }
-        );
+    #[test]
+    fn scale_bps_negative_value() {
+        // Signed i128 arithmetic should work symmetrically
+        assert_eq!(scale_bps(-1_000_000, 500), Some(-50_000));
+    }
+
+    #[test]
+    fn scale_bps_one_bps() {
+        // 1 BPS of 10_000 → 1
+        assert_eq!(scale_bps(10_000, 1), Some(1));
+    }
+
+    // ── unscale_bps ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn unscale_bps_five_percent() {
+        assert_eq!(unscale_bps(50_000, 500), Some(1_000_000));
+    }
+
+    #[test]
+    fn unscale_bps_full_hundred_percent() {
+        assert_eq!(unscale_bps(1_000_000, BPS_DENOM), Some(1_000_000));
+    }
+
+    #[test]
+    fn unscale_bps_zero_divisor_returns_none() {
+        assert_eq!(unscale_bps(1_000_000, 0), None);
+    }
+
+    #[test]
+    fn unscale_bps_zero_value() {
+        assert_eq!(unscale_bps(0, 500), Some(0));
+    }
+
+    #[test]
+    fn unscale_bps_overflow_returns_none() {
+        // i128::MAX * BPS_DENOM overflows
+        assert_eq!(unscale_bps(i128::MAX, 1), None);
+    }
+
+    #[test]
+    fn unscale_bps_negative_value() {
+        assert_eq!(unscale_bps(-50_000, 500), Some(-1_000_000));
+    }
+
+    // ── LendingError discriminants ────────────────────────────────────────────
+
+    #[test]
+    fn error_codes_are_stable() {
+        assert_eq!(LendingError::InvalidAmount as u32, 1001);
+        assert_eq!(LendingError::Overflow as u32, 1002);
+        assert_eq!(LendingError::Unauthorized as u32, 1003);
+        assert_eq!(LendingError::NotInitialized as u32, 1009);
+        assert_eq!(LendingError::AlreadyInitialized as u32, 1010);
+        assert_eq!(LendingError::BelowMinimumBorrow as u32, 1008);
+        assert_eq!(LendingError::PositionHealthy as u32, 1011);
+        assert_eq!(LendingError::DebtCeilingExceeded as u32, 2001);
+        assert_eq!(LendingError::DepositCapExceeded as u32, 2002);
+        assert_eq!(LendingError::InsufficientCollateral as u32, 2007);
+        assert_eq!(LendingError::InvalidFeeBps as u32, 2005);
     }
 }

@@ -274,7 +274,7 @@ python3 scripts/tests/test_enforce_coverage.py
 ## References
 
 - local-ci.sh — authoritative local CI script
-- ci-doc.md — CI pipeline architecture overview
+- [CI_OVERVIEW.md](CI_OVERVIEW.md) — CI pipeline architecture overview
 - Clippy lints index: https://rust-lang.github.io/rust-clippy/master/
 - Soroban SDK docs: https://docs.rs/soroban-sdk/latest/soroban_sdk/
 - RustSec advisory database: https://rustsec.org/

@@ -64,7 +64,7 @@ fn test_decimal_mismatch_scaling_normalization() {
 
     let (_, oracle, token_a, token_b) = setup_test_environment(&e);
     
-    // Test upward normalization from 4 decimals up to internal standard (7 decimals)
+    // Test upward normalization from 4 decimals up. to internal standard (7 decimals)
     LendingContract::update_price_feed(e.clone(), oracle.clone(), token_a.clone(), 1200, 10000, 4);
     let scale_up = LendingContract::get_price(e.clone(), token_a);
     assert_eq!(scale_up, 1200000);

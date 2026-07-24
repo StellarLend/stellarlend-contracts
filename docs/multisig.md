@@ -4,6 +4,8 @@
 
 The **multisig** module (`src/multisig.rs`) implements a proposal–approve–execute governance pattern for critical StellarLend protocol parameters. It is a thin, focused layer on top of `governance.rs` that adds admin-set management (`ms_set_admins`) and a clean public API for the multisig flow.
 
+For a detailed reference on the two-phase change lifecycle, timelock cooldowns, and cancellation mechanics, see the [Change Lifecycle Guide](../stellar-lend/contracts/multisig/docs/CHANGE_LIFECYCLE.md).
+
 ---
 
 ## Flow
@@ -37,6 +39,7 @@ Shares all storage with `governance.rs` via `GovernanceDataKey`:
 | `GovernanceDataKey::ProposalCounter` | `u64` | Monotonic proposal ID counter |
 | `GovernanceDataKey::Proposal(id)` | `Proposal` | Proposal data, including `expires_at_ledger: u32` |
 | `GovernanceDataKey::ProposalApprovals(id)` | `Vec<Address>` | Per-proposal approvals; removed with its proposal during expiry cleanup |
+| `DataKey::PendingSignersChange` | `SignersChange` | Queued replacement signer set plus `eta_ledger`; absent when idle |
 
 ---
 
@@ -147,6 +150,160 @@ Removes expired, unexecuted proposal records and their approval vectors from con
 | Rushed execution | Execution timelock (default 2 days) gives time to detect malicious proposals |
 | Stale approval execution | `expires_at_ledger` is stored on every proposal and `ms_execute` / `execute_proposal` rejects `current_ledger > expires_at_ledger` |
 | Storage bloat from expired proposals | `cleanup_expired(ids)` removes expired unexecuted proposals and their approvals in bounded batches |
+| **Signer-set instant takeover** | **`queue_signers_change` / `apply_signers_change` enforce the same ~7-day cooldown as threshold changes; `set_signers` is retained for direct admin changes** |
+
+---
+
+## Signer-Set Change Timelock
+
+For detailed state diagrams and transition guides regarding signer-set rotations, see the [Change Lifecycle Guide](../stellar-lend/contracts/multisig/docs/CHANGE_LIFECYCLE.md).
+
+### Motivation
+
+`set_signers` can still be called directly by the admin for immediate changes when that is intentional (e.g. emergency key rotation). However, a new **queued, cooldown-gated path** — mirroring the existing `queue_threshold_change` / `apply_threshold_change` pattern — protects against an attacker who briefly controls quorum from replacing the entire signer set in a single ledger and locking out the legitimate owners.
+
+### Cooldown Window
+
+```
+MIN_SIGNERS_DELAY_LEDGERS = MIN_THRESHOLD_DELAY_LEDGERS = 600 000 ledgers ≈ 7 days
+```
+
+Both governance levers (`threshold` and `signer set`) share the same cooldown so there is no weaker lever an attacker can exploit.
+
+### API
+
+```rust
+/// Queue a signer-set replacement. Returns SignersDelayNotElapsed until the
+/// cooldown elapses. Overwrites any previously queued change and resets the
+/// cooldown window to the new queue ledger.
+pub fn queue_signers_change(env: Env, new_signers: Vec<Address>) -> Result<(), MultisigError>
+
+/// Apply the queued change once current_ledger >= eta_ledger.
+pub fn apply_signers_change(env: Env) -> Result<(), MultisigError>
+
+/// Cancel a queued change before it is applied. Emergency escape hatch.
+pub fn cancel_signers_change(env: Env) -> Result<(), MultisigError>
+
+/// Inspect the pending change (returns None when no change is queued).
+pub fn get_pending_signers_change(env: Env) -> Option<SignersChange>
+
+/// The cooldown constant (equals MIN_THRESHOLD_DELAY_LEDGERS).
+pub fn get_min_signers_delay_ledgers(env: Env) -> u32
+```
+
+### Storage
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `DataKey::PendingSignersChange` | `SignersChange` | Queued replacement signer set plus `eta_ledger` |
+
+```rust
+pub struct SignersChange {
+    pub new_signers: Vec<Address>,
+    pub eta_ledger: u32,        // queue_ledger + MIN_SIGNERS_DELAY_LEDGERS
+}
+```
+
+### Events
+
+| Event | Fields | Emitted by |
+|-------|--------|-----------|
+| `SignersChangeQueuedEvent` | `admin`, `eta_ledger` | `queue_signers_change` |
+| `SignersChangeAppliedEvent` | `admin`, `ledger` | `apply_signers_change` |
+| `SignersChangeCancelledEvent` | `admin`, `ledger` | `cancel_signers_change` |
+
+### Error Variants
+
+| Code | Variant | Meaning |
+|------|---------|---------|
+| 1015 | `NoQueuedSignersChange` | `apply_signers_change` or `cancel_signers_change` called with nothing queued |
+| 1016 | `SignersDelayNotElapsed` | `apply_signers_change` called before `eta_ledger` |
+
+### Worked Example
+
+**Scenario A — Legitimate signer rotation (7-day review)**
+
+```
+Ledger L:           Admin queues a 3-signer replacement set.
+                    → SignersChangeQueuedEvent emitted; eta_ledger = L + 600 000
+                    → Live signer set UNCHANGED
+                    → get_pending_signers_change() returns the queued set
+
+Ledger L + 300 000: Community reviews the proposed new signers.
+                    → apply_signers_change() → SignersDelayNotElapsed
+
+Ledger L + 600 000: Delay elapsed.
+                    → apply_signers_change() succeeds
+                    → Live signer set updated to the queued set
+                    → SignersChangeAppliedEvent emitted
+                    → get_pending_signers_change() returns None
+```
+
+**Formula:** `eta_ledger = queue_ledger + 600 000`  
+**Application window:** `current_ledger >= eta_ledger` (no upper bound)
+
+**Scenario B — Malicious quorum attempts a takeover**
+
+```
+Ledger L:       Attacker briefly controls quorum; queues a replacement signer
+                set with their own addresses.
+                → eta_ledger = L + 600 000; live set is still the original
+
+Ledger L + 1:   Legitimate admin detects the queued change via
+                get_pending_signers_change().
+                → Calls cancel_signers_change()
+                → Pending change removed; SignersChangeCancelledEvent emitted
+                → Attacker's replacement set is never applied
+```
+
+### Monitoring
+
+Add the following event watchers alongside the existing threshold-change monitors:
+
+```javascript
+contract.events.filter({ topics: ["multisig", "SignersChangeQueuedEvent"] })
+  .on('data', (event) => {
+    console.log('⚠ Signer-set change queued', {
+      admin:      event.admin,
+      eta_ledger: event.eta_ledger,
+      eta_time:   new Date(event.eta_ledger * 5 * 1000).toISOString(),
+    });
+    // Alert governance participants; begin 7-day review period.
+  });
+
+contract.events.filter({ topics: ["multisig", "SignersChangeAppliedEvent"] })
+  .on('data', (event) => {
+    console.log('Signer-set change applied', { admin: event.admin, ledger: event.ledger });
+    // Update UI; notify signers of new set.
+  });
+
+contract.events.filter({ topics: ["multisig", "SignersChangeCancelledEvent"] })
+  .on('data', (event) => {
+    console.log('Signer-set change cancelled', { admin: event.admin, ledger: event.ledger });
+  });
+```
+
+### Interaction with `set_signers`
+
+`set_signers` is **not** removed. It remains available for cases where the admin intentionally wants an immediate change (e.g. emergency key compromise response). The queued path is an additional security option, not a replacement.
+
+| Path | Delay | Use case |
+|------|-------|---------|
+| `set_signers` | None (immediate) | Emergency key rotation, initial bootstrap |
+| `queue_signers_change` → `apply_signers_change` | ~7 days | Routine signer rotation with community review |
+
+---
+
+## Quorum-Counting Rules
+
+The multisig contract enforces strict quorum-integrity guarantees at execution time to ensure that only current, valid approvals contribute to meeting the threshold:
+
+- **Deduplication:** A signer can only approve a proposal once; subsequent approvals from the same signer are rejected with `AlreadyApproved`. At execution time, the contract deduplicates the approval list so that each signer address counts at most once.
+- **Live Signer Set Evaluation:** Only addresses currently present in the registered signer set contribute to the quorum. If a signer approved a proposal but is subsequently removed from the signer set before the proposal is executed, their approval is excluded and no longer counts.
+- **Live Threshold Evaluation:** The quorum threshold is read fresh from storage at the time of execution, not at the time of proposal creation. If the threshold is raised during the proposal's lifecycle, the proposal requires additional approvals to meet the new threshold before it can be executed.
+- **Fallback Signer:** When no signer set is configured, the administrator address is treated as the sole implicit signer (requiring a threshold of 1).
+
+These rules are fully covered and verified by the tests in `quorum_edge_test.rs`.
 
 ---
 
@@ -394,6 +551,35 @@ cargo test -p stellarlend-multisig
 | `test_initialize_already_initialized` | `AlreadyInitialized` |
 | `test_queue_threshold_change_unauthorized` | host-level abort (`#[should_panic]`) |
 | `test_apply_threshold_change_unauthorized` | host-level abort (`#[should_panic]`) |
+
+### Signer-Set Cooldown Test Coverage (`signer_cooldown_test.rs`)
+
+| Test | Invariant verified |
+|------|--------------------|
+| `test_queue_and_apply_signers_change_success` | Happy-path queue → apply updates live signer set |
+| `test_apply_before_delay_rejected` | `SignersDelayNotElapsed` before cooldown elapses |
+| `test_apply_at_exact_eta_boundary` | `SignersDelayNotElapsed` at eta−1; success at eta |
+| `test_apply_after_eta_succeeds` | Apply at 2× cooldown succeeds (no upper bound) |
+| `test_cancel_clears_pending_change` | `cancel_signers_change` removes pending; subsequent apply → `NoQueuedSignersChange` |
+| `test_cancel_nothing_queued_returns_error` | `NoQueuedSignersChange` when idle |
+| `test_overwrite_pending_change_resets_cooldown` | Second queue resets eta; first eta no longer sufficient |
+| `test_queue_signers_change_unauthorized` | `require_auth` aborts (`#[should_panic]`) |
+| `test_apply_signers_change_unauthorized` | `require_auth` aborts (`#[should_panic]`) |
+| `test_cancel_signers_change_unauthorized` | `require_auth` aborts (`#[should_panic]`) |
+| `test_queue_empty_signers_rejected` | `InvalidThreshold` on empty signer list |
+| `test_get_pending_signers_change_reflects_queue` | `eta_ledger = queue_ledger + MIN_SIGNERS_DELAY_LEDGERS` |
+| `test_get_min_signers_delay_ledgers_returns_constant` | Returns `MIN_SIGNERS_DELAY_LEDGERS` |
+| `test_same_ledger_queue_and_apply_rejected` | Same-ledger protection (`SignersDelayNotElapsed`) |
+| `test_set_signers_still_immediate` | `set_signers` remains instant; queued path is additive |
+| `test_apply_clears_pending_change` | `get_pending_signers_change` → `None` after apply |
+| `test_apply_with_nothing_queued_returns_error` | `NoQueuedSignersChange` |
+| `test_multi_signer_set_replacement_preserved` | 5-signer set preserved exactly through queue → apply |
+| `test_entrypoints_return_not_initialized` | All 3 new entrypoints → `NotInitialized` before init |
+| `test_signers_delay_equals_threshold_delay` | `MIN_SIGNERS_DELAY_LEDGERS == MIN_THRESHOLD_DELAY_LEDGERS` |
+| `test_queued_change_does_not_mutate_live_set` | Live set unchanged while change is only queued |
+| `test_queue_cancel_requeue_apply` | Cancel + re-queue + apply with different set succeeds |
+| `test_single_signer_set_accepted` | Single-address signer set is valid |
+| `test_apply_at_exact_min_delay_boundary` | Boundary −1 → `SignersDelayNotElapsed`; boundary → success |
 
 ### Timing boundary invariants
 

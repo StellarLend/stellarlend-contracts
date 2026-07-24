@@ -284,6 +284,14 @@ The test suite includes:
    - `test_multiple_users_respect_ceiling`: Ceiling enforcement across users
    - `test_multiple_users_respect_deposit_cap`: Cap enforcement across users
 
+4. **Debt Function Property Tests** (`property_invariants_test.rs`)
+   - `repay` never makes principal negative; full repay zeroes it
+   - `borrow` increases principal by exactly the borrow amount after settlement
+   - `effective_debt >= principal` for non-negative rates
+   - `accrue_interest` returns non-negative for non-negative inputs
+   - `settle_accrual` never decreases principal
+   - Overflow on extreme values returns `Err(Overflow)`
+
 ### Verification Checklist
 
 - [ ] All tests pass with 95%+ coverage
