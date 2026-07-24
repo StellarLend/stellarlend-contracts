@@ -77,6 +77,8 @@ mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
+mod mul_div_proptest;
+#[cfg(test)]
 mod property_invariants_test;
 #[cfg(test)]
 mod missing_price_test;
@@ -213,6 +215,8 @@ pub enum DataKey {
     IsolationDebt(Address),
     /// Ring-buffered protocol utilization samples, stored oldest-first.
     UtilizationHistory,
+    /// List of all borrowers tracked for position migration.
+    BorrowerList,
     /// Governed close-factor cap (basis points) consulted by `liquidate` to
     /// limit the maximum portion of a borrower's debt repayable in a single
     /// call. Bounds: `(0, 10000]`. Defaults to [`DEFAULT_CLOSE_FACTOR_BPS`]
@@ -225,9 +229,6 @@ pub enum DataKey {
     /// [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] when unset. Configured via
     /// [`LendingContract::set_liquidation_incentive_bps`].
     LiquidationIncentiveBps,
-    /// List of all registered borrowers, used to iterate debt records during
-    /// migration.
-    BorrowerList,
 }
 
 #[contractevent]
@@ -533,6 +534,7 @@ pub struct LendingContract;
 
 #[allow(clippy::too_many_arguments)]
 #[contractimpl]
+#[allow(clippy::too_many_arguments)]
 impl LendingContract {
     /// One-time contract initialization — sets the protocol admin and seeds
     /// the emergency state to [`EmergencyState::Normal`].
@@ -1189,6 +1191,8 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
@@ -1211,6 +1215,10 @@ impl LendingContract {
             .ok_or(LendingError::Overflow)?;
 
         assert_borrow_solvent(&env, &user, &updated, new_total_debt)?;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDebt, &new_total_debt);
 
         save_debt(&env, &user, &updated);
         // Extend TTL to prevent archival of debt entry
@@ -1423,7 +1431,6 @@ impl LendingContract {
             }
 
             check_pause_status(&env, ProtocolAction::Liquidate);
-            check_emergency_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
             require_no_active_flash_loan(&env);
 
@@ -1445,6 +1452,9 @@ impl LendingContract {
             }
 
             // Health-factor computation: floor rounding.
+            // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
+            // slightly lower, making the position look *more* underwater than it
+            // really is, which is conservative (triggers liquidation slightly earlier).
             let liquidation_threshold_bps = Self::get_liquidation_threshold_bps(&env);
             let hf = math::checked_mul_div_floor(collateral, liquidation_threshold_bps, debt)
                 .map_err(|_| LendingError::Overflow)?;
@@ -1549,10 +1559,6 @@ impl LendingContract {
         })
     }
 
-    fn get_liquidation_threshold_bps(_env: &Env) -> i128 {
-        LIQUIDATION_THRESHOLD_BPS
-    }
-
     /// Read the governed close-factor cap (basis points) consulted by
     /// `liquidate`, defaulting to [`DEFAULT_CLOSE_FACTOR_BPS`] when unset.
     fn close_factor_bps_config(env: &Env) -> i128 {
@@ -1603,6 +1609,15 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Return the effective liquidation threshold (basis points) used for
+    /// health-factor computations.
+    ///
+    /// Currently returns the compile-time constant [`LIQUIDATION_THRESHOLD_BPS`]
+    /// (8000 = 80 %). This will become a governed parameter in a future upgrade.
+    pub fn get_liquidation_threshold_bps(_env: &Env) -> i128 {
+        LIQUIDATION_THRESHOLD_BPS
+    }
+
     /// Return the effective liquidation incentive (basis points) used by
     /// `liquidate` — the bonus, on top of the repaid debt, paid to the
     /// liquidator in seized collateral.
@@ -1612,13 +1627,6 @@ impl LendingContract {
     /// [`Self::set_liquidation_incentive_bps`].
     pub fn get_liquidation_incentive_bps(env: Env) -> i128 {
         Self::liquidation_incentive_bps_config(&env)
-    }
-
-    /// Return the liquidation threshold in basis points used for health-factor
-    /// computations. Currently returns the constant [`LIQUIDATION_THRESHOLD_BPS`].
-    pub fn get_liquidation_threshold_bps(env: &Env) -> i128 {
-        let _ = env;
-        LIQUIDATION_THRESHOLD_BPS
     }
 
     /// Set the liquidation incentive in basis points (admin-only).
@@ -1657,6 +1665,8 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
@@ -1927,6 +1937,7 @@ impl LendingContract {
     ///
     /// Only the protocol admin can call this.
     /// Emits an `AssetParamsSetEvent` on success.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_asset_params(
         env: Env,
         admin: Address,
@@ -3026,9 +3037,12 @@ pub(crate) mod test {
         price: i128,
         timestamp: u64,
     ) -> Bytes {
+        let asset_xdr = asset.to_xdr(env);
+        let asset_len = asset_xdr.len(); // u32
         let mut payload = Bytes::new(env);
         payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-        payload.append(&asset.to_xdr(env));
+        payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
+        payload.append(&asset_xdr);
         payload.append(&Bytes::from_slice(env, &price.to_be_bytes()));
         payload.append(&Bytes::from_slice(env, &timestamp.to_be_bytes()));
         payload

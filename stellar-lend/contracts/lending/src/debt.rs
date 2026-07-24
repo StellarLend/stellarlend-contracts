@@ -7,7 +7,6 @@ use stellar_lend_common::BPS_DENOM;
 
 /// Default APR when no dynamic rate is available: 5% (500 bps).
 pub const DEFAULT_APR_BPS: i128 = 500;
-pub const INDEX_SCALE: i128 = 10_000_000;
 
 /// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
 ///

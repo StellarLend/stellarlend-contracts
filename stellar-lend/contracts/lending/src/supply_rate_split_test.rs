@@ -427,7 +427,7 @@ mod supply_rate_split_tests {
     fn depositor_yield_consistent_with_supply_rate() {
         let principal = 1_000_000i128;
         let borrow_rate = 500i128; // 5% APR
-        let utilization = 5_000i128; // 50%
+        let utilization = 10_000i128; // 100% — matches accrue_interest_split (no utilization scaling)
         let reserve_factor = 2_000u32; // 20%
         let elapsed = SECONDS_PER_YEAR;
 

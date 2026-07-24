@@ -4,7 +4,11 @@
 //! longer available in SDK 25.3.1. Keep a smoke test here so the liquidation
 //! path is still exercised in a focused way.
 
-use crate::{debt::DebtPosition, LendingContract, LendingContractClient};
+use crate::{
+    debt::DebtPosition,
+    liquidate_transfer_test::{MockToken, MockTokenClient},
+    LendingContract, LendingContractClient,
+};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
@@ -18,10 +22,13 @@ fn liquidate_smoke_test() {
     let admin = Address::generate(&env);
     let borrower = Address::generate(&env);
     let liquidator = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
 
     client.initialize(&admin);
+
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
 
     env.as_contract(&contract_id, || {
         env.storage()

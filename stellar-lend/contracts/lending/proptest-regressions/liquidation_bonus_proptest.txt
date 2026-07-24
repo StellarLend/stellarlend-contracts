@@ -4,4 +4,8 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
+<<<<<<< HEAD
+cc 2e6ceffacba39cec7c486e7bb1f9329f1790f2087b8b838b8a75f18f09dfa11e # shrinks to collateral_value = 17014118346046923173168730371588411, ltv_bps = 1
+=======
 cc 7fea57d300523ac5031399a2c9c9a20c763738e47c2ff95c3c00b552df4cb725 # shrinks to debt_to_cover = 17014118346046923173168730371588411, liquidation_bonus_bps = 1
+>>>>>>> origin/main

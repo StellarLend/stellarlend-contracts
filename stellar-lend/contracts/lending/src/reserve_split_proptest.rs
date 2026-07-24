@@ -46,6 +46,8 @@
 
 use super::math::split_interest_by_reserve_factor;
 use proptest::prelude::*;
+use proptest::strategy::Just;
+use proptest::test_runner::Config as ProptestConfig;
 
 /// Strategy for total_interest: non‑negative values that are safe to multiply.
 fn arb_total_interest_safe() -> impl Strategy<Value = i128> {
@@ -53,8 +55,11 @@ fn arb_total_interest_safe() -> impl Strategy<Value = i128> {
 }
 
 /// Overflow strategy: force overflow in total_interest * reserve_factor_bps.
+/// The minimum reserve factor used in the test is 1001, so we need
+/// total_interest * 1001 > i128::MAX → total_interest > i128::MAX / 1001.
+/// Use i128::MAX / 1000 to be safe and avoid edge cases.
 fn arb_total_interest_overflow() -> impl Strategy<Value = i128> {
-    (i128::MAX / 10_000 + 1)..=i128::MAX
+    (i128::MAX / 1000 + 1)..=i128::MAX
 }
 
 /// Reserve factor strategy: valid basis points range 0‑10_000 (0‑100%).
@@ -63,6 +68,8 @@ fn arb_reserve_factor_bps() -> impl Strategy<Value = u32> {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1024))]
+
     /// Conservation invariant: depositor_yield + reserve_cut == total_interest.
     ///
     /// Ensures the mathematical split preserves the total value exactly.
@@ -84,6 +91,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1024))]
+
     /// Non‑negativity invariant: both split parts must be ≥ 0.
     ///
     /// Rejection of negative values guarantees accounting integrity.
@@ -101,6 +110,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
     /// Conservative rounding: fractional unit falls to depositor (floor division).
     ///
     /// The protocol never takes more than its exact share; remainder always lands
@@ -129,6 +140,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
     /// Overflow handling: returning MathError::Overflow.
     ///
     /// Ensures that extreme values are caught and reported typed rather than
@@ -147,6 +160,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// Zero interest invariants: both parts zero.
     ///
     /// Regardless of reserve factor, zero total interest always produces zero split.
@@ -164,6 +179,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// Zero reserve factor: all interest to depositors.
     ///
     /// With rf_bps == 0, protocol share is exactly zero.
@@ -184,6 +201,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// 100% reserve factor: all interest to protocol.
     ///
     /// With rf_bps == 10_000, depositors receive nothing.
@@ -204,6 +223,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// Negative interest rejection: MathError::OutOfRange.
     ///
     /// Inputs < 0 are explicitly rejected as out of range.
@@ -218,6 +239,8 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// Reserve factor >100% rejection: MathError::OutOfRange.
     ///
     /// rf_bps > 10_000 is never accepted.

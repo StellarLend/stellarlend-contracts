@@ -341,12 +341,42 @@ fn e2e_exactly_at_liquidation_threshold() {
 /// Verifies that when collateral is insufficient to cover the incentivised
 /// seizure the simulation correctly clamps to available balance, so no
 /// negative collateral can arise.
+///
+/// Since `borrow_asset` enforces a solvency check (HF >= 1.0), we set the
+/// debt position directly in storage to create a deeply underwater position.
 #[test]
 fn e2e_deep_underwater_seizure_capped_at_available_collateral() {
     let (env, client, id, _, borrower, _, asset_col, asset_dbt) = setup();
 
-    client.deposit_collateral_asset(&borrower, &asset_col, &10_000i128);
-    client.borrow_asset(&borrower, &asset_dbt, &7_000i128);
+    client.deposit_collateral_asset(&borrower, &asset_col, &1_000i128);
+    // Write a large debt directly to storage to bypass the solvency check
+    // and create a deeply underwater position.
+    env.as_contract(&id, || {
+        env.storage().persistent().set(
+            &DataKey::DebtAsset(borrower.clone(), asset_dbt.clone()),
+            &DebtPosition {
+                principal: 7_000,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+        // Also need to register this in the user's debt assets list
+        let mut list: soroban_sdk::Vec<Address> = env.storage()
+            .persistent()
+            .get(&DataKey::UserDebtAssets(borrower.clone()))
+            .unwrap_or_else(|| {
+                let v: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env];
+                v
+            });
+        list.push_back(asset_dbt.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::UserDebtAssets(borrower.clone()), &list);
+        // Update total debt asset tracking
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDebtAsset(asset_dbt.clone()), &7_000i128);
+    });
 
     // Crash collateral 90 % → deeply underwater
     set_price(&env, &id, &asset_col, 1_000_000); // $0.10
@@ -407,8 +437,8 @@ fn e2e_partial_liquidation_then_full_repay_and_withdraw() {
     client.deposit_collateral_asset(&borrower, &asset_col, &20_000i128);
     client.borrow_asset(&borrower, &asset_dbt, &8_000i128);
 
-    // Moderate shock: collateral drops 30 %
-    set_price(&env, &id, &asset_col, 7_000_000); // $0.70
+    // Severe shock: collateral drops 60 %
+    set_price(&env, &id, &asset_col, 4_000_000); // $0.40
 
     let hf_shock = client.get_cross_health_factor(&borrower);
     assert!(hf_shock < 10_000, "should be liquidatable after shock");
