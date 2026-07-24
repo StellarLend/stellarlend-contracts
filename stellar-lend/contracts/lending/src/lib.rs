@@ -661,6 +661,7 @@ impl LendingContract {
         amount: i128,
         params: Bytes,
     ) {
+        check_emergency_status(&env, ProtocolAction::FlashLoan);
         let tre_key = DataKey::Treasury(asset.clone());
         let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         if amount > tre_bal {
