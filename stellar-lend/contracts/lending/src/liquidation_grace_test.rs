@@ -336,4 +336,3 @@ fn test_liquidation_grace_unauthorized_setter() {
         "non-admin should not be able to set grace period"
     );
 }
-

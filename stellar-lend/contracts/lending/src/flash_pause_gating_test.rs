@@ -176,9 +176,7 @@ impl FlashReceiverOk {
             let new_tre_bal = tre_bal
                 .checked_add(total)
                 .expect("flash repayment overflow");
-            env.storage()
-                .persistent()
-                .set(&tre_key, &new_tre_bal);
+            env.storage().persistent().set(&tre_key, &new_tre_bal);
         });
     }
 }
