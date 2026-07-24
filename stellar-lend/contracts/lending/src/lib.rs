@@ -1927,6 +1927,11 @@ impl LendingContract {
         }
     }
 
+    /// Alias for [`Self::get_position`] for API compatibility.
+    pub fn get_user_position(env: Env, user: Address) -> PositionSummary {
+        Self::get_position(env, user)
+    }
+
     /// Get the health factor for a user. Read-only view.
     /// Computed as: `(collateral * LIQUIDATION_THRESHOLD_BPS) / debt`
     /// Returns `HEALTH_FACTOR_NO_DEBT` sentinel if user has no debt.
