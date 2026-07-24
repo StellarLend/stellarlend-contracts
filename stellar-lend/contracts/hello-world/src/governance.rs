@@ -767,15 +767,16 @@ pub fn approve_proposal(
     vote(env, approver, proposal_id, VoteType::Yes)
 }
 
-/// Return proposal approvals (votes for this proposal).    pub fn get_proposal_approvals(
-        env: &Env,
-        _proposal_id: u64,
-    ) -> Option<Vec<Address>> {
-        // Approval tracking is not yet implemented for the can_vote test focus.
-        // In production, this would return the list of approvers for a proposal.
-        let _ = env;
-        None
-    }
+/// Return proposal approvals (votes for this proposal).
+pub fn get_proposal_approvals(
+    env: &Env,
+    _proposal_id: u64,
+) -> Option<Vec<Address>> {
+    // Approval tracking is not yet implemented for the can_vote test focus.
+    // In production, this would return the list of approvers for a proposal.
+    let _ = env;
+    None
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
