@@ -16,6 +16,40 @@
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Vec};
 
 // ---------------------------------------------------------------------------
+// Admin storage
+// ---------------------------------------------------------------------------
+
+/// Storage key for the module's admin address.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CrossAssetAdminKey {
+    Admin,
+}
+
+/// Store an admin address (called once during protocol initialisation).
+pub fn set_admin(env: &Env, admin: &Address) {
+    env.storage()
+        .persistent()
+        .set(&CrossAssetAdminKey::Admin, admin);
+}
+
+/// Return the stored admin address, or `None` if not yet set.
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get::<CrossAssetAdminKey, Address>(&CrossAssetAdminKey::Admin)
+}
+
+/// Require that `caller` is the stored admin; returns `Unauthorized` otherwise.
+fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
+    let admin = get_admin(env).ok_or(CrossAssetError::Unauthorized)?;
+    if &admin != caller {
+        return Err(CrossAssetError::Unauthorized);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -60,6 +94,58 @@ pub enum CrossAssetError {
     InvalidDecimals = 8,
     /// `collateral_factor_bps` is outside the allowed range [0, 10_000].
     InvalidCollateralFactor = 9,
+    /// Caller is not the protocol admin.
+    Unauthorized = 10,
+    /// `collateral_factor_bps` exceeds `liquidation_threshold`, which would
+    /// allow positions to be born underwater (LTV > liquidation ratio).
+    LtvExceedsThreshold = 11,
+    /// `price_decimals` is zero, which is a misconfiguration that silently
+    /// mis-scales all oracle prices for this asset.
+    ZeroDecimals = 12,
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+/// Emitted by [`update_asset_config`] on every successful configuration change.
+///
+/// All fields reflect the **post-update** state of the asset config.
+/// Indexers should compare against the previous on-chain state to determine
+/// which fields changed.
+///
+/// Topics: `("cross_asset", "config_updated")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ConfigUpdatedEvent {
+    /// Asset key identifying the updated asset (`AssetKey::Native` or
+    /// `AssetKey::Token(address)`).
+    pub asset_key: AssetKey,
+    /// Post-update collateral factor in basis points.
+    pub collateral_factor_bps: i128,
+    /// Post-update liquidation threshold in basis points.
+    pub liquidation_threshold: i128,
+    /// Post-update maximum supply cap (0 = unlimited).
+    pub max_supply: i128,
+    /// Post-update maximum borrow cap (0 = unlimited).
+    pub max_borrow: i128,
+    /// Post-update `can_collateralize` flag.
+    pub can_collateralize: bool,
+    /// Post-update `can_borrow` flag.
+    pub can_borrow: bool,
+}
+
+/// Emit a [`ConfigUpdatedEvent`].
+///
+/// Topics: `("cross_asset", "config_updated")`
+pub fn emit_config_updated(env: &Env, event: ConfigUpdatedEvent) {
+    env.events().publish(
+        (
+            symbol_short!("crossAsst"),
+            symbol_short!("cfgUpd"),
+        ),
+        event,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -387,15 +473,30 @@ pub fn initialize_asset(
 
 /// Update mutable fields of an existing asset's configuration.
 ///
-/// Only the fields that are `Some(...)` are changed. Each value supplied is
-/// range-checked the same way as at registration time:
-/// - `collateral_factor_bps` must be in `[0, 10_000]` (rejected with
-///   [`CrossAssetError::InvalidCollateralFactor`] otherwise).
+/// Only the fields that are `Some(...)` are changed. Each supplied value is
+/// range-checked identically to registration time.
 ///
-/// Passing `None` for a field is a no-op; passing `Some(_)` overwrites with
-/// the validated value.
+/// # Access control
+/// `caller` must be the stored protocol admin, else
+/// [`CrossAssetError::Unauthorized`] is returned before any state is touched.
+///
+/// # Validation rules (all checked against the **post-update** config)
+/// | Rule | Error |
+/// |------|-------|
+/// | `collateral_factor_bps` ∈ \[0, 10 000\] | [`InvalidCollateralFactor`] |
+/// | `collateral_factor_bps` ≤ `liquidation_threshold` | [`LtvExceedsThreshold`] |
+/// | `price_decimals` ≠ 0 | [`ZeroDecimals`] |
+///
+/// # Events
+/// On success emits [`ConfigUpdatedEvent`] with the full post-update config.
+///
+/// [`InvalidCollateralFactor`]: CrossAssetError::InvalidCollateralFactor
+/// [`LtvExceedsThreshold`]: CrossAssetError::LtvExceedsThreshold
+/// [`ZeroDecimals`]: CrossAssetError::ZeroDecimals
+#[allow(clippy::too_many_arguments)]
 pub fn update_asset_config(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     collateral_factor_bps: Option<i128>,
     liquidation_threshold: Option<i128>,
@@ -403,9 +504,14 @@ pub fn update_asset_config(
     max_borrow: Option<i128>,
     can_collateralize: Option<bool>,
     can_borrow: Option<bool>,
+    price_decimals: Option<u32>,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
+
+    // Apply field-level updates first, then validate the resulting config.
     if let Some(v) = collateral_factor_bps {
         if v < MIN_COLLATERAL_FACTOR_BPS || v > MAX_COLLATERAL_FACTOR_BPS {
             return Err(CrossAssetError::InvalidCollateralFactor);
@@ -427,7 +533,38 @@ pub fn update_asset_config(
     if let Some(v) = can_borrow {
         cfg.can_borrow = v;
     }
+    if let Some(v) = price_decimals {
+        if v == 0 {
+            return Err(CrossAssetError::ZeroDecimals);
+        }
+        if v > 38 {
+            return Err(CrossAssetError::InvalidDecimals);
+        }
+        cfg.price_decimals = v;
+    }
+
+    // Cross-field invariant: LTV must not exceed the liquidation threshold —
+    // a position with LTV == threshold is liquidatable on creation; LTV > threshold
+    // would be born underwater.
+    if cfg.collateral_factor_bps > cfg.liquidation_threshold {
+        return Err(CrossAssetError::LtvExceedsThreshold);
+    }
+
     save_config(env, &key, &cfg);
+
+    emit_config_updated(
+        env,
+        ConfigUpdatedEvent {
+            asset_key: key,
+            collateral_factor_bps: cfg.collateral_factor_bps,
+            liquidation_threshold: cfg.liquidation_threshold,
+            max_supply: cfg.max_supply,
+            max_borrow: cfg.max_borrow,
+            can_collateralize: cfg.can_collateralize,
+            can_borrow: cfg.can_borrow,
+        },
+    );
+
     Ok(())
 }
 
