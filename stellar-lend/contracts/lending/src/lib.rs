@@ -1437,9 +1437,13 @@ impl LendingContract {
                 return Err(LendingError::PositionHealthy);
             }
 
-            let threshold_bps = Self::get_liquidation_threshold_bps(&env);
-            let hf = math::checked_mul_div_floor(collateral, threshold_bps, debt)
+            // Health-factor computation: floor rounding.
+            // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
+            // slightly lower, making the position look *more* underwater than it
+            // really is, which is conservative (triggers liquidation slightly earlier).
+            let hf = math::checked_mul_div_floor(collateral, LIQUIDATION_THRESHOLD_BPS, debt)
                 .map_err(|_| LendingError::Overflow)?;
+
             if hf >= HEALTH_FACTOR_SCALE {
                 return Err(LendingError::PositionHealthy);
             }
