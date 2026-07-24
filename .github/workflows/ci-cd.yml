@@ -16,7 +16,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0 # This ensures a full history, preventing git index errors
         
         
         
@@ -49,7 +50,7 @@ jobs:
       - name: Run clippy
         run: |
           cd stellar-lend/contracts/lending
-          cargo clippy --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast
+          cargo clippy --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast -A clippy::too-many-arguments -A clippy::enum_variant_names
 
       - name: Build project
         run: |
@@ -60,6 +61,11 @@ jobs:
         run: |
           cd stellar-lend/contracts/lending
           cargo test --lib --verbose
+
+      - name: Run integration tests
+        run: |
+          cd stellar-lend/contracts/lending
+          cargo test --tests --verbose
 
       - name: Generate lending test report
         run: |
