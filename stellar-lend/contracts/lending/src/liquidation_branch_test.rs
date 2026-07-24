@@ -65,6 +65,16 @@ mod liquidation_branch_tests {
         let debt_before = client.get_debt_position(&borrower).principal;
         let actual_repay = client
             .liquidate(&liquidator, &borrower, &debt_before)
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let actual_repay = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_before,
+            )
             .unwrap();
 
         // CLOSE_FACTOR = 5000 BPS
@@ -94,6 +104,16 @@ mod liquidation_branch_tests {
         let debt_before = client.get_debt_position(&borrower).principal;
         let actual_repay = client
             .liquidate(&liquidator, &borrower, &debt_before)
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let actual_repay = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_before,
+            )
             .unwrap();
 
         // repay is still the close-factor-capped amount
@@ -121,6 +141,17 @@ mod liquidation_branch_tests {
         let debt_r1 = client.get_debt_position(&borrower).principal;
         let repay_r1 = client
             .liquidate(&liquidator, &borrower, &debt_r1)
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let debt_r1 = client.get_debt_position(&borrower).principal;
+        let repay_r1 = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_r1,
+            )
             .unwrap();
         assert_eq!(repay_r1, debt_r1 * 5_000 / 10_000);
         let debt_after_r1 = client.get_debt_position(&borrower).principal;
@@ -133,6 +164,13 @@ mod liquidation_branch_tests {
         let debt_r2 = client.get_debt_position(&borrower).principal;
         let repay_r2 = client
             .liquidate(&liquidator, &borrower, &debt_r2)
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_r2,
+            )
             .unwrap();
         assert_eq!(repay_r2, debt_r2 * 5_000 / 10_000);
         let debt_after_r2 = client.get_debt_position(&borrower).principal;
@@ -156,6 +194,15 @@ mod liquidation_branch_tests {
 
         let result = client.try_liquidate(&liquidator, &borrower, &100);
         assert_eq!(result, Ok(Err(LendingError::PositionHealthy)));
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let result =
+            client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+        assert!(
+            matches!(result, Err(Ok(LendingError::PositionHealthy))),
+            "expected PositionHealthy error, got {:?}",
+            result
+        );
     }
 
     /// No borrow -> debt == 0: must reject.
@@ -169,5 +216,14 @@ mod liquidation_branch_tests {
 
         let result = client.try_liquidate(&liquidator, &borrower, &100);
         assert_eq!(result, Ok(Err(LendingError::PositionHealthy)));
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let result =
+            client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+        assert!(
+            matches!(result, Err(Ok(LendingError::PositionHealthy))),
+            "expected PositionHealthy error, got {:?}",
+            result
+        );
     }
 }

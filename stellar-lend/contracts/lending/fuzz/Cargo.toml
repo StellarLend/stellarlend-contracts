@@ -45,6 +45,10 @@ path = "fuzz_targets/fuzz_liquidation.rs"
 name = "fuzz_repay_borrow_roundtrip"
 path = "fuzz_targets/fuzz_repay_borrow_roundtrip.rs"
 
+[[bin]]
+name = "fuzz_liquidate_close_factor"
+path = "fuzz_targets/fuzz_liquidate_close_factor.rs"
+
 [profile.release]
 opt-level = 3
 debug = true
