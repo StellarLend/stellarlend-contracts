@@ -7,6 +7,7 @@ use stellar_lend_common::BPS_DENOM;
 
 /// Default APR when no dynamic rate is available: 5% (500 bps).
 pub const DEFAULT_APR_BPS: i128 = 500;
+pub const INDEX_SCALE: i128 = 10_000_000;
 
 /// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
 ///
@@ -346,6 +347,7 @@ pub fn settle_accrual_split(
 
     let updated = DebtPosition {
         principal,
+        borrow_index_snapshot: position.borrow_index_snapshot,
         last_update: now,
     };
 
@@ -473,12 +475,7 @@ const KEY_ACCRUAL_LOG: &str = "accrual_log";
 /// Call this immediately after `settle_accrual_split` so the split is
 /// recorded for both on-chain history (via `get_accrual_split_log`) and
 /// off-chain TWAP/revenue attribution consumers.
-pub fn record_accrual_split(
-    env: &Env,
-    borrower: &Address,
-    timestamp: u64,
-    split: &InterestSplit,
-) {
+pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split: &InterestSplit) {
     let entry = AccrualSplitEntry {
         borrower: borrower.clone(),
         timestamp,
@@ -499,7 +496,11 @@ pub fn record_accrual_split(
 
     env.events().publish(
         (symbol_short!("accrual"), borrower.clone()),
-        (split.total_interest, split.depositor_yield, split.reserve_cut),
+        (
+            split.total_interest,
+            split.depositor_yield,
+            split.reserve_cut,
+        ),
     );
 }
 
@@ -552,6 +553,37 @@ pub fn repay_amount(
     };
     settled.last_update = now;
     Ok(settled)
+}
+
+pub fn settle_position(
+    position: &DebtPosition,
+    current_index: i128,
+    now: u64,
+) -> Result<DebtPosition, DebtError> {
+    if current_index <= 0 || position.borrow_index_snapshot < 0 {
+        return Err(DebtError::IndexInvariantViolated);
+    }
+    if position.borrow_index_snapshot == 0 || position.borrow_index_snapshot == current_index {
+        return Ok(DebtPosition {
+            principal: position.principal,
+            borrow_index_snapshot: current_index,
+            last_update: now,
+        });
+    }
+    if current_index < position.borrow_index_snapshot {
+        return Err(DebtError::IndexInvariantViolated);
+    }
+    let principal = position
+        .principal
+        .checked_mul(current_index)
+        .ok_or(DebtError::Overflow)?
+        .checked_div(position.borrow_index_snapshot)
+        .ok_or(DebtError::Overflow)?;
+    Ok(DebtPosition {
+        principal,
+        borrow_index_snapshot: current_index,
+        last_update: now,
+    })
 }
 
 /// Index-aware borrow: settle via index ratio, then add `amount`.

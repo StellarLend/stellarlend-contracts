@@ -63,6 +63,7 @@ pub fn compute_borrow_rate(utilization_bps: i128, params: &RateParams) -> i128 {
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum RateModelKey {
     LastRate,
     LastTargetRate,
