@@ -147,8 +147,9 @@ use crate::interest_rate::{
     InterestRateError,
 };
 use crate::liquidate::liquidate;
+use crate::admin::require_admin;
 use crate::risk_management::{
-    require_admin, set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
+    set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
 };
 use crate::risk_params::{
     can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
@@ -312,7 +313,7 @@ impl HelloContract {
         close_factor: Option<i128>,
         liquidation_incentive: Option<i128>,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &caller)?;
+        require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
         check_emergency_pause(&env)?;
         risk_params::set_risk_params(
             &env,
@@ -514,7 +515,7 @@ impl HelloContract {
         admin: Address,
         adjustment_bps: i128,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &admin)?;
+        require_admin(&env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
         interest_rate::set_emergency_rate_adjustment(&env, admin, adjustment_bps)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
@@ -532,7 +533,7 @@ impl HelloContract {
         rate_ceiling: Option<i128>,
         spread: Option<i128>,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &admin)?;
+        require_admin(&env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
         interest_rate::update_interest_rate_config(
             &env,
             admin,
@@ -602,7 +603,7 @@ impl HelloContract {
         _to: Address,
         amount: i128,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &caller)?;
+        require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
 
         let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
         let mut reserve_balance = env

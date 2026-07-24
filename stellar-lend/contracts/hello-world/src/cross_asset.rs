@@ -98,7 +98,8 @@ pub fn set_max_debt_assets_per_user(
     caller: &Address,
     max: Option<u32>,
 ) -> Result<(), CrossAssetError> {
-    require_admin(env, caller)?;
+    crate::admin::require_admin(env, caller)
+        .map_err(|_| CrossAssetError::Unauthorized)?;
 
     if let Some(v) = max {
         if v < 1 {
@@ -126,20 +127,3 @@ pub fn get_max_debt_assets_per_user(env: &Env) -> Option<u32> {
         .get::<CrossAssetDataKey, u32>(&key)
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Verify that `caller` is the stored admin; returns Unauthorized otherwise.
-fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
-    use crate::risk_management::RiskDataKey;
-    let admin: Address = env
-        .storage()
-        .persistent()
-        .get::<RiskDataKey, Address>(&RiskDataKey::Admin)
-        .ok_or(CrossAssetError::Unauthorized)?;
-    if &admin != caller {
-        return Err(CrossAssetError::Unauthorized);
-    }
-    Ok(())
-}
