@@ -1,0 +1,54 @@
+[package]
+name = "lending-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+stellarlend-lending = { path = "..", features = ["fuzzing"] }
+
+# Fuzzing-specific dependencies
+soroban-sdk = { version = "=25.3.0", features = ["testutils"] }
+
+[[bin]]
+name = "fuzz_accrual"
+path = "fuzz_targets/fuzz_accrual.rs"
+
+[[bin]]
+name = "fuzz_health_factor"
+path = "fuzz_targets/fuzz_health_factor.rs"
+
+[[bin]]
+name = "fuzz_borrow_rate"
+path = "fuzz_targets/fuzz_borrow_rate.rs"
+
+[[bin]]
+name = "fuzz_supply_rate"
+path = "fuzz_targets/fuzz_supply_rate.rs"
+
+[[bin]]
+name = "fuzz_utilization"
+path = "fuzz_targets/fuzz_utilization.rs"
+
+[[bin]]
+name = "fuzz_liquidation"
+path = "fuzz_targets/fuzz_liquidation.rs"
+
+[[bin]]
+name = "fuzz_repay_borrow_roundtrip"
+path = "fuzz_targets/fuzz_repay_borrow_roundtrip.rs"
+
+[[bin]]
+name = "fuzz_liquidate_close_factor"
+path = "fuzz_targets/fuzz_liquidate_close_factor.rs"
+
+[profile.release]
+opt-level = 3
+debug = true

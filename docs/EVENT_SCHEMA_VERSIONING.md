@@ -21,8 +21,40 @@ The versioning strategy is minimal by design:
 | Struct | Since version | Notes |
 |---|---|---|
 | `SchemaVersionEvent` | 1 | Emitted once on `initialize`. |
+| `DepositEvent` | 1 | Emitted when a user deposits collateral. Includes user, amount, new balance, and timestamp. |
+| `WithdrawEvent` | 1 | Emitted when a user withdraws collateral. Includes user, amount, new balance, and timestamp. |
+| `BorrowEvent` | 1 | Emitted when a user borrows against collateral. Includes user, amount, new debt principal, and timestamp. |
+| `RepayEvent` | 1 | Emitted when a user repays debt. Includes user, amount, new debt principal, and timestamp. |
+| `LiquidateEvent` | 1 | Emitted when a liquidator liquidates an undercollateralized position. Includes liquidator, borrower, repaid debt, seized collateral, remaining debt, remaining collateral, and timestamp. |
 | `LiquidationEventV1` | 1 | Versioned liquidation with post-liquidation borrower snapshot. |
 | `BorrowerHealthEventV1` | 1 | Borrower health snapshot emitted alongside position updates. |
+| `DepositEvent` | 1 | Versioned deposit event with user and new collateral balance. |
+| `WithdrawEvent` | 1 | Versioned withdraw event with user and new collateral balance. |
+| `BorrowEvent` | 1 | Versioned borrow event with user and new debt balance. |
+| `RepayEvent` | 1 | Versioned repay event with user and new debt balance. |
+| `AmmSwapEventV1` | 1 | Versioned AMM swap event with stable `amm/v1` topics. |
+| `AmmLiquidityAddedEventV1` | 1 | Versioned AMM add-liquidity event with stable `amm/v1` topics. |
+| `AmmLiquidityRemovedEventV1` | 1 | Versioned AMM remove-liquidity event with stable `amm/v1` topics. |
+
+## AMM Event Topics
+
+AMM mutation events must publish a stable, versioned topic tuple:
+
+```rust
+(env.events().publish(
+    (Symbol::new(&env, "amm"), Symbol::new(&env, "v1"), Symbol::new(&env, "swap")),
+    event_data
+));
+```
+
+Supported AMM event kinds for version `v1`:
+
+- `swap`
+- `add_liquidity`
+- `remove_liquidity`
+
+Each versioned AMM event payload must include `schema_version: 1` and an
+explicit `event` field that matches the final topic segment.
 
 All other events are unversioned (no `schema_version` field). They follow an
 additive-only policy: new fields may be appended but existing fields will not
@@ -135,6 +167,9 @@ The parser (`indexing_system/src/parser.rs`) automatically extracts
 
 ## References
 
+- `contracts/lending/src/events.rs` – `EVENT_SCHEMA_VERSION` constant, all event structs, and emit functions.
+- `contracts/lending/src/lib.rs` – Event emission in `initialize`, `deposit`, `withdraw`, `borrow`, `repay`, and `liquidate`.
+- `contracts/lending/src/events_test.rs` – Comprehensive event emission tests for all core operations.
 - `contracts/hello-world/src/events.rs` – `EVENT_SCHEMA_VERSION` constant,
   `SchemaVersionEvent`, `emit_schema_version`.
 - `contracts/hello-world/src/tests/events_test.rs` –

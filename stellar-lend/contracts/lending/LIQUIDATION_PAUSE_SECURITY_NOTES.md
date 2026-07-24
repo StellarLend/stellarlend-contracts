@@ -237,3 +237,13 @@ The liquidation-pause policy provides a robust framework for balancing solvency 
 5. **Continuous Improvement**: Learning from incidents and updating procedures
 
 When properly implemented and operated, this system significantly reduces the risk of catastrophic liquidation events while maintaining necessary market functionality.
+
+## Liquidation Invariant Rules
+
+To ensure protocol safety and prevent economic exploits, the liquidation engine enforces the following invariants:
+
+1. **Health Factor Check**: Liquidation is only permitted if $HF < 1.0$. $HF$ is calculated as $(\text{Collateral} \times \text{Liquidation Threshold}) / \text{Debt}$.
+2. **Close Factor Enforcement**: A liquidator can only repay up to 50% of the borrower's total debt in a single transaction.
+3. **Liquidation Incentive**: Liquidators receive a 10% bonus from the borrower's collateral (seized collateral = repaid amount $\times 1.1$).
+4. **Conservation of Assets**: The sum of the borrower's remaining collateral and the seized collateral must always equal the pre-liquidation collateral balance.
+5. **No Negative Balances**: Seized collateral is capped at the borrower's actual balance, ensuring no position ever has negative collateral.

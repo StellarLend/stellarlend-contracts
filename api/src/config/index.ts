@@ -17,6 +17,7 @@ export const config = {
   auth: {
     jwtSecret: process.env.JWT_SECRET || 'default-secret-change-me',
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
+    hookSecret: process.env.STELLAR_API_HOOK_SECRET || '',
   },
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
@@ -30,5 +31,12 @@ export const config = {
     maxRetries: parseInt(process.env.MAX_RETRIES || '3', 10),
     retryInitialDelayMs: parseInt(process.env.RETRY_INITIAL_DELAY_MS || '1000', 10),
     retryMaxDelayMs: parseInt(process.env.RETRY_MAX_DELAY_MS || '10000', 10),
+  },
+  circuitBreaker: {
+    windowMs: parseInt(process.env.CB_WINDOW_MS || '60000', 10),
+    failureThreshold: parseFloat(process.env.CB_FAILURE_THRESHOLD || '0.5'),
+    minRequests: parseInt(process.env.CB_MIN_REQUESTS || '5', 10),
+    openMs: parseInt(process.env.CB_OPEN_MS || '30000', 10),
+    halfOpenMaxTrial: parseInt(process.env.CB_HALF_OPEN_TRIAL || '2', 10),
   },
 };

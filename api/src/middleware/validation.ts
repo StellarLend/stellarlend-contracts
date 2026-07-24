@@ -1,60 +1,40 @@
-import { body, validationResult } from 'express-validator';
 import { Request, Response, NextFunction } from 'express';
+import { z, ZodError, ZodSchema } from 'zod';
 import { ValidationError } from '../utils/errors';
+import { I128String, PositiveI128String, StellarAddress } from '../utils/validators';
 
-export const validateRequest = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    const errorMessages = errors.array().map(err => err.msg).join(', ');
-    throw new ValidationError(errorMessages);
-  }
-  next();
-};
+export const validateBody =
+  (schema: ZodSchema) => (req: Request, res: Response, next: NextFunction) => {
+    try {
+      req.body = schema.parse(req.body);
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        const errorMessages = error.issues
+          .map(issue => `${issue.path.join('.') || 'body'}: ${issue.message}`)
+          .join(', ');
+        return next(new ValidationError(errorMessages));
+      }
 
-export const depositValidation = [
-  body('userAddress').isString().notEmpty().withMessage('User address is required'),
-  body('amount').isString().notEmpty().withMessage('Amount is required')
-    .custom((value) => {
-      const num = BigInt(value);
-      return num > 0n;
-    }).withMessage('Amount must be greater than zero'),
-  body('assetAddress').optional().isString(),
-  body('userSecret').isString().notEmpty().withMessage('User secret is required'),
-  validateRequest,
-];
+      return next(error);
+    }
+  };
 
-export const borrowValidation = [
-  body('userAddress').isString().notEmpty().withMessage('User address is required'),
-  body('amount').isString().notEmpty().withMessage('Amount is required')
-    .custom((value) => {
-      const num = BigInt(value);
-      return num > 0n;
-    }).withMessage('Amount must be greater than zero'),
-  body('assetAddress').optional().isString(),
-  body('userSecret').isString().notEmpty().withMessage('User secret is required'),
-  validateRequest,
-];
+const optionalStellarAddress = z.preprocess(
+  value => (value === '' ? undefined : value),
+  StellarAddress.optional()
+);
 
-export const repayValidation = [
-  body('userAddress').isString().notEmpty().withMessage('User address is required'),
-  body('amount').isString().notEmpty().withMessage('Amount is required')
-    .custom((value) => {
-      const num = BigInt(value);
-      return num > 0n;
-    }).withMessage('Amount must be greater than zero'),
-  body('assetAddress').optional().isString(),
-  body('userSecret').isString().notEmpty().withMessage('User secret is required'),
-  validateRequest,
-];
+export const lendingRequestSchema = z.object({
+  userAddress: StellarAddress,
+  amount: PositiveI128String,
+  assetAddress: optionalStellarAddress,
+  userSecret: z.string().trim().min(1, 'User secret is required'),
+});
 
-export const withdrawValidation = [
-  body('userAddress').isString().notEmpty().withMessage('User address is required'),
-  body('amount').isString().notEmpty().withMessage('Amount is required')
-    .custom((value) => {
-      const num = BigInt(value);
-      return num > 0n;
-    }).withMessage('Amount must be greater than zero'),
-  body('assetAddress').optional().isString(),
-  body('userSecret').isString().notEmpty().withMessage('User secret is required'),
-  validateRequest,
-];
+export const depositValidation = [validateBody(lendingRequestSchema)];
+export const borrowValidation = [validateBody(lendingRequestSchema)];
+export const repayValidation = [validateBody(lendingRequestSchema)];
+export const withdrawValidation = [validateBody(lendingRequestSchema)];
+
+export { I128String, StellarAddress };

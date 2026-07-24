@@ -6,8 +6,13 @@ import {
   repayValidation,
   withdrawValidation,
 } from '../middleware/validation';
+import { verifyHookHmac } from '../middleware/auth';
 
 const router = Router();
+
+router.use('/hooks', verifyHookHmac);
+router.post('/hooks', lendingController.processHook);
+router.post('/hooks/*', lendingController.processHook);
 
 router.post('/deposit', depositValidation, lendingController.deposit);
 router.post('/borrow', borrowValidation, lendingController.borrow);
