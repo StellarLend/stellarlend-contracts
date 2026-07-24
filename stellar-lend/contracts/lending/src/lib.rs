@@ -1374,64 +1374,32 @@ impl LendingContract {
             check_pause_status(&env, ProtocolAction::Liquidate);
             check_emergency_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
-
             require_no_active_flash_loan(&env);
 
-        let threshold_bps = Self::get_liquidation_threshold_bps(&env);
-        let hf = collateral
-            .checked_mul(threshold_bps)
-            .and_then(|v| v.checked_div(debt))
-            .ok_or(LendingError::Overflow)?;
-
+            let col_key = DataKey::Collateral(borrower.clone());
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
             let position = load_debt(&env, &borrower);
             let now = env.ledger().timestamp();
+
             // Accrue and capitalize pending interest into the borrower's principal
-            // debt position (routing the configured insurance-fund share of interest
-            // into the fund) and persist the updated position before performing any
-            // liquidation checks or debt reduction. This ensures the health-factor
-            // calculation, close-factor cap, and final repayment operate on a
-            // fully-settled, capitalized principal, mirroring the standard
-            // non-liquidation repay path.
+            // debt position before we compute health factor and liquidation bounds.
             let settled_position =
                 settle_and_accrue_insurance(&env, &position, now, DEFAULT_APR_BPS)
                     .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
 
-        let close_factor_bps = Self::get_close_factor_bps(&env);
-        let max_repay = debt
-            .checked_mul(close_factor_bps)
-            .and_then(|v| v.checked_div(10000))
-            .ok_or(LendingError::Overflow)?;
-        let actual_repay = if amount > max_repay {
-            max_repay
-        } else {
-            amount
-        };
-
-        let incentive_bps = Self::get_liquidation_incentive_bps(&env);
-        let seized_collateral = actual_repay
-            .checked_mul(10000 + incentive_bps)
-            .and_then(|v| v.checked_div(10000))
-            .ok_or(LendingError::Overflow)?;
-
-            // Health-factor computation: floor rounding.
-            // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
-            // slightly lower, making the position look *more* underwater than it
-            // really is, which is conservative (triggers liquidation slightly earlier).
-            let hf = math::checked_mul_div_floor(collateral, LIQUIDATION_THRESHOLD_BPS, debt)
-                .map_err(|_| LendingError::Overflow)?;
-
-            if hf >= 10000 {
+            let debt = settled_position.principal;
+            if debt <= 0 {
                 return Err(LendingError::PositionHealthy);
             }
 
-            // Close-factor cap: floor rounding.
-            // debt * close_factor_bps / 10000 — rounding down means the liquidator can
-            // extinguish *at most* the governed share of debt (default 50 %), and
-            // possibly slightly less. This is conservative: the protocol retains more
-            // liquidation opportunities. `close_factor_bps` is a governed risk
-            // parameter; see [`Self::set_close_factor_bps`].
+            let threshold_bps = Self::get_liquidation_threshold_bps(&env);
+            let hf = math::checked_mul_div_floor(collateral, threshold_bps, debt)
+                .map_err(|_| LendingError::Overflow)?;
+            if hf >= HEALTH_FACTOR_SCALE {
+                return Err(LendingError::PositionHealthy);
+            }
+
             let close_factor_bps = Self::close_factor_bps_config(&env);
             let max_repay = math::checked_mul_div_floor(debt, close_factor_bps, BPS_DENOM)
                 .map_err(|_| LendingError::Overflow)?;
@@ -1441,28 +1409,18 @@ impl LendingContract {
                 amount
             };
 
-            // Dust guard: a repay of 0 would make the liquidation a no-op.
             if actual_repay <= 0 {
                 return Err(LendingError::InvalidAmount);
-            }if supply_cap < 0 {
-    return Err(LendingError::InvalidAmount);
-}
+            }
 
-            // Liquidation incentive: floor rounding.
-            // actual_repay * (10000 + incentive_bps) / 10000 — rounding down means the
-            // liquidator receives *less* collateral than the exact bonus. The sub-unit
-            // remainder stays with the borrower (or protocol), preventing value
-            // extraction via repeated dust-sized liquidations. `incentive_bps` is a
-            // governed risk parameter; see [`Self::set_liquidation_incentive_bps`].
             let incentive_bps = Self::liquidation_incentive_bps_config(&env);
-            let seized_collateral =
-                math::checked_mul_div_floor(actual_repay, BPS_DENOM + incentive_bps, BPS_DENOM)
-                    .map_err(|_| LendingError::Overflow)?;
+            let seized_collateral = math::checked_mul_div_floor(
+                actual_repay,
+                BPS_DENOM + incentive_bps,
+                BPS_DENOM,
+            )
+            .map_err(|_| LendingError::Overflow)?;
 
-            // Clamp: never seize more than the borrower's available collateral.
-            // When the incentivized seizure exceeds available collateral, the
-            // shortfall is written off as protocol bad debt (with a backstop event)
-            // rather than silently lost.
             let available_collateral = collateral;
             let final_seized = if seized_collateral > available_collateral {
                 let shortfall = seized_collateral
@@ -1485,33 +1443,20 @@ impl LendingContract {
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
                     #[allow(deprecated)]
-                    env.events()
-                        .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), residual);
+                    env.events().publish(
+                        (Symbol::new(&env, "bad_debt"), borrower.clone()),
+                        residual,
+                    );
                 }
                 available_collateral
             } else {
                 seized_collateral
             };
 
-            // Invariant: close-factor clamp guarantees actual_repay <= debt,
-            // and the seizure clamp guarantees final_seized <= collateral.
-            // checked_sub surfaces any violation loudly instead of silently
-            // flooring to zero (which would mask an accounting bug).
-            let new_debt = debt
-                .checked_sub(actual_repay)
-                .ok_or(LendingError::Overflow)?;
+            let new_debt = debt.checked_sub(actual_repay).ok_or(LendingError::Overflow)?;
             let new_col = collateral
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
-            env.storage()
-                .persistent()
-                .set(&DataKey::BadDebt, &new_bad_debt);
-            env.events()
-                .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), shortfall);
-            available_collateral
-        } else {
-            seized_collateral
-        };
 
             let updated_position = DebtPosition {
                 principal: new_debt,
@@ -1530,7 +1475,6 @@ impl LendingContract {
             );
 
             let shortfall = seized_collateral - final_seized;
-
             LiquidationEventV1 {
                 schema_version: SCHEMA_VERSION_V1,
                 liquidator: liquidator.clone(),
