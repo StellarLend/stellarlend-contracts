@@ -82,11 +82,16 @@ impl Grant {
         if elapsed >= self.duration_secs {
             return self.total_amount;
         }
-        // Linear vesting: total_amount * elapsed / duration_secs
-        (self.total_amount as u64)
-            .checked_mul(elapsed)
-            .map(|v| (v / self.duration_secs) as i128)
-            .unwrap_or(self.total_amount)
+        // Linear vesting: vested = total_amount × elapsed ÷ duration_secs
+        // Computed entirely in i128 to avoid narrowing self.total_amount
+        // (i128 → u64 truncates silently for amounts > u64::MAX ≈ 1.8×10¹⁹)
+        let numerator = self.total_amount.checked_mul(elapsed as i128);
+        if let Some(n) = numerator {
+            n.checked_div(self.duration_secs as i128)
+                .unwrap_or(self.total_amount)
+        } else {
+            self.total_amount
+        }
     }
 
     /// How many tokens are claimable right now (vested minus already claimed).
