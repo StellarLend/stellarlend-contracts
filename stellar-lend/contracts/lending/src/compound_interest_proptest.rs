@@ -6,8 +6,8 @@
 
 #![cfg(test)]
 
-use proptest::prelude::*;
 use crate::math::{compute_compound_interest, MathError, MAX_RATE_BPS, SCALE};
+use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Arbitrary-strategy helpers
@@ -16,9 +16,9 @@ use crate::math::{compute_compound_interest, MathError, MAX_RATE_BPS, SCALE};
 /// Valid non-negative principal values (including zero).
 fn principal() -> impl Strategy<Value = i128> {
     prop_oneof![
-        0i128..=1_000_000_000_000i128,       // typical range
+        0i128..=1_000_000_000_000i128,                   // typical range
         (1_000_000_000_001i128..=i128::MAX / 1_000_000), // large but safe
-        prop::num::i128::POSITIVE,            // any positive
+        prop::num::i128::POSITIVE,                       // any positive
     ]
     .prop_map(|v| v.abs()) // ensure non-negative
 }
@@ -246,14 +246,14 @@ proptest! {
 fn known_reference_values() {
     // (principal, rate_bps, elapsed, expected_interest)
     let cases: &[(i128, i128, u64, i128)] = &[
-        (1_000_000_000, 1000, 31_536_000, 100_000_000),  // 100 * 10% per year
-        (10_000,        500,  31_536_000, 500),           // 10K * 5% per year
-        (100_000,       500,  15_768_000, 250),           // 100K * 5% for 6 months
-        (50_000,        500,  7_884_000,  125),           // 50K * 5% for 3 months
-        (1,             1,    1,          1),              // minimum floor
-        (0,             5000, 31_536_000, 0),              // zero principal
-        (5_000,         0,    31_536_000, 0),              // zero rate
-        (5_000,         500,  0,          0),              // zero time
+        (1_000_000_000, 1000, 31_536_000, 100_000_000), // 100 * 10% per year
+        (10_000, 500, 31_536_000, 500),                 // 10K * 5% per year
+        (100_000, 500, 15_768_000, 250),                // 100K * 5% for 6 months
+        (50_000, 500, 7_884_000, 125),                  // 50K * 5% for 3 months
+        (1, 1, 1, 1),                                   // minimum floor
+        (0, 5000, 31_536_000, 0),                       // zero principal
+        (5_000, 0, 31_536_000, 0),                      // zero rate
+        (5_000, 500, 0, 0),                             // zero time
     ];
 
     for &(p, r, t, expected) in cases {
@@ -291,8 +291,8 @@ proptest! {
     }
 }
 
-use proptest::prelude::*;
 use crate::math::compute_compound_interest;
+use proptest::prelude::*;
 
 proptest! {
 
