@@ -13,6 +13,8 @@ pub mod upgrade;
 mod cross_asset_roundtrip_test;
 #[cfg(test)]
 mod rate_smoothing_proof_doctest;
+#[cfg(test)]
+mod liquidation_grace_test;
 
 #[cfg(test)]
 mod admin_handover_test;
@@ -101,9 +103,9 @@ mod rate_persistence_test;
 #[cfg(test)]
 mod rate_smoothing_state_test;
 #[cfg(test)]
-mod repay_debt_floor_test;
+mod rate_updated_event_test;
 #[cfg(test)]
-mod repay_overpay_test;
+mod repay_debt_floor_test;
 #[cfg(test)]
 mod reserve_split_proptest;
 #[cfg(test)]
@@ -162,6 +164,7 @@ const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
 /// is reached, the next write evicts exactly one oldest entry before appending
 /// the newest sample, keeping rent and read cost bounded.
 pub const UTILIZATION_HISTORY_CAPACITY: u32 = 256;
+pub const MAX_LIQUIDATION_GRACE_PERIOD_SECS: u64 = 30 * 24 * 3600;
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,6 +236,14 @@ pub enum DataKey {
     /// [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] when unset. Configured via
     /// [`LendingContract::set_liquidation_incentive_bps`].
     LiquidationIncentiveBps,
+    /// Timestamp (u64) when borrower's position first dropped below the health threshold.
+    FirstUnhealthyTimestamp(Address),
+    /// Configured grace period in seconds before a position is eligible for liquidation (u64).
+    LiquidationGracePeriodSecs,
+    /// The global borrow index.
+    BorrowIndex,
+    /// The timestamp of the last global borrow index update.
+    LastIndexUpdate,
 }
 
 #[contractevent]
@@ -349,6 +360,8 @@ pub enum LendingError {
     IsolationCeilingExceeded = 2009,
     InvalidIsolationCeiling = 2010,
     InvalidLiquidationParams = 2011,
+    InvalidLiquidationGracePeriod = 7003,
+    LiquidationGracePeriodNotMet = 7004,
     InvalidOracleSignature = 5001,
     PriceOutOfBounds = 3004,
     PriceUnavailable = 3005,
@@ -1084,6 +1097,7 @@ impl LendingContract {
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
 
+        check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(new_balance)
     }
 
@@ -1123,6 +1137,7 @@ impl LendingContract {
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
 
+        check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(new_balance)
     }
 
@@ -1195,8 +1210,6 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
@@ -1336,7 +1349,8 @@ impl LendingContract {
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
         let rate = current_borrow_rate(&env);
-        let updated = repay_amount(position, now, amount, rate).map_err(|e| match e {
+        let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
+        let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
@@ -1355,6 +1369,9 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
+        
+        // Emit repay event
+        emit_repay(&env, &user, amount, updated.principal);
 
         // Decrement the per-asset isolation debt tracker only when the asset is
         // actually configured as isolated.
@@ -1362,6 +1379,7 @@ impl LendingContract {
             decrement_isolation_debt(&env, &collateral_asset, repaid);
         }
 
+        check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(updated.principal)
     }
 
@@ -1445,8 +1463,9 @@ impl LendingContract {
 
             // Accrue and capitalize pending interest into the borrower's principal
             // debt position before we compute health factor and liquidation bounds.
+            let rate = current_borrow_rate(&env);
             let settled_position =
-                settle_and_accrue_insurance(&env, &position, now, DEFAULT_APR_BPS)
+                settle_and_accrue_insurance(&env, &position, now, rate)
                     .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
 
@@ -1464,7 +1483,28 @@ impl LendingContract {
                 .map_err(|_| LendingError::Overflow)?;
 
             if hf >= HEALTH_FACTOR_SCALE {
+                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                if env.storage().persistent().has(&first_unhealthy_key) {
+                    env.storage().persistent().remove(&first_unhealthy_key);
+                }
                 return Err(LendingError::PositionHealthy);
+            }
+
+            // Enforce Liquidation Grace Period
+            let grace_period = Self::get_liquidation_grace_period(env.clone());
+            if grace_period > 0 {
+                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                match env.storage().persistent().get::<_, u64>(&first_unhealthy_key) {
+                    Some(ts) => {
+                        if now.saturating_sub(ts) < grace_period {
+                            return Err(LendingError::LiquidationGracePeriodNotMet);
+                        }
+                    }
+                    None => {
+                        env.storage().persistent().set(&first_unhealthy_key, &now);
+                        return Err(LendingError::LiquidationGracePeriodNotMet);
+                    }
+                }
             }
 
             // Close-factor cap: floor rounding.
@@ -1492,8 +1532,10 @@ impl LendingContract {
 
             // Clamp: never seize more than the borrower's available collateral.
             let available_collateral = collateral;
-            let final_seized = if seized_collateral > available_collateral {
-                let shortfall = seized_collateral
+            let mut final_seized = seized_collateral;
+            let mut shortfall = 0;
+            if seized_collateral > available_collateral {
+                shortfall = seized_collateral
                     .checked_sub(available_collateral)
                     .ok_or(LendingError::Overflow)?;
                 let insurance_drawn = draw_insurance(&env, shortfall)?;
@@ -1518,10 +1560,8 @@ impl LendingContract {
                         residual,
                     );
                 }
-                available_collateral
-            } else {
-                seized_collateral
-            };
+                final_seized = available_collateral;
+            }
 
             let new_debt = debt
                 .checked_sub(actual_repay)
@@ -1537,6 +1577,21 @@ impl LendingContract {
             };
             save_debt(&env, &borrower, &updated_position);
             env.storage().persistent().set(&col_key, &new_col);
+
+            // Recompute health factor after liquidation and clear unhealthy timestamp if healthy
+            let hf_after = if new_debt > 0 {
+                new_col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
+                    .map(|v| v / new_debt)
+                    .unwrap_or(i128::MAX)
+            } else {
+                i128::MAX
+            };
+            if hf_after >= 10000 {
+                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                if env.storage().persistent().has(&first_unhealthy_key) {
+                    env.storage().persistent().remove(&first_unhealthy_key);
+                }
+            }
 
             let debt_token_client = TokenClient::new(&env, &debt_asset);
             let collateral_token_client = TokenClient::new(&env, &collateral_asset);
@@ -1669,8 +1724,6 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
@@ -1696,6 +1749,7 @@ impl LendingContract {
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
 
+        check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(updated.principal)
     }
 
@@ -1859,7 +1913,7 @@ impl LendingContract {
             .max(0);
 
         let health_factor = if debt > 0 {
-            col.checked_mul(Self::get_liquidation_threshold_bps(&env))
+            col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
                 .map(|v| v / debt)
                 .unwrap_or(i128::MAX)
         } else {
@@ -1892,7 +1946,7 @@ impl LendingContract {
             .max(0);
 
         if debt > 0 {
-            col.checked_mul(Self::get_liquidation_threshold_bps(&env))
+            col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
                 .map(|v| v / debt)
                 .unwrap_or(i128::MAX)
         } else {
@@ -2205,6 +2259,30 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Set the liquidation grace period in seconds (admin-only).
+    ///
+    /// The grace period enforces a minimum time that must elapse after a position
+    /// becomes unhealthy (health factor < 1.0) before it can be liquidated.
+    /// Caps the grace period at 30 days (`MAX_LIQUIDATION_GRACE_PERIOD_SECS`).
+    pub fn set_liquidation_grace_period(env: Env, grace_secs: u64) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if grace_secs > MAX_LIQUIDATION_GRACE_PERIOD_SECS {
+            return Err(LendingError::InvalidLiquidationGracePeriod);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::LiquidationGracePeriodSecs, &grace_secs);
+        Ok(())
+    }
+
+    /// Return the configured liquidation grace period in seconds.
+    pub fn get_liquidation_grace_period(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::LiquidationGracePeriodSecs)
+            .unwrap_or(0)
+    }
+
     /// Return the configured risk parameters for an asset, if any.
     pub fn get_asset_params(env: Env, asset: Address) -> Option<AssetParams> {
         cross_asset::load_asset_params(&env, &asset)
@@ -2223,11 +2301,12 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::deposit_collateral_asset_internal(&env, &user, &asset, amount)?;
         CrossDepositEvent {
-            user,
+            user: user.clone(),
             asset,
             amount,
         }
         .publish(&env);
+        check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(result)
     }
 
@@ -2263,11 +2342,12 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::repay_asset_internal(&env, &user, &asset, amount)?;
         CrossRepayEvent {
-            user,
+            user: user.clone(),
             asset,
             amount,
         }
         .publish(&env);
+        check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(result)
     }
 
@@ -2326,18 +2406,6 @@ impl LendingContract {
     /// Initialize timelocked multisig upgrade governance (admin-only, once).
     pub fn upgrade_init(
         env: Env,
-        initiator: Address,
-        receiver: Address,
-        asset: Address,
-        amount: i128,
-        params: Bytes,
-    ) {
-        check_emergency_status(&env, ProtocolAction::FlashLoan);
-        let tre_key = DataKey::Treasury(asset.clone());
-        let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-        if amount > tre_bal {
-            panic!("InsufficientLiquidity");
-        }
         caller: Address,
         current_wasm_hash: BytesN<32>,
         required_approvals: u32,
@@ -2742,6 +2810,29 @@ pub(crate) fn assert_admin(env: &Env) {
     let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
     admin.require_auth();
 }
+
+fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
+    let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(user.clone());
+    if env.storage().persistent().has(&first_unhealthy_key) {
+        let col_key = DataKey::Collateral(user.clone());
+        let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
+        let position = load_debt(env, user);
+        let debt = position.principal;
+
+        let hf = if debt > 0 {
+            collateral.checked_mul(LIQUIDATION_THRESHOLD_BPS)
+                .map(|v| v / debt)
+                .unwrap_or(i128::MAX)
+        } else {
+            i128::MAX
+        };
+
+        if hf >= HEALTH_FACTOR_SCALE {
+            env.storage().persistent().remove(&first_unhealthy_key);
+        }
+    }
+}
+
 /// For Shutdown, allow the guardian (if set) or admin; for Recovery/Normal, admin only.
 fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) {
     match state {

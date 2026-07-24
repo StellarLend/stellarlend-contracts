@@ -54,7 +54,7 @@ pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPositi
         .get(&key)
         .unwrap_or(DebtPosition {
             principal: 0,
-            borrow_index_snapshot: INDEX_SCALE,
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
             last_update: env.ledger().timestamp(),
         })
 }
@@ -557,6 +557,7 @@ pub fn borrow_asset_internal(
     let rate = crate::current_borrow_rate(env);
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
+    let prev_snapshot = position.borrow_index_snapshot;
     let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
     let updated = crate::debt::borrow_amount(settled_position, now, amount, rate)
         .map_err(|_| LendingError::Overflow)?;
@@ -572,7 +573,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: position.borrow_index_snapshot,
+                borrow_index_snapshot: prev_snapshot,
                 last_update: now,
             },
         );
@@ -601,7 +602,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: position.borrow_index_snapshot,
+                borrow_index_snapshot: prev_snapshot,
                 last_update: now,
             },
         );
@@ -618,7 +619,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: position.borrow_index_snapshot,
+                borrow_index_snapshot: prev_snapshot,
                 last_update: now,
             },
         );

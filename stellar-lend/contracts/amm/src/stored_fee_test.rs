@@ -28,7 +28,9 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    client.init_pool(&ra, &rb).unwrap();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
     let admin = Address::generate(&env);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
