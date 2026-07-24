@@ -85,7 +85,7 @@ impl Grant {
         if elapsed >= self.duration_secs {
             return self.total_amount;
         }
-        
+
         // Partitioned division to avoid intermediate u128 multiplication overflow:
         // elapsed * total_amount / duration_secs
         // Since elapsed < duration_secs, we partition total_amount (positive i128 as u128)
@@ -95,15 +95,15 @@ impl Grant {
         let principal = self.total_amount as u128;
         let elapsed_u128 = elapsed as u128;
         let duration_u128 = self.duration_secs as u128;
-        
+
         let q = principal / duration_u128;
         let r = principal % duration_u128;
-        
+
         let val1 = elapsed_u128 * q;
         let val2 = (elapsed_u128 * r) / duration_u128;
-        
+
         let vested = val1 + val2;
-        
+
         // Guard to ensure vested never exceeds principal and is safe to cast back
         if vested > principal {
             self.total_amount
@@ -390,8 +390,6 @@ impl VestingContract {
         data.push_back(actor.clone().into_val(env));
         env.events().publish(topics, data);
     }
-
-
 }
 
 #[cfg(test)]

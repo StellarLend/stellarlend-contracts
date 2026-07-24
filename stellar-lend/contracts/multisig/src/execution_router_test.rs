@@ -94,13 +94,13 @@ fn test_create_proposal_returns_incrementing_ids() {
     let hash = make_bytes(&env, b"hash_a");
     let id0 = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &100u64,
     );
     let id1 = client.create_proposal(
         &signers.get(1).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &100u64,
     );
@@ -118,7 +118,7 @@ fn test_create_proposal_rejects_non_signer() {
     let hash = make_bytes(&env, b"hash");
     client.create_proposal(
         &outsider,
-        &ProposalAction::SetThreshold { new_threshold: 1 },
+        &ProposalAction::SetThreshold(1),
         &hash,
         &100u64,
     );
@@ -137,7 +137,7 @@ fn test_approve_proposal_transitions_to_passed_at_quorum() {
     let hash = make_bytes(&env, b"h1");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &200u64,
     );
@@ -163,7 +163,7 @@ fn test_approve_proposal_rejects_double_approval() {
     let hash = make_bytes(&env, b"h2");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &100u64,
     );
@@ -185,7 +185,7 @@ fn test_execute_set_threshold_updates_threshold() {
     let hash = make_bytes(&env, b"threshold_hash");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 3 },
+        &ProposalAction::SetThreshold(3),
         &hash,
         &500u64,
     );
@@ -217,9 +217,7 @@ fn test_execute_rotate_signers_replaces_signer_set() {
     let hash = make_bytes(&env, b"rotate_hash");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::RotateSigners {
-            new_signers: new_signers.clone(),
-        },
+        &ProposalAction::RotateSigners(new_signers.clone()),
         &hash,
         &500u64,
     );
@@ -247,7 +245,7 @@ fn test_execute_before_quorum_rejected() {
     let hash = make_bytes(&env, b"qh");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 1 },
+        &ProposalAction::SetThreshold(1),
         &hash,
         &100u64,
     );
@@ -266,7 +264,7 @@ fn test_execute_double_execution_rejected() {
     let hash = make_bytes(&env, b"dex_hash");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &500u64,
     );
@@ -287,7 +285,7 @@ fn test_execute_payload_hash_mismatch_rejected() {
     let swapped_hash = make_bytes(&env, b"swapped_payload");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &original_hash,
         &500u64,
     );
@@ -306,7 +304,7 @@ fn test_execute_cancelled_proposal_rejected() {
     let hash = make_bytes(&env, b"cancel_hash");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &500u64,
     );
@@ -328,7 +326,7 @@ fn test_cancel_proposal_sets_cancelled_status() {
     let hash = make_bytes(&env, b"ch");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &200u64,
     );
@@ -347,7 +345,7 @@ fn test_cancel_passed_proposal_rejected() {
     let hash = make_bytes(&env, b"cp2");
     let id = client.create_proposal(
         &signers.get(0).unwrap(),
-        &ProposalAction::SetThreshold { new_threshold: 2 },
+        &ProposalAction::SetThreshold(2),
         &hash,
         &300u64,
     );
