@@ -350,6 +350,7 @@ pub fn settle_accrual_split(
 
     let updated = DebtPosition {
         principal,
+        borrow_index_snapshot: position.borrow_index_snapshot,
         last_update: now,
     };
 
@@ -391,12 +392,6 @@ pub fn effective_debt(
 ///                   * (10_000 − reserve_factor_bps) / 10_000
 /// ```
 ///
-/// Equivalently:
-///
-/// ```text
-/// supply_rate_bps = compute_supply_rate(borrow_rate_bps, utilization_bps, reserve_factor_bps)
-/// ```
-///
 /// When `reserve_factor_bps == 0` the formula reduces to
 /// `borrow_rate * utilization / 10_000`, which is the full utilization-weighted
 /// borrow rate — identical to the previous (no-reserve) behaviour.
@@ -411,8 +406,7 @@ pub fn effective_debt(
 ///
 /// # Returns
 ///
-/// The supply APR in basis points, clamped to
-/// `[0, crate::math::MAX_RATE_BPS]`.
+/// The supply APR in basis points.
 ///
 /// Returns `DebtError::Overflow` if any intermediate calculation overflows or
 /// an input is out of range.
