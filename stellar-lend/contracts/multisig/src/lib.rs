@@ -419,3 +419,5 @@ mod tests {
 
 #[cfg(test)]
 mod execution_router_test;
+#[cfg(test)]
+mod signer_shrink_guard_test;
