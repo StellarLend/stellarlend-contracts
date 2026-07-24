@@ -63,8 +63,6 @@ mod liquidation_branch_tests {
         assert!(hf < 10_000, "expected liquidatable position; hf={hf}");
 
         let debt_before = client.get_debt_position(&borrower).principal;
-        let actual_repay = client
-            .liquidate(&liquidator, &borrower, &debt_before)
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
         let actual_repay = client
@@ -102,8 +100,6 @@ mod liquidation_branch_tests {
         make_undercollateralised(&env, &client, &borrower, 100, 1_000, 0);
 
         let debt_before = client.get_debt_position(&borrower).principal;
-        let actual_repay = client
-            .liquidate(&liquidator, &borrower, &debt_before)
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
         let actual_repay = client
@@ -137,12 +133,10 @@ mod liquidation_branch_tests {
 
         make_undercollateralised(&env, &client, &borrower, 200, 1_000, 0);
 
-        // Round 1
-        let debt_r1 = client.get_debt_position(&borrower).principal;
-        let repay_r1 = client
-            .liquidate(&liquidator, &borrower, &debt_r1)
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
+
+        // Round 1
         let debt_r1 = client.get_debt_position(&borrower).principal;
         let repay_r1 = client
             .liquidate(
@@ -163,7 +157,6 @@ mod liquidation_branch_tests {
         // Round 2
         let debt_r2 = client.get_debt_position(&borrower).principal;
         let repay_r2 = client
-            .liquidate(&liquidator, &borrower, &debt_r2)
             .liquidate(
                 &liquidator,
                 &borrower,
@@ -192,8 +185,6 @@ mod liquidation_branch_tests {
 
         assert!(client.get_health_factor(&borrower) >= 10_000);
 
-        let result = client.try_liquidate(&liquidator, &borrower, &100);
-        assert_eq!(result, Ok(Err(LendingError::PositionHealthy)));
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
         let result =
@@ -214,8 +205,6 @@ mod liquidation_branch_tests {
 
         client.deposit(&borrower, &1_000).unwrap();
 
-        let result = client.try_liquidate(&liquidator, &borrower, &100);
-        assert_eq!(result, Ok(Err(LendingError::PositionHealthy)));
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
         let result =
