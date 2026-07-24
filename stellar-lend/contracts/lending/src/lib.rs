@@ -2,6 +2,7 @@
 
 mod debt;
 mod events;
+mod math;
 pub mod rounding_strategy;
 
 #[cfg(test)]
