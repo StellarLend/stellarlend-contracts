@@ -86,6 +86,7 @@ pub enum MultisigError {
     InvalidTtl = 13,
     BatchSizeExceeded = 14,
     DuplicateProposalId = 15,
+    AlreadyInitialized = 16,
 }
 
 /// Maximum number of proposals that can be executed in a single
@@ -108,7 +109,10 @@ impl MultisigContract {
     /// * `env`       – Soroban environment.
     /// * `signers`   – Initial list of authorised signers.
     /// * `threshold` – Minimum number of approvals required to pass a proposal.
-    pub fn initialize(env: Env, signers: Vec<Address>, threshold: u32) {
+    pub fn initialize(env: Env, signers: Vec<Address>, threshold: u32) -> Result<(), MultisigError> {
+        if env.storage().persistent().has(&MultisigDataKey::Signers) {
+            return Err(MultisigError::AlreadyInitialized);
+        }
         if threshold == 0 || threshold as usize > signers.len() as usize {
             panic!("InvalidThreshold");
         }
@@ -121,6 +125,7 @@ impl MultisigContract {
         env.storage()
             .persistent()
             .set(&MultisigDataKey::ProposalCount, &0u64);
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
