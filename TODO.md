@@ -1,11 +1,19 @@
-# TODO - Liquidation parameter setters + storage-backed reads
+# TODO: Wire `compound_interest_proptest.rs` into `lib.rs`
 
-- [ ] Implement DataKey variants for liquidation threshold, close factor, and liquidation incentive (defaults to current constants)
-- [ ] Add LendingError variants (or reuse existing) for invalid liquidation parameters
-- [ ] Add admin-only setter functions + getters for these parameters
-- [ ] Update `liquidate` to read threshold/close factor/incentive from storage (not hardcoded constants)
-- [ ] Update `get_position` and `get_health_factor` to use storage-backed liquidation threshold
-- [ ] Add/adjust unit tests to cover: defaults, setters bounds validation, and liquidation/health-factor behavior changes
-- [ ] Update `stellar-lend/contracts/lending/README.md` and `docs/interface_quick_reference.md` to reflect new public API
-- [ ] Run `cargo test -p stellarlend-lending`
+## Steps
+
+- [x] **Read relevant files**: Analyzed `lib.rs`, `math.rs`, `property_invariants_test.rs`, `Cargo.toml` to understand the codebase structure
+- [x] **Create `compound_interest_proptest.rs`**: Property-based test file covering `math::compute_compound_interest` invariants:
+  - Interest is always non-negative
+  - Zero principal → zero interest
+  - Zero elapsed time → zero interest
+  - Zero rate → zero interest
+  - Interest scales linearly with principal
+  - Minimum interest floor of 1 for any positive principal & elapsed time
+  - Interest monotonically non-decreasing with time/rate
+  - Extreme values don't panic (return `Err` instead)
+  - Known reference values match exactly
+  - Overflow returns `Err(MathError::Overflow)`
+- [x] **Edit `lib.rs`**: Added `#[cfg(test)] mod compound_interest_proptest;` to test-module block
+- [ ] **Run `cargo test -p stellarlend-lending`**: 🔴 Blocked — this machine lacks the MSVC linker (`link.exe`). Requires Visual Studio Build Tools or `gnu` toolchain to be installed. The wasm build target works but cannot run tests.
 

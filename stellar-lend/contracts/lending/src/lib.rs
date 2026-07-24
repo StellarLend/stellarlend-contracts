@@ -8,6 +8,8 @@ pub mod rounding_strategy;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
 #[cfg(test)]
+mod compound_interest_proptest;
+#[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
 mod emergency_state_matrix_test;
@@ -260,6 +262,68 @@ impl LendingContract {
             .get(&DataKey::FlashFeeBps)
             .unwrap_or(5)
     }
+
+    fn get_liquidation_threshold_bps(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LiquidationThresholdBps)
+            .unwrap_or(DEFAULT_LIQUIDATION_THRESHOLD_BPS)
+    }
+
+    fn get_close_factor_bps(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::CloseFactorBps)
+            .unwrap_or(DEFAULT_CLOSE_FACTOR_BPS)
+    }
+
+    fn get_liquidation_incentive_bps(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LiquidationIncentiveBps)
+            .unwrap_or(DEFAULT_LIQUIDATION_INCENTIVE_BPS)
+    }
+
+    /// Admin-only setter for liquidation threshold bps.
+    /// Must be in (0, 10000].
+    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if threshold_bps <= 0 || threshold_bps > 10000 {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationThresholdBps, &threshold_bps);
+        Ok(())
+    }
+
+    /// Admin-only setter for close factor bps.
+    /// Must be in (0, 10000].
+    pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if close_factor_bps <= 0 || close_factor_bps > 10000 {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::CloseFactorBps, &close_factor_bps);
+        Ok(())
+    }
+
+    /// Admin-only setter for liquidation incentive bps.
+    /// Must be in [0, 5000].
+    pub fn set_liquidation_incentive_bps(env: Env, incentive_bps: i128) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if incentive_bps < 0 || incentive_bps > 5000 {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
+        Ok(())
+    }
+
+
 
     /// Propose a new admin (current admin only).
     pub fn propose_admin(env: Env, new_admin: Address) {
