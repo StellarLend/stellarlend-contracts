@@ -139,7 +139,7 @@ pub fn load_rate_snapshot(env: &Env) -> RateSnapshot {
 /// Computes the global borrow rate directly from current aggregate storage.
 pub fn uncached_borrow_rate(env: &Env) -> i128 {
     let snapshot = load_rate_snapshot(env);
-    compute_borrow_rate_from_snapshot(&snapshot).rate_bps
+    compute_borrow_rate_from_snapshot(env, &snapshot).rate_bps
 }
 
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.
@@ -147,6 +147,7 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// Utilization uses checked arithmetic and falls back to zero when supply is
 /// non-positive. Overflow in `debt * 10_000` returns [`DebtError::Overflow`].
 pub(crate) fn try_compute_borrow_rate_from_snapshot(
+    env: &Env,
     snapshot: &RateSnapshot,
 ) -> Result<BorrowRateComputation, DebtError> {
     let utilization_bps = if snapshot.total_supply > 0 {
@@ -161,7 +162,10 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
     };
 
     let rate_bps = match &snapshot.params {
-        Some(p) => rate_model::compute_borrow_rate(utilization_bps, p),
+        Some(p) => {
+            let target_rate = rate_model::compute_borrow_rate(utilization_bps, p);
+            crate::rate_model::update_and_get_rate(env, target_rate, p)
+        }
         None => DEFAULT_APR_BPS,
     };
 
@@ -175,13 +179,13 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
 ///
 /// Panics on arithmetic overflow, matching the existing borrow-rate API shape
 /// while keeping the underlying arithmetic checked.
-pub(crate) fn compute_borrow_rate_from_snapshot(snapshot: &RateSnapshot) -> BorrowRateComputation {
-    try_compute_borrow_rate_from_snapshot(snapshot).expect("borrow-rate utilization overflow")
+pub(crate) fn compute_borrow_rate_from_snapshot(env: &Env, snapshot: &RateSnapshot) -> BorrowRateComputation {
+    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
 }
 
 fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
     let snapshot = load_rate_snapshot(env);
-    compute_borrow_rate_from_snapshot(&snapshot)
+    compute_borrow_rate_from_snapshot(env, &snapshot)
 }
 
 /// Returns the global borrow rate, computing it at most once per ledger.
@@ -346,6 +350,7 @@ pub fn settle_accrual_split(
 
     let updated = DebtPosition {
         principal,
+        borrow_index_snapshot: position.borrow_index_snapshot,
         last_update: now,
     };
 
@@ -387,12 +392,6 @@ pub fn effective_debt(
 ///                   * (10_000 − reserve_factor_bps) / 10_000
 /// ```
 ///
-/// Equivalently:
-///
-/// ```text
-/// supply_rate_bps = compute_supply_rate(borrow_rate_bps, utilization_bps, reserve_factor_bps)
-/// ```
-///
 /// When `reserve_factor_bps == 0` the formula reduces to
 /// `borrow_rate * utilization / 10_000`, which is the full utilization-weighted
 /// borrow rate — identical to the previous (no-reserve) behaviour.
@@ -407,8 +406,7 @@ pub fn effective_debt(
 ///
 /// # Returns
 ///
-/// The supply APR in basis points, clamped to
-/// `[0, crate::math::MAX_RATE_BPS]`.
+/// The supply APR in basis points.
 ///
 /// Returns `DebtError::Overflow` if any intermediate calculation overflows or
 /// an input is out of range.

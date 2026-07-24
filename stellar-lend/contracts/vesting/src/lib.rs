@@ -82,11 +82,16 @@ impl Grant {
         if elapsed >= self.duration_secs {
             return self.total_amount;
         }
-        // Linear vesting: total_amount * elapsed / duration_secs
-        (self.total_amount as u64)
-            .checked_mul(elapsed)
-            .map(|v| (v / self.duration_secs) as i128)
-            .unwrap_or(self.total_amount)
+        // Linear vesting: vested = total_amount × elapsed ÷ duration_secs
+        // Computed entirely in i128 to avoid narrowing self.total_amount
+        // (i128 → u64 truncates silently for amounts > u64::MAX ≈ 1.8×10¹⁹)
+        let numerator = self.total_amount.checked_mul(elapsed as i128);
+        if let Some(n) = numerator {
+            n.checked_div(self.duration_secs as i128)
+                .unwrap_or(self.total_amount)
+        } else {
+            self.total_amount
+        }
     }
 
     /// How many tokens are claimable right now (vested minus already claimed).
@@ -368,55 +373,6 @@ impl VestingContract {
         env.events().publish(topics, data);
     }
 
-    /// Merge all active (non-revoked) grants for `grantee` into a single consolidated grant.
-    ///
-    /// The resulting grant has:
-    /// - `total` = sum of all active grants' remaining (`total - claimed`) amounts
-    /// - `claimed` = 0 (fresh start on the merged grant)
-    /// - `start_seconds` = current `now`
-    /// - `duration_seconds` = `merge_duration`
-    /// - `cliff_seconds` = 0 (no cliff on merged grant — vesting started already)
-    ///
-    /// All original active grants are revoked and replaced by the single merged grant.
-    /// Returns the merged grant's total, or `VestingError::NoSuchGrant` if the grantee
-    /// has no active grants.
-    pub fn merge_grants(
-        &mut self,
-        caller: &str,
-        grantee: &str,
-        now: u64,
-        merge_duration: u64,
-    ) -> Result<u128, VestingError> {
-        if self.admin != caller {
-            return Err(VestingError::Unauthorized);
-        }
-        let grants = self.grants.get_mut(grantee).ok_or(VestingError::NoSuchGrant)?;
-
-        let mut merged_total: u128 = 0;
-        for grant in grants.iter_mut() {
-            if !grant.revoked {
-                let remaining = grant.total.saturating_sub(grant.claimed);
-                merged_total = merged_total.saturating_add(remaining);
-                grant.revoked = true;
-            }
-        }
-        if merged_total == 0 {
-            return Err(VestingError::NoSuchGrant);
-        }
-
-        let merged = Grant {
-            grantee: grantee.to_string(),
-            total: merged_total,
-            claimed: 0,
-            released: 0,
-            start_seconds: now,
-            duration_seconds: merge_duration,
-            cliff_seconds: 0,
-            revoked: false,
-        };
-        grants.push(merged);
-        Ok(merged_total)
-    }
 }
 
 #[cfg(test)]
