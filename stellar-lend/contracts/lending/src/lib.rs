@@ -112,6 +112,8 @@ mod effective_supply_rate_test;
 
 #[cfg(test)]
 mod utilization_history_test;
+#[cfg(test)]
+mod upgrade_governance_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,
