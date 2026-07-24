@@ -96,6 +96,8 @@ mod rate_persistence_test;
 #[cfg(test)]
 mod rate_smoothing_state_test;
 #[cfg(test)]
+mod rate_updated_event_test;
+#[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
 mod repay_overpay_test;
@@ -1543,10 +1545,8 @@ impl LendingContract {
             .publish(&env);
 
             Ok(actual_repay)
-        })
-    }
-
-    /// Read the governed close-factor cap (basis points) consulted by
+        }
+    }// Read the governed close-factor cap (basis points) consulted by
     /// `liquidate`, defaulting to [`DEFAULT_CLOSE_FACTOR_BPS`] when unset.
     fn close_factor_bps_config(env: &Env) -> i128 {
         env.storage()
