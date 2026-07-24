@@ -88,7 +88,7 @@ Set once at `initialize()` and stored in **instance storage**.  Cannot be cleare
 | `set_guardian` | Appoints a secondary emergency key |
 | `set_oracle` / `set_primary_oracle` / `set_fallback_oracle` / `configure_oracle` / `set_oracle_paused` | Price-feed governance |
 | `set_liquidation_threshold_bps` / `set_close_factor_bps` / `set_liquidation_incentive_bps` | Risk parameter tuning |
-| `set_flash_loan_fee_bps` | Flash-loan revenue policy |
+| `set_flash_fee` | Flash-loan revenue policy |
 | `start_recovery` / `complete_recovery` | Emergency lifecycle management |
 | `upgrade_init` / `upgrade_propose` / `upgrade_approve` / `upgrade_execute` | Upgrade governance |
 
@@ -222,7 +222,7 @@ Set once at `initialize()` and stored in **instance storage**.  Cannot be cleare
 | `set_guardian` | Appoints a secondary emergency key |
 | `set_oracle` / `set_primary_oracle` / `set_fallback_oracle` / `configure_oracle` / `set_oracle_paused` | Price-feed governance |
 | `set_liquidation_threshold_bps` / `set_close_factor_bps` / `set_liquidation_incentive_bps` | Risk parameter tuning |
-| `set_flash_loan_fee_bps` | Flash-loan revenue policy |
+| `set_flash_fee` | Flash-loan revenue policy |
 | `start_recovery` / `complete_recovery` | Emergency lifecycle management |
 | `upgrade_init` / `upgrade_propose` / `upgrade_approve` / `upgrade_execute` | Upgrade governance |
 
