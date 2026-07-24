@@ -268,7 +268,7 @@ fn test_deposit_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(DepositReentrant, ());
     let initiator = Address::generate(&env);
-let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "deposit during flash loan must fail");
@@ -287,7 +287,6 @@ fn test_withdraw_blocked_during_flash_loan() {
     let initiator = Address::generate(&env);
 
     let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
-
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "withdraw during flash loan must fail");
@@ -326,7 +325,6 @@ fn test_repay_blocked_during_flash_loan() {
 
     let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
 
-
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "repay during flash loan must fail");
     assert_eq!(read_treasury(&env, &contract_id, &asset), 10_000);
@@ -345,7 +343,6 @@ fn test_liquidate_blocked_during_flash_loan() {
 
     let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
 
-
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "liquidate during flash loan must fail");
     assert_eq!(read_treasury(&env, &contract_id, &asset), 10_000);
@@ -363,7 +360,6 @@ fn test_nested_flash_loan_blocked() {
     let initiator = Address::generate(&env);
 
     let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
-
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "nested flash loan must fail");
