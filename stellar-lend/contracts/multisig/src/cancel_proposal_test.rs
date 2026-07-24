@@ -125,6 +125,9 @@ fn test_cancel_already_cancelled_panics() {
 // ---------------------------------------------------------------------------
 
 /// A cancelled proposal must be rejected by `execute_proposal`.
+/// The proposal is cancelled while still Active (before quorum), so
+/// cancel_proposal succeeds, and a subsequent execute_proposal attempt
+/// panics with AlreadyCancelled.
 #[test]
 #[should_panic(expected = "AlreadyCancelled")]
 fn test_execute_cancelled_proposal_panics() {
@@ -140,14 +143,10 @@ fn test_execute_cancelled_proposal_panics() {
         &500u64,
     );
 
-    // Gather enough approvals to reach quorum.
-    client.approve_proposal(&signers.get(0).unwrap(), &id);
-    client.approve_proposal(&signers.get(1).unwrap(), &id);
-
-    // Cancel before executing.
+    // Cancel while still Active (before quorum is reached).
     client.cancel_proposal(&signers.get(0).unwrap(), &id);
 
-    // execute_proposal should panic with AlreadyCancelled.
+    // execute_proposal must reject a Cancelled proposal.
     client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
 }
 
@@ -180,6 +179,8 @@ fn test_cancel_proposal_non_signer_rejected() {
 // ---------------------------------------------------------------------------
 
 /// A cancelled proposal must be rejected by `batch_execute`.
+/// The proposal is cancelled while still Active so cancel_proposal succeeds.
+/// batch_execute then panics with AlreadyCancelled.
 #[test]
 #[should_panic(expected = "AlreadyCancelled")]
 fn test_batch_execute_cancelled_proposal_rejected() {
@@ -195,9 +196,7 @@ fn test_batch_execute_cancelled_proposal_rejected() {
         &500u64,
     );
 
-    // Reach quorum then cancel.
-    client.approve_proposal(&signers.get(0).unwrap(), &id);
-    client.approve_proposal(&signers.get(1).unwrap(), &id);
+    // Cancel while still Active (before quorum).
     client.cancel_proposal(&signers.get(0).unwrap(), &id);
 
     let mut ids = Vec::new(&env);
