@@ -82,6 +82,8 @@ mod max_borrow_proptest;
 #[cfg(test)]
 mod property_invariants_test;
 #[cfg(test)]
+mod oracle_max_move_test;
+#[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
 mod position_summary_bench_test;
