@@ -42,7 +42,7 @@ interest = ceil(principal × INTEREST_RATE_PER_YEAR × elapsed / (BPS_SCALE × S
 ```
 
 For any non-zero principal and any elapsed time ≥ 1 second, interest ≥ 1. Therefore
-`get_debt_balance()` at the moment of repay equals the exact amount `repay` will consume.
+`get_debt_position()` (with the interest-inclusive balance derived via `debt::effective_debt`) at the moment of repay equals the exact amount `repay` will consume.
 No sub-unit dust can remain after a correctly-sized repay call.
 
 ### Recovery mode
@@ -116,11 +116,12 @@ Each asset key is independent in the `debt_balances` map.
 ## 4. Security notes for integrators
 
 **Do not overpay the borrow system.** Unlike many DeFi protocols that silently refund excess,
-`borrow::repay` returns `RepayAmountTooHigh`. Always query `get_debt_balance()` for the exact
-amount required.
+`borrow::repay` returns `RepayAmountTooHigh`. Always query `get_debt_position()` for the raw debt
+state and derive the effective balance with `debt::effective_debt` before submitting a repay.
 
-**Dust debt cannot block withdrawals.** Because interest uses ceiling division, `get_debt_balance()`
-at any timestamp is exactly what a full repay consumes. There is no scenario where a tiny
+**Dust debt cannot block withdrawals.** Because interest uses ceiling division, the effective
+balance derived from `get_debt_position()` (via `debt::effective_debt`) at any timestamp is
+exactly what a full repay consumes. There is no scenario where a tiny
 residual interest amount (< 1 unit) blocks a user's withdrawal.
 
 **Cross-asset overpay is safe by design.** A malicious caller cannot use an overpay to extract

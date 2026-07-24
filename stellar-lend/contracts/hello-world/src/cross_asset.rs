@@ -53,6 +53,52 @@ pub fn get_admin(env: &Env) -> Option<Address> {
         .get::<CrossAssetAdminKey, Address>(&CrossAssetAdminKey::Admin)
 }
 
+/// Admin-only: set the maximum number of distinct debt assets a single user may hold.
+/// Pass `None` to remove the cap (unlimited).
+/// When setting a value it must be >= 1.
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+/// * `caller` - Must be the stored admin address
+/// * `max` - New cap value, or None to disable
+///
+/// # Errors
+/// * `CrossAssetError::Unauthorized` - If caller is not admin
+/// * `CrossAssetError::InvalidMaxDebtAssets` - If max is Some(0)
+pub fn set_max_debt_assets_per_user(
+    env: &Env,
+    caller: &Address,
+    max: Option<u32>,
+) -> Result<(), CrossAssetError> {
+    crate::admin::require_admin(env, caller)
+        .map_err(|_| CrossAssetError::Unauthorized)?;
+
+    if let Some(v) = max {
+        if v < 1 {
+            return Err(CrossAssetError::InvalidMaxDebtAssets);
+        }
+    }
+
+    let key = CrossAssetDataKey::MaxDebtAssetsPerUser;
+    match max {
+        Some(v) => env.storage().persistent().set(&key, &v),
+        None => env.storage().persistent().remove(&key),
+    }
+    Ok(())
+}
+
+/// Read-only getter for the current max-debt-assets-per-user cap.
+/// Returns None when no cap is configured (unlimited).
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+pub fn get_max_debt_assets_per_user(env: &Env) -> Option<u32> {
+    let key = CrossAssetDataKey::MaxDebtAssetsPerUser;
+    env.storage()
+        .persistent()
+        .get::<CrossAssetDataKey, u32>(&key)
+}
+
 /// Require that `caller` is the stored admin; returns `Unauthorized` otherwise.
 fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
     let admin = get_admin(env).ok_or(CrossAssetError::Unauthorized)?;
@@ -95,6 +141,8 @@ pub enum CrossAssetError {
     LtvExceedsThreshold = 11,
     /// `price_decimals` is zero — silently mis-scales all oracle prices.
     ZeroDecimals = 12,
+    /// `set_max_debt_assets_per_user` called with `max = Some(0)`.
+    InvalidMaxDebtAssets = 13,
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +201,7 @@ enum CrossAssetDataKey {
     UserDebt(AssetKey, Address),
     TotalSupply(AssetKey),
     TotalDebt(AssetKey),
+    MaxDebtAssetsPerUser,
 }
 
 // ---------------------------------------------------------------------------
