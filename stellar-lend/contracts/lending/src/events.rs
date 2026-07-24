@@ -110,10 +110,8 @@ pub fn emit_schema_version(env: &Env) {
         schema_version: EVENT_SCHEMA_VERSION,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "SchemaVersionEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "SchemaVersionEvent"),), event);
 }
 
 /// Emit a deposit event.
@@ -125,10 +123,8 @@ pub fn emit_deposit(env: &Env, user: &Address, amount: i128, new_balance: i128) 
         new_balance,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "DepositEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "DepositEvent"),), event);
 }
 
 /// Emit a withdraw event.
@@ -140,10 +136,8 @@ pub fn emit_withdraw(env: &Env, user: &Address, amount: i128, new_balance: i128)
         new_balance,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "WithdrawEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "WithdrawEvent"),), event);
 }
 
 /// Emit a borrow event.
@@ -155,10 +149,8 @@ pub fn emit_borrow(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         new_debt,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "BorrowEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "BorrowEvent"),), event);
 }
 
 /// Emit a repay event.
@@ -170,10 +162,8 @@ pub fn emit_repay(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         new_debt,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "RepayEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "RepayEvent"),), event);
 }
 
 /// Emit a liquidate event.
@@ -196,8 +186,6 @@ pub fn emit_liquidate(
         borrower_remaining_collateral,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "LiquidateEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "LiquidateEvent"),), event);
 }

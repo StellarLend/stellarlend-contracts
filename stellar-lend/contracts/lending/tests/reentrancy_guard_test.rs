@@ -8,7 +8,6 @@
 //! Covered operations:
 //!   deposit, withdraw, borrow, borrow_against_collateral,
 //!   repay, liquidate, nested flash_loan.
-use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     // Updated
     contract,
