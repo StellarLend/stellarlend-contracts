@@ -1,6 +1,6 @@
 use soroban_sdk::{Address, Env, Map, Vec};
 
-use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
+use crate::debt::{DebtPosition, DEFAULT_APR_BPS, INDEX_SCALE};
 use crate::{
     check_emergency_status, check_pause_status, AssetParams, DataKey, LendingError, PriceRecord,
     ProtocolAction, DEFAULT_ORACLE_MAX_AGE_SECS,
@@ -54,6 +54,7 @@ pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPositi
         .get(&key)
         .unwrap_or(DebtPosition {
             principal: 0,
+            borrow_index_snapshot: INDEX_SCALE,
             last_update: env.ledger().timestamp(),
         })
 }
@@ -571,6 +572,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );
@@ -599,6 +601,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );
@@ -615,6 +618,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
+                borrow_index_snapshot: position.borrow_index_snapshot,
                 last_update: now,
             },
         );

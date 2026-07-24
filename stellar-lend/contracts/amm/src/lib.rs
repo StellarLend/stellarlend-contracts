@@ -4,6 +4,8 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
+mod error_codes_test;
+#[cfg(test)]
 mod fee_accrual_overflow_test;
 #[cfg(test)]
 mod stored_fee_test;
@@ -22,7 +24,7 @@ mod mint_shares_proptest;
 #[cfg(test)]
 mod sqrt_precision_test;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec};
 
 pub struct FeeTier {
     pub min_reserve: u128,
@@ -149,6 +151,25 @@ pub enum AmmPoolError {
     FeeBpsOutOfRange = 8,
 }
 
+/// Return value of [`AmmContract::get_swap_quote`].
+///
+/// Contains the full read-only projection of a hypothetical swap without
+/// touching any persistent storage.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SwapQuote {
+    /// The output amount the caller would receive (floor-division, same as the
+    /// live swap path).
+    pub amount_out: i128,
+    /// The fee taken from `amount_in` according to `fee_bps` (same formula as
+    /// [`compute_fee`]).
+    pub fee: i128,
+    /// Reserve of token A after the hypothetical swap (not written to storage).
+    pub reserve_a_after: i128,
+    /// Reserve of token B after the hypothetical swap (not written to storage).
+    pub reserve_b_after: i128,
+}
+
 #[contract]
 pub struct AmmContract;
 
@@ -244,7 +265,7 @@ impl AmmContract {
     /// when `KEY_FLASH_ACTIVE == true`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Reentrancy Guard](../FLASH_SWAP_PROTOCOL.md)
-    fn assert_no_active_flash_swap(env: &Env) {
+    fn assert_no_active_flash_swap(env: &Env) -> Result<(), AmmPoolError> {
         let active: bool = env
             .storage()
             .instance()
@@ -636,6 +657,91 @@ impl AmmContract {
         Ok(())
     }
 
+    /// Read-only swap quotation — projects the outcome of a swap without
+    /// writing to storage or emitting events.
+    ///
+    /// Reuses the same constant-product math and [`compute_fee`] call that the
+    /// live swap paths (`swap_a_for_b` / `swap_b_for_a`) execute, so the quote
+    /// is guaranteed to match a live swap to the unit.
+    ///
+    /// # Arguments
+    /// * `amount_in` — positive input amount (same sign and units as the live swap).
+    /// * `fee_bps`   — fee in basis points to apply (e.g. 30 = 0.30 %).  Use
+    ///                 [`AmmContract::get_fee_bps`] to pass the current stored fee.
+    /// * `a_for_b`   — `true` → quote A→B; `false` → quote B→A.
+    ///
+    /// # Returns
+    /// `Ok(SwapQuote)` with the projected output, fee taken, and resulting
+    /// reserves for both tokens.
+    ///
+    /// # Errors
+    /// * [`AmmPoolError::NonPositiveAmount`] — `amount_in <= 0`.
+    /// * [`AmmPoolError::EmptyPool`]         — either reserve is zero (returns
+    ///   a typed error instead of panicking, unlike the live path).
+    /// * [`AmmPoolError::Overflow`]          — checked arithmetic overflow.
+    pub fn get_swap_quote(
+        env: Env,
+        amount_in: i128,
+        fee_bps: i128,
+        a_for_b: bool,
+    ) -> Result<SwapQuote, AmmPoolError> {
+        if amount_in <= 0 {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
+
+        let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
+        let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
+        if ra <= 0 || rb <= 0 {
+            return Err(AmmPoolError::EmptyPool);
+        }
+
+        let fee = compute_fee(amount_in, fee_bps)?;
+
+        // Uniswap-v2 constant-product formula (identical to live swap path).
+        //   amount_in_with_fee = amount_in * (10_000 - fee_bps)
+        //   amount_out = (amount_in_with_fee * reserve_out)
+        //              / (reserve_in * 10_000 + amount_in_with_fee)
+        let fee_adj = 10_000_i128
+            .checked_sub(fee_bps)
+            .ok_or(AmmPoolError::Overflow)?;
+        let amount_in_with_fee = amount_in
+            .checked_mul(fee_adj)
+            .ok_or(AmmPoolError::Overflow)?;
+
+        let (reserve_in, reserve_out) = if a_for_b { (ra, rb) } else { (rb, ra) };
+
+        let numerator = amount_in_with_fee
+            .checked_mul(reserve_out)
+            .ok_or(AmmPoolError::Overflow)?;
+        let denom_part = reserve_in
+            .checked_mul(10_000_i128)
+            .ok_or(AmmPoolError::Overflow)?;
+        let denominator = denom_part
+            .checked_add(amount_in_with_fee)
+            .ok_or(AmmPoolError::Overflow)?;
+
+        let amount_out = numerator / denominator;
+
+        let (reserve_a_after, reserve_b_after) = if a_for_b {
+            (
+                ra.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?,
+                rb.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?,
+            )
+        } else {
+            (
+                ra.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?,
+                rb.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?,
+            )
+        };
+
+        Ok(SwapQuote {
+            amount_out,
+            fee,
+            reserve_a_after,
+            reserve_b_after,
+        })
+    }
+
     /// Read reserves (for testing / inspection).
     pub fn get_reserves(env: Env) -> (i128, i128) {
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
@@ -892,3 +998,5 @@ pub fn get_fee_tiers(env: Env) -> Vec<u128> {
 mod dynamic_fee_test;
 #[cfg(test)]
 mod inverse_swap_proptest;
+#[cfg(test)]
+mod swap_quote_test;

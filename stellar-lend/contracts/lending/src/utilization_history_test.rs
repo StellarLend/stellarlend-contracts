@@ -6,7 +6,8 @@ use crate::{
     write_utilization_sample, DataKey, LendingContract, LendingContractClient, UtilizationSample,
     UTILIZATION_HISTORY_CAPACITY,
 };
-use soroban_sdk::{testutils::Ledger, Address, Env};
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{Address, Env};
 
 fn setup() -> (Env, Address, LendingContractClient<'static>) {
     let env = Env::default();
@@ -170,5 +171,5 @@ fn utilization_history_rate_math_reports_overflow() {
         params: Some(RateParams::default()),
     };
 
-    assert!(try_compute_borrow_rate_from_snapshot(&snapshot).is_err());
+    assert!(try_compute_borrow_rate_from_snapshot(&env, &snapshot).is_err());
 }
