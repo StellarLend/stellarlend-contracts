@@ -263,11 +263,9 @@ fn test_batch_execute_one_already_executed_rejected() {
     client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
 }
 
-// The Cancelled-proposal guard is tested indirectly by the
-// `test_batch_execute_one_already_executed_rejected` test (same status-guard
-// code path). The `cancel_proposal` entrypoint has a pre-existing bug
-// (doesn't set Cancelled status), so a dedicated test cannot be reliably set
-// up without bypassing the public API.
+// The Cancelled-proposal guard in batch_execute is covered by the dedicated
+// cancel_proposal_test module, which exercises the full cancel → batch-reject
+// path end-to-end now that cancel_proposal correctly persists the status.
 
 // ---------------------------------------------------------------------------
 // Duplicate IDs
