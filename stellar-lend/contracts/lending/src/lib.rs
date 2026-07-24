@@ -78,6 +78,8 @@ mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod property_invariants_test;
 #[cfg(test)]
+mod missing_price_test;
+#[cfg(test)]
 mod oracle_max_move_test;
 #[cfg(test)]
 mod oracle_staleness_test;
