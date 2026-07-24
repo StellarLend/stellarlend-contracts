@@ -82,6 +82,8 @@ mod oracle_max_move_test;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
+mod oracle_payload_binding_test;
+#[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
 mod repay_overpay_test;
