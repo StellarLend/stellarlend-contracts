@@ -306,7 +306,7 @@ fn test_borrow_blocked_during_flash_loan() {
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes()
+    let params = Bytes::from_slice(&env, contract_id.to_string().to_bytes());
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "borrow during flash loan must fail");
