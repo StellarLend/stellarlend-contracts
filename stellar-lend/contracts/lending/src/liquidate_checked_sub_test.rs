@@ -10,6 +10,7 @@
 //!    `LendingError::Overflow` instead of silently flooring to zero.
 
 use super::*;
+use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup() -> (
@@ -28,9 +29,16 @@ fn setup() -> (
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let liquidator = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
     client.initialize(&admin);
+
+    // Fund the participants so token transfers in liquidate won't abort.
+    let debt_token = MockTokenClient::new(&env, &debt_asset);
+    let collateral_token = MockTokenClient::new(&env, &collateral_asset);
+    debt_token.mint(&liquidator, &1_000_000);
+    collateral_token.mint(&id, &1_000_000);
+
     (
         env,
         client,
@@ -42,11 +50,33 @@ fn setup() -> (
     )
 }
 
-/// Set up a position that is unhealthy: hf = col*8000/debt < 10000.
-/// deposit(100), borrow(200) → hf = 100*8000/200 = 4000 < 10000.
-fn make_unhealthy(client: &LendingContractClient, user: &Address) {
-    client.deposit(user, &100);
-    client.borrow(user, &200);
+/// Seed an unhealthy position directly into storage.
+///
+/// We **cannot** use `client.borrow` here because `assert_borrow_solvent`
+/// requires the position to be healthy at borrow time (collateral * 8000 ≥
+/// debt * 10000).  An unhealthy position can only be created by direct
+/// storage writes (or by price moves / interest accrual in an e2e setting).
+fn seed_unhealthy(
+    env: &Env,
+    id: &Address,
+    user: &Address,
+    collateral: i128,
+    debt: i128,
+) {
+    env.as_contract(id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &collateral);
+        crate::debt::save_debt(
+            env,
+            user,
+            &crate::debt::DebtPosition {
+                principal: debt,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 }
 
 // ── Valid liquidation: repay < max_repay ─────────────────────────────────────
@@ -55,8 +85,9 @@ fn make_unhealthy(client: &LendingContractClient, user: &Address) {
 /// correct repaid amount. Proves checked_sub doesn't change the happy path.
 #[test]
 fn test_liquidation_partial_succeeds() {
-    let (_env, client, _id, user, liquidator, debt_asset, collateral_asset) = setup();
-    make_unhealthy(&client, &user);
+    let (env, client, id, user, liquidator, debt_asset, collateral_asset) = setup();
+    // collateral=100, debt=200 → hf = 100*8000/200 = 4000 < 10000 (unhealthy).
+    seed_unhealthy(&env, &id, &user, 100, 200);
 
     // max_repay = 200 * 5000 / 10000 = 100; request 50 (well within clamp).
     let repaid = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &50);
@@ -69,8 +100,9 @@ fn test_liquidation_partial_succeeds() {
 /// actual_repay == max_repay == debt/2, so new_debt = debt - debt/2 = debt/2 ≥ 0.
 #[test]
 fn test_liquidation_at_close_factor_cap_succeeds() {
-    let (_env, client, _id, user, liquidator, debt_asset, collateral_asset) = setup();
-    make_unhealthy(&client, &user);
+    let (env, client, id, user, liquidator, debt_asset, collateral_asset) = setup();
+    // collateral=100, debt=200 → hf = 4000 (unhealthy).
+    seed_unhealthy(&env, &id, &user, 100, 200);
 
     // max_repay = 200 * 50% = 100.
     let repaid = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1000); // over-request → clamped to 100
@@ -83,8 +115,9 @@ fn test_liquidation_at_close_factor_cap_succeeds() {
 /// The clamped value is ≤ max_repay ≤ debt, so checked_sub cannot underflow.
 #[test]
 fn test_close_factor_clamp_prevents_repay_exceeding_debt() {
-    let (_env, client, _id, user, liquidator, debt_asset, collateral_asset) = setup();
-    make_unhealthy(&client, &user);
+    let (env, client, id, user, liquidator, debt_asset, collateral_asset) = setup();
+    // collateral=100, debt=200 → hf = 4000 (unhealthy).
+    seed_unhealthy(&env, &id, &user, 100, 200);
 
     // Request more than entire debt — must be clamped to max_repay.
     let repaid = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &999_999);
@@ -115,6 +148,7 @@ fn test_seizure_clamp_prevents_collateral_underflow() {
             &user,
             &DebtPosition {
                 principal: 200,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -160,6 +194,7 @@ fn test_debt_exactly_repaid_gives_zero_new_debt() {
             &user,
             &DebtPosition {
                 principal: 20,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 last_update: env.ledger().timestamp(),
             },
         );
