@@ -4,6 +4,8 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
+mod error_codes_test;
+#[cfg(test)]
 mod fee_accrual_overflow_test;
 #[cfg(test)]
 mod stored_fee_test;
