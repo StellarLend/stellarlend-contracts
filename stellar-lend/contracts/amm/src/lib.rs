@@ -300,7 +300,7 @@ impl AmmContract {
     /// counter reaches `i128::MAX` it stops incrementing but never panics.
     /// This guarantees the swap cannot be halted by fee-accumulation overflow.
     pub fn swap_a_for_b(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
-        Self::assert_no_active_flash_swap(&env);
+        Self::assert_no_active_flash_swap(&env)?;
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
