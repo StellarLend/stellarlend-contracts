@@ -145,7 +145,7 @@ const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
-const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
+const DEFAULT_MAX_FLASH_BPS: i128 = 5_000;
 /// Maximum number of utilization samples retained in persistent storage.
 ///
 /// Samples are kept in an oldest-first bounded vector internally. When the cap
