@@ -180,7 +180,10 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
 ///
 /// Panics on arithmetic overflow, matching the existing borrow-rate API shape
 /// while keeping the underlying arithmetic checked.
-pub(crate) fn compute_borrow_rate_from_snapshot(env: &Env, snapshot: &RateSnapshot) -> BorrowRateComputation {
+pub(crate) fn compute_borrow_rate_from_snapshot(
+    env: &Env,
+    snapshot: &RateSnapshot,
+) -> BorrowRateComputation {
     try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
 }
 

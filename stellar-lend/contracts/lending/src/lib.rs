@@ -55,8 +55,6 @@ mod health_factor_edge_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
-mod liquidation_branch_test;
-#[cfg(test)]
 mod isolation_mode_test;
 #[cfg(test)]
 mod liquidate_accrual_test;
@@ -73,21 +71,25 @@ mod liquidate_rounding_test;
 #[cfg(test)]
 mod liquidate_transfer_test;
 #[cfg(test)]
+mod liquidation_branch_test;
+#[cfg(test)]
 mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
-mod property_invariants_test;
-#[cfg(test)]
 mod missing_price_test;
+#[cfg(test)]
+mod mul_div_proptest;
 #[cfg(test)]
 mod oracle_max_move_test;
 #[cfg(test)]
-mod oracle_staleness_test;
-#[cfg(test)]
 mod oracle_payload_binding_test;
 #[cfg(test)]
+mod oracle_staleness_test;
+#[cfg(test)]
 mod position_summary_bench_test;
+#[cfg(test)]
+mod property_invariants_test;
 #[cfg(test)]
 mod rate_cache_test;
 #[cfg(test)]
@@ -101,8 +103,6 @@ mod repay_debt_floor_test;
 #[cfg(test)]
 mod repay_overpay_test;
 #[cfg(test)]
-mod mul_div_proptest;
-#[cfg(test)]
 mod reserve_split_proptest;
 #[cfg(test)]
 mod rounding_drift_test;
@@ -111,12 +111,11 @@ mod self_liquidation_test;
 #[cfg(test)]
 mod supply_rate_split_test;
 #[cfg(test)]
-mod withdraw_overflow_test;
-
+mod upgrade_governance_test;
 #[cfg(test)]
 mod utilization_history_test;
 #[cfg(test)]
-mod upgrade_governance_test;
+mod withdraw_overflow_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,
@@ -1102,9 +1101,7 @@ impl LendingContract {
         if amount > current {
             return Err(LendingError::InvalidAmount);
         }
-        let new_balance = current
-            .checked_sub(amount)
-            .ok_or(LendingError::Overflow)?;
+        let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&key, &new_balance);
         let total_deposits: i128 = env
             .storage()
@@ -1474,12 +1471,9 @@ impl LendingContract {
 
             // Liquidation incentive: floor rounding.
             let incentive_bps = Self::liquidation_incentive_bps_config(&env);
-            let seized_collateral = math::checked_mul_div_floor(
-                actual_repay,
-                BPS_DENOM + incentive_bps,
-                BPS_DENOM,
-            )
-            .map_err(|_| LendingError::Overflow)?;
+            let seized_collateral =
+                math::checked_mul_div_floor(actual_repay, BPS_DENOM + incentive_bps, BPS_DENOM)
+                    .map_err(|_| LendingError::Overflow)?;
 
             // Clamp: never seize more than the borrower's available collateral.
             let available_collateral = collateral;
@@ -1504,10 +1498,8 @@ impl LendingContract {
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
                     #[allow(deprecated)]
-                    env.events().publish(
-                        (Symbol::new(&env, "bad_debt"), borrower.clone()),
-                        residual,
-                    );
+                    env.events()
+                        .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), residual);
                 }
                 available_collateral
             } else {
