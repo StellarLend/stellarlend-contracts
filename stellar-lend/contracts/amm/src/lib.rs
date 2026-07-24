@@ -244,7 +244,7 @@ impl AmmContract {
     /// when `KEY_FLASH_ACTIVE == true`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Reentrancy Guard](../FLASH_SWAP_PROTOCOL.md)
-    fn assert_no_active_flash_swap(env: &Env) {
+    fn assert_no_active_flash_swap(env: &Env) -> Result<(), AmmPoolError> {
         let active: bool = env
             .storage()
             .instance()
