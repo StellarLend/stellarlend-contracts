@@ -25,7 +25,7 @@ mod mint_shares_proptest;
 mod sqrt_precision_test;
 
 use soroban_sdk::token::Client as TokenClient;
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec};
 
 pub struct FeeTier {
     pub min_reserve: u128,
@@ -359,8 +359,8 @@ impl AmmContract {
     /// The fee accumulator (`KEY_FEE_A`) uses saturating addition. If the
     /// counter reaches `i128::MAX` it stops incrementing but never panics.
     /// This guarantees the swap cannot be halted by fee-accumulation overflow.
-    pub fn swap_a_for_b(env: Env, amount_in: i128) -> i128 {
-        Self::assert_no_active_flash_swap(&env);
+    pub fn swap_a_for_b(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
+        Self::assert_no_active_flash_swap(&env)?;
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -464,7 +464,7 @@ impl AmmContract {
     ///
     /// Identical to [`swap_a_for_b`]: the fee accumulator saturates at
     /// `i128::MAX` and never panics on addition.
-    pub fn swap_b_for_a(env: Env, amount_in: i128) -> i128 {
+    pub fn swap_b_for_a(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -568,7 +568,7 @@ impl AmmContract {
     /// - `"Insufficient reserves: amount_out would drain reserve_b"` — `amount_out ≥ reserve_b`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
-    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> i128 {
+    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> Result<i128, AmmPoolError> {
         // `params` is reserved for a future callback variant.  Bound to
         // a local so the parameter is used (no dead-binding lint).
         let _ = params;
@@ -640,7 +640,7 @@ impl AmmContract {
     ///   Soroban then rolls back all storage changes, including the Op-1 debit.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Verify-K Repay Invariant](../FLASH_SWAP_PROTOCOL.md)
-    pub fn repay_flash_swap(env: Env, amount_in: i128) {
+    pub fn repay_flash_swap(env: Env, amount_in: i128) -> Result<(), AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -914,7 +914,7 @@ fn assert_k_monotonic(
 ///
 /// Uses checked arithmetic; panics on overflow.
 fn compute_fee(amount_in: i128, fee_bps: i128) -> Result<i128, AmmPoolError> {
-    amount_in.checked_mul(fee_bps).ok_or(AmmPoolError::Overflow)? / 10_000
+    Ok(amount_in.checked_mul(fee_bps).ok_or(AmmPoolError::Overflow)? / 10_000)
 }
 
 /// Inverse of the verify-k condition: returns the **minimum** `amount_in`
