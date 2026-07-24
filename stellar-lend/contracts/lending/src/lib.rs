@@ -225,6 +225,8 @@ pub enum DataKey {
     /// [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] when unset. Configured via
     /// [`LendingContract::set_liquidation_incentive_bps`].
     LiquidationIncentiveBps,
+    /// List of all registered borrowers, used to iterate debt records during
+    /// migration.
     BorrowerList,
 }
 
@@ -375,11 +377,6 @@ pub enum LendingError {
     /// `set_liquidation_incentive_bps` called with a value outside
     /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
     InvalidLiquidationIncentiveBps = 7002,
-    /// `set_asset_isolation` called with `isolated = true` but
-    /// `isolation_debt_ceiling <= 0`.
-    InvalidIsolationCeiling = 7003,
-    /// `self_liquidation` — liquidator and borrower are the same address.
-    SelfLiquidation = 7004,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -1615,6 +1612,13 @@ impl LendingContract {
     /// [`Self::set_liquidation_incentive_bps`].
     pub fn get_liquidation_incentive_bps(env: Env) -> i128 {
         Self::liquidation_incentive_bps_config(&env)
+    }
+
+    /// Return the liquidation threshold in basis points used for health-factor
+    /// computations. Currently returns the constant [`LIQUIDATION_THRESHOLD_BPS`].
+    pub fn get_liquidation_threshold_bps(env: &Env) -> i128 {
+        let _ = env;
+        LIQUIDATION_THRESHOLD_BPS
     }
 
     /// Set the liquidation incentive in basis points (admin-only).

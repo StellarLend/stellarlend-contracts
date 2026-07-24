@@ -15,6 +15,11 @@ pub const INDEX_SCALE: i128 = 10_000_000;
 /// that has not been updated to pass an explicit reserve factor.
 pub const DEFAULT_RESERVE_FACTOR_BPS: u32 = 0;
 
+/// Initial value for the global borrow index (1.0 in fixed-point).
+/// The borrow index grows over time as interest accrues and is used to
+/// compute the inflation-adjusted principal of each position.
+pub const INDEX_SCALE: i128 = 10_000_000;
+
 // ─── Core position type ───────────────────────────────────────────────────────
 
 #[contracttype]
@@ -552,6 +557,14 @@ pub fn repay_amount(
     Ok(settled)
 }
 
+/// Settle a debt position by applying the borrow index ratio.
+///
+/// Scales the principal by `current_index / borrow_index_snapshot` so the
+/// inflation-adjusted value reflects accrued interest since the last touch.
+/// When `borrow_index_snapshot` is zero (pre-migration position), it is
+/// treated as equal to `current_index` (no scaling). Rejects a `current_index`
+/// that has moved backward relative to the stored snapshot, since the global
+/// borrow index must be monotonically non-decreasing.
 pub fn settle_position(
     position: &DebtPosition,
     current_index: i128,
