@@ -57,6 +57,8 @@ mod health_factor_edge_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
+mod interest_ordering_time_test;
+#[cfg(test)]
 mod liquidation_branch_test;
 #[cfg(test)]
 mod isolation_mode_test;
@@ -114,6 +116,8 @@ mod self_liquidation_test;
 mod supply_rate_split_test;
 #[cfg(test)]
 mod withdraw_overflow_test;
+#[cfg(test)]
+mod withdraw_reserve_test;
 
 #[cfg(test)]
 mod utilization_history_test;

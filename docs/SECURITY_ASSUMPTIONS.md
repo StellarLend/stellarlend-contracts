@@ -33,7 +33,7 @@ secured.
 | Manage guardian | `set_guardian` |
 | Emergency lifecycle | `emergency_shutdown`, `start_recovery`, `complete_recovery` |
 | Insurance fund | `credit_insurance_fund`, `offset_bad_debt` |
-| Flash loan config | `set_flash_loan_fee_bps` |
+| Flash loan config | `set_flash_fee` |
 | Deposit/withdraw config | `initialize_deposit_settings`, `initialize_withdraw_settings` |
 | Contract upgrades | `upgrade_init`, `upgrade_propose`, `upgrade_approve`, `upgrade_execute` |
 
