@@ -163,27 +163,6 @@ use crate::types::{
     VoteInfo, VoteType,
 };
 
-// AMM types (temporary stubs until stellarlend_amm types are made public)
-#[derive(Clone)]
-#[contracttype]
-pub struct AmmProtocolConfig {
-    // Placeholder fields
-}
-
-#[derive(Clone)]
-#[contracttype]
-pub struct SwapParams {
-    // Placeholder fields
-}
-
-#[derive(Clone, Debug)]
-#[contracterror]
-pub enum AmmError {
-    InvalidParams = 1,
-    InsufficientLiquidity = 2,
-    SlippageExceeded = 3,
-}
-
 /// The StellarLend core contract.
 #[contract]
 pub struct HelloContract;
@@ -778,41 +757,6 @@ impl HelloContract {
         paused: bool,
     ) -> Result<(), RiskManagementError> {
         risk_management::set_emergency_pause(&env, admin, paused)
-    }
-
-    // ============================================================================
-    // AMM Methods
-    // ============================================================================
-
-    /// Initialize AMM settings (admin only).
-    pub fn initialize_amm(
-        env: Env,
-        admin: Address,
-        default_slippage: i128,
-        max_slippage: i128,
-        auto_swap_threshold: i128,
-    ) -> Result<(), amm::AmmError> {
-        amm::initialize_amm(
-            env,
-            admin,
-            default_slippage,
-            max_slippage,
-            auto_swap_threshold,
-        )
-    }
-
-    /// Set AMM pool configuration (admin only).
-    pub fn set_amm_pool(
-        env: Env,
-        admin: Address,
-        protocol_config: amm::AmmProtocolConfig,
-    ) -> Result<(), amm::AmmError> {
-        amm::set_amm_pool(env, admin, protocol_config)
-    }
-
-    /// Execute swap through AMM.
-    pub fn amm_swap(env: Env, user: Address, params: SwapParams) -> Result<i128, AmmError> {
-        amm::amm_swap(env, user, params)
     }
 
     // ============================================================================
