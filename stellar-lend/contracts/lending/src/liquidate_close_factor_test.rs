@@ -56,6 +56,7 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
         env.storage().persistent().set(
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: debt,
                 last_update: now,
             },

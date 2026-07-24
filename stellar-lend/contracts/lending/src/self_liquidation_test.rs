@@ -44,6 +44,7 @@ fn self_liquidation_is_rejected_before_any_state_change() {
         env.storage().persistent().set(
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
@@ -84,6 +85,7 @@ fn unhealthy_self_position_is_rejected_even_when_position_is_underwater() {
         env.storage().persistent().set(
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },

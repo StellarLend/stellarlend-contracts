@@ -58,6 +58,7 @@ fn make_unhealthy_position(
             env,
             user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: debt,
                 last_update: now,
             },

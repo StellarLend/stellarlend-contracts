@@ -225,6 +225,7 @@ fn populate_positions(
             user,
             &asset,
             &debt::DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 100i128 * (i as i128 + 1),
                 last_update: env.ledger().timestamp(),
             },
@@ -429,6 +430,7 @@ fn bench_mixed_zero_nonzero_positions_within_budget() {
                 &user,
                 &asset,
                 &debt::DebtPosition {
+                    borrow_index_snapshot: crate::debt::INDEX_SCALE,
                     principal: 200i128,
                     last_update: env.ledger().timestamp(),
                 },

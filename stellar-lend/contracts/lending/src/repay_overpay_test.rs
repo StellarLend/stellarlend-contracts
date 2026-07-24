@@ -21,6 +21,7 @@ fn repay_exact_amount_leaves_zero_debt_and_no_refund() {
 
     // Borrow 1000
     let position = DebtPosition {
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
         last_update: env.ledger().timestamp(),
     };
@@ -39,6 +40,7 @@ fn repay_overpay_by_one_unit_refunds_one() {
     let (env, _client, _admin, _user) = setup();
 
     let position = DebtPosition {
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
         last_update: env.ledger().timestamp(),
     };
@@ -59,6 +61,7 @@ fn repay_overpay_by_2x_refunds_full_debt_amount() {
     let (env, _client, _admin, _user) = setup();
 
     let position = DebtPosition {
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
         last_update: env.ledger().timestamp(),
     };
@@ -80,6 +83,7 @@ fn repay_overpay_with_accrued_interest_refunds_excess() {
 
     let initial_timestamp = 1000u64;
     let position = DebtPosition {
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
         last_update: initial_timestamp,
     };
@@ -109,6 +113,7 @@ fn repay_partial_payment_leaves_debt_no_refund() {
     let (env, _client, _admin, _user) = setup();
 
     let position = DebtPosition {
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
         last_update: env.ledger().timestamp(),
     };
@@ -180,6 +185,7 @@ fn repay_exact_debt_after_interest_accrual_with_no_refund() {
 
     let initial_timestamp = 1000u64;
     let position = DebtPosition {
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
         last_update: initial_timestamp,
     };

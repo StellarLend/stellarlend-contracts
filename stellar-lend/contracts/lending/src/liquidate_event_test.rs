@@ -54,6 +54,7 @@ fn liquidate_emits_event_with_correct_fields() {
         env.storage().persistent().set(
             &DataKey::Debt(user.clone()),
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
@@ -94,6 +95,7 @@ fn liquidate_event_close_factor_limits_repay() {
         env.storage().persistent().set(
             &DataKey::Debt(user.clone()),
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
@@ -136,6 +138,7 @@ fn liquidate_event_zero_shortfall() {
         env.storage().persistent().set(
             &DataKey::Debt(user.clone()),
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 130,
                 last_update: env.ledger().timestamp(),
             },

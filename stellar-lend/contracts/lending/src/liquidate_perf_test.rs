@@ -31,6 +31,7 @@ fn liquidate_smoke_test() {
             &env,
             &borrower,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },

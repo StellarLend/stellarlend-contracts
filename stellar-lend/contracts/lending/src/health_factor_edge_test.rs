@@ -84,6 +84,7 @@ fn health_factor_overflow_returns_i128_max_sentinel() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 1,
                 last_update: env.ledger().timestamp(),
             },

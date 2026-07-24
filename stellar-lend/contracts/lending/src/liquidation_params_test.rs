@@ -47,6 +47,7 @@ fn seed_position(env: &Env, cid: &Address, borrower: &Address, collateral: i128,
         env.storage().persistent().set(
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: debt,
                 last_update: now,
             },
