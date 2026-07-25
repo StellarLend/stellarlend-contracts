@@ -109,7 +109,11 @@ impl MultisigContract {
     /// * `env`       – Soroban environment.
     /// * `signers`   – Initial list of authorised signers.
     /// * `threshold` – Minimum number of approvals required to pass a proposal.
-    pub fn initialize(env: Env, signers: Vec<Address>, threshold: u32) -> Result<(), MultisigError> {
+    pub fn initialize(
+        env: Env,
+        signers: Vec<Address>,
+        threshold: u32,
+    ) -> Result<(), MultisigError> {
         if env.storage().persistent().has(&MultisigDataKey::Signers) {
             return Err(MultisigError::AlreadyInitialized);
         }
@@ -276,12 +280,7 @@ impl MultisigContract {
     /// * `id`           – ID of the proposal to execute.
     /// * `payload_hash` – Hash of the action payload presented at execution time;
     ///                    must match the hash recorded at creation.
-    pub fn execute_proposal(
-        env: Env,
-        caller: Address,
-        id: u64,
-        payload_hash: soroban_sdk::Bytes,
-    ) {
+    pub fn execute_proposal(env: Env, caller: Address, id: u64, payload_hash: soroban_sdk::Bytes) {
         caller.require_auth();
         Self::require_signer(&env, &caller);
 
@@ -495,7 +494,10 @@ impl MultisigContract {
 
         // Emit single BatchExecuted event with all applied IDs
         env.events().publish(
-            (symbol_short!("multisig"), Symbol::new(&env, "batch_executed")),
+            (
+                symbol_short!("multisig"),
+                Symbol::new(&env, "batch_executed"),
+            ),
             BatchExecutedEvent { ids },
         );
     }

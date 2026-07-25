@@ -587,7 +587,11 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Admin).unwrap()
     }
 
-    pub fn try_get_admin(env: Env) -> Option<Address> {
+    /// Panic-free admin lookup. Named `get_admin_optional` (not `try_get_admin`)
+    /// because Soroban's `#[contractimpl]` client already synthesizes
+    /// `try_get_admin` for the fallible wrapper of [`Self::get_admin`], and a
+    /// same-named contract method collides (E0592).
+    pub fn get_admin_optional(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
 
@@ -1687,8 +1691,12 @@ impl LendingContract {
 
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
-    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
-        Self::require_admin(&env)?;
+    pub fn set_liquidation_threshold_bps(
+        env: Env,
+        threshold_bps: i128,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }
