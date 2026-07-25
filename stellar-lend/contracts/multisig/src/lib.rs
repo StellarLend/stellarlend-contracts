@@ -369,10 +369,12 @@ impl MultisigContract {
         caller.require_auth();
         Self::require_signer(&env, &caller);
 
-        let proposal = Self::fetch_proposal(&env, id);
+        let mut proposal = Self::fetch_proposal(&env, id);
         if proposal.status != ProposalStatus::Active {
             panic!("ProposalNotPassed");
         }
+        proposal.status = ProposalStatus::Cancelled;
+        Self::save_proposal(&env, &proposal);
     }
 
     /// Return the current approval threshold.
@@ -529,3 +531,6 @@ mod execution_router_test;
 
 #[cfg(test)]
 mod batch_execute_test;
+
+#[cfg(test)]
+mod cancel_proposal_test;
