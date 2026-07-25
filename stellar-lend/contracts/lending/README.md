@@ -158,15 +158,7 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 
 The functions listed below appear in older documentation but are **not yet implemented** in `src/lib.rs`. They are tracked for future milestones.
 
-| Function | Notes |
-|---|---|
-| `set_oracle(env, admin, oracle)` | External oracle contract adapter; signed `set_oracle_pubkey` / `set_price` flow is implemented today. |
-| `set_liquidation_threshold_bps(env, admin, bps)` | Configurable liquidation threshold (currently hardcoded at 8000 BPS). |
-| `set_close_factor_bps(env, admin, bps)` | Configurable close factor (currently hardcoded at 5000 BPS). |
-| `get_collateral_value(env, user)` | USD-denominated collateral value (requires oracle). |
-| `get_debt_value(env, user)` | USD-denominated debt value (requires oracle). |
-| `get_max_liquidatable_amount(env, user)` | Convenience helper for liquidators. |
-| `get_emergency_state(env)` | Public view for current lifecycle state (today exposed only via events). |
+
 | `deposit_collateral(env, user, asset, amount)` | Multi-asset collateral support. |
 | `data_store_init / data_save / data_load / data_backup / data_restore` | Persistent data-store management helpers. |
 
