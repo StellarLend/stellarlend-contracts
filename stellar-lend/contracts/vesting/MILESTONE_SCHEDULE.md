@@ -1,106 +1,86 @@
-# Milestone Vesting Schedule
+# Milestone Vesting Status
 
-## Rationale
+## Current Status
 
-The original vesting contract (as described in PR #502) supported only a
-**linear** schedule with a cliff: tokens vest continuously from a start time
-to an end time, with nothing vested before a configurable cliff.
+Milestone-based vesting is **not implemented** in the compiled vesting
+contract at `stellar-lend/contracts/vesting/src/lib.rs`.
 
-Many real-world token allocations, however, vest in **discrete tranches** at
-fixed calendar dates — for example 25 % on each of four quarterly
-anniversaries.  The milestone schedule formalises that pattern so the vesting
-contract can express both continuous and discrete unlocks.
+The contract currently supports only a **single linear vesting schedule with an
+optional cliff** per grantee. This file exists to document that limitation and
+to prevent readers from relying on an API that does not exist on `main`.
 
-## How It Works
+## What Is Actually Supported
 
-A milestone schedule is an ordered list of `(timestamp, cumulative_amount)`
-pairs.
+Each stored grant contains:
 
-At any point in time the vested amount is simply the `cumulative_amount` of
-the **latest milestone whose timestamp has passed**.  If no milestone has
-passed yet the vested amount is zero.  There is no interpolation between
-milestones — the vested balance steps up discretely at each milestone
-timestamp.
+- `total_amount`
+- `claimed_amount`
+- `start_ts`
+- `cliff_secs`
+- `duration_secs`
+- `revoked`
 
-### Example
+Vesting is computed linearly:
 
-A grant of `10_000` tokens with four quarterly unlocks:
+- nothing vests before `start_ts + cliff_secs`
+- vesting then accrues linearly from `start_ts`
+- the full `total_amount` is vested once `duration_secs` has elapsed
 
-| Timestamp (unix) | Cumulative | Interpretation            |
-| ---------------- | ---------- | ------------------------- |
-| 1_750_000_000    | 2_500      | 25 % after Q1             |
-| 1_757_884_800    | 5_000      | 50 % after Q2             |
-| 1_765_660_800    | 7_500      | 75 % after Q3             |
-| 1_773_436_800    | 10_000     | 100 % after Q4 (fully vested) |
+Claimable balance is:
 
-* **Before Q1** (timestamp < 1_750_000_000): vested = 0
-* **At Q1** (timestamp ≥ 1_750_000_000 but < 1_757_884_800): vested = 2_500
-* **At Q2** (timestamp ≥ 1_757_884_800 but < 1_765_660_800): vested = 5_000
-* **At Q3** (timestamp ≥ 1_765_660_800 but < 1_773_436_800): vested = 7_500
-* **At or after Q4** (timestamp ≥ 1_773_436_800): vested = 10_000
+```text
+claimable = vested_at(effective_now) - claimed_amount
+```
 
-Claiming works exactly as with the linear schedule: `claimable = vested - claimed`.
+`effective_now` is the ledger timestamp adjusted by the contract's pause
+accounting so that paused time does not increase vesting.
 
-## Validation Rules
+## Public Contract API On Main
 
-When a milestone grant is created via `add_grant`, the following checks are
-enforced:
-
-1. **At least one milestone** is required.
-2. **Strictly increasing timestamps** — each milestone's timestamp must be
-   greater than the previous one.
-3. **Strictly increasing cumulative amounts** — each milestone's cumulative
-   must be greater than the previous one.
-4. **Final cumulative equals principal** — the cumulative of the last
-   milestone must exactly match the `principal` of the grant.
-5. **No milestone cumulative exceeds principal** — each individual cumulative
-   is checked against the grant's principal.
-
-If any rule is violated `add_grant` returns an appropriate `VestingError`
-variant.
-
-## Edge Cases & Guarantees
-
-### Before first milestone
-The vested amount is `0`.  No tokens are claimable.
-
-### Exactly at a milestone timestamp
-The milestone's full cumulative amount is vested (inclusive boundary).
-
-### Between milestones
-The vested amount remains at the previous milestone's cumulative until the
-next milestone is reached.
-
-### After final milestone
-The vested amount is `principal` (fully vested).  It will never exceed
-`principal`.
-
-### Single milestone
-A schedule with a single milestone is valid, provided its cumulative equals
-`principal`.  This models a "cliff-only" grant where all tokens unlock at one
-future date.
-
-### Arithmetic
-All computations use checked `i128` arithmetic.  Overflow conditions return
-a safe sentinel of `0` (which is unreachable with realistic principal values
-given Soroban's 64-bit timestamp range).
-
-## Compatibility With Linear Vesting
-
-Existing linear grants are unaffected by the addition of the milestone
-variant.  `add_grant` dispatches validation based on the schedule type, and
-`vested_at` / `claimable` / `claim` / `sync` operate identically on both
-schedule types.
-
-## API Reference
+The vesting contract currently exposes the following entry points:
 
 | Function | Description |
 | -------- | ----------- |
-| `initialize(admin)` | One-time admin setup |
-| `add_grant(admin, recipient, principal, schedule)` | Create a grant (Linear or Milestone) |
-| `vested_at(recipient, timestamp)` | Vested amount at any timestamp |
-| `claimable(recipient)` | Vested minus already claimed |
-| `claim(recipient, amount)` | Claim vested tokens (recipient must auth) |
-| `get_grant(recipient)` | Read stored grant |
-| `sync(recipient)` | Alias for `claimable` |
-| `get_admin()` | Read admin address |
+| `initialize(env, admin)` | One-time admin setup |
+| `create_grant(env, caller, grantee, total_amount, start_ts, cliff_secs, duration_secs)` | Create a linear grant |
+| `pause(env, caller)` | Pause claims and revocations |
+| `resume(env, caller)` | Resume the contract and accumulate paused time |
+| `claim(env, grantee)` | Claim the full currently vested amount |
+| `revoke(env, caller, grantee)` | Revoke a grant and claw back unvested tokens |
+| `get_grant(env, grantee)` | Read the stored linear grant |
+| `total_paused_secs(env)` | Read total paused seconds |
+| `is_paused(env)` | Read current pause status |
+
+## What Is Not Implemented
+
+The following milestone-related items described by earlier drafts are **not**
+present in the compiled contract:
+
+- no `MilestoneSchedule` type
+- no `VestingSchedule` enum with a milestone variant
+- no `add_grant(admin, recipient, principal, schedule)` entry point
+- no `vested_at(recipient, timestamp)` public contract method
+- no `claimable(recipient)` public contract method
+- no `sync(recipient)` entry point
+
+There is also no milestone storage model for ordered
+`(timestamp, cumulative_amount)` pairs.
+
+## Test Status
+
+`src/milestone_schedule_test.rs` documents a possible milestone-vesting design,
+but it is not wired into the compiled contract from `lib.rs` and should not be
+treated as implemented behavior on `main`.
+
+## Future Work
+
+If milestone vesting is desired in the future, it will require a separate
+contract change that adds:
+
+- a schedule type that can represent discrete tranches
+- validation rules for milestone ordering and cumulative totals
+- storage and view methods for milestone-based grants
+- tests wired into the compiled crate
+
+Until then, the vesting contract should be documented and used as a
+linear-with-cliff vesting contract only.
