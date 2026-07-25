@@ -22,32 +22,32 @@ fn test_error_paths() {
     let tb = Address::generate(&env);
 
     // Test NonPositiveAmount in swap_a_for_b
-    let res = client.swap_a_for_b(&0);
-    assert_eq!(res, Err(AmmPoolError::NonPositiveAmount));
+    let res = client.try_swap_a_for_b(&0);
+    assert_eq!(res, Err(Ok(AmmPoolError::NonPositiveAmount)));
 
     // Test EmptyPool in swap_a_for_b
-    let res = client.swap_a_for_b(&100);
-    assert_eq!(res, Err(AmmPoolError::EmptyPool));
+    let res = client.try_swap_a_for_b(&100);
+    assert_eq!(res, Err(Ok(AmmPoolError::EmptyPool)));
 
-    client.init_pool(&1000, &1000, &ta, &tb).unwrap();
+    client.init_pool(&1000, &1000, &ta, &tb);
 
     // Test InsufficientReserves in remove_liquidity (hits check before token transfer)
-    let res = client.remove_liquidity(&caller, &2000, &2000);
-    assert_eq!(res, Err(AmmPoolError::InsufficientReserves));
+    let res = client.try_remove_liquidity(&caller, &2000, &2000);
+    assert_eq!(res, Err(Ok(AmmPoolError::InsufficientReserves)));
 
     // Test Overflow in add_liquidity (hits checked_add before token transfer)
-    client.init_pool(&i128::MAX, &1000, &ta, &tb).unwrap();
-    let res = client.add_liquidity(&caller, &1, &1);
-    assert_eq!(res, Err(AmmPoolError::Overflow));
+    client.init_pool(&i128::MAX, &1000, &ta, &tb);
+    let res = client.try_add_liquidity(&caller, &1, &1);
+    assert_eq!(res, Err(Ok(AmmPoolError::Overflow)));
 
     // Test InvariantViolation in add_liquidity (hits assert_k_monotonic before token transfer)
-    client.init_pool(&1000, &1000, &ta, &tb).unwrap();
-    let res = client.add_liquidity(&caller, &-1, &0);
-    assert_eq!(res, Err(AmmPoolError::InvariantViolation));
+    client.init_pool(&1000, &1000, &ta, &tb);
+    let res = client.try_add_liquidity(&caller, &-1, &0);
+    assert_eq!(res, Err(Ok(AmmPoolError::InvariantViolation)));
 
     // Test ReentrantFlashSwap
-    client.init_pool(&1000, &1000, &ta, &tb).unwrap();
-    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
-    let res = client.swap_a_for_b(&100);
-    assert_eq!(res, Err(AmmPoolError::ReentrantFlashSwap));
+    client.init_pool(&1000, &1000, &ta, &tb);
+    client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
+    let res = client.try_swap_a_for_b(&100);
+    assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }

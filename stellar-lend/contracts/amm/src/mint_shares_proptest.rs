@@ -164,6 +164,16 @@ proptest! {
             }
             Err(LiquidityMathError::ZeroReserve) => {}
             Err(LiquidityMathError::Overflow) => {}
+            Err(
+                LiquidityMathError::InvalidBurnAmount
+                | LiquidityMathError::ZeroSupply
+                | LiquidityMathError::BurnExceedsSupply,
+            ) => {
+                prop_assert!(
+                    false,
+                    "calculate_mint_shares must never return a burn-only error variant"
+                );
+            }
         }
     }
 }

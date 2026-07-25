@@ -14,7 +14,7 @@ fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) {
     let client = AmmContractClient::new(&env, &id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
+    client.init_pool(&ra, &rb, &token_a, &token_b);
     let admin = Address::generate(&env);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
@@ -123,8 +123,8 @@ fn test_symmetric_output_equal_reserves() {
     let tb1 = Address::generate(&env);
     let ta2 = Address::generate(&env);
     let tb2 = Address::generate(&env);
-    c_ab.init_pool(&50_000, &50_000, &ta1, &tb1).unwrap();
-    c_ba.init_pool(&50_000, &50_000, &ta2, &tb2).unwrap();
+    c_ab.init_pool(&50_000, &50_000, &ta1, &tb1);
+    c_ba.init_pool(&50_000, &50_000, &ta2, &tb2);
 
     let out_ab = c_ab.swap_a_for_b(&1_000);
     let out_ba = c_ba.swap_b_for_a(&1_000);
@@ -160,7 +160,7 @@ fn test_swap_b_for_a_empty_pool_panics() {
 fn test_swap_b_for_a_zero_fee() {
     // Admin sets fee to 0 → output maximised (no fee deducted).
     let (_env, client, admin) = setup(10_000, 10_000);
-    client.set_fee_bps(&admin, &0).unwrap();
+    client.set_fee_bps(&admin, &0);
     let out_zero_fee = client.swap_b_for_a(&1_000);
 
     // Compare with default-fee pool (30 bps).
@@ -177,7 +177,7 @@ fn test_swap_b_for_a_max_fee_gives_reduced_output() {
     // Admin sets fee to MAX_FEE_BPS (5_000 = 50%) → output is much lower than with default fee.
     use crate::MAX_FEE_BPS;
     let (_env, client, admin) = setup(10_000, 10_000);
-    client.set_fee_bps(&admin, &MAX_FEE_BPS).unwrap();
+    client.set_fee_bps(&admin, &MAX_FEE_BPS);
     let out_max_fee = client.swap_b_for_a(&1_000);
 
     let (_env2, client2, _admin2) = setup(10_000, 10_000);

@@ -43,8 +43,8 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, soroban_sdk::Address) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
-    let token_a = soroban_sdk::testutils::Address::generate(&env);
-    let token_b = soroban_sdk::testutils::Address::generate(&env);
+    let token_a = soroban_sdk::Address::generate(&env);
+    let token_b = soroban_sdk::Address::generate(&env);
     AmmContractClient::new(&env, &id).init_pool(&ra, &rb, &token_a, &token_b);
     (env, id)
 }
@@ -67,8 +67,9 @@ impl SwapCallbackStub {
     /// Initiate flash swap + repay in one atomic host invocation.
     pub fn execute(env: Env, amm: soroban_sdk::Address, amount_out: i128, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
-        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
-        client.repay_flash_swap(&amount_in);
+        let this = env.current_contract_address();
+        client.flash_swap_a_for_b(&this, &amount_out, &Bytes::new(&env));
+        client.repay_flash_swap(&this, &amount_in);
     }
 }
 
@@ -85,10 +86,11 @@ impl ReentrantCallbackStub {
     /// Starts a flash swap then immediately tries a nested one (must panic).
     pub fn execute(env: Env, amm: soroban_sdk::Address, amount_out: i128) {
         let client = AmmContractClient::new(&env, &amm);
+        let this = env.current_contract_address();
         // Step 1: open the flash swap — arms the guard.
-        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&this, &amount_out, &Bytes::new(&env));
         // Step 2: attempt a nested flash swap — must be rejected by the guard.
-        client.flash_swap_a_for_b(&1_i128, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&this, &1_i128, &Bytes::new(&env));
     }
 }
 
