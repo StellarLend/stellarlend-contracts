@@ -28,16 +28,16 @@
 //! - Flash‑swap APIs (e.g. `flash_swap_a_for_b`, `repay_flash_swap`) and a dedicated `AmmPoolError`
 //!   type are **not implemented** in this crate; do not reference them until they are introduced
 //!   through a tracked protocol change.
-//!   Note re: [#1413](https://github.com/StellarLend/stellarlend-contracts/issues/1413):
-//!   that report describes a signature/body mismatch on a `flash_swap_a_for_b` symbol that is
-//!   not declared on this branch, so no source fix is required here. The proposal in the
-//!   issue defines the (candidate) shape as
-//!   `pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes)
-//!       -> Result<i128, AmmPoolError>` — paired, per the issue, with `repay_flash_swap`
-//!   and `assert_no_active_flash_swap`. Any eventual landing may differ (the bug report is
-//!   not a design doc); see the actual protocol-change PR for the final shape and make sure
-//!   it introduces a regression test, since none currently exercises this unimplemented
-//!   surface.
+//!
+//! Note re: [#1413](https://github.com/StellarLend/stellarlend-contracts/issues/1413):
+//! that report describes a signature/body mismatch on a `flash_swap_a_for_b` symbol that
+//! is not declared on this branch, so no source fix is required here. The proposal in the
+//! issue defines the (candidate) shape as
+//! `pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> Result<i128, AmmPoolError>`
+//! — paired, per the issue, with `repay_flash_swap` and `assert_no_active_flash_swap`.
+//! Any eventual landing may differ (the bug report is not a design doc); see the actual
+//! protocol-change PR for the final shape and make sure it introduces a regression test,
+//! since none currently exercises this unimplemented surface.
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
