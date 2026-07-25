@@ -19,6 +19,7 @@ fn test_error_paths() {
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
+    let admin = soroban_sdk::Address::generate(&env);
 
     // Test NonPositiveAmount in swap_a_for_b
     let res = client.swap_a_for_b(&0);
@@ -28,24 +29,24 @@ fn test_error_paths() {
     let res = client.swap_a_for_b(&100);
     assert_eq!(res, Err(AmmPoolError::EmptyPool));
 
-    client.init_pool(&1000, &1000).unwrap();
+    client.init_pool(&admin, &1000, &1000);
 
     // Test InsufficientReserves in remove_liquidity
     let res = client.remove_liquidity(&2000, &2000);
     assert_eq!(res, Err(AmmPoolError::InsufficientReserves));
 
     // Test Overflow in add_liquidity
-    client.init_pool(&i128::MAX, &1000).unwrap();
+    client.init_pool(&admin, &i128::MAX, &1000);
     let res = client.add_liquidity(&1, &1);
     assert_eq!(res, Err(AmmPoolError::Overflow));
 
     // Test InvariantViolation in add_liquidity (using negative amount to force k decrease)
-    client.init_pool(&1000, &1000).unwrap();
+    client.init_pool(&admin, &1000, &1000);
     let res = client.add_liquidity(&-1, &0);
     assert_eq!(res, Err(AmmPoolError::InvariantViolation));
 
     // Test ReentrantFlashSwap
-    client.init_pool(&1000, &1000).unwrap();
+    client.init_pool(&admin, &1000, &1000);
     client.flash_swap_a_for_b(&100, &Bytes::new());
     let res = client.swap_a_for_b(&100);
     assert_eq!(res, Err(AmmPoolError::ReentrantFlashSwap));

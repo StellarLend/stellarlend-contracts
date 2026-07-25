@@ -4,6 +4,8 @@ pub mod liquidity_math;
 pub mod math;
 
 #[cfg(test)]
+mod admin_authorization_test;
+#[cfg(test)]
 mod fee_accrual_overflow_test;
 #[cfg(test)]
 mod stored_fee_test;
@@ -22,8 +24,7 @@ mod mint_shares_proptest;
 #[cfg(test)]
 mod sqrt_precision_test;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
-
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Bytes, Env, Symbol, Vec};
 pub struct FeeTier {
     pub min_reserve: u128,
     pub fee_bps: u32,
@@ -122,6 +123,11 @@ const KEY_FEE_B: (&str, &str) = ("pool", "fee_b");
 // admin call is `DEFAULT_FEE_BPS` (30 bps = 0.30 %).
 const KEY_FEE_BPS: (&str, &str) = ("pool", "fee_bps");
 
+// Pool admin identity. Set on the first `init_pool` call (first-caller-wins).
+// All admin-gated setters (`init_pool`, `set_max_impact_bps`, `set_fee_bps`)
+// require the stored admin's authorization once it exists.
+const KEY_ADMIN: (&str, &str) = ("pool", "admin");
+
 /// Maximum fee the admin may configure (50 % = 5 000 bps).
 pub const MAX_FEE_BPS: i128 = 5_000;
 
@@ -161,8 +167,9 @@ impl AmmContract {
     /// follow-up `init_pool` from the same transaction.
     ///
     /// Resets both fee accumulators to zero.
-    pub fn init_pool(env: Env, a: i128, b: i128) -> Result<(), AmmPoolError> {
+    pub fn init_pool(env: Env, admin: Address, a: i128, b: i128) -> Result<(), AmmPoolError> {
         Self::assert_no_active_flash_swap(&env)?;
+        Self::require_admin(&env, &admin)?;
         env.storage().persistent().set(&KEY_RES_A, &a);
         env.storage().persistent().set(&KEY_RES_B, &b);
         env.storage().persistent().set(&KEY_FEE_A, &0_i128);
@@ -183,10 +190,16 @@ impl AmmContract {
     /// * `_admin`         — caller address (auth checked by the caller in
     ///                      production; kept in signature for future ACL).
     /// * `max_impact_bps` — maximum impact in BPS, or `IMPACT_GUARD_DISABLED`.
-    pub fn set_max_impact_bps(env: Env, _admin: Address, max_impact_bps: u32) {
+    pub fn set_max_impact_bps(
+        env: Env,
+        admin: Address,
+        max_impact_bps: u32,
+    ) -> Result<(), AmmPoolError> {
+        Self::require_admin(&env, &admin)?;
         env.storage()
             .persistent()
             .set(&KEY_MAX_IMPACT_BPS, &max_impact_bps);
+        Ok(())
     }
 
     /// Return the current max-impact bound in BPS, or [`IMPACT_GUARD_DISABLED`]
@@ -213,7 +226,7 @@ impl AmmContract {
     /// # Errors
     /// Returns [`AmmPoolError::FeeBpsOutOfRange`] when `fee_bps > MAX_FEE_BPS`.
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: i128) -> Result<(), AmmPoolError> {
-        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
         if fee_bps < 0 || fee_bps > MAX_FEE_BPS {
             return Err(AmmPoolError::FeeBpsOutOfRange);
         }
@@ -244,14 +257,33 @@ impl AmmContract {
     /// when `KEY_FLASH_ACTIVE == true`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Reentrancy Guard](../FLASH_SWAP_PROTOCOL.md)
-    fn assert_no_active_flash_swap(env: &Env) {
+fn require_admin(env: &Env, caller: &Address) -> Result<(), AmmPoolError> {
+        caller.require_auth();
+        match env
+            .storage()
+            .persistent()
+            .get::<(&str, &str), Address>(&KEY_ADMIN)
+        {
+            Some(stored) => {
+                if &stored != caller {
+                    return Err(AmmPoolError::UnauthorizedCaller);
+                }
+            }
+            None => {
+                env.storage().persistent().set(&KEY_ADMIN, caller);
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_no_active_flash_swap(env: &Env) -> Result<(), AmmPoolError> {
         let active: bool = env
             .storage()
             .instance()
             .get(&KEY_FLASH_ACTIVE)
             .unwrap_or(false);
         if active {
-            return Err(AmmPoolError::ReentrantFlashSwap);
+    return Err(AmmPoolError::ReentrantFlashSwap);   // but returns Result
         }
         Ok(())
     }
@@ -299,8 +331,8 @@ impl AmmContract {
     /// The fee accumulator (`KEY_FEE_A`) uses saturating addition. If the
     /// counter reaches `i128::MAX` it stops incrementing but never panics.
     /// This guarantees the swap cannot be halted by fee-accumulation overflow.
-    pub fn swap_a_for_b(env: Env, amount_in: i128) -> i128 {
-        Self::assert_no_active_flash_swap(&env);
+    pub fn swap_a_for_b(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
+        Self::assert_no_active_flash_swap(&env)?;
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -404,7 +436,7 @@ impl AmmContract {
     ///
     /// Identical to [`swap_a_for_b`]: the fee accumulator saturates at
     /// `i128::MAX` and never panics on addition.
-    pub fn swap_b_for_a(env: Env, amount_in: i128) -> i128 {
+    pub fn swap_b_for_a(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -508,7 +540,7 @@ impl AmmContract {
     /// - `"Insufficient reserves: amount_out would drain reserve_b"` — `amount_out ≥ reserve_b`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
-    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> i128 {
+    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> Result<i128, AmmPoolError> {
         // `params` is reserved for a future callback variant.  Bound to
         // a local so the parameter is used (no dead-binding lint).
         let _ = params;
@@ -580,7 +612,7 @@ impl AmmContract {
     ///   Soroban then rolls back all storage changes, including the Op-1 debit.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Verify-K Repay Invariant](../FLASH_SWAP_PROTOCOL.md)
-    pub fn repay_flash_swap(env: Env, amount_in: i128) {
+    pub fn repay_flash_swap(env: Env, amount_in: i128) -> Result<(), AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -769,7 +801,7 @@ fn assert_k_monotonic(
 ///
 /// Uses checked arithmetic; panics on overflow.
 fn compute_fee(amount_in: i128, fee_bps: i128) -> Result<i128, AmmPoolError> {
-    amount_in.checked_mul(fee_bps).ok_or(AmmPoolError::Overflow)? / 10_000
+    Ok(amount_in.checked_mul(fee_bps).ok_or(AmmPoolError::Overflow)? / 10_000)
 }
 
 /// Inverse of the verify-k condition: returns the **minimum** `amount_in`
@@ -823,6 +855,7 @@ mod test {
         env.mock_all_auths();
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
 
         let reserve_sizes = [1_000_i128, 10_000, 100_000, 1_000_000];
         let amounts = [1_i128, 10, 100, 1_000, 10_000];
@@ -830,7 +863,7 @@ mod test {
         for &ra in reserve_sizes.iter() {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
-                    client.init_pool(&ra, &rb).unwrap();
+                    client.init_pool(&admin, &ra, &rb);
                     // swap using stored fee (default 30 bps)
                     let _out = client.swap_a_for_b(&amt);
                     let (new_ra, new_rb) = client.get_reserves();
@@ -856,8 +889,9 @@ mod test {
         env.mock_all_auths();
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
 
-        client.init_pool(&1000, &2000).unwrap();
+        client.init_pool(&admin, &1000, &2000);
         client.add_liquidity(&100, &200);
         let (ra1, rb1) = client.get_reserves();
         let k1 = ra1.checked_mul(rb1).unwrap();

@@ -26,7 +26,8 @@ fn make_pool(ra: i128, rb: i128) -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
-    AmmContractClient::new(&env, &id).init_pool(&ra, &rb);
+    let admin = Address::generate(&env);
+    AmmContractClient::new(&env, &id).init_pool(&admin, &ra, &rb);
     (env, id)
 }
 

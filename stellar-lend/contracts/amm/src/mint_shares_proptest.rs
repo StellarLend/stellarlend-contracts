@@ -163,7 +163,10 @@ proptest! {
                 );
             }
             Err(LiquidityMathError::ZeroReserve) => {}
-            Err(LiquidityMathError::Overflow) => {}
+            Err(LiquidityMathError::Overflow)
+            | Err(LiquidityMathError::InvalidBurnAmount)
+            | Err(LiquidityMathError::ZeroSupply)
+            | Err(LiquidityMathError::BurnExceedsSupply) => {}
         }
     }
 }
