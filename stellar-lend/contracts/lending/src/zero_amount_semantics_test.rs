@@ -31,21 +31,21 @@ fn setup() -> (Env, LendingContractClient<'static>, Address) {
 fn deposit_zero_returns_invalid_amount() {
     let (_env, client, user) = setup();
     let res = client.try_deposit(&user, &0);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn deposit_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
     let res = client.try_deposit(&user, &-1);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn deposit_large_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
     let res = client.try_deposit(&user, &i128::MIN);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn withdraw_zero_returns_invalid_amount() {
     let (_env, client, user) = setup();
     client.deposit(&user, &200);
     let res = client.try_withdraw(&user, &0);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn withdraw_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
     client.deposit(&user, &200);
     let res = client.try_withdraw(&user, &-50);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn withdraw_large_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
     client.deposit(&user, &200);
     let res = client.try_withdraw(&user, &i128::MIN);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
@@ -133,26 +133,27 @@ fn withdraw_negative_does_not_mutate_collateral() {
 fn borrow_zero_returns_invalid_amount() {
     let (_env, client, user) = setup();
     let res = client.try_borrow(&user, &0);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn borrow_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
     let res = client.try_borrow(&user, &-1);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn borrow_large_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
     let res = client.try_borrow(&user, &i128::MIN);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn borrow_zero_does_not_mutate_debt() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     let before = client.get_position(&user).debt;
 
@@ -165,6 +166,7 @@ fn borrow_zero_does_not_mutate_debt() {
 #[test]
 fn borrow_negative_does_not_mutate_debt() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     let before = client.get_position(&user).debt;
 
@@ -182,7 +184,7 @@ fn borrow_negative_with_min_borrow_set_returns_invalid_amount_not_below_minimum(
     // set a minimum borrow of 50 — negative amounts must still hit InvalidAmount
     client.set_min_borrow(&50);
     let res = client.try_borrow(&user, &-1);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 /// Zero borrow must return InvalidAmount even when min_borrow is also zero,
@@ -192,7 +194,7 @@ fn borrow_zero_with_min_borrow_zero_returns_invalid_amount() {
     let (_env, client, user) = setup();
     // min_borrow defaults to 0; a zero amount must still be rejected
     let res = client.try_borrow(&user, &0);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 // ---------------------------------------------------------------------------
@@ -202,30 +204,34 @@ fn borrow_zero_with_min_borrow_zero_returns_invalid_amount() {
 #[test]
 fn repay_zero_returns_invalid_amount() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     let res = client.try_repay(&user, &0);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn repay_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     let res = client.try_repay(&user, &-1);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn repay_large_negative_returns_invalid_amount() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     let res = client.try_repay(&user, &i128::MIN);
-    assert_eq!(res, Ok(Err(LendingError::InvalidAmount)));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
 }
 
 #[test]
 fn repay_zero_does_not_mutate_debt() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     let before = client.get_position(&user).debt;
 
@@ -238,6 +244,7 @@ fn repay_zero_does_not_mutate_debt() {
 #[test]
 fn repay_negative_does_not_mutate_debt() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
     let before = client.get_position(&user).debt;
 
@@ -250,9 +257,10 @@ fn repay_negative_does_not_mutate_debt() {
 #[test]
 fn repay_exact_reduces_debt_to_zero() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
 
-    let remaining = client.repay(&user, &100).unwrap();
+    let remaining = client.repay(&user, &100);
 
     assert_eq!(remaining, 0);
     assert_eq!(client.get_position(&user).debt, 0);
@@ -261,9 +269,10 @@ fn repay_exact_reduces_debt_to_zero() {
 #[test]
 fn repay_overpay_clamps_debt_to_zero() {
     let (_env, client, user) = setup();
+    client.deposit(&user, &200);
     client.borrow(&user, &100);
 
-    let remaining = client.repay(&user, &150).unwrap();
+    let remaining = client.repay(&user, &150);
 
     assert_eq!(remaining, 0);
     assert_eq!(client.get_position(&user).debt, 0);
@@ -273,7 +282,7 @@ fn repay_overpay_clamps_debt_to_zero() {
 fn repay_with_no_debt_returns_zero() {
     let (_env, client, user) = setup();
 
-    let remaining = client.repay(&user, &50).unwrap();
+    let remaining = client.repay(&user, &50);
 
     assert_eq!(remaining, 0);
     assert_eq!(client.get_position(&user).debt, 0);

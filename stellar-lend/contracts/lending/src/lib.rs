@@ -560,8 +560,8 @@ impl LendingContract {
     ///
     /// # Errors
     /// - [`LendingError::AlreadyInitialized`] if `initialize` has already
-    ///   been called on this contract instance.  The second call is a no-op
-    ///   and the existing admin is **not** replaced.
+    ///   been called on this contract instance. This returns a typed error
+    ///   rather than panicking.
     ///
     /// # Security
     /// `initialize` is the *only* entry point that may be called before the
@@ -3595,3 +3595,5 @@ pub(crate) mod test {
 }
 #[cfg(test)]
 mod initialization_guard_test;
+#[cfg(test)]
+mod zero_amount_semantics_test;
