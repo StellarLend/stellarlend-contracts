@@ -192,9 +192,20 @@ const KEY_FEE_B: (&str, &str) = ("pool", "fee_b");
 // admin call is `DEFAULT_FEE_BPS` (30 bps = 0.30 %).
 const KEY_FEE_BPS: (&str, &str) = ("pool", "fee_bps");
 
+// Admin-configured minimum swap input floor.
+//
+// `KEY_MIN_SWAP_IN` stores the optional lower bound on `amount_in` for
+// regular swaps (and on `amount_out` for flash swaps).  Default is `0`
+// (disabled) so the only always-on protection is the zero-output guard.
+// Admins may raise the floor to reject economically meaningless dust
+// inputs before they hit the constant-product math.
+//
+// See: [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md)
+const KEY_MIN_SWAP_IN: (&str, &str) = ("pool", "min_swap_in");
+
 // Pool admin identity. Set on the first `init_pool` call (first-caller-wins).
-// All admin-gated setters (`init_pool`, `set_max_impact_bps`, `set_fee_bps`)
-// require the stored admin's authorization once it exists.
+// All admin-gated setters (`init_pool`, `set_max_impact_bps`, `set_fee_bps`,
+// `set_min_swap_in`) require the stored admin's authorization once it exists.
 const KEY_ADMIN: (&str, &str) = ("pool", "admin");
 
 // LP share tracking — total supply and per-user balances.
@@ -212,6 +223,12 @@ pub const MAX_FEE_BPS: i128 = 5_000;
 
 /// Default fee applied when no admin has called `set_fee_bps`.
 pub const DEFAULT_FEE_BPS: i128 = 30;
+
+/// Default minimum swap input when no admin has called `set_min_swap_in`.
+///
+/// `0` means the floor is disabled; the always-on protection is still the
+/// zero-output rejection ([`AmmPoolError::ZeroOutput`]).
+pub const DEFAULT_MIN_SWAP_IN: i128 = 0;
 
 #[contracterror]
 #[derive(Eq, PartialEq, Debug)]
@@ -244,6 +261,12 @@ pub enum AmmPoolError {
     ZeroReserve = 13,
     /// Caller has insufficient LP balance for requested burn
     InsufficientLpBalance = 14,
+    /// Computed swap output is zero after fees and floor division — dust
+    /// input that would consume tokens / perturb reserves with no economic
+    /// exchange.  See [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md).
+    ZeroOutput = 15,
+    /// Input is below the admin-configured `min_swap_in` floor.
+    AmountBelowMinSwapIn = 16,
 }
 
 /// Return value of [`AmmContract::get_swap_quote`].
@@ -414,6 +437,48 @@ impl AmmContract {
             .persistent()
             .get(&KEY_FEE_BPS)
             .unwrap_or(DEFAULT_FEE_BPS)
+    }
+
+    /// Set the optional minimum swap-input floor (admin only).
+    ///
+    /// When `min_swap_in > 0`, regular swaps whose `amount_in` is strictly
+    /// below the floor are rejected with
+    /// [`AmmPoolError::AmountBelowMinSwapIn`] before any reserve math runs.
+    /// Flash swaps apply the same floor to `amount_out`.  Passing `0`
+    /// disables the floor (default); the zero-output guard still applies.
+    ///
+    /// # Arguments
+    /// * `admin`       — address that must authorize the call.
+    /// * `min_swap_in` — non-negative minimum input (or flash `amount_out`).
+    ///
+    /// # Errors
+    /// * [`AmmPoolError::NonPositiveAmount`] — `min_swap_in < 0`.
+    ///
+    /// See: [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md)
+    pub fn set_min_swap_in(
+        env: Env,
+        admin: Address,
+        min_swap_in: i128,
+    ) -> Result<(), AmmPoolError> {
+        Self::require_admin(&env, &admin)?;
+        if min_swap_in < 0 {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
+        env.storage()
+            .persistent()
+            .set(&KEY_MIN_SWAP_IN, &min_swap_in);
+        Ok(())
+    }
+
+    /// Return the current minimum swap-input floor.
+    ///
+    /// Returns [`DEFAULT_MIN_SWAP_IN`] (`0`) when no admin has called
+    /// [`set_min_swap_in`](AmmContract::set_min_swap_in) yet.
+    pub fn get_min_swap_in(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&KEY_MIN_SWAP_IN)
+            .unwrap_or(DEFAULT_MIN_SWAP_IN)
     }
 
     /// Reentrancy guard — panics if a flash swap is currently in flight.
@@ -625,6 +690,23 @@ impl AmmContract {
     /// caller argument.  This prevents callers from routing fee-free by
     /// supplying `fee_bps = 0`.  Returns amount_out.
     ///
+    /// # Dust-swap guard
+    ///
+    /// After the constant-product floor division, if `amount_out == 0` the
+    /// swap is rejected with [`AmmPoolError::ZeroOutput`].  Without this
+    /// check a dust `amount_in` would still be absorbed into `reserve_a`
+    /// while paying the caller nothing — free reserve-state grinding that
+    /// `assert_k_monotonic` alone does not reject (k still rises).  An
+    /// optional admin floor ([`set_min_swap_in`]) rejects inputs below
+    /// `min_swap_in` before math runs.  See [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md).
+    ///
+    /// # Errors
+    /// * [`AmmPoolError::NonPositiveAmount`] — `amount_in <= 0`.
+    /// * [`AmmPoolError::AmountBelowMinSwapIn`] — `amount_in < min_swap_in`.
+    /// * [`AmmPoolError::EmptyPool`] — either reserve is zero.
+    /// * [`AmmPoolError::ZeroOutput`] — computed output floors to zero.
+    /// * [`AmmPoolError::Overflow`] — checked arithmetic overflow.
+    ///
     /// # Overflow policy
     ///
     /// The fee accumulator (`KEY_FEE_A`) uses saturating addition. If the
@@ -634,6 +716,15 @@ impl AmmContract {
         Self::assert_no_active_flash_swap(&env)?;
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
+        }
+        // Optional admin floor (default 0 = disabled).
+        let min_swap_in: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_MIN_SWAP_IN)
+            .unwrap_or(DEFAULT_MIN_SWAP_IN);
+        if min_swap_in > 0 && amount_in < min_swap_in {
+            return Err(AmmPoolError::AmountBelowMinSwapIn);
         }
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
         let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
@@ -669,6 +760,12 @@ impl AmmContract {
             .ok_or(AmmPoolError::Overflow)?;
 
         let amount_out = numerator / denominator;
+
+        // Dust-swap guard: reject zero-output swaps so input is never
+        // consumed without an economic exchange of the output asset.
+        if amount_out == 0 {
+            return Err(AmmPoolError::ZeroOutput);
+        }
 
         let new_ra = ra.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?;
         let new_rb = rb.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?;
@@ -731,11 +828,18 @@ impl AmmContract {
     /// decreases by `amount_out`.  The k-monotonicity invariant
     /// (k = reserve_a × reserve_b) is asserted via `assert_k_monotonic`.
     ///
-    /// # Panics
-    /// - `amount_in <= 0`
-    /// - either reserve is zero (empty pool)
-    /// - any intermediate checked-arithmetic overflow
-    /// - k decreases after the swap (invariant violation)
+    /// # Dust-swap guard
+    ///
+    /// Same as [`swap_a_for_b`]: zero computed output is rejected with
+    /// [`AmmPoolError::ZeroOutput`], and an optional admin `min_swap_in`
+    /// floor applies before math.  See [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md).
+    ///
+    /// # Errors
+    /// * [`AmmPoolError::NonPositiveAmount`] — `amount_in <= 0`.
+    /// * [`AmmPoolError::AmountBelowMinSwapIn`] — `amount_in < min_swap_in`.
+    /// * [`AmmPoolError::EmptyPool`] — either reserve is zero.
+    /// * [`AmmPoolError::ZeroOutput`] — computed output floors to zero.
+    /// * [`AmmPoolError::Overflow`] — checked arithmetic overflow.
     ///
     /// # Overflow policy
     ///
@@ -744,6 +848,14 @@ impl AmmContract {
     pub fn swap_b_for_a(env: Env, amount_in: i128) -> Result<i128, AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
+        }
+        let min_swap_in: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_MIN_SWAP_IN)
+            .unwrap_or(DEFAULT_MIN_SWAP_IN);
+        if min_swap_in > 0 && amount_in < min_swap_in {
+            return Err(AmmPoolError::AmountBelowMinSwapIn);
         }
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
         let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
@@ -778,6 +890,11 @@ impl AmmContract {
             .ok_or(AmmPoolError::Overflow)?;
 
         let amount_out = numerator / denominator; // floor — pool never over-pays
+
+        // Dust-swap guard (mirrors swap_a_for_b).
+        if amount_out == 0 {
+            return Err(AmmPoolError::ZeroOutput);
+        }
 
         let new_rb = rb.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?;
         let new_ra = ra.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?;
@@ -841,14 +958,23 @@ impl AmmContract {
     /// The fee is read from [`KEY_FEE_BPS`] in storage (admin-set via
     /// [`set_fee_bps`](AmmContract::set_fee_bps)), not from a caller argument.
     ///
+    /// # Dust-swap / min-input guard
+    ///
+    /// Flash swaps are amount-out driven, so the zero-output grinding
+    /// vector of regular swaps does not apply directly.  The optional
+    /// admin `min_swap_in` floor is still enforced against `amount_out`
+    /// so dust flash draws cannot open a flash session that only
+    /// perturbs reserves.  See [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md).
+    ///
     /// # Returns
     /// `amount_out` — the number of asset-B units debited from the pool.
     ///
-    /// # Panics
-    /// - `"ReentrantFlashSwap"` — a flash swap is already in flight.
-    /// - `"amount_out must be positive"` — `amount_out ≤ 0`.
-    /// - `"empty pool"` — either reserve is zero.
-    /// - `"Insufficient reserves: amount_out would drain reserve_b"` — `amount_out ≥ reserve_b`.
+    /// # Errors
+    /// * [`AmmPoolError::ReentrantFlashSwap`] — a flash swap is already in flight.
+    /// * [`AmmPoolError::NonPositiveAmount`] — `amount_out ≤ 0`.
+    /// * [`AmmPoolError::AmountBelowMinSwapIn`] — `amount_out < min_swap_in`.
+    /// * [`AmmPoolError::EmptyPool`] — either reserve is zero.
+    /// * [`AmmPoolError::InsufficientReserves`] — `amount_out ≥ reserve_b`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
     pub fn flash_swap_a_for_b(
@@ -864,6 +990,16 @@ impl AmmContract {
 
         if amount_out <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
+        }
+        // Apply the same admin min-input floor used by regular swaps to
+        // the flash draw size so dust flash sessions cannot open.
+        let min_swap_in: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_MIN_SWAP_IN)
+            .unwrap_or(DEFAULT_MIN_SWAP_IN);
+        if min_swap_in > 0 && amount_out < min_swap_in {
+            return Err(AmmPoolError::AmountBelowMinSwapIn);
         }
 
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
@@ -1265,26 +1401,39 @@ mod test {
         let token_b = generate_address(&env);
 
         let reserve_sizes = [1_000_i128, 10_000, 100_000, 1_000_000];
-        let amounts = [1_i128, 10, 100, 1_000, 10_000];
+        // Start from 2: amount_in=1 floors to zero output under the dust guard
+        // for all of these reserve sizes (with the default 30 bps fee).
+        let amounts = [2_i128, 10, 100, 1_000, 10_000];
 
         for &ra in reserve_sizes.iter() {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
                     client.init_pool(&ra, &rb, &token_a, &token_b);
-                    // swap using stored fee (default 30 bps)
-                    let _out = client.swap_a_for_b(&amt);
-                    let (new_ra, new_rb) = client.get_reserves();
-                    let k_before = ra.checked_mul(rb).unwrap();
-                    let k_after = new_ra.checked_mul(new_rb).unwrap();
-                    assert!(
-                        k_after >= k_before,
-                        "k decreased: ra={}, rb={}, amt={}, k_before={}, k_after={}",
-                        ra,
-                        rb,
-                        amt,
-                        k_before,
-                        k_after
-                    );
+                    // swap using stored fee (default 30 bps); skip dust inputs
+                    // that the zero-output guard correctly rejects.
+                    let result = client.try_swap_a_for_b(&amt);
+                    match result {
+                        Ok(_) => {
+                            let (new_ra, new_rb) = client.get_reserves();
+                            let k_before = ra.checked_mul(rb).unwrap();
+                            let k_after = new_ra.checked_mul(new_rb).unwrap();
+                            assert!(
+                                k_after >= k_before,
+                                "k decreased: ra={}, rb={}, amt={}, k_before={}, k_after={}",
+                                ra,
+                                rb,
+                                amt,
+                                k_before,
+                                k_after
+                            );
+                        }
+                        Err(Ok(AmmPoolError::ZeroOutput)) => {
+                            // Dust rejected — k must be unchanged.
+                            let (new_ra, new_rb) = client.get_reserves();
+                            assert_eq!((new_ra, new_rb), (ra, rb));
+                        }
+                        other => panic!("unexpected swap result: {:?}", other),
+                    }
                 }
             }
         }
@@ -1478,6 +1627,8 @@ pub fn get_fee_tiers(env: Env) -> Vec<u128> {
         .get::<_, Vec<u128>>(&key)
         .unwrap_or_else(|| Vec::new(&env))
 }
+#[cfg(test)]
+mod dust_swap_guard_test;
 #[cfg(test)]
 mod dynamic_fee_test;
 #[cfg(test)]
