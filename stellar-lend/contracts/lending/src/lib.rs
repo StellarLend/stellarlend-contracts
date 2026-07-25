@@ -195,6 +195,7 @@ pub enum DataKey {
     EmergencyState,
     Guardian,
     PauseState(PauseType),
+    LiquidationThresholdBps,
     RateParams,
     /// Cross-asset: per-(user, asset) collateral balance.
     CollateralAsset(Address, Address),
@@ -395,6 +396,7 @@ pub enum LendingError {
     /// `set_liquidation_incentive_bps` called with a value outside
     /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
     InvalidLiquidationIncentiveBps = 7002,
+    InvalidLiquidationThresholdBps = 7005,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -1667,11 +1669,24 @@ impl LendingContract {
 
     /// Return the effective liquidation threshold (basis points) used for
     /// health-factor computations.
-    ///
-    /// Currently returns the compile-time constant [`LIQUIDATION_THRESHOLD_BPS`]
-    /// (8000 = 80 %). This will become a governed parameter in a future upgrade.
-    pub fn get_liquidation_threshold_bps(_env: &Env) -> i128 {
-        LIQUIDATION_THRESHOLD_BPS
+    pub fn get_liquidation_threshold_bps(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LiquidationThresholdBps)
+            .unwrap_or(LIQUIDATION_THRESHOLD_BPS)
+    }
+
+    /// Set the effective liquidation threshold (basis points) used for
+    /// health-factor computations.
+    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
+        Self::require_admin(&env)?;
+        if threshold_bps <= 0 || threshold_bps > 10000 {
+            return Err(LendingError::InvalidLiquidationThresholdBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationThresholdBps, &threshold_bps);
+        Ok(())
     }
 
     /// Return the effective liquidation incentive (basis points) used by
@@ -1910,7 +1925,7 @@ impl LendingContract {
             .max(0);
 
         let health_factor = if debt > 0 {
-            col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
+            col.checked_mul(Self::get_liquidation_threshold_bps(&env))
                 .map(|v| v / debt)
                 .unwrap_or(i128::MAX)
         } else {
@@ -1948,7 +1963,7 @@ impl LendingContract {
             .max(0);
 
         if debt > 0 {
-            col.checked_mul(LIQUIDATION_THRESHOLD_BPS)
+            col.checked_mul(Self::get_liquidation_threshold_bps(&env))
                 .map(|v| v / debt)
                 .unwrap_or(i128::MAX)
         } else {
