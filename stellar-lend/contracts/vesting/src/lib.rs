@@ -22,6 +22,10 @@ pub enum VestingError {
     NotPaused = 7,
     /// Invalid grant parameters
     InvalidGrant = 8,
+    /// Invalid amount requested
+    InvalidAmount = 9,
+    /// Requested amount exceeds claimable amount
+    OverClaim = 10,
 }
 
 /// Storage keys for the vesting contract
@@ -283,6 +287,45 @@ impl VestingContract {
             .set(&VestingKey::Grant(grantee.clone()), &grant);
         Self::emit_event(&env, "claimed", &grantee);
         Ok(claimable)
+    }
+
+    /// Claim a partial amount of vested tokens for the calling grantee.
+    ///
+    /// Rejected while the contract is paused. Uses pause-adjusted `effective_now`.
+    ///
+    /// # Arguments
+    /// * `grantee` - The beneficiary claiming tokens
+    /// * `amount` - The amount of tokens to claim
+    ///
+    /// # Returns
+    /// The number of tokens claimed in this transaction
+    pub fn claim_partial(env: Env, grantee: Address, amount: i128) -> Result<i128, VestingError> {
+        Self::require_not_paused(&env)?;
+        if amount <= 0 {
+            return Err(VestingError::InvalidAmount);
+        }
+        let mut grant: Grant = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Grant(grantee.clone()))
+            .ok_or(VestingError::GrantNotFound)?;
+        if grant.revoked {
+            return Err(VestingError::AlreadyRevoked);
+        }
+        let effective_now = Self::effective_now(&env);
+        let claimable = grant.claimable_at(effective_now);
+        if amount > claimable {
+            return Err(VestingError::OverClaim);
+        }
+        grant.claimed_amount = grant
+            .claimed_amount
+            .checked_add(amount)
+            .ok_or(VestingError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&VestingKey::Grant(grantee.clone()), &grant);
+        Self::emit_event(&env, "claimed", &grantee);
+        Ok(amount)
     }
 
     /// Revoke a grant.
