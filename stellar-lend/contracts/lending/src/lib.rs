@@ -21,6 +21,8 @@ mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
 #[cfg(test)]
+mod accrual_state_doc_test;
+#[cfg(test)]
 mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
