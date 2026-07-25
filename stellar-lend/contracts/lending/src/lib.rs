@@ -83,6 +83,8 @@ mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
+mod max_borrow_proptest;
+#[cfg(test)]
 mod missing_price_test;
 #[cfg(test)]
 mod mul_div_proptest;
