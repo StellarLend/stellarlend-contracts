@@ -81,7 +81,6 @@ mod cross_asset_decimals_test;
 
 #[cfg(test)]
 mod normalize_price_test;
-
 #[cfg(test)]
 mod cross_asset_ltv_test;
 #[cfg(test)]
@@ -142,13 +141,13 @@ use bridge::{
     set_bridge_fee,
 };
 
+use crate::admin::require_admin;
 #[allow(unused_imports)]
 use crate::interest_rate::{
     initialize_interest_rate_config, update_interest_rate_config, InterestRateConfig,
     InterestRateError,
 };
 use crate::liquidate::liquidate;
-use crate::admin::require_admin;
 use crate::risk_management::{
     set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
 };
@@ -194,7 +193,7 @@ impl HelloContract {
             .map_err(|_| RiskManagementError::Unauthorized)?;
         initialize_risk_management(&env, admin.clone())?;
         initialize_risk_params(&env).map_err(|_| RiskManagementError::InvalidParameter)?;
-        initialize_interest_rate_config(&env, admin.clone()).map_err(|e| {
+        initialize_interest_rate_config(&env).map_err(|e| {
             if e == InterestRateError::AlreadyInitialized {
                 RiskManagementError::AlreadyInitialized
             } else {
