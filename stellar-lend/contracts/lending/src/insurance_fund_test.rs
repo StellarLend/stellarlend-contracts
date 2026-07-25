@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::debt::DebtPosition;
+use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
 use crate::rounding_strategy::SECONDS_PER_YEAR;
 use crate::{DataKey, LendingContract, LendingContractClient};
 use soroban_sdk::{
@@ -25,8 +26,10 @@ fn setup() -> (
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let liquidator = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&id, &1_000_000);
     client.initialize(&admin);
     (
         env,
@@ -142,6 +145,7 @@ fn test_liquidation_empty_insurance_fund() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
@@ -181,6 +185,7 @@ fn test_liquidation_partial_insurance_coverage() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },
@@ -216,6 +221,7 @@ fn test_liquidation_full_insurance_coverage() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
                 last_update: env.ledger().timestamp(),
             },

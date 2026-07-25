@@ -34,8 +34,9 @@ fn setup(ra: i128, rb: i128) -> (Env, Address, AmmContractClient<'static>, Addre
     env.mock_all_auths();
     let amm_id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &amm_id);
-    let admin = Address::generate(&env);
-    client.init_pool(&admin, &ra, &rb);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, amm_id, client, admin)
@@ -219,7 +220,9 @@ fn test_reinit_resets_saturated_fees() {
     seed_fee_b(&env, &amm_id, i128::MAX);
 
     // Re-initialize the pool with new reserves
-    client.init_pool(&admin, &50_000, &50_000);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    client.init_pool(&50_000, &50_000, &token_a, &token_b);
 
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "re-init must reset fee_a to zero");

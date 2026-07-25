@@ -40,13 +40,13 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let admin = Address::generate(&env);
-    client.init_pool(&admin, &ra, &rb);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
     (env, id)
 }
 
 /// Two-address setup: returns (env, amm_id, alice, bob).
-/// Alice is the flash-swap initiator; Bob is a would-be interloper.
 fn setup_two_users(ra: i128, rb: i128) -> (Env, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -54,8 +54,9 @@ fn setup_two_users(ra: i128, rb: i128) -> (Env, Address, Address, Address) {
     let bob = Address::generate(&env);
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let admin = Address::generate(&env);
-    client.init_pool(&admin, &ra, &rb);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
     (env, id, alice, bob)
 }
 
@@ -166,8 +167,9 @@ fn test_initiator_cleared_on_success() {
     new_env.mock_all_auths();
     let new_id = new_env.register(AmmContract, ());
     let new_client = AmmContractClient::new(&new_env, &new_id);
-    let new_admin = Address::generate(&new_env);
-    new_client.init_pool(&new_admin, &1_000, &1_000);
+    let new_ta = Address::generate(&new_env);
+    let new_tb = Address::generate(&new_env);
+    new_client.init_pool(&1_000, &1_000, &new_ta, &new_tb).unwrap();
     new_client
         .flash_swap_a_for_b(&50, &Bytes::new(&new_env));
     new_client.repay_flash_swap(&inverse_swap_in(1_000, 1_000, 50, FEE_BPS));
@@ -219,8 +221,11 @@ fn test_initiator_via_proxy_matches_proxy() {
     let env = Env::default();
     env.mock_all_auths();
     let amm_id = env.register(AmmContract, ());
-    let admin = Address::generate(&env);
-    AmmContractClient::new(&env, &amm_id).init_pool(&admin, &1_000, &1_000);
+    let ta = Address::generate(&env);
+    let tb = Address::generate(&env);
+    AmmContractClient::new(&env, &amm_id)
+        .init_pool(&1_000, &1_000, &ta, &tb)
+        .unwrap();
 
     let proxy_id = env.register(FlashProxy, ());
     let proxy_client = FlashProxyClient::new(&env, &proxy_id);
