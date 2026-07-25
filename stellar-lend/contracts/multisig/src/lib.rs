@@ -87,6 +87,7 @@ pub enum MultisigError {
     BatchSizeExceeded = 14,
     DuplicateProposalId = 15,
     AlreadyInitialized = 16,
+    ProposalIdOverflow = 17,
 }
 
 /// Maximum number of proposals that can be executed in a single
@@ -163,17 +164,17 @@ impl MultisigContract {
             .set(&MultisigDataKey::Proposal(proposal.id), proposal);
     }
 
-    fn next_proposal_id(env: &Env) -> u64 {
+    fn next_proposal_id(env: &Env) -> Result<u64, MultisigError> {
         let count: u64 = env
             .storage()
             .persistent()
             .get(&MultisigDataKey::ProposalCount)
             .unwrap_or(0);
-        let new_count = count + 1;
+        let new_count = count.checked_add(1).ok_or(MultisigError::ProposalIdOverflow)?;
         env.storage()
             .persistent()
             .set(&MultisigDataKey::ProposalCount, &new_count);
-        count
+        Ok(count)
     }
 
     fn action_kind_symbol(env: &Env, action: &ProposalAction) -> Symbol {
@@ -212,7 +213,7 @@ impl MultisigContract {
             return Err(MultisigError::InvalidTtl);
         }
 
-        let id = Self::next_proposal_id(&env);
+        let id = Self::next_proposal_id(&env)?;
         let expires_at = (env.ledger().sequence() as u64).saturating_add(ttl_ledgers);
 
         let proposal = Proposal {
