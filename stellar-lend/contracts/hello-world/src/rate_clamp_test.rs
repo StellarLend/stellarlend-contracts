@@ -16,8 +16,8 @@ where
     env.as_contract(&contract_id, || f(Address::generate(&env)))
 }
 
-fn init(env: &Env, admin: Address, total_deposits: i128, total_borrows: i128) {
-    initialize_interest_rate_config(env, admin).unwrap();
+fn init(env: &Env, total_deposits: i128, total_borrows: i128) {
+    initialize_interest_rate_config(env).unwrap();
     set_protocol_totals(env, total_deposits, total_borrows).unwrap();
 }
 
@@ -27,7 +27,7 @@ fn utilization_zero_defaults_to_current_curve_behavior() {
     env.mock_all_auths();
 
     with_rate_contract(&env, |admin| {
-        init(&env, admin, 1_000, 0);
+        init(&env, 1_000, 0);
 
         assert_eq!(calculate_utilization(&env).unwrap(), 0);
         // Defaults preserve old behavior: floor is 0, so the base rate is not raised.
@@ -41,7 +41,7 @@ fn utilization_at_100_percent_uses_curve_when_ceiling_is_open_by_default() {
     env.mock_all_auths();
 
     with_rate_contract(&env, |admin| {
-        init(&env, admin, 1_000, 1_000);
+        init(&env, 1_000, 1_000);
 
         assert_eq!(calculate_utilization(&env).unwrap(), 10_000);
         // base + multiplier + post-kink jump = 100 + 2_000 + 10_000 = 12_100
@@ -55,7 +55,7 @@ fn borrow_rate_is_clamped_to_configured_floor_as_final_step() {
     env.mock_all_auths();
 
     with_rate_contract(&env, |admin| {
-        init(&env, admin.clone(), 1_000, 0);
+        init(&env, 1_000, 0);
         update_interest_rate_config(
             &env,
             admin,
@@ -80,7 +80,7 @@ fn borrow_rate_is_clamped_to_configured_ceiling_as_final_step() {
     env.mock_all_auths();
 
     with_rate_contract(&env, |admin| {
-        init(&env, admin.clone(), 1_000, 1_000);
+        init(&env, 1_000, 1_000);
         update_interest_rate_config(
             &env,
             admin,
@@ -105,7 +105,7 @@ fn supply_rate_uses_the_clamped_borrow_rate() {
     env.mock_all_auths();
 
     with_rate_contract(&env, |admin| {
-        init(&env, admin.clone(), 1_000, 1_000);
+        init(&env, 1_000, 1_000);
         update_interest_rate_config(
             &env,
             admin,
