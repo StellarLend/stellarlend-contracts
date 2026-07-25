@@ -826,6 +826,14 @@ impl AmmContract {
     /// # Arguments
     /// * `amount_in` — units of asset A being repaid.  Must be `> 0`.
     ///
+    /// # Errors
+    /// - [`AmmPoolError::NonPositiveAmount`] — `amount_in ≤ 0`.
+    /// - [`AmmPoolError::InvariantViolation`] — called outside an active flash swap, the
+    ///   initiator address is missing from storage, or k decreased (under-repayment);
+    ///   Soroban rolls back all storage changes including the Op-1 debit.
+    /// - [`AmmPoolError::UnauthorizedCaller`] — caller is not the flash-swap initiator.
+    /// - [`AmmPoolError::Overflow`] — arithmetic overflow computing `new_ra` or `k_after`.
+    ///
     /// # Panics
     /// - `"repay_flash_swap: amount_in must be positive"` — `amount_in ≤ 0`.
     /// - `"repay_flash_swap: no flash swap in progress"` — called outside a flash swap.
