@@ -51,11 +51,11 @@ $ grep -cE '^\s*pub fn' stellar-lend/contracts/amm/src/lib.rs
 5
 
 $ grep -nE '^\s*pub fn' stellar-lend/contracts/amm/src/lib.rs
-54:    pub fn init_pool(env: Env, a: i128, b: i128)
-60:    pub fn add_liquidity(env: Env, add_a: i128, add_b: i128)
-71:    pub fn remove_liquidity(env: Env, rem_a: i128, rem_b: i128)
-86:    pub fn swap_a_for_b(env: Env, amount_in: i128, fee_bps: i128) -> i128
-114:   pub fn get_reserves(env: Env) -> (i128, i128)
+44:    pub fn init_pool(env: Env, a: i128, b: i128)
+50:    pub fn add_liquidity(env: Env, add_a: i128, add_b: i128)
+61:    pub fn remove_liquidity(env: Env, rem_a: i128, rem_b: i128)
+76:    pub fn swap_a_for_b(env: Env, amount_in: i128, fee_bps: i128) -> i128
+108:   pub fn get_reserves(env: Env) -> (i128, i128)
 ```
 
 Conclusions (stable across every SHA on this branch):
