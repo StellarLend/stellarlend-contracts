@@ -1100,6 +1100,7 @@ impl LendingContract {
         emit_deposit(&env, &user, amount, new_balance);
 
         check_and_clear_unhealthy_timestamp(&env, &user);
+
         Ok(new_balance)
     }
 
@@ -1138,6 +1139,7 @@ impl LendingContract {
         emit_withdraw(&env, &user, amount, new_balance);
 
         check_and_clear_unhealthy_timestamp(&env, &user);
+
         Ok(new_balance)
     }
 
