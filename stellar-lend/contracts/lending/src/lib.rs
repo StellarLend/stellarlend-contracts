@@ -587,9 +587,9 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Admin).unwrap()
     }
 
-    pub fn try_get_admin(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::Admin)
-    }
+    // Note: do not add a contract method named `try_get_admin`.
+    // The Soroban client auto-generates `try_get_admin` as the fallible
+    // wrapper around `get_admin`; a second definition fails to compile.
 
     /// Returns the accumulated protocol bad debt.
     pub fn get_bad_debt(env: Env) -> i128 {
@@ -1688,7 +1688,8 @@ impl LendingContract {
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
     pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
-        Self::require_admin(&env)?;
+        require_initialized(&env)?;
+        assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }

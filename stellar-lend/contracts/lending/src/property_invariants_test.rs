@@ -46,20 +46,30 @@ fn setup_case() -> (Env, LendingContractClient<'static>, Address, Address) {
     (env, client, id, user)
 }
 
-fn read_storage_position(env: &Env, contract_id: &Address, user: &Address) -> (i128, i128) {
+/// Read raw collateral from persistent storage (legacy single-asset path).
+///
+/// Debt is stored as a [`DebtPosition`], not a bare `i128`, so storage/view
+/// parity for debt is validated via [`LendingContractClient::get_position`]
+/// rather than a second raw storage read.
+fn read_storage_collateral(env: &Env, contract_id: &Address, user: &Address) -> i128 {
     env.as_contract(contract_id, || {
-        let collateral: i128 = env
-            .storage()
+        env.storage()
             .persistent()
-            .get(&("col", user.clone()))
-            .unwrap_or(0);
-        let debt: i128 = env
-            .storage()
-            .persistent()
-            .get(&("debt", user.clone()))
-            .unwrap_or(0);
-        (collateral, debt)
+            .get(&DataKey::Collateral(user.clone()))
+            .unwrap_or(0)
     })
+}
+
+/// Whether a prospective borrow of `amount` is solvent under the same
+/// overflow-safe HF check used by `assert_borrow_solvent`:
+/// `collateral * LIQUIDATION_THRESHOLD_BPS >= HEALTH_FACTOR_SCALE * new_debt`.
+fn borrow_is_solvent(collateral: i128, current_debt: i128, amount: i128) -> bool {
+    let new_debt = current_debt.saturating_add(amount);
+    if new_debt <= 0 {
+        return true;
+    }
+    collateral.saturating_mul(LIQUIDATION_THRESHOLD_BPS)
+        >= new_debt.saturating_mul(HEALTH_FACTOR_SCALE)
 }
 
 #[test]
@@ -85,42 +95,70 @@ fn property_random_operation_sequences_preserve_invariants() {
                     Operation::Deposit(amount) => {
                         let amount = amount as i128;
                         let call = client.try_deposit(&user, &amount);
-                        prop_assert!(call.is_ok());
+                        prop_assert!(
+                            call.is_ok(),
+                            "deposit({}) should succeed, got {:?}",
+                            amount,
+                            call
+                        );
                         expected_collateral += amount;
                     }
                     Operation::Withdraw(amount) => {
                         let amount = amount as i128;
                         let call = client.try_withdraw(&user, &amount);
                         if amount <= expected_collateral {
-                            prop_assert!(call.is_ok());
+                            prop_assert!(
+                                call.is_ok(),
+                                "withdraw({}) with collateral {} should succeed, got {:?}",
+                                amount,
+                                expected_collateral,
+                                call
+                            );
                             expected_collateral -= amount;
                         } else {
-                            prop_assert!(call.is_err());
+                            prop_assert!(
+                                call.is_err(),
+                                "withdraw({}) with collateral {} should fail",
+                                amount,
+                                expected_collateral
+                            );
                         }
                     }
                     Operation::Borrow(amount) => {
                         let amount = amount as i128;
                         let position = client.get_position(&user);
 
-                        // Only borrow if collateral can support it based on contract limits (80% LTV)
-                        // collateral * LIQUIDATION_THRESHOLD_BPS >= new_debt * HEALTH_FACTOR_SCALE
-                        if position.collateral.saturating_mul(8000)
-                            >= position.debt.saturating_add(amount).saturating_mul(10000)
-                        {
+                        // Gate on the same HF rule as `assert_borrow_solvent` so
+                        // try_borrow is only expected to succeed when solvent.
+                        // Insolvent borrows are skipped (not invoked) in this sequence test;
+                        // solvent/insolvent rejection is covered by
+                        // `property_try_borrow_succeeds_when_solvent`.
+                        if borrow_is_solvent(position.collateral, position.debt, amount) {
                             let call = client.try_borrow(&user, &amount);
-                            prop_assert!(call.is_ok());
+                            prop_assert!(
+                                call.is_ok(),
+                                "try_borrow({}) should succeed for collateral={}, debt={}, got {:?}",
+                                amount,
+                                position.collateral,
+                                position.debt,
+                                call
+                            );
                             expected_debt += amount;
                         }
                     }
                     Operation::Repay(amount) => {
                         let amount = amount as i128;
                         let call = client.try_repay(&user, &amount);
-                        if amount <= expected_debt {
-                            prop_assert!(call.is_ok());
-                            expected_debt -= amount;
-                        } else {
-                            prop_assert!(call.is_err());
-                        }
+                        // `repay` clamps overpayment: amount > debt zeros principal
+                        // and still returns Ok (no InvalidAmount for overpay).
+                        prop_assert!(
+                            call.is_ok(),
+                            "repay({}) should succeed (clamps to debt), got {:?}",
+                            amount,
+                            call
+                        );
+                        let repaid = expected_debt.min(amount);
+                        expected_debt -= repaid;
                     }
                 }
 
@@ -130,10 +168,11 @@ fn property_random_operation_sequences_preserve_invariants() {
                 prop_assert_eq!(position.collateral, expected_collateral);
                 prop_assert_eq!(position.debt, expected_debt);
 
-                let (storage_collateral, storage_debt) =
-                    read_storage_position(&env, &contract_id, &user);
-                prop_assert_eq!(position.collateral, storage_collateral);
-                prop_assert_eq!(position.debt, storage_debt);
+                let storage_collateral = read_storage_collateral(&env, &contract_id, &user);
+                prop_assert_eq!(
+                    position.collateral, storage_collateral,
+                    "view collateral must match DataKey::Collateral storage"
+                );
             }
 
             Ok(())
@@ -145,12 +184,85 @@ fn property_random_operation_sequences_preserve_invariants() {
 fn adversarial_interleavings_reject_invalid_withdraw_and_repay() {
     let (_env, client, _contract_id, user) = setup_case();
 
+    // Withdraw with no collateral is rejected.
     assert!(client.try_withdraw(&user, &1).is_err());
-    assert!(client.try_repay(&user, &1).is_err());
+
+    // Over-repay / repay with no debt succeeds and clamps principal to 0
+    // (repay_amount zeros debt when amount >= principal).
+    let repay_result = client.try_repay(&user, &1);
+    assert!(
+        repay_result.is_ok(),
+        "repay with no debt should succeed (clamp to 0), got {:?}",
+        repay_result
+    );
 
     let pos = client.get_position(&user);
     assert_eq!(pos.collateral, 0);
     assert_eq!(pos.debt, 0);
+}
+
+/// Focused property: whenever the HF solvent check passes, `try_borrow` must
+/// return Ok (covers the failure mode from issue #1292 / PR #1290 CI).
+#[test]
+fn property_try_borrow_succeeds_when_solvent() {
+    let mut runner = TestRunner::new_with_rng(
+        Config {
+            cases: PROPERTY_CASES,
+            max_shrink_iters: 4096,
+            ..Config::default()
+        },
+        TestRng::from_seed(RngAlgorithm::ChaCha, &INVARIANT_SEED),
+    );
+
+    // (collateral, existing_debt, borrow_amount) with small ranges that still
+    // exercise the HF boundary around 80% LTV.
+    let strategy = (1u16..=500u16, 0u16..=400u16, 1u16..=400u16);
+    runner
+        .run(&strategy, |(col, debt, amount)| {
+            let col = col as i128;
+            let debt = debt as i128;
+            let amount = amount as i128;
+
+            let (_env, client, _contract_id, user) = setup_case();
+            client.deposit(&user, &col);
+            if debt > 0 && borrow_is_solvent(col, 0, debt) {
+                let call = client.try_borrow(&user, &debt);
+                prop_assert!(
+                    call.is_ok(),
+                    "seed borrow({}) with col={} should succeed, got {:?}",
+                    debt,
+                    col,
+                    call
+                );
+            }
+
+            let position = client.get_position(&user);
+            if borrow_is_solvent(position.collateral, position.debt, amount) {
+                let call = client.try_borrow(&user, &amount);
+                prop_assert!(
+                    call.is_ok(),
+                    "try_borrow({}) should succeed for collateral={}, debt={}, got {:?}",
+                    amount,
+                    position.collateral,
+                    position.debt,
+                    call
+                );
+                let after = client.get_position(&user);
+                prop_assert_eq!(after.debt, position.debt + amount);
+            } else {
+                let call = client.try_borrow(&user, &amount);
+                prop_assert!(
+                    call.is_err(),
+                    "try_borrow({}) should fail for collateral={}, debt={}",
+                    amount,
+                    position.collateral,
+                    position.debt
+                );
+            }
+
+            Ok(())
+        })
+        .unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
