@@ -113,8 +113,11 @@ impl MultisigContract {
         if env.storage().persistent().has(&MultisigDataKey::Signers) {
             return Err(MultisigError::AlreadyInitialized);
         }
+        if signers.is_empty() {
+            return Err(MultisigError::InvalidSigners);
+        }
         if threshold == 0 || threshold as usize > signers.len() as usize {
-            panic!("InvalidThreshold");
+            return Err(MultisigError::InvalidThreshold);
         }
         env.storage()
             .persistent()
@@ -132,15 +135,16 @@ impl MultisigContract {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    fn require_signer(env: &Env, caller: &Address) {
+    fn require_signer(env: &Env, caller: &Address) -> Result<(), MultisigError> {
         let signers: Vec<Address> = env
             .storage()
             .persistent()
             .get(&MultisigDataKey::Signers)
-            .unwrap_or_else(|| panic!("Unauthorized"));
+            .unwrap_or_else(|| Vec::new(env));
         if !signers.contains(caller) {
-            panic!("Unauthorized");
+            return Err(MultisigError::Unauthorized);
         }
+        Ok(())
     }
 
     fn fetch_threshold(env: &Env) -> u32 {
@@ -150,11 +154,11 @@ impl MultisigContract {
             .unwrap_or(1)
     }
 
-    fn fetch_proposal(env: &Env, id: u64) -> Proposal {
+    fn fetch_proposal(env: &Env, id: u64) -> Result<Proposal, MultisigError> {
         env.storage()
             .persistent()
             .get(&MultisigDataKey::Proposal(id))
-            .unwrap_or_else(|| panic!("ProposalNotFound"))
+            .ok_or(MultisigError::ProposalNotFound)
     }
 
     fn save_proposal(env: &Env, proposal: &Proposal) {
@@ -206,7 +210,7 @@ impl MultisigContract {
         ttl_ledgers: u64,
     ) -> Result<u64, MultisigError> {
         caller.require_auth();
-        Self::require_signer(&env, &caller);
+        Self::require_signer(&env, &caller)?;
 
         if ttl_ledgers > 3_110_400 {
             return Err(MultisigError::InvalidTtl);
@@ -236,24 +240,30 @@ impl MultisigContract {
     /// # Arguments
     /// * `caller` – Signer casting the approval.
     /// * `id`     – ID of the proposal to approve.
-    pub fn approve_proposal(env: Env, caller: Address, id: u64) {
+    pub fn approve_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
         caller.require_auth();
-        Self::require_signer(&env, &caller);
+        Self::require_signer(&env, &caller)?;
 
-        let mut proposal = Self::fetch_proposal(&env, id);
+        let mut proposal = Self::fetch_proposal(&env, id)?;
 
         if proposal.status == ProposalStatus::Expired
             || env.ledger().sequence() as u64 > proposal.expires_at
         {
             proposal.status = ProposalStatus::Expired;
             Self::save_proposal(&env, &proposal);
-            panic!("ProposalExpired");
+            return Err(MultisigError::ProposalExpired);
+        }
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
         }
         if proposal.status != ProposalStatus::Active {
-            panic!("ProposalNotPassed");
+            return Err(MultisigError::ProposalNotPassed);
         }
         if proposal.approvals.contains(&caller) {
-            panic!("AlreadyApproved");
+            return Err(MultisigError::AlreadyApproved);
         }
 
         proposal.approvals.push_back(caller);
@@ -263,6 +273,7 @@ impl MultisigContract {
             proposal.status = ProposalStatus::Passed;
         }
         Self::save_proposal(&env, &proposal);
+        Ok(())
     }
 
     /// Execute a passed, non-expired, non-executed proposal.
@@ -281,35 +292,38 @@ impl MultisigContract {
         caller: Address,
         id: u64,
         payload_hash: soroban_sdk::Bytes,
-    ) {
+    ) -> Result<(), MultisigError> {
         caller.require_auth();
-        Self::require_signer(&env, &caller);
+        Self::require_signer(&env, &caller)?;
 
-        let mut proposal = Self::fetch_proposal(&env, id);
+        let mut proposal = Self::fetch_proposal(&env, id)?;
 
         // Expiry guard
         if env.ledger().sequence() as u64 > proposal.expires_at {
             proposal.status = ProposalStatus::Expired;
             Self::save_proposal(&env, &proposal);
-            panic!("ProposalExpired");
+            return Err(MultisigError::ProposalExpired);
         }
         // Status guards
         if proposal.status == ProposalStatus::Executed {
-            panic!("AlreadyExecuted");
+            return Err(MultisigError::AlreadyExecuted);
         }
         if proposal.status == ProposalStatus::Cancelled {
-            panic!("AlreadyCancelled");
+            return Err(MultisigError::AlreadyCancelled);
         }
         if proposal.status != ProposalStatus::Passed {
-            panic!("ProposalNotPassed");
+            return Err(match proposal.status {
+                ProposalStatus::Active => MultisigError::QuorumNotReached,
+                _ => MultisigError::ProposalNotPassed,
+            });
         }
         // Payload-hash binding: prevents action swap between approval and execution
         if proposal.payload_hash != payload_hash {
-            panic!("PayloadHashMismatch");
+            return Err(MultisigError::PayloadHashMismatch);
         }
 
         let action_kind = Self::action_kind_symbol(&env, &proposal.action);
-        let ok = Self::dispatch_action(&env, &proposal.action);
+        Self::dispatch_action(&env, &proposal.action)?;
 
         proposal.status = ProposalStatus::Executed;
         Self::save_proposal(&env, &proposal);
@@ -320,42 +334,37 @@ impl MultisigContract {
             ProposalExecutedEvent {
                 id,
                 action_kind,
-                ok,
+                ok: true,
             },
         );
+        Ok(())
     }
 
     /// Internal router: dispatches a `ProposalAction` to its handler.
-    ///
-    /// Returns `true` on success, `false` if the action is unregistered or fails.
-    fn dispatch_action(env: &Env, action: &ProposalAction) -> bool {
+    fn dispatch_action(env: &Env, action: &ProposalAction) -> Result<(), MultisigError> {
         match action {
             ProposalAction::SetThreshold(new_threshold) => {
                 if *new_threshold == 0 {
-                    return false;
+                    return Err(MultisigError::InvalidThreshold);
                 }
                 env.storage()
                     .persistent()
                     .set(&MultisigDataKey::Threshold, new_threshold);
-                true
+                Ok(())
             }
             ProposalAction::RotateSigners(new_signers) => {
                 if new_signers.is_empty() {
-                    return false;
+                    return Err(MultisigError::InvalidSigners);
                 }
                 env.storage()
                     .persistent()
                     .set(&MultisigDataKey::Signers, new_signers);
-                true
+                Ok(())
             }
             ProposalAction::InvokeContract(contract, fn_symbol, _args_hash) => {
-                // Dispatch to the lending upgrade entrypoint via cross-contract call.
-                // The args_hash was verified at the payload_hash check; here we
-                // perform the actual invocation with an empty args list since the
-                // concrete arguments were committed via the hash.
                 let args: soroban_sdk::Vec<soroban_sdk::Val> = soroban_sdk::Vec::new(env);
                 let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args);
-                true
+                Ok(())
             }
         }
     }
@@ -365,16 +374,26 @@ impl MultisigContract {
     /// # Arguments
     /// * `caller` – Signer requesting cancellation.
     /// * `id`     – ID of the proposal to cancel.
-    pub fn cancel_proposal(env: Env, caller: Address, id: u64) {
+    pub fn cancel_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
         caller.require_auth();
-        Self::require_signer(&env, &caller);
+        Self::require_signer(&env, &caller)?;
 
-        let mut proposal = Self::fetch_proposal(&env, id);
+        let mut proposal = Self::fetch_proposal(&env, id)?;
+        if proposal.status == ProposalStatus::Expired {
+            return Err(MultisigError::ProposalExpired);
+        }
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
+        }
         if proposal.status != ProposalStatus::Active {
-            panic!("ProposalNotPassed");
+            return Err(MultisigError::ProposalNotPassed);
         }
         proposal.status = ProposalStatus::Cancelled;
         Self::save_proposal(&env, &proposal);
+        Ok(())
     }
 
     /// Return the current approval threshold.
@@ -394,7 +413,7 @@ impl MultisigContract {
     ///
     /// # Arguments
     /// * `id` – Proposal ID.
-    pub fn get_proposal(env: Env, id: u64) -> Proposal {
+    pub fn get_proposal(env: Env, id: u64) -> Result<Proposal, MultisigError> {
         Self::fetch_proposal(&env, id)
     }
 
@@ -431,16 +450,16 @@ impl MultisigContract {
         caller: Address,
         ids: Vec<u64>,
         payload_hashes: Vec<soroban_sdk::Bytes>,
-    ) {
+    ) -> Result<(), MultisigError> {
         caller.require_auth();
-        Self::require_signer(&env, &caller);
+        Self::require_signer(&env, &caller)?;
 
         let batch_size = ids.len();
         if batch_size > MAX_BATCH_SIZE {
-            panic!("BatchSizeExceeded");
+            return Err(MultisigError::BatchSizeExceeded);
         }
         if batch_size != payload_hashes.len() {
-            panic!("PayloadHashMismatch");
+            return Err(MultisigError::PayloadHashMismatch);
         }
 
         // Phase 1 – validate every proposal before touching any state
@@ -452,31 +471,34 @@ impl MultisigContract {
             // Duplicate check against earlier positions
             for j in 0..i {
                 if ids.get(j).unwrap() == id {
-                    panic!("DuplicateProposalId");
+                    return Err(MultisigError::DuplicateProposalId);
                 }
             }
 
-            let mut proposal = Self::fetch_proposal(&env, id);
+            let mut proposal = Self::fetch_proposal(&env, id)?;
 
             // Expiry guard
             if env.ledger().sequence() as u64 > proposal.expires_at {
                 proposal.status = ProposalStatus::Expired;
                 Self::save_proposal(&env, &proposal);
-                panic!("ProposalExpired");
+                return Err(MultisigError::ProposalExpired);
             }
             // Status guards
             if proposal.status == ProposalStatus::Executed {
-                panic!("AlreadyExecuted");
+                return Err(MultisigError::AlreadyExecuted);
             }
             if proposal.status == ProposalStatus::Cancelled {
-                panic!("AlreadyCancelled");
+                return Err(MultisigError::AlreadyCancelled);
             }
             if proposal.status != ProposalStatus::Passed {
-                panic!("ProposalNotPassed");
+                return Err(match proposal.status {
+                    ProposalStatus::Active => MultisigError::QuorumNotReached,
+                    _ => MultisigError::ProposalNotPassed,
+                });
             }
             // Payload-hash binding
             if proposal.payload_hash != payload_hash {
-                panic!("PayloadHashMismatch");
+                return Err(MultisigError::PayloadHashMismatch);
             }
 
             proposals.push_back(proposal);
@@ -486,9 +508,7 @@ impl MultisigContract {
         // the panic rolls back all prior execution side-effects.
         for i in 0..batch_size {
             let mut proposal = proposals.get(i).unwrap();
-            if !Self::dispatch_action(&env, &proposal.action) {
-                panic!("InvalidAction");
-            }
+            Self::dispatch_action(&env, &proposal.action)?;
             proposal.status = ProposalStatus::Executed;
             Self::save_proposal(&env, &proposal);
         }
@@ -498,6 +518,7 @@ impl MultisigContract {
             (symbol_short!("multisig"), Symbol::new(&env, "batch_executed")),
             BatchExecutedEvent { ids },
         );
+        Ok(())
     }
 }
 

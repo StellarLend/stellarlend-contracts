@@ -29,7 +29,7 @@ fn setup_multisig(env: &Env) -> (Address, Vec<Address>) {
     signers.push_back(s2.clone());
     signers.push_back(s3.clone());
 
-    client.initialize(&signers, &2u32);
+    client.initialize(&signers, &2u32).unwrap();
     (contract_id, signers)
 }
 
@@ -54,13 +54,13 @@ fn test_cancel_proposal_status_is_cancelled() {
     );
 
     // Proposal should be Active before cancellation.
-    let before = client.get_proposal(&id);
+    let before = client.get_proposal(&id).unwrap();
     assert_eq!(before.status, ProposalStatus::Active);
 
     client.cancel_proposal(&signers.get(0).unwrap(), &id);
 
     // Proposal must now be Cancelled in persistent storage.
-    let after = client.get_proposal(&id);
+    let after = client.get_proposal(&id).unwrap();
     assert_eq!(
         after.status,
         ProposalStatus::Cancelled,
@@ -85,9 +85,9 @@ fn test_cancel_proposal_by_non_proposer_signer() {
     );
 
     // s2 (not the proposer) cancels it.
-    client.cancel_proposal(&signers.get(1).unwrap(), &id);
+    client.cancel_proposal(&signers.get(1).unwrap(), &id).unwrap();
 
-    let p = client.get_proposal(&id);
+    let p = client.get_proposal(&id).unwrap();
     assert_eq!(
         p.status,
         ProposalStatus::Cancelled,
@@ -99,10 +99,10 @@ fn test_cancel_proposal_by_non_proposer_signer() {
 // Idempotency / double-cancel guard
 // ---------------------------------------------------------------------------
 
-/// Attempting to cancel an already-cancelled proposal must panic.
+/// Attempting to cancel an already-cancelled proposal must return
+/// `MultisigError::AlreadyCancelled`.
 #[test]
-#[should_panic(expected = "ProposalNotPassed")]
-fn test_cancel_already_cancelled_panics() {
+fn test_cancel_already_cancelled_returns_error() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
     let client = MultisigContractClient::new(&env, &contract_id);
@@ -115,9 +115,12 @@ fn test_cancel_already_cancelled_panics() {
         &500u64,
     );
 
-    client.cancel_proposal(&signers.get(0).unwrap(), &id);
-    // Second call must panic because status is no longer Active.
-    client.cancel_proposal(&signers.get(0).unwrap(), &id);
+    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    // Second call must return AlreadyCancelled.
+    assert_eq!(
+        client.try_cancel_proposal(&signers.get(0).unwrap(), &id),
+        Err(Ok(MultisigError::AlreadyCancelled))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +130,9 @@ fn test_cancel_already_cancelled_panics() {
 /// A cancelled proposal must be rejected by `execute_proposal`.
 /// The proposal is cancelled while still Active (before quorum), so
 /// cancel_proposal succeeds, and a subsequent execute_proposal attempt
-/// panics with AlreadyCancelled.
+/// returns `AlreadyCancelled`.
 #[test]
-#[should_panic(expected = "AlreadyCancelled")]
-fn test_execute_cancelled_proposal_panics() {
+fn test_execute_cancelled_proposal_returns_error() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
     let client = MultisigContractClient::new(&env, &contract_id);
@@ -144,10 +146,13 @@ fn test_execute_cancelled_proposal_panics() {
     );
 
     // Cancel while still Active (before quorum is reached).
-    client.cancel_proposal(&signers.get(0).unwrap(), &id);
+    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
 
     // execute_proposal must reject a Cancelled proposal.
-    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::AlreadyCancelled))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +161,6 @@ fn test_execute_cancelled_proposal_panics() {
 
 /// A caller who is not a registered signer must not be able to cancel.
 #[test]
-#[should_panic(expected = "Unauthorized")]
 fn test_cancel_proposal_non_signer_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -171,7 +175,10 @@ fn test_cancel_proposal_non_signer_rejected() {
     );
 
     let outsider = Address::generate(&env);
-    client.cancel_proposal(&outsider, &id);
+    assert_eq!(
+        client.try_cancel_proposal(&outsider, &id),
+        Err(Ok(MultisigError::Unauthorized))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +189,6 @@ fn test_cancel_proposal_non_signer_rejected() {
 /// The proposal is cancelled while still Active so cancel_proposal succeeds.
 /// batch_execute then panics with AlreadyCancelled.
 #[test]
-#[should_panic(expected = "AlreadyCancelled")]
 fn test_batch_execute_cancelled_proposal_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -197,12 +203,15 @@ fn test_batch_execute_cancelled_proposal_rejected() {
     );
 
     // Cancel while still Active (before quorum).
-    client.cancel_proposal(&signers.get(0).unwrap(), &id);
+    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
 
     let mut ids = Vec::new(&env);
     ids.push_back(id);
     let mut hashes = Vec::new(&env);
     hashes.push_back(hash);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::AlreadyCancelled))
+    );
 }

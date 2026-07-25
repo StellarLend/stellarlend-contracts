@@ -55,7 +55,6 @@ fn test_initialize_sets_threshold_and_signers() {
 }
 
 #[test]
-#[should_panic]
 fn test_initialize_rejects_zero_threshold() {
     let env = make_env();
     let contract_id = env.register(MultisigContract, ());
@@ -64,11 +63,10 @@ fn test_initialize_rejects_zero_threshold() {
     let s1 = Address::generate(&env);
     let mut signers = Vec::new(&env);
     signers.push_back(s1);
-    client.initialize(&signers, &0u32);
+    assert_eq!(client.try_initialize(&signers, &0u32), Err(Ok(MultisigError::InvalidThreshold)));
 }
 
 #[test]
-#[should_panic]
 fn test_initialize_rejects_threshold_exceeding_signers() {
     let env = make_env();
     let contract_id = env.register(MultisigContract, ());
@@ -78,7 +76,7 @@ fn test_initialize_rejects_threshold_exceeding_signers() {
     let mut signers = Vec::new(&env);
     signers.push_back(s1);
     // threshold 2 > 1 signer
-    client.initialize(&signers, &2u32);
+    assert_eq!(client.try_initialize(&signers, &2u32), Err(Ok(MultisigError::InvalidThreshold)));
 }
 
 // ---------------------------------------------------------------------------
@@ -97,18 +95,17 @@ fn test_create_proposal_returns_incrementing_ids() {
         &ProposalAction::SetThreshold(2),
         &hash,
         &100u64,
-    );
+    ).unwrap();
     let id1 = client.create_proposal(
         &signers.get(1).unwrap(),
         &ProposalAction::SetThreshold(2),
         &hash,
         &100u64,
-    );
+    ).unwrap();
     assert_eq!(id1, id0 + 1);
 }
 
 #[test]
-#[should_panic]
 fn test_create_proposal_rejects_non_signer() {
     let env = make_env();
     let (contract_id, _) = setup_multisig(&env);
@@ -116,11 +113,14 @@ fn test_create_proposal_rejects_non_signer() {
 
     let outsider = Address::generate(&env);
     let hash = make_bytes(&env, b"hash");
-    client.create_proposal(
-        &outsider,
-        &ProposalAction::SetThreshold(1),
-        &hash,
-        &100u64,
+    assert_eq!(
+        client.try_create_proposal(
+            &outsider,
+            &ProposalAction::SetThreshold(1),
+            &hash,
+            &100u64,
+        ),
+        Err(Ok(MultisigError::Unauthorized))
     );
 }
 
@@ -143,18 +143,17 @@ fn test_approve_proposal_transitions_to_passed_at_quorum() {
     );
 
     // One approval: still Active
-    client.approve_proposal(&signers.get(0).unwrap(), &id);
-    let p = client.get_proposal(&id);
+    client.approve_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    let p = client.get_proposal(&id).unwrap();
     assert_eq!(p.status, ProposalStatus::Active);
 
     // Second approval: reaches threshold of 2 → Passed
-    client.approve_proposal(&signers.get(1).unwrap(), &id);
-    let p2 = client.get_proposal(&id);
+    client.approve_proposal(&signers.get(1).unwrap(), &id).unwrap();
+    let p2 = client.get_proposal(&id).unwrap();
     assert_eq!(p2.status, ProposalStatus::Passed);
 }
 
 #[test]
-#[should_panic]
 fn test_approve_proposal_rejects_double_approval() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -166,10 +165,13 @@ fn test_approve_proposal_rejects_double_approval() {
         &ProposalAction::SetThreshold(2),
         &hash,
         &100u64,
-    );
-    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    ).unwrap();
+    client.approve_proposal(&signers.get(0).unwrap(), &id).unwrap();
     // Same signer approves again
-    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    assert_eq!(
+        client.try_approve_proposal(&signers.get(0).unwrap(), &id),
+        Err(Ok(MultisigError::AlreadyApproved))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -188,13 +190,13 @@ fn test_execute_set_threshold_updates_threshold() {
         &ProposalAction::SetThreshold(3),
         &hash,
         &500u64,
-    );
+    ).unwrap();
     approve_n(&client, &signers, id, 2);
 
-    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
+    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash).unwrap();
 
     assert_eq!(client.get_threshold(), 3u32);
-    let p = client.get_proposal(&id);
+    let p = client.get_proposal(&id).unwrap();
     assert_eq!(p.status, ProposalStatus::Executed);
 }
 
@@ -220,7 +222,7 @@ fn test_execute_rotate_signers_replaces_signer_set() {
         &ProposalAction::RotateSigners(new_signers.clone()),
         &hash,
         &500u64,
-    );
+    ).unwrap();
     approve_n(&client, &signers, id, 2);
 
     client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
@@ -236,7 +238,6 @@ fn test_execute_rotate_signers_replaces_signer_set() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic]
 fn test_execute_before_quorum_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -248,14 +249,16 @@ fn test_execute_before_quorum_rejected() {
         &ProposalAction::SetThreshold(1),
         &hash,
         &100u64,
-    );
+    ).unwrap();
     // Only one approval — threshold is 2
-    client.approve_proposal(&signers.get(0).unwrap(), &id);
-    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
+    client.approve_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::QuorumNotReached))
+    );
 }
 
 #[test]
-#[should_panic]
 fn test_execute_double_execution_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -267,15 +270,17 @@ fn test_execute_double_execution_rejected() {
         &ProposalAction::SetThreshold(2),
         &hash,
         &500u64,
-    );
+    ).unwrap();
     approve_n(&client, &signers, id, 2);
-    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
-    // Second execution attempt should panic
-    client.execute_proposal(&signers.get(1).unwrap(), &id, &hash);
+    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash).unwrap();
+    // Second execution attempt should return AlreadyExecuted
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(1).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::AlreadyExecuted))
+    );
 }
 
 #[test]
-#[should_panic]
 fn test_execute_payload_hash_mismatch_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -288,14 +293,16 @@ fn test_execute_payload_hash_mismatch_rejected() {
         &ProposalAction::SetThreshold(2),
         &original_hash,
         &500u64,
-    );
+    ).unwrap();
     approve_n(&client, &signers, id, 2);
     // Present a different hash at execution — must be rejected
-    client.execute_proposal(&signers.get(0).unwrap(), &id, &swapped_hash);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &swapped_hash),
+        Err(Ok(MultisigError::PayloadHashMismatch))
+    );
 }
 
 #[test]
-#[should_panic]
 fn test_execute_cancelled_proposal_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -307,10 +314,13 @@ fn test_execute_cancelled_proposal_rejected() {
         &ProposalAction::SetThreshold(2),
         &hash,
         &500u64,
-    );
-    client.cancel_proposal(&signers.get(0).unwrap(), &id);
+    ).unwrap();
+    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
     // Attempt to execute a cancelled proposal
-    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::AlreadyCancelled))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -329,14 +339,13 @@ fn test_cancel_proposal_sets_cancelled_status() {
         &ProposalAction::SetThreshold(2),
         &hash,
         &200u64,
-    );
-    client.cancel_proposal(&signers.get(0).unwrap(), &id);
-    let p = client.get_proposal(&id);
+    ).unwrap();
+    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    let p = client.get_proposal(&id).unwrap();
     assert_eq!(p.status, ProposalStatus::Cancelled);
 }
 
 #[test]
-#[should_panic]
 fn test_cancel_passed_proposal_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -348,10 +357,13 @@ fn test_cancel_passed_proposal_rejected() {
         &ProposalAction::SetThreshold(2),
         &hash,
         &300u64,
-    );
+    ).unwrap();
     approve_n(&client, &signers, id, 2);
     // Cannot cancel a Passed proposal
-    client.cancel_proposal(&signers.get(0).unwrap(), &id);
+    assert_eq!(
+        client.try_cancel_proposal(&signers.get(0).unwrap(), &id),
+        Err(Ok(MultisigError::ProposalNotPassed))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -359,10 +371,9 @@ fn test_cancel_passed_proposal_rejected() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic]
 fn test_get_proposal_nonexistent_panics() {
     let env = make_env();
     let (contract_id, _) = setup_multisig(&env);
     let client = MultisigContractClient::new(&env, &contract_id);
-    client.get_proposal(&9999u64);
+    assert_eq!(client.try_get_proposal(&9999u64), Err(Ok(MultisigError::ProposalNotFound)));
 }
