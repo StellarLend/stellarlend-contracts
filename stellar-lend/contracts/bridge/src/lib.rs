@@ -886,10 +886,11 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        assert_eq!(client.next_outbound_nonce(&1u32).unwrap(), 0u64);
-        assert_eq!(client.next_outbound_nonce(&1u32).unwrap(), 1u64);
+        // Client methods that return Result unwrap on success; value is plain u64.
+        assert_eq!(client.next_outbound_nonce(&1u32), 0u64);
+        assert_eq!(client.next_outbound_nonce(&1u32), 1u64);
         assert_eq!(client.peek_outbound_nonce(&1u32), 2u64);
-        assert_eq!(client.next_outbound_nonce(&2u32).unwrap(), 0u64);
+        assert_eq!(client.next_outbound_nonce(&2u32), 0u64);
     }
 
     #[test]
@@ -913,9 +914,10 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64).unwrap();
-        client.admit_inbound(&500i128, &1000u64).unwrap();
-        client.admit_inbound(&500i128, &2000u64).unwrap();
+        // Result<(), _> client methods return unit on success (use try_* for Result).
+        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.admit_inbound(&500i128, &1000u64);
+        client.admit_inbound(&500i128, &2000u64);
         // Now at cap — next should fail
         assert!(client.try_admit_inbound(&1i128, &3000u64).is_err());
     }
@@ -926,12 +928,12 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64).unwrap();
-        client.admit_inbound(&1000i128, &100u64).unwrap();
+        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.admit_inbound(&1000i128, &100u64);
         // Still in same window — should fail
         assert!(client.try_admit_inbound(&1i128, &200u64).is_err());
         // After window duration — should succeed
-        client.admit_inbound(&1000i128, &86400u64).unwrap();
+        client.admit_inbound(&1000i128, &86400u64);
     }
 
     #[test]
@@ -940,9 +942,9 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_outbound_cap(&500i128, &86400u64, &0u64).unwrap();
-        client.admit_outbound(&499i128, &1000u64).unwrap();
-        client.admit_outbound(&1i128, &2000u64).unwrap();
+        client.set_outbound_cap(&500i128, &86400u64, &0u64);
+        client.admit_outbound(&499i128, &1000u64);
+        client.admit_outbound(&1i128, &2000u64);
         assert!(client.try_admit_outbound(&1i128, &3000u64).is_err());
     }
 
