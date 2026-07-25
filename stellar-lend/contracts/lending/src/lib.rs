@@ -3583,3 +3583,5 @@ pub(crate) mod test {
 }
 #[cfg(test)]
 mod initialization_guard_test;
+#[cfg(test)]
+mod zero_amount_semantics_test;
