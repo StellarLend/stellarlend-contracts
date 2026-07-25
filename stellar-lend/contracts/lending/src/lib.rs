@@ -55,6 +55,8 @@ mod granular_pause_ops_test;
 #[cfg(test)]
 mod health_factor_edge_test;
 #[cfg(test)]
+mod insurance_fund_test;
+#[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
 mod interest_ordering_time_test;
