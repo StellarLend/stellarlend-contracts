@@ -846,6 +846,9 @@ impl Bridge {
 // Tests
 // ---------------------------------------------------------------------------
 #[cfg(test)]
+mod inbound_window_integration_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Ledger, Env};
