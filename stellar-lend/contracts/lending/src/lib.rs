@@ -93,6 +93,8 @@ mod oracle_payload_binding_test;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
+mod partial_staleness_guard_test;
+#[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
 mod property_invariants_test;
@@ -587,10 +589,11 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Admin).unwrap()
     }
 
-    /// Panic-free admin lookup. Named `get_admin_optional` (not `try_get_admin`)
-    /// because Soroban's `#[contractimpl]` client already synthesizes
-    /// `try_get_admin` for the fallible wrapper of [`Self::get_admin`], and a
-    /// same-named contract method collides (E0592).
+    /// Panic-free admin lookup for callers that may run before `initialize`.
+    ///
+    /// Named `get_admin_optional` (not `try_get_admin`) so it does not collide
+    /// with the Soroban client-generated `try_get_admin` wrapper around
+    /// [`Self::get_admin`].
     pub fn get_admin_optional(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
