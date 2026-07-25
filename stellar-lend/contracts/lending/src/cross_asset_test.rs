@@ -89,6 +89,24 @@ fn test_set_asset_params_rejects_invalid_ltv() {
 }
 
 #[test]
+fn test_set_asset_params_rejects_ltv_above_liquidation_threshold() {
+    let (_env, client, _id, admin, _user, asset_a, _asset_b) = setup();
+    let res = client.try_set_asset_params(
+        &admin,
+        &asset_a,
+        &9000i128, // LTV above liquidation threshold
+        &5000i128, // liquidation threshold
+        &1_000_000i128,
+        &0i128,
+        &0i128,
+    );
+    assert!(matches!(
+        res,
+        Err(Ok(LendingError::InvalidLiquidationParams))
+    ));
+}
+
+#[test]
 fn test_unconfigured_asset_returns_none() {
     let (_env, client, _id, _admin, _user, _asset_a, _asset_b) = setup();
     let unknown = Address::generate(&_env);

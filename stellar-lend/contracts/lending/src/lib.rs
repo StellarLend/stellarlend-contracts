@@ -359,6 +359,9 @@ pub enum LendingError {
     SelfLiquidation = 2008,
     IsolationCeilingExceeded = 2009,
     InvalidIsolationCeiling = 2010,
+    /// `set_asset_params` called with `ltv_bps > liquidation_threshold_bps`,
+    /// which would let a user borrow up to the max LTV while already being
+    /// eligible for liquidation.
     InvalidLiquidationParams = 2011,
     InvalidLiquidationGracePeriod = 7003,
     LiquidationGracePeriodNotMet = 7004,
@@ -551,7 +554,6 @@ pub struct LendingContract;
 
 #[allow(clippy::too_many_arguments)]
 #[contractimpl]
-#[allow(clippy::too_many_arguments)]
 impl LendingContract {
     /// One-time contract initialization — sets the protocol admin and seeds
     /// the emergency state to [`EmergencyState::Normal`].
@@ -1535,9 +1537,8 @@ impl LendingContract {
             // Clamp: never seize more than the borrower's available collateral.
             let available_collateral = collateral;
             let mut final_seized = seized_collateral;
-            let mut shortfall = 0;
             if seized_collateral > available_collateral {
-                shortfall = seized_collateral
+                let shortfall = seized_collateral
                     .checked_sub(available_collateral)
                     .ok_or(LendingError::Overflow)?;
                 let insurance_drawn = draw_insurance(&env, shortfall)?;
@@ -2000,6 +2001,10 @@ impl LendingContract {
     /// Configure per-asset risk parameters.
     ///
     /// Only the protocol admin can call this.
+    /// `ltv_bps` must not exceed `liquidation_threshold_bps` — otherwise a
+    /// user could borrow up to the max LTV while already eligible for
+    /// liquidation. Returns [`LendingError::InvalidLiquidationParams`] when
+    /// violated.
     /// Emits an `AssetParamsSetEvent` on success.
     #[allow(clippy::too_many_arguments)]
     pub fn set_asset_params(
@@ -2022,6 +2027,9 @@ impl LendingContract {
         }
         if !(0..=10000).contains(&liquidation_threshold_bps) {
             return Err(LendingError::InvalidAmount);
+        }
+        if ltv_bps > liquidation_threshold_bps {
+            return Err(LendingError::InvalidLiquidationParams);
         }
         if debt_ceiling < 0 {
             return Err(LendingError::InvalidAmount);
