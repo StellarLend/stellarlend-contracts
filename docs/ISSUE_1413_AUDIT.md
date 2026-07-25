@@ -1,12 +1,17 @@
 # Issue #1413 — audit + caveat (companion to the crate-level rustdoc note)
 
-<!-- Bound to the docs-only closure of #1413. Delete this file when
-     `flash_swap_a_for_b` and `repay_flash_swap` are actually
-     implemented. -->
+> **Note (bound):** this file documents the docs-only closure of
+> [#1413](https://github.com/StellarLend/stellarlend-contracts/issues/1413).
+> **Delete this file** when `flash_swap_a_for_b` and `repay_flash_swap`
+> are actually implemented, so it cannot drift in lockstep with an
+> unlanded API.
 
-<!-- Location: docs/ISSUE_1413_AUDIT.md — co-located with the rest of
-     the project's durable documentation under docs/, mirroring
-     docs/INCIDENT_RESPONSE.md, docs/RESERVE_ACCOUNTING.md, etc. -->
+> **Note (location):** this file lives at `docs/ISSUE_1413_AUDIT.md`
+> because it is durable project documentation, not part of any
+> contract crate. It mirrors the convention used by
+> [`docs/INCIDENT_RESPONSE.md`](./INCIDENT_RESPONSE.md),
+> [`docs/RESERVE_ACCOUNTING.md`](./RESERVE_ACCOUNTING.md), and the
+> other notes under `docs/`.
 
 This file documents the evidence behind the docs-only PR that closes
 [#1413](https://github.com/StellarLend/stellarlend-contracts/issues/1413)
@@ -19,12 +24,17 @@ below).
 
 ## Audit
 
-Snapshot taken **before** the PR's three doc-only commits, with
-`stellar-lend/contracts/amm/src/lib.rs` at the HEAD of `flash/swap`
-(commit `429fb5f6`). The two follow-up commits on the AMM rustdoc
-(`b71cd854`, `a896e41e`) only extend an existing crate-level rustdoc
-note; they introduce no `pub fn`, no `use`, no storage key, no type,
-and no invariant.
+Snapshot taken at **the base of this branch — `flash/swap` HEAD
+`429fb5f6`** — i.e. **before** any of this PR's doc-only commits
+(`b71cd854`, `a896e41e`, `4b8bb1c7`, and the consolidation
+commits). All four doc-only commits on this branch only extend the
+existing crate-level rustdoc note; they introduce no `pub fn`, no
+`use`, no storage key, no type, and no invariant, so the
+non-line-number findings (zero declarations, single rustdoc-keyword
+hit, five public entry points) hold at every SHA on this branch.
+The line numbers below are anchors for the pre-PR snapshot; line
+numbers shift as the rustdoc is extended, but grep `-c` (counts)
+and the lack of any symbol declaration are stable.
 
 ```text
 $ wc -l stellar-lend/contracts/amm/src/lib.rs
@@ -32,8 +42,13 @@ $ wc -l stellar-lend/contracts/amm/src/lib.rs
 
 $ grep -RInE 'flash_swap_a_for_b|repay_flash_swap|AmmPoolError|assert_no_active_flash_swap' stellar-lend/contracts/amm
 stellar-lend/contracts/amm/src/lib.rs:28: //! - Flash‑swap APIs ...
-                (sole hit is the existing rustdoc note that the PR extends —
-                 zero fn / struct / type / storage-key declarations anywhere)
+                (sole hit is the rustdoc note itself; the
+                 PR extends this note — zero fn / struct / type /
+                 storage-key declarations anywhere in the crate,
+                 at any SHA on this branch)
+
+$ grep -cE '^\s*pub fn' stellar-lend/contracts/amm/src/lib.rs
+5
 
 $ grep -nE '^\s*pub fn' stellar-lend/contracts/amm/src/lib.rs
 54:    pub fn init_pool(env: Env, a: i128, b: i128)
@@ -43,7 +58,7 @@ $ grep -nE '^\s*pub fn' stellar-lend/contracts/amm/src/lib.rs
 114:   pub fn get_reserves(env: Env) -> (i128, i128)
 ```
 
-Conclusions:
+Conclusions (stable across every SHA on this branch):
 
 - The symbol `flash_swap_a_for_b` is **not declared** anywhere in the
   AMM crate, so the report's claim of a return-type mismatch is *not
@@ -94,7 +109,8 @@ doc.
 
 1. `flash_swap_a_for_b(env, amount_out: i128, params: Bytes) ->
    Result<i128, AmmPoolError>` — a *candidate* signature recorded in
-   the issue; the landed signature may differ.
+   the issue; the landed signature may differ (name and type may
+   differ too).
 2. `repay_flash_swap(...)` paired with `assert_no_active_flash_swap(...)`
    — names also subject to the protocol-change PR.
 3. An error type (`AmmPoolError` per the issue, or whatever the team
