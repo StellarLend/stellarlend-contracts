@@ -48,7 +48,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     let amm_client = AmmContractClient::new(&env, &amm_id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    amm_client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
+    amm_client.init_pool(&ra, &rb, &token_a, &token_b);
     (env, amm_id)
 }
 
@@ -252,7 +252,8 @@ fn test_reentrancy_blocks_add() {
 
     client.flash_swap_a_for_b(&100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    client.add_liquidity(&caller, &1_i128, &1_i128);
+    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128);
+    assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 
 #[test]
@@ -262,7 +263,8 @@ fn test_reentrancy_blocks_remove() {
 
     client.flash_swap_a_for_b(&100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    client.remove_liquidity(&caller, &1_i128, &1_i128);
+    let res = client.try_remove_liquidity(&caller, &1_i128);
+    assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 
 #[test]
