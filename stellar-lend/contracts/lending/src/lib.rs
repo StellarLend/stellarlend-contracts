@@ -4,7 +4,7 @@
 mod cross_asset;
 mod debt;
 mod events;
-mod math;
+pub mod math;
 mod rate_model;
 pub mod rounding_strategy;
 pub mod upgrade;
