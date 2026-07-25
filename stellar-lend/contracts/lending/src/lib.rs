@@ -581,6 +581,10 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Admin).unwrap()
     }
 
+    pub fn try_get_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Admin)
+    }
+
     /// Returns the accumulated protocol bad debt.
     pub fn get_bad_debt(env: Env) -> i128 {
         env.storage()
