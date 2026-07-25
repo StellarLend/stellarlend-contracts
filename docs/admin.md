@@ -71,9 +71,10 @@ The protocol has a single super-admin whose address is stored under
 above.
 
 `get_admin()` returns `Address` and panics if `initialize` has not been called.
-Callers should use the client fallible wrapper `try_get_admin()` if the contract
-may be uninitialized (Soroban auto-generates this from `get_admin`; do not add a
-separate contract method with that name).
+Callers should use `get_admin_optional()` if the contract may be uninitialized,
+which returns `Option<Address>` (named to avoid clashing with the Soroban
+client's auto-generated `try_get_admin` wrapper around `get_admin`).
+
 
 ---
 

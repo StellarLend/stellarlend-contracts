@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Bytes, BytesN, Env, Map, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Bytes, BytesN, Env, Map, Vec,
+};
 
 // ---------------------------------------------------------------------------
 // Domain-separation constant for quorum-proof payloads (issue #1146).
@@ -183,9 +185,7 @@ impl Bridge {
     }
 
     fn save_bridge_id(env: &Env, id: &Bytes) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::BridgeId, id);
+        env.storage().persistent().set(&BridgeDataKey::BridgeId, id);
     }
 
     fn load_guardian(env: &Env) -> Option<BytesN<32>> {
@@ -195,9 +195,7 @@ impl Bridge {
     }
 
     fn save_guardian(env: &Env, pk: &BytesN<32>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Guardian, pk);
+        env.storage().persistent().set(&BridgeDataKey::Guardian, pk);
     }
 
     fn load_max_churn(env: &Env) -> Option<u32> {
@@ -213,9 +211,7 @@ impl Bridge {
     }
 
     fn remove_max_churn(env: &Env) {
-        env.storage()
-            .persistent()
-            .remove(&BridgeDataKey::MaxChurn);
+        env.storage().persistent().remove(&BridgeDataKey::MaxChurn);
     }
 
     fn load_max_per_window(env: &Env) -> i128 {
@@ -400,7 +396,11 @@ impl Bridge {
     ///             || epoch(8 LE) )`
     ///
     /// All current active validators must sign the 32-byte hash returned here.
-    pub fn quorum_proof_payload(env: Env, new_validators: Vec<BytesN<32>>, epoch: u64) -> BytesN<32> {
+    pub fn quorum_proof_payload(
+        env: Env,
+        new_validators: Vec<BytesN<32>>,
+        epoch: u64,
+    ) -> BytesN<32> {
         let bridge_id = Self::load_bridge_id(&env);
         Self::build_quorum_payload(&env, &bridge_id, &new_validators, epoch)
     }
@@ -421,16 +421,9 @@ impl Bridge {
         // 2. bridge_id length (4 bytes LE) + bridge_id bytes
         let id_len = bridge_id.len();
         data.extend_from_slice(&(id_len as u32).to_le_bytes());
-        // Copy bridge_id in 32-byte chunks to avoid heap allocation.
-        let mut offset: u32 = 0;
-        while offset < id_len {
-            let mut chunk = [0u8; 32];
-            let end = (offset + 32).min(id_len);
-            let slice_len = (end - offset) as usize;
-            bridge_id.copy_into_slice_with_offset(offset, &mut chunk[..slice_len]);
-            data.extend_from_slice(&chunk[..slice_len]);
-            offset = end;
-        }
+        // Append via SDK `Bytes::append` / `slice` — soroban-sdk 25 has no
+        // `copy_into_slice_with_offset` (only full-length `copy_into_slice`).
+        data.append(bridge_id);
 
         // 3. validator count (4 bytes LE) + each 32-byte key
         let val_count = new_validators.len() as u32;
@@ -443,8 +436,8 @@ impl Bridge {
         // 4. epoch (8 bytes LE)
         data.extend_from_slice(&epoch.to_le_bytes());
 
-        // SHA-256 over the assembled bytes
-        env.crypto().sha256(&data)
+        // SHA-256 over the assembled bytes (`Hash<32>` → `BytesN<32>`)
+        env.crypto().sha256(&data).into()
     }
 
     // -----------------------------------------------------------------------
@@ -512,7 +505,9 @@ impl Bridge {
                 removed += 1;
             }
         }
-        let churn = added.checked_add(removed).ok_or(BridgeError::WindowTotalOverflow)?;
+        let churn = added
+            .checked_add(removed)
+            .ok_or(BridgeError::WindowTotalOverflow)?;
 
         if let Some(limit) = Self::load_max_churn(&env) {
             if churn > limit {
@@ -521,7 +516,13 @@ impl Bridge {
         }
 
         // -- Verify quorum proof --
-        Self::verify_quorum_proof_internal(&env, &current_validators, &new_validators, epoch, &proofs)?;
+        Self::verify_quorum_proof_internal(
+            &env,
+            &current_validators,
+            &new_validators,
+            epoch,
+            &proofs,
+        )?;
 
         // -- Commit atomically --
         Self::save_validators(&env, &new_validators);
@@ -578,7 +579,10 @@ impl Bridge {
                 continue;
             }
             // Verify ed25519 signature over the payload hash.
-            env.crypto().ed25519_verify(&pk, &payload.into(), &sig);
+            // Clone: `Into<Bytes>` consumes `BytesN` and this loop may iterate many times.
+            // `ed25519_verify` traps on bad sig (returns `()`), so no Result mapping.
+            env.crypto()
+                .ed25519_verify(&pk, &payload.clone().into(), &sig);
             unique_active += 1;
         }
 
@@ -652,12 +656,11 @@ impl Bridge {
         }
 
         // Verify guardian signature over action-bound payload.
+        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
         let payload = Self::build_tagged_payload(&env, PAUSE_PAYLOAD_TAG, &validator);
         let payload_hash = env.crypto().sha256(&payload);
         env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature)
-            .then_some(())
-            .ok_or(BridgeError::InvalidGuardianSignature)?;
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
 
         paused.set(validator, true);
         Self::save_paused(&env, &paused);
@@ -684,12 +687,11 @@ impl Bridge {
             return Err(BridgeError::NotPaused);
         }
 
+        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
         let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
         let payload_hash = env.crypto().sha256(&payload);
         env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature)
-            .then_some(())
-            .ok_or(BridgeError::InvalidGuardianSignature)?;
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
 
         paused.remove(validator);
         Self::save_paused(&env, &paused);
@@ -725,10 +727,18 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage().persistent().set(&BridgeDataKey::MaxPerWindow, &max_per_window);
-        env.storage().persistent().set(&BridgeDataKey::WindowSize, &window_size);
-        env.storage().persistent().set(&BridgeDataKey::WindowStart, &current_time);
-        env.storage().persistent().set(&BridgeDataKey::WindowInboundTotal, &0i128);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::MaxPerWindow, &max_per_window);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowSize, &window_size);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowStart, &current_time);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowInboundTotal, &0i128);
         Ok(())
     }
 
@@ -759,8 +769,12 @@ impl Bridge {
             return Err(BridgeError::InboundCapExceeded);
         }
 
-        env.storage().persistent().set(&BridgeDataKey::WindowStart, &rolled_start);
-        env.storage().persistent().set(&BridgeDataKey::WindowInboundTotal, &new_total);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowStart, &rolled_start);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowInboundTotal, &new_total);
         Ok(())
     }
 
@@ -781,10 +795,18 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage().persistent().set(&BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowSize, &window_size);
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowStart, &current_time);
-        env.storage().persistent().set(&BridgeDataKey::WindowOutboundTotal, &0i128);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundWindowSize, &window_size);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundWindowStart, &current_time);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowOutboundTotal, &0i128);
         Ok(())
     }
 
@@ -814,8 +836,12 @@ impl Bridge {
             return Err(BridgeError::OutboundCapExceeded);
         }
 
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
-        env.storage().persistent().set(&BridgeDataKey::WindowOutboundTotal, &new_total);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowOutboundTotal, &new_total);
         Ok(())
     }
 
@@ -936,6 +962,8 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
-        assert!(client.try_set_outbound_cap(&1000i128, &0u64, &0u64).is_err());
+        assert!(client
+            .try_set_outbound_cap(&1000i128, &0u64, &0u64)
+            .is_err());
     }
 }
