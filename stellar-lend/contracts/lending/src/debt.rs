@@ -349,6 +349,7 @@ pub fn settle_accrual_split(
 
     let updated = DebtPosition {
         principal,
+        borrow_index_snapshot: position.borrow_index_snapshot,
         last_update: now,
     };
 
@@ -555,6 +556,42 @@ pub fn repay_amount(
     };
     settled.last_update = now;
     Ok(settled)
+}
+
+/// Index-aware settlement: scale principal by the borrow-index ratio.
+///
+/// When `borrow_index_snapshot == 0` (pre-migration position) or equal to
+/// `current_index`, the principal is unchanged.  Otherwise:
+///
+/// ```text
+/// new_principal = principal * current_index / borrow_index_snapshot
+/// ```
+///
+/// The returned position has `borrow_index_snapshot = current_index` and
+/// `last_update = now`.
+pub fn settle_position(
+    position: &DebtPosition,
+    current_index: i128,
+    now: u64,
+) -> Result<DebtPosition, DebtError> {
+    if position.borrow_index_snapshot == 0 || position.borrow_index_snapshot == current_index {
+        return Ok(DebtPosition {
+            principal: position.principal,
+            borrow_index_snapshot: current_index,
+            last_update: now,
+        });
+    }
+    let principal = position
+        .principal
+        .checked_mul(current_index)
+        .ok_or(DebtError::Overflow)?
+        .checked_div(position.borrow_index_snapshot)
+        .ok_or(DebtError::Overflow)?;
+    Ok(DebtPosition {
+        principal,
+        borrow_index_snapshot: current_index,
+        last_update: now,
+    })
 }
 
 /// Index-aware borrow: settle via index ratio, then add `amount`.
