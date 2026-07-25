@@ -27,6 +27,8 @@ mod bad_debt_write_off_test;
 #[cfg(test)]
 mod borrow_health_factor_test;
 #[cfg(test)]
+mod borrow_index_test;
+#[cfg(test)]
 mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
 mod cross_asset_e2e_test;
