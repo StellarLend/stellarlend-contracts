@@ -73,7 +73,6 @@ fn borrow_is_solvent(collateral: i128, current_debt: i128, amount: i128) -> bool
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
 fn property_random_operation_sequences_preserve_invariants() {
     let mut runner = TestRunner::new_with_rng(
         Config {
@@ -182,7 +181,6 @@ fn property_random_operation_sequences_preserve_invariants() {
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
 fn adversarial_interleavings_reject_invalid_withdraw_and_repay() {
     let (_env, client, _contract_id, user) = setup_case();
 

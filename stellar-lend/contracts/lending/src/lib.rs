@@ -595,7 +595,6 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Admin)
     }
 
-
     /// Returns the accumulated protocol bad debt.
     pub fn get_bad_debt(env: Env) -> i128 {
         env.storage()
@@ -1696,7 +1695,6 @@ impl LendingContract {
         env: Env,
         threshold_bps: i128,
     ) -> Result<(), LendingError> {
-
         require_initialized(&env)?;
         assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
