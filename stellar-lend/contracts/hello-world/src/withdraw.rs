@@ -169,7 +169,11 @@ pub fn withdraw_collateral(
 
     // 5. Load outstanding debt.
     let debt_key = crate::DataKey::Debt(user.clone());
-    let debt: i128 = env.storage().persistent().get(&debt_key).unwrap_or(0_i128);
+    let debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&debt_key)
+        .unwrap_or(0_i128);
 
     // 6. Health-factor check — mirrors assert_borrow_solvent in the lending crate:
     //    new_balance * LIQUIDATION_THRESHOLD_BPS >= HEALTH_FACTOR_SCALE * debt
@@ -186,7 +190,9 @@ pub fn withdraw_collateral(
     }
 
     // 7. Persist updated balance.
-    env.storage().persistent().set(&balance_key, &new_balance);
+    env.storage()
+        .persistent()
+        .set(&balance_key, &new_balance);
 
     // 8. Emit withdrawal event (schema matches lending crate's WithdrawEvent).
     emit_withdraw(env, &user, amount, new_balance);

@@ -119,7 +119,11 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
 /// validation checks added here (`CannotTransferToSelf`, `AlreadyAdmin`)
 /// prevent fat-finger lockout scenarios that have historically caused
 /// irrecoverable protocol halts.
-pub fn set_admin(env: &Env, new_admin: Address, caller: Option<Address>) -> Result<(), AdminError> {
+pub fn set_admin(
+    env: &Env,
+    new_admin: Address,
+    caller: Option<Address>,
+) -> Result<(), AdminError> {
     // When caller is provided, validate authorisation and check for unsafe
     // target addresses.
     if let Some(caller) = caller {
@@ -402,4 +406,5 @@ mod tests {
         assert_eq!(AdminError::Unauthorized as u32, 3);
         assert_eq!(AdminError::NotInitialized as u32, 4);
     }
+
 }

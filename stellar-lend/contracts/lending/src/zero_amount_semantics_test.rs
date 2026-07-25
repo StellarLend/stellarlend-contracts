@@ -7,7 +7,10 @@
 ///
 /// See docs/ZERO_AMOUNT_SEMANTICS.md for the design invariants these enforce.
 use crate::{LendingContract, LendingContractClient, LendingError};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::Address as _,
+    Address, Env,
+};
 
 fn setup() -> (Env, LendingContractClient<'static>, Address) {
     let env = Env::default();
@@ -67,10 +70,7 @@ fn deposit_negative_does_not_mutate_collateral() {
     let _ = client.try_deposit(&user, &-100);
 
     let after = client.get_position(&user).collateral;
-    assert_eq!(
-        before, after,
-        "collateral must not change on negative deposit"
-    );
+    assert_eq!(before, after, "collateral must not change on negative deposit");
 }
 
 // ---------------------------------------------------------------------------
@@ -122,10 +122,7 @@ fn withdraw_negative_does_not_mutate_collateral() {
     let _ = client.try_withdraw(&user, &-75);
 
     let after = client.get_position(&user).collateral;
-    assert_eq!(
-        before, after,
-        "collateral must not change on negative withdraw"
-    );
+    assert_eq!(before, after, "collateral must not change on negative withdraw");
 }
 
 // ---------------------------------------------------------------------------
@@ -312,9 +309,6 @@ fn get_position_unaffected_after_all_rejected_calls() {
     let _ = client.try_repay(&user, &-1);
 
     let pos = client.get_position(&user);
-    assert_eq!(
-        pos.collateral, 1000,
-        "collateral corrupted by rejected calls"
-    );
+    assert_eq!(pos.collateral, 1000, "collateral corrupted by rejected calls");
     assert_eq!(pos.debt, 200, "debt corrupted by rejected calls");
 }

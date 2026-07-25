@@ -1687,10 +1687,7 @@ impl LendingContract {
 
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
-    pub fn set_liquidation_threshold_bps(
-        env: Env,
-        threshold_bps: i128,
-    ) -> Result<(), LendingError> {
+    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
         Self::require_admin(&env)?;
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);

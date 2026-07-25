@@ -69,7 +69,11 @@ pub fn configure_flash_loan(
     Ok(())
 }
 
-pub fn set_flash_loan_fee(env: &Env, caller: Address, fee_bps: i128) -> Result<(), FlashLoanError> {
+pub fn set_flash_loan_fee(
+    env: &Env,
+    caller: Address,
+    fee_bps: i128,
+) -> Result<(), FlashLoanError> {
     require_admin(env, &caller)?;
     if fee_bps < 0 || fee_bps > 1000 {
         return Err(FlashLoanError::InvalidFeeBps);

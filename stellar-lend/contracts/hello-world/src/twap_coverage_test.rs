@@ -269,10 +269,7 @@ mod twap_coverage_tests {
         let (result, comparisons) = snapshot_search_metrics_for_test(&snaps, 1_000);
 
         assert!(result.is_none(), "empty buffer must return None");
-        assert_eq!(
-            comparisons, 0,
-            "no comparisons expected for an empty buffer"
-        );
+        assert_eq!(comparisons, 0, "no comparisons expected for an empty buffer");
     }
 
     /// Target timestamp **exactly matches** a snapshot → that snapshot is returned.
@@ -288,18 +285,12 @@ mod twap_coverage_tests {
         // Exact hit at the middle entry.
         let (result, _) = snapshot_search_metrics_for_test(&snaps, 200);
         let snap = result.expect("exact hit at middle must return Some");
-        assert_eq!(
-            snap.timestamp, 200,
-            "exact match must return the snapshot at T=200"
-        );
+        assert_eq!(snap.timestamp, 200, "exact match must return the snapshot at T=200");
 
         // Exact hit at the last entry.
         let (result_last, _) = snapshot_search_metrics_for_test(&snaps, 300);
         let snap_last = result_last.expect("exact hit at last must return Some");
-        assert_eq!(
-            snap_last.timestamp, 300,
-            "exact match must return the snapshot at T=300"
-        );
+        assert_eq!(snap_last.timestamp, 300, "exact match must return the snapshot at T=300");
     }
 
     /// Target falls **between** two consecutive snapshots → the most recent

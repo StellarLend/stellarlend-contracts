@@ -80,21 +80,21 @@ mod clamp_rate_test;
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
-mod cross_asset_config_bounds_test;
+mod normalize_price_test;
 #[cfg(test)]
 mod cross_asset_ltv_test;
 #[cfg(test)]
-mod cross_asset_storage_doc_test;
-#[cfg(test)]
-mod normalize_price_test;
-#[cfg(test)]
 mod rate_clamp_test;
-#[cfg(test)]
-mod twap_coverage_test;
 #[cfg(test)]
 mod twap_maxbuffer_perf_test;
 #[cfg(test)]
 mod twap_read_bench_test;
+#[cfg(test)]
+mod twap_coverage_test;
+#[cfg(test)]
+mod cross_asset_storage_doc_test;
+#[cfg(test)]
+mod cross_asset_config_bounds_test;
 #[cfg(test)]
 mod utilization_clamp_test;
 
@@ -405,14 +405,8 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
-        let (repaid, _seized, _fee) = liquidate(
-            &env,
-            liquidator,
-            borrower,
-            debt_asset,
-            collateral_asset,
-            amount,
-        )?;
+        let (repaid, _seized, _fee) =
+            liquidate(&env, liquidator, borrower, debt_asset, collateral_asset, amount)?;
         Ok(repaid)
     }
 
@@ -1312,8 +1306,8 @@ impl HelloContract {
     }
 }
 
-// #[cfg(test)]
-// mod test;
+#[cfg(test)]
+mod test;
 
 #[cfg(test)]
 mod amm_pause_integration_test;
