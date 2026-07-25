@@ -32,6 +32,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     let token_b = Address::generate(&env);
     client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
     let admin = Address::generate(&env);
+    client.init_pool(&admin, &ra, &rb);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
@@ -121,7 +122,7 @@ fn test_fee_never_exceeds_amount_in() {
     let (_env, client, admin) = setup_pool(10_000, 10_000);
     let amount_in: i128 = 5_000;
     let fee_bps: i128 = 4_999; // within MAX_FEE_BPS (5_000)
-    client.set_fee_bps(&admin, &fee_bps).unwrap();
+    client.set_fee_bps(&admin, &fee_bps);
     let fee = amount_in * fee_bps / 10_000;
     assert!(fee <= amount_in, "fee must not exceed amount_in");
 
@@ -141,7 +142,7 @@ fn test_fee_never_exceeds_amount_in() {
 fn test_zero_fee_swap() {
     let (_env, client, admin) = setup_pool(10_000, 10_000);
     // Set stored fee to 0 so swaps accrue no fee.
-    client.set_fee_bps(&admin, &0).unwrap();
+    client.set_fee_bps(&admin, &0);
 
     client.swap_a_for_b(&1_000);
     let (fee_a, _fee_b) = client.get_accrued_fees();
@@ -217,7 +218,7 @@ fn test_max_fee_bps() {
     let (_env, client, admin) = setup_pool(10_000, 10_000);
     let amount_in: i128 = 1_000;
     let fee_bps: i128 = MAX_FEE_BPS; // 5_000 bps = 50 %
-    client.set_fee_bps(&admin, &fee_bps).unwrap();
+    client.set_fee_bps(&admin, &fee_bps);
     let expected_fee = amount_in * fee_bps / 10_000;
 
     client.swap_a_for_b(&amount_in);
@@ -298,7 +299,7 @@ fn test_reinit_resets_fees() {
 fn test_analytical_fee_sequence() {
     let (_env, client, admin) = setup_pool(100_000, 100_000);
     let fee_bps: i128 = 50;
-    client.set_fee_bps(&admin, &fee_bps).unwrap();
+    client.set_fee_bps(&admin, &fee_bps);
 
     let swaps_a = [1_000_i128, 2_000, 3_000, 4_000, 5_000];
     let swaps_b = [500_i128, 1_500, 2_500];

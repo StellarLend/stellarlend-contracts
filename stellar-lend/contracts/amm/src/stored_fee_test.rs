@@ -32,6 +32,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     let token_b = Address::generate(&env);
     client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
     let admin = Address::generate(&env);
+    client.init_pool(&admin, &ra, &rb);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
@@ -58,7 +59,7 @@ fn test_default_fee_bps() {
 fn test_set_and_get_fee_bps() {
     let (_env, client, admin) = setup_pool(10_000, 10_000);
     let new_fee: i128 = 100; // 1 %
-    client.set_fee_bps(&admin, &new_fee).unwrap();
+    client.set_fee_bps(&admin, &new_fee);
     assert_eq!(
         client.get_fee_bps(),
         new_fee,
@@ -73,7 +74,7 @@ fn test_set_and_get_fee_bps() {
 #[test]
 fn test_fee_bps_zero() {
     let (_env, client, admin) = setup_pool(10_000, 10_000);
-    client.set_fee_bps(&admin, &0).unwrap();
+    client.set_fee_bps(&admin, &0);
     assert_eq!(client.get_fee_bps(), 0);
 
     // A swap with zero fee should accrue nothing.
@@ -89,7 +90,7 @@ fn test_fee_bps_zero() {
 #[test]
 fn test_fee_bps_max() {
     let (_env, client, admin) = setup_pool(100_000, 100_000);
-    client.set_fee_bps(&admin, &MAX_FEE_BPS).unwrap();
+    client.set_fee_bps(&admin, &MAX_FEE_BPS);
     assert_eq!(client.get_fee_bps(), MAX_FEE_BPS);
 
     let amount_in: i128 = 1_000;
@@ -140,7 +141,7 @@ fn test_swap_uses_stored_fee() {
 
     // Set the admin fee to 50 bps.
     let stored_fee: i128 = 50;
-    client.set_fee_bps(&admin, &stored_fee).unwrap();
+    client.set_fee_bps(&admin, &stored_fee);
 
     let amount_in: i128 = 5_000;
     let expected_fee = amount_in * stored_fee / 10_000;
@@ -162,7 +163,7 @@ fn test_fee_accrual_with_stored_fee() {
 
     // First phase: fee = 30 bps.
     let fee_phase1: i128 = 30;
-    client.set_fee_bps(&admin, &fee_phase1).unwrap();
+    client.set_fee_bps(&admin, &fee_phase1);
     let amt1: i128 = 1_000;
     client.swap_a_for_b(&amt1);
     let expected1 = amt1 * fee_phase1 / 10_000;
@@ -171,7 +172,7 @@ fn test_fee_accrual_with_stored_fee() {
 
     // Admin raises fee to 200 bps.
     let fee_phase2: i128 = 200;
-    client.set_fee_bps(&admin, &fee_phase2).unwrap();
+    client.set_fee_bps(&admin, &fee_phase2);
     let amt2: i128 = 2_000;
     client.swap_a_for_b(&amt2);
     let expected2 = expected1 + amt2 * fee_phase2 / 10_000;

@@ -149,6 +149,11 @@ const KEY_FEE_B: (&str, &str) = ("pool", "fee_b");
 // admin call is `DEFAULT_FEE_BPS` (30 bps = 0.30 %).
 const KEY_FEE_BPS: (&str, &str) = ("pool", "fee_bps");
 
+// Pool admin identity. Set on the first `init_pool` call (first-caller-wins).
+// All admin-gated setters (`init_pool`, `set_max_impact_bps`, `set_fee_bps`)
+// require the stored admin's authorization once it exists.
+const KEY_ADMIN: (&str, &str) = ("pool", "admin");
+
 /// Maximum fee the admin may configure (50 % = 5 000 bps).
 pub const MAX_FEE_BPS: i128 = 5_000;
 
@@ -211,6 +216,7 @@ impl AmmContract {
     /// transfers.  Resets both fee accumulators to zero.
     pub fn init_pool(env: Env, a: i128, b: i128, token_a: Address, token_b: Address) -> Result<(), AmmPoolError> {
         Self::assert_no_active_flash_swap(&env)?;
+        Self::require_admin(&env, &admin)?;
         env.storage().persistent().set(&KEY_RES_A, &a);
         env.storage().persistent().set(&KEY_RES_B, &b);
         env.storage().persistent().set(&KEY_TOKEN_A, &token_a);
@@ -233,10 +239,16 @@ impl AmmContract {
     /// * `_admin`         — caller address (auth checked by the caller in
     ///                      production; kept in signature for future ACL).
     /// * `max_impact_bps` — maximum impact in BPS, or `IMPACT_GUARD_DISABLED`.
-    pub fn set_max_impact_bps(env: Env, _admin: Address, max_impact_bps: u32) {
+    pub fn set_max_impact_bps(
+        env: Env,
+        admin: Address,
+        max_impact_bps: u32,
+    ) -> Result<(), AmmPoolError> {
+        Self::require_admin(&env, &admin)?;
         env.storage()
             .persistent()
             .set(&KEY_MAX_IMPACT_BPS, &max_impact_bps);
+        Ok(())
     }
 
     /// Return the current max-impact bound in BPS, or [`IMPACT_GUARD_DISABLED`]
@@ -263,7 +275,7 @@ impl AmmContract {
     /// # Errors
     /// Returns [`AmmPoolError::FeeBpsOutOfRange`] when `fee_bps > MAX_FEE_BPS`.
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: i128) -> Result<(), AmmPoolError> {
-        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
         if fee_bps < 0 || fee_bps > MAX_FEE_BPS {
             return Err(AmmPoolError::FeeBpsOutOfRange);
         }
@@ -301,7 +313,7 @@ impl AmmContract {
             .get(&KEY_FLASH_ACTIVE)
             .unwrap_or(false);
         if active {
-            return Err(AmmPoolError::ReentrantFlashSwap);
+    return Err(AmmPoolError::ReentrantFlashSwap);   // but returns Result
         }
         Ok(())
     }
@@ -991,6 +1003,7 @@ mod test {
         env.mock_all_auths();
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
 
         let token_a = soroban_sdk::testutils::Address::generate(&env);
         let token_b = soroban_sdk::testutils::Address::generate(&env);
@@ -1027,6 +1040,7 @@ mod test {
         env.mock_all_auths();
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
 
         let token_a = soroban_sdk::testutils::Address::generate(&env);
         let token_b = soroban_sdk::testutils::Address::generate(&env);
