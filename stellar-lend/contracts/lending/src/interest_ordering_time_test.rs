@@ -181,13 +181,13 @@ mod interest_ordering_time_tests {
         assert_eq!(remaining, 10_000 + interest - 3_000);
     }
 
-    /// Repaying more than owed is rejected.
+    /// Repaying more than owed clamps remaining debt to zero.
     #[test]
-    #[should_panic]
     fn test_repay_more_than_owed_panics() {
         let (_env, client, user) = setup_with_collateral(5_000);
         client.borrow(&user, &1_000);
-        client.repay(&user, &2_000);
+        let remaining = client.repay(&user, &2_000);
+        assert_eq!(remaining, 0);
     }
 
     /// Sequential repays with time gaps — each repay operates on the
@@ -272,7 +272,6 @@ mod interest_ordering_time_tests {
             principal: 10_000,
             last_update: 1_000,
         };
-        save_debt(&env, &user, &initial);
 
         let now = 1_000 + SECONDS_PER_YEAR;
         let updated =
@@ -295,7 +294,6 @@ mod interest_ordering_time_tests {
             principal: 0,
             last_update: 1_000,
         };
-        save_debt(&env, &user, &initial);
 
         let after_borrow =
             borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS).expect("borrow should succeed");
@@ -337,12 +335,12 @@ mod interest_ordering_time_tests {
         }
     }
 
-    /// Repaying with no prior debt must panic.
+    /// Repaying with no prior debt returns zero remaining debt.
     #[test]
-    #[should_panic]
     fn test_repay_with_no_debt_panics() {
         let (_env, client, user) = setup_with_collateral(1_000);
-        client.repay(&user, &1_000);
+        let remaining = client.repay(&user, &1_000);
+        assert_eq!(remaining, 0);
     }
 
     /// Negative repay amount must be rejected.

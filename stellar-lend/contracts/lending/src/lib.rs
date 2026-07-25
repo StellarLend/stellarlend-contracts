@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod cross_asset;
-mod debt;
+pub mod debt;
 mod events;
 mod math;
 mod rate_model;
@@ -26,6 +26,8 @@ mod bad_debt_ledger_test;
 mod bad_debt_write_off_test;
 #[cfg(test)]
 mod borrow_health_factor_test;
+#[cfg(test)]
+mod borrow_index_test;
 #[cfg(test)]
 mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
@@ -126,8 +128,8 @@ mod upgrade_governance_test;
 #[cfg(test)]
 mod utilization_history_test;
 use debt::{
-    borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
-    DebtPosition, DEFAULT_APR_BPS,
+    borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt,
+    repay_amount, save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
 };
 use events::{emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw};
 use soroban_sdk::token::Client as TokenClient;
@@ -578,6 +580,8 @@ impl LendingContract {
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         set_emergency_state_internal(&env, EmergencyState::Normal);
+        debt::save_borrow_index(&env, debt::INDEX_SCALE);
+        debt::save_last_index_update(&env, env.ledger().timestamp());
         // Emit schema version event for indexers
         emit_schema_version(&env);
         Ok(())
@@ -585,10 +589,6 @@ impl LendingContract {
 
     pub fn get_admin(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Admin).unwrap()
-    }
-
-    pub fn try_get_admin(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::Admin)
     }
 
     /// Returns the accumulated protocol bad debt.
@@ -1687,8 +1687,11 @@ impl LendingContract {
 
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
-    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
-        Self::require_admin(&env)?;
+    pub fn set_liquidation_threshold_bps(
+        env: Env,
+        threshold_bps: i128,
+    ) -> Result<(), LendingError> {
+        assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }
@@ -1780,6 +1783,18 @@ impl LendingContract {
             extend_debt_ttl(&env, &user);
         }
         position
+    }
+
+    /// Read-only view of current global borrow index.
+    pub fn get_borrow_index(env: Env) -> i128 {
+        load_borrow_index(&env)
+    }
+
+    /// Read-only view of a user's accrued debt.
+    pub fn compute_debt_view(env: Env, user: Address) -> i128 {
+        let position = load_debt(&env, &user);
+        let current_index = load_borrow_index(&env);
+        debt::compute_debt(&position, current_index)
     }
 
     /// Set the protocol-level debt ceiling (admin-only).
@@ -2562,9 +2577,22 @@ pub(crate) fn settle_and_accrue_insurance(
     now: u64,
     rate_bps: i128,
 ) -> Result<DebtPosition, LendingError> {
-    let elapsed = debt::elapsed_seconds(now, position.last_update);
-    let interest = debt::accrue_interest(position.principal, elapsed, rate_bps)
-        .map_err(|_| LendingError::Overflow)?;
+    let current_index = touch_borrow_index(env, now, rate_bps);
+
+    let (interest, settled) = if position.borrow_index_snapshot > 0 {
+        let settled = debt::settle_position(position, current_index, now)
+            .map_err(|_| LendingError::Overflow)?;
+        let interest = settled.principal.saturating_sub(position.principal);
+        (interest, settled)
+    } else {
+        let elapsed = debt::elapsed_seconds(now, position.last_update);
+        let interest = debt::accrue_interest(position.principal, elapsed, rate_bps)
+            .map_err(|_| LendingError::Overflow)?;
+        let mut settled =
+            debt::settle_accrual(position, now, rate_bps).map_err(|_| LendingError::Overflow)?;
+        settled.borrow_index_snapshot = current_index;
+        (interest, settled)
+    };
 
     if interest > 0 {
         let share_bps: i128 = env
@@ -2594,8 +2622,6 @@ pub(crate) fn settle_and_accrue_insurance(
         }
     }
 
-    let settled =
-        debt::settle_accrual(position, now, rate_bps).map_err(|_| LendingError::Overflow)?;
     Ok(settled)
 }
 

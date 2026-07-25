@@ -2,6 +2,7 @@
 #![cfg(test)]
 mod test {
     use super::*;
+    use crate::{LendingContract, LendingError};
     use soroban_sdk::{Env, BytesN, Address, testutils::Address as TestAddress};
 
     fn setup_env() -> (Env, Address, BytesN<32>, BytesN<64>) {
