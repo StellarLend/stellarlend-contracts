@@ -142,15 +142,30 @@ fn liquidation_sequence_invariants_hold_across_seeded_sequences() {
                         let amount = amount as i128;
                         let position = client.get_position(&borrower);
 
-                        // Only borrow if collateral can support it based on contract limits (80% LTV)
-                        // collateral * LIQUIDATION_THRESHOLD_BPS >= new_debt * HEALTH_FACTOR_SCALE
-                        if position.collateral.saturating_mul(8000)
-                            >= position.debt.saturating_add(amount).saturating_mul(10000)
-                        {
+                        // Guard: only assert success when the post-borrow position stays
+                        // solvent under the same check as `assert_borrow_solvent`:
+                        // collateral * LIQUIDATION_THRESHOLD_BPS >= new_debt * HEALTH_FACTOR_SCALE.
+                        // Arbitrary proptest amounts that would drop HF below 1.0 are
+                        // rejected by the contract (#2007 InsufficientCollateral) and must
+                        // not be treated as invariant failures.
+                        let new_debt = position.debt.saturating_add(amount);
+                        let healthy = new_debt == 0
+                            || position
+                                .collateral
+                                .saturating_mul(LIQUIDATION_THRESHOLD_BPS)
+                                >= new_debt.saturating_mul(HEALTH_FACTOR_SCALE);
+                        if healthy {
                             let result = client.try_borrow(&borrower, &amount);
-                            prop_assert!(result.is_ok());
+                            prop_assert!(
+                                result.is_ok(),
+                                "borrow within LTV/health should succeed: coll={} debt={} amount={}",
+                                position.collateral,
+                                position.debt,
+                                amount
+                            );
                             expected_debt = expected_debt.saturating_add(amount);
                         }
+                        // else: skip — contract correctly rejects unhealthy borrows
                     }
                     Operation::Repay(amount) => {
                         let amount = amount as i128;
