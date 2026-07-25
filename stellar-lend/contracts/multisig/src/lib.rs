@@ -3,6 +3,15 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
 };
 
+/// Parameters for cross-contract invocation action.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InvokeContractParams {
+    pub contract: Address,
+    pub fn_symbol: Symbol,
+    pub args_hash: soroban_sdk::Bytes,
+}
+
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
 /// The payload_hash binds the approved action so it cannot be swapped between
 /// approval and execution.
@@ -14,7 +23,7 @@ pub enum ProposalAction {
     /// Replace the full signer set with a new set
     RotateSigners(Vec<Address>),
     /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call
-    InvokeContract(Address, Symbol, soroban_sdk::Bytes),
+    InvokeContract(InvokeContractParams),
 }
 
 /// Lifecycle state of a proposal.
@@ -348,13 +357,13 @@ impl MultisigContract {
                     .set(&MultisigDataKey::Signers, new_signers);
                 true
             }
-            ProposalAction::InvokeContract(contract, fn_symbol, _args_hash) => {
+            ProposalAction::InvokeContract(params) => {
                 // Dispatch to the lending upgrade entrypoint via cross-contract call.
                 // The args_hash was verified at the payload_hash check; here we
                 // perform the actual invocation with an empty args list since the
                 // concrete arguments were committed via the hash.
                 let args: soroban_sdk::Vec<soroban_sdk::Val> = soroban_sdk::Vec::new(env);
-                let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args);
+                let _res: soroban_sdk::Val = env.invoke_contract(&params.contract, &params.fn_symbol, args);
                 true
             }
         }
