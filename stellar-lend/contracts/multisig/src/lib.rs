@@ -365,9 +365,10 @@ impl MultisigContract {
 
         // Persist the domain-separated binding for off-chain / indexer checks
         // and for `verify_approval_binding`.
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ApprovalBinding(id, caller.clone()), &binding);
+        env.storage().persistent().set(
+            &MultisigDataKey::ApprovalBinding(id, caller.clone()),
+            &binding,
+        );
 
         let threshold = Self::fetch_threshold(&env) as usize;
         if proposal.approvals.len() as usize >= threshold {

@@ -166,13 +166,7 @@ fn cross_proposal_auth_payload_rejected() {
         invoke: &MockAuthInvoke {
             contract: &contract_id,
             fn_name: "create_proposal",
-            args: (
-                s1.clone(),
-                make_action(),
-                dummy_hash(&env),
-                100u64,
-            )
-                .into_val(&env),
+            args: (s1.clone(), make_action(), dummy_hash(&env), 100u64).into_val(&env),
             sub_invokes: &[],
         },
     }]);
@@ -183,13 +177,7 @@ fn cross_proposal_auth_payload_rejected() {
         invoke: &MockAuthInvoke {
             contract: &contract_id,
             fn_name: "create_proposal",
-            args: (
-                s1.clone(),
-                make_action(),
-                dummy_hash(&env),
-                100u64,
-            )
-                .into_val(&env),
+            args: (s1.clone(), make_action(), dummy_hash(&env), 100u64).into_val(&env),
             sub_invokes: &[],
         },
     }]);
@@ -233,13 +221,7 @@ fn correct_domain_auth_payload_accepted() {
         invoke: &MockAuthInvoke {
             contract: &contract_id,
             fn_name: "create_proposal",
-            args: (
-                s1.clone(),
-                make_action(),
-                dummy_hash(&env),
-                100u64,
-            )
-                .into_val(&env),
+            args: (s1.clone(), make_action(), dummy_hash(&env), 100u64).into_val(&env),
             sub_invokes: &[],
         },
     }]);
