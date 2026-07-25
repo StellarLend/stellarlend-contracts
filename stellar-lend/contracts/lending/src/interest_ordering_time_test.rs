@@ -15,7 +15,7 @@
 
 #[cfg(test)]
 mod interest_ordering_time_tests {
-    use crate::debt::{borrow_amount, repay_amount, save_debt, DebtPosition, DEFAULT_APR_BPS};
+    use crate::debt::{borrow_amount, repay_amount, DebtPosition, DEFAULT_APR_BPS};
     use crate::rounding_strategy::SECONDS_PER_YEAR;
     use crate::{LendingContract, LendingContractClient};
     use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
@@ -181,13 +181,13 @@ mod interest_ordering_time_tests {
         assert_eq!(remaining, 10_000 + interest - 3_000);
     }
 
-    /// Repaying more than owed is rejected.
+    /// Repaying more than owed clamps remaining principal to zero (no panic).
     #[test]
-    #[should_panic]
-    fn test_repay_more_than_owed_panics() {
+    fn test_repay_more_than_owed_clears_debt() {
         let (_env, client, user) = setup_with_collateral(5_000);
         client.borrow(&user, &1_000);
-        client.repay(&user, &2_000);
+        let remaining = client.repay(&user, &2_000);
+        assert_eq!(remaining, 0);
     }
 
     /// Sequential repays with time gaps — each repay operates on the
@@ -261,18 +261,14 @@ mod interest_ordering_time_tests {
     // ────────────────────────────────────────────────────────────────────────
 
     /// `repay_amount` in the debt module accrues interest before subtracting
-    /// the repayment.
+    /// the repayment. Pure function — no storage access required.
     #[test]
     fn test_debt_module_repay_amount_accrues_first() {
-        let env = Env::default();
-        let user = Address::generate(&env);
-
         let initial = DebtPosition {
             borrow_index_snapshot: crate::debt::INDEX_SCALE,
             principal: 10_000,
             last_update: 1_000,
         };
-        save_debt(&env, &user, &initial);
 
         let now = 1_000 + SECONDS_PER_YEAR;
         let updated =
@@ -287,15 +283,11 @@ mod interest_ordering_time_tests {
     /// `borrow_amount` followed by `repay_amount` with a six-month gap.
     #[test]
     fn test_debt_module_borrow_then_repay_with_time() {
-        let env = Env::default();
-        let user = Address::generate(&env);
-
         let initial = DebtPosition {
             borrow_index_snapshot: crate::debt::INDEX_SCALE,
             principal: 0,
             last_update: 1_000,
         };
-        save_debt(&env, &user, &initial);
 
         let after_borrow =
             borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS).expect("borrow should succeed");
@@ -337,12 +329,12 @@ mod interest_ordering_time_tests {
         }
     }
 
-    /// Repaying with no prior debt must panic.
+    /// Repaying with no prior debt is a no-op that leaves principal at zero.
     #[test]
-    #[should_panic]
-    fn test_repay_with_no_debt_panics() {
+    fn test_repay_with_no_debt_is_noop() {
         let (_env, client, user) = setup_with_collateral(1_000);
-        client.repay(&user, &1_000);
+        let remaining = client.repay(&user, &1_000);
+        assert_eq!(remaining, 0);
     }
 
     /// Negative repay amount must be rejected.
