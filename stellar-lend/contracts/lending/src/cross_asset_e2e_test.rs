@@ -361,7 +361,8 @@ fn e2e_deep_underwater_seizure_capped_at_available_collateral() {
             },
         );
         // Also need to register this in the user's debt assets list
-        let mut list: soroban_sdk::Vec<Address> = env.storage()
+        let mut list: soroban_sdk::Vec<Address> = env
+            .storage()
             .persistent()
             .get(&DataKey::UserDebtAssets(borrower.clone()))
             .unwrap_or_else(|| {

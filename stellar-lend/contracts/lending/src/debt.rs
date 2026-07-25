@@ -5,7 +5,6 @@ use crate::rounding_strategy::{calculate_interest_with_rounding, RoundingError, 
 use crate::{rate_model, write_utilization_sample, DataKey};
 use stellar_lend_common::BPS_DENOM;
 
-
 pub const DEFAULT_APR_BPS: i128 = 500;
 
 /// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
@@ -88,7 +87,6 @@ pub(crate) struct BorrowRateComputation {
     pub rate_bps: i128,
 }
 
-
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -162,9 +160,7 @@ pub fn load_borrow_index(env: &Env) -> i128 {
 
 /// Persist the global borrow index.
 pub fn save_borrow_index(env: &Env, index: i128) {
-    env.storage()
-        .instance()
-        .set(&DataKey::BorrowIndex, &index);
+    env.storage().instance().set(&DataKey::BorrowIndex, &index);
 }
 
 /// Load the timestamp of the last index update.
@@ -179,9 +175,7 @@ pub fn load_last_index_update(env: &Env) -> u64 {
 
 /// Persist the last-index-update timestamp.
 pub fn save_last_index_update(env: &Env, ts: u64) {
-    env.storage()
-        .instance()
-        .set(&DataKey::LastIndexUpdate, &ts);
+    env.storage().instance().set(&DataKey::LastIndexUpdate, &ts);
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +583,10 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
 ///
 /// Panics on arithmetic overflow, matching the existing borrow-rate API shape
 /// while keeping the underlying arithmetic checked.
-pub(crate) fn compute_borrow_rate_from_snapshot(env: &Env, snapshot: &RateSnapshot) -> BorrowRateComputation {
+pub(crate) fn compute_borrow_rate_from_snapshot(
+    env: &Env,
+    snapshot: &RateSnapshot,
+) -> BorrowRateComputation {
     try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
 }
 
@@ -782,5 +779,3 @@ pub fn get_accrual_split_log(env: &Env) -> Vec<AccrualSplitEntry> {
         .get(&Symbol::new(env, KEY_ACCRUAL_LOG))
         .unwrap_or_else(|| Vec::new(env))
 }
-
-
