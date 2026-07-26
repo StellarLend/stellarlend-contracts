@@ -586,7 +586,8 @@ impl Bridge {
                 continue;
             }
             // Verify ed25519 signature over the payload hash.
-            env.crypto().ed25519_verify(&pk, &payload.into(), &sig);
+            let payload_bytes = payload.clone().into();
+            env.crypto().ed25519_verify(&pk, &payload_bytes, &sig);
             unique_active += 1;
         }
 
@@ -973,3 +974,4 @@ mod tests {
             .is_err());
     }
 }
+
