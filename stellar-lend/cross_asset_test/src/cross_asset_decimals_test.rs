@@ -34,7 +34,7 @@ where
 
 fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
     AssetConfig {
-        collateral_factor: 7500, // 75 %
+        collateral_factor_bps: 7500, // 75 %
         liquidation_threshold: 8000,
         max_supply: 0,
         max_borrow: 0,
@@ -172,7 +172,7 @@ fn test_borrow_health_check_mixed_decimals() {
             &env,
             None,
             AssetConfig {
-                collateral_factor: 7500,
+                collateral_factor_bps: 7500,
                 liquidation_threshold: 8000,
                 max_supply: 0,
                 max_borrow: 0,
@@ -189,7 +189,7 @@ fn test_borrow_health_check_mixed_decimals() {
             &env,
             Some(token_b.clone()),
             AssetConfig {
-                collateral_factor: 7500,
+                collateral_factor_bps: 7500,
                 liquidation_threshold: 8000,
                 max_supply: 0,
                 max_borrow: 0,
