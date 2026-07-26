@@ -346,10 +346,7 @@ pub fn can_be_liquidated(
 
 /// Return the maximum amount that may be repaid in a single liquidation call:
 /// `debt_value * close_factor_bps / 10_000`.
-pub fn get_max_liquidatable_amount(
-    env: &Env,
-    debt_value: i128,
-) -> Result<i128, RiskParamsError> {
+pub fn get_max_liquidatable_amount(env: &Env, debt_value: i128) -> Result<i128, RiskParamsError> {
     let close_factor = get_close_factor(env)?;
     debt_value
         .checked_mul(close_factor)
