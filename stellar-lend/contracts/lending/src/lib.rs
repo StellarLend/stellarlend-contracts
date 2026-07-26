@@ -21,6 +21,8 @@ mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
 #[cfg(test)]
+mod asset_rate_params_test;
+#[cfg(test)]
 mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
@@ -628,6 +630,66 @@ impl LendingContract {
                 .get(&rate_model::RateModelKey::LastRateLedger)
                 .unwrap_or(0),
         }
+    }
+
+    /// Admin-only: set a per-asset interest-rate curve override.
+    ///
+    /// When present, the override supersedes the protocol-global
+    /// [`DataKey::RateParams`] for `asset`. Resolution is performed by
+    /// [`Self::get_effective_rate_params`]; [`rate_model::compute_borrow_rate`]
+    /// remains a pure function of utilization + params.
+    ///
+    /// # Errors
+    /// - [`LendingError::NotInitialized`] if the contract is not initialized
+    /// - [`LendingError::InvalidAmount`] if params fail validation
+    ///   (`floor > ceiling`, kink outside `0..=10_000`, negative slopes, etc.)
+    ///
+    /// # Auth
+    /// Requires the protocol admin's authorization.
+    pub fn set_asset_rate_params(
+        env: Env,
+        asset: Address,
+        params: rate_model::RateParams,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env);
+        rate_model::set_asset_rate_params_storage(&env, &asset, &params)
+            .map_err(|_| LendingError::InvalidAmount)
+    }
+
+    /// Admin-only: remove a per-asset rate-params override.
+    ///
+    /// After clearing, [`Self::get_effective_rate_params`] falls back to the
+    /// global curve (or [`rate_model::RateParams::default`] when unset).
+    pub fn clear_asset_rate_params(env: Env, asset: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env);
+        rate_model::clear_asset_rate_params_storage(&env, &asset);
+        Ok(())
+    }
+
+    /// Resolve the effective [`rate_model::RateParams`] for `asset`.
+    ///
+    /// Resolution order:
+    /// 1. Per-asset override (if set via [`Self::set_asset_rate_params`])
+    /// 2. Protocol-global `DataKey::RateParams`
+    /// 3. [`rate_model::RateParams::default`]
+    ///
+    /// Read-only; does not require auth.
+    pub fn get_effective_rate_params(env: Env, asset: Address) -> rate_model::RateParams {
+        let global = env.storage().instance().get(&DataKey::RateParams);
+        rate_model::get_effective_rate_params(&env, &asset, global)
+    }
+
+    /// Return the raw per-asset override if one is stored, without global fallback.
+    ///
+    /// Useful for indexers and admin UIs that need to distinguish "override set"
+    /// from "using default". Returns `None` when no override exists.
+    pub fn get_asset_rate_params_override(
+        env: Env,
+        asset: Address,
+    ) -> Option<rate_model::RateParams> {
+        rate_model::get_asset_rate_params_override(&env, &asset)
     }
 
     /// Set the configured oracle pubkey used to verify signed price updates.

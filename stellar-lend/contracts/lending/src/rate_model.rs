@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use soroban_sdk::{contracttype, Env};
+use soroban_sdk::{contracttype, Address, Env};
 use stellar_lend_common::BPS_DENOM;
 
 /// Configuration parameters for the two-slope kink interest-rate model.
@@ -180,6 +180,111 @@ pub enum RateModelKey {
     LastRate,
     LastTargetRate,
     LastRateLedger,
+    /// Per-asset override for [`RateParams`]. When present, supersedes the
+    /// protocol-global curve stored under `DataKey::RateParams` for that asset.
+    AssetParams(Address),
+}
+
+/// Validation error for admin-written [`RateParams`] overrides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateParamsValidationError {
+    /// `rate_floor_bps > rate_ceiling_bps`.
+    FloorAboveCeiling,
+    /// `kink_utilization_bps` outside `0..=BPS_DENOM`.
+    KinkOutOfRange,
+    /// A slope multiplier is negative.
+    NegativeSlope,
+    /// Base rate is negative.
+    NegativeBaseRate,
+    /// Floor or ceiling is negative.
+    NegativeBound,
+    /// Hysteresis band is negative.
+    NegativeHysteresis,
+}
+
+/// Validate a [`RateParams`] config before it is written to storage.
+///
+/// Rules (mirrors the issue requirements for per-asset overrides):
+/// - `rate_floor_bps <= rate_ceiling_bps`
+/// - `kink_utilization_bps` in `0..=10_000`
+/// - non-negative base rate, slopes, floor, ceiling, and hysteresis
+///
+/// Returns `Ok(())` when the config is safe to store.
+pub fn validate_rate_params(params: &RateParams) -> Result<(), RateParamsValidationError> {
+    if params.rate_floor_bps > params.rate_ceiling_bps {
+        return Err(RateParamsValidationError::FloorAboveCeiling);
+    }
+    if params.kink_utilization_bps < 0 || params.kink_utilization_bps > BPS_DENOM {
+        return Err(RateParamsValidationError::KinkOutOfRange);
+    }
+    if params.multiplier_bps < 0 || params.jump_multiplier_bps < 0 {
+        return Err(RateParamsValidationError::NegativeSlope);
+    }
+    if params.base_rate_bps < 0 {
+        return Err(RateParamsValidationError::NegativeBaseRate);
+    }
+    if params.rate_floor_bps < 0 || params.rate_ceiling_bps < 0 {
+        return Err(RateParamsValidationError::NegativeBound);
+    }
+    if params.hysteresis_bps < 0 {
+        return Err(RateParamsValidationError::NegativeHysteresis);
+    }
+    Ok(())
+}
+
+/// Resolve the effective [`RateParams`] for `asset`.
+///
+/// Resolution order:
+/// 1. Per-asset override under [`RateModelKey::AssetParams`] (persistent), if set.
+/// 2. Protocol-global curve under the caller's `global` argument (typically
+///    loaded from `DataKey::RateParams`).
+/// 3. [`RateParams::default()`] when `global` is `None`.
+///
+/// This helper is pure with respect to rate math: it only reads storage for
+/// the override map. Callers still pass the resolved params into
+/// [`compute_borrow_rate`].
+pub fn get_effective_rate_params(
+    env: &Env,
+    asset: &Address,
+    global: Option<RateParams>,
+) -> RateParams {
+    if let Some(override_params) = env
+        .storage()
+        .persistent()
+        .get::<RateModelKey, RateParams>(&RateModelKey::AssetParams(asset.clone()))
+    {
+        return override_params;
+    }
+    global.unwrap_or_default()
+}
+
+/// Persist a per-asset rate-params override after validation.
+///
+/// Does **not** enforce admin auth — callers must gate this via `assert_admin`.
+pub fn set_asset_rate_params_storage(
+    env: &Env,
+    asset: &Address,
+    params: &RateParams,
+) -> Result<(), RateParamsValidationError> {
+    validate_rate_params(params)?;
+    env.storage()
+        .persistent()
+        .set(&RateModelKey::AssetParams(asset.clone()), params);
+    Ok(())
+}
+
+/// Remove a per-asset override so the asset falls back to the global curve.
+pub fn clear_asset_rate_params_storage(env: &Env, asset: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&RateModelKey::AssetParams(asset.clone()));
+}
+
+/// Read a per-asset override if present (does not fall back to global).
+pub fn get_asset_rate_params_override(env: &Env, asset: &Address) -> Option<RateParams> {
+    env.storage()
+        .persistent()
+        .get(&RateModelKey::AssetParams(asset.clone()))
 }
 
 pub fn apply_hysteresis(current: i128, target: i128, band: i128) -> i128 {
