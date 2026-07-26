@@ -15,7 +15,6 @@ pub mod amm_twap;
 pub mod analytics;
 pub mod borrow;
 pub mod bridge;
-pub mod config;
 pub mod config_snapshot;
 pub mod cross_asset;
 pub mod deposit;
@@ -110,7 +109,6 @@ use crate::analytics::{
     AnalyticsError, ProtocolReport, UserReport,
 };
 use crate::bridge::{BridgeConfig, BridgeError};
-use crate::config::{config_backup, config_get, config_restore, config_set, ConfigError};
 use crate::cross_asset::{
     get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
     get_user_asset_position, get_user_position_summary, initialize_asset, update_asset_config,
@@ -797,43 +795,6 @@ impl HelloContract {
     /// Get configuration of a specific bridge.
     pub fn get_bridge_config(env: Env, network_id: u32) -> Result<BridgeConfig, BridgeError> {
         bridge::get_bridge_config(&env, network_id)
-    }
-
-    // ============================================================================
-    // Config Methods
-    // ============================================================================
-
-    /// Set a configuration value (admin only).
-    pub fn config_set(
-        env: Env,
-        caller: Address,
-        key: soroban_sdk::Symbol,
-        value: soroban_sdk::Val,
-    ) -> Result<(), ConfigError> {
-        config_set(&env, caller, key, value)
-    }
-
-    /// Get a configuration value.
-    pub fn config_get(env: Env, key: soroban_sdk::Symbol) -> Option<soroban_sdk::Val> {
-        config_get(&env, key)
-    }
-
-    /// Backup configuration parameters (admin only).
-    pub fn config_backup(
-        env: Env,
-        caller: Address,
-        keys: soroban_sdk::Vec<soroban_sdk::Symbol>,
-    ) -> Result<soroban_sdk::Vec<(soroban_sdk::Symbol, soroban_sdk::Val)>, ConfigError> {
-        config_backup(&env, caller, keys)
-    }
-
-    /// Restore configuration parameters (admin only).
-    pub fn config_restore(
-        env: Env,
-        caller: Address,
-        backup: soroban_sdk::Vec<(soroban_sdk::Symbol, soroban_sdk::Val)>,
-    ) -> Result<(), ConfigError> {
-        config_restore(&env, caller, backup)
     }
 
     // ============================================================================

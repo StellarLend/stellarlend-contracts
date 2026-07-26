@@ -181,10 +181,22 @@ impl VestingContract {
         if total_amount <= 0 || duration_secs == 0 {
             return Err(VestingError::InvalidGrant);
         }
+
+        let claimed_amount = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Grant(grantee.clone()))
+            .map(|g: Grant| if !g.revoked { g.claimed_amount } else { 0 })
+            .unwrap_or(0);
+
+        if total_amount < claimed_amount {
+            return Err(VestingError::InvalidGrant);
+        }
+
         let grant = Grant {
             grantee: grantee.clone(),
             total_amount,
-            claimed_amount: 0,
+            claimed_amount,
             start_ts,
             cliff_secs,
             duration_secs,
