@@ -26,6 +26,8 @@ pub enum VestingError {
     InvalidAmount = 9,
     /// Requested amount exceeds claimable amount
     OverClaim = 10,
+    /// Contract was already initialized
+    AlreadyInitialized = 11,
 }
 
 /// Storage keys for the vesting contract
@@ -134,15 +136,22 @@ pub struct VestingContract;
 impl VestingContract {
     /// Initialize the vesting contract with an admin address.
     ///
-    /// Must be called before any other operation.
+    /// Must be called exactly once before any other operation.
     ///
     /// # Arguments
     /// * `admin` - The admin address that controls pause/resume and grant management
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), VestingError> {
+        if env.storage().persistent().has(&VestingKey::Admin) {
+            return Err(VestingError::AlreadyInitialized);
+        }
+
+        admin.require_auth();
+
         env.storage().persistent().set(&VestingKey::Admin, &admin);
         env.storage().persistent().set(&VestingKey::Paused, &false);
         env.storage().persistent().set(&VestingKey::PausedAt, &0u64);
         env.storage().persistent().set(&VestingKey::TotalPausedSecs, &0u64);
+        Ok(())
     }
 
     /// Create a new vesting grant for `grantee`.
@@ -435,6 +444,8 @@ impl VestingContract {
     }
 }
 
+#[cfg(test)]
+mod initialize_test;
 #[cfg(test)]
 mod pause_offset_test;
 #[cfg(test)]
