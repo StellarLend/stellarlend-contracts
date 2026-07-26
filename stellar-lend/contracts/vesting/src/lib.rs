@@ -96,6 +96,9 @@ impl Grant {
         // into quotient and remainder:
         // total_amount = q * duration_secs + r
         // elapsed * total_amount / duration_secs = elapsed * q + (elapsed * r) / duration_secs
+        //
+        // Note (#1569): this partitioned form never performs an unchecked total_amount * elapsed
+        // multiplication, so there is no overflow fallback path that could fabricate 100% vesting.
         let principal = self.total_amount as u128;
         let elapsed_u128 = elapsed as u128;
         let duration_u128 = self.duration_secs as u128;
