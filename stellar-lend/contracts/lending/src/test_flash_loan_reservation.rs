@@ -11,8 +11,8 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env};
 use crate::{DataKey, LendingContract, LendingContractClient};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ---------------------------------------------------------------------------
 // Helper: register + initialise the lending contract
