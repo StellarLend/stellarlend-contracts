@@ -1329,10 +1329,10 @@ impl LendingContract {
         let delta = updated
             .principal
             .checked_sub(prev_principal)
-            .expect("borrow_against_collateral: delta overflow");
+            .ok_or(LendingError::Overflow)?;
         let new_total_debt = total_debt
             .checked_add(delta)
-            .expect("borrow_against_collateral: total_debt overflow");
+            .ok_or(LendingError::Overflow)?;
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);

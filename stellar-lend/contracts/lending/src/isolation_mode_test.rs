@@ -20,7 +20,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::{IsolationConfig, LendingContract, LendingContractClient, LendingError};
+    use crate::{DataKey, IsolationConfig, LendingContract, LendingContractClient, LendingError};
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     // -----------------------------------------------------------------------
@@ -533,6 +533,25 @@ mod tests {
         let result = client.borrow_against_collateral(&user, &big_amount, &tok);
         assert_eq!(result, big_amount);
         assert_eq!(client.get_isolation_debt(&tok), big_amount);
+    }
+
+    #[test]
+    fn test_borrow_against_collateral_returns_overflow_on_total_debt_overflow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(LendingContract, ());
+        let client = LendingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        client.initialize(&admin);
+
+        let tok = asset(&env);
+        env.as_contract(&contract_id, || {
+            env.storage().persistent().set(&DataKey::TotalDebt, &(i128::MAX - 1));
+        });
+
+        let res = client.try_borrow_against_collateral(&user, &2i128, &tok);
+        assert!(matches!(res, Err(Ok(LendingError::Overflow))));
     }
 
     // -----------------------------------------------------------------------
