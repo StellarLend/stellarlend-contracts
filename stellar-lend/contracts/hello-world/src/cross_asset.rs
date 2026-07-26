@@ -239,6 +239,8 @@ pub struct AssetConfig {
     pub price: i128,
     /// Number of decimal places for the oracle price feed. Must be in 1..=38.
     pub price_decimals: u32,
+    /// Ledger timestamp when the asset price was last updated.
+    pub last_update_ts: u64,
 }
 
 /// A user's supply/debt balances for a single asset.
@@ -444,7 +446,11 @@ pub fn initialize_asset(
     {
         return Err(CrossAssetError::AssetAlreadyExists);
     }
-    save_config(env, &key, &config);
+    let mut cfg = config;
+    if cfg.last_update_ts == 0 {
+        cfg.last_update_ts = env.ledger().timestamp();
+    }
+    save_config(env, &key, &cfg);
     let mut list = load_asset_list(env);
     list.push_back(key);
     save_asset_list(env, &list);
@@ -541,7 +547,16 @@ pub fn update_asset_config(
     Ok(())
 }
 
-/// Store the latest oracle price for an asset.
+/// Store the latest oracle price for an asset and update its timestamp.
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+/// * `asset` - Optional token address (`None` for native asset)
+/// * `price` - Positive raw oracle price value
+///
+/// # Errors
+/// * [`CrossAssetError::InvalidAmount`] - If `price <= 0`
+/// * [`CrossAssetError::AssetNotFound`] - If the specified asset is not registered
 pub fn update_asset_price(
     env: &Env,
     asset: Option<Address>,
@@ -553,8 +568,31 @@ pub fn update_asset_price(
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
     cfg.price = price;
+    cfg.last_update_ts = env.ledger().timestamp();
     save_config(env, &key, &cfg);
     Ok(())
+}
+
+/// Return how old (in seconds) the stored oracle price for an asset is.
+///
+/// Age is calculated as `now - price_timestamp` where `now` is the current
+/// ledger timestamp (`env.ledger().timestamp()`) and `price_timestamp` is
+/// `cfg.last_update_ts`. Uses saturating subtraction to prevent underflow.
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+/// * `asset` - Optional token address (`None` for native asset)
+///
+/// # Errors
+/// * [`CrossAssetError::AssetNotFound`] - If the specified asset is not registered
+pub fn get_asset_price_age(
+    env: &Env,
+    asset: Option<Address>,
+) -> Result<u64, CrossAssetError> {
+    let key = asset_key(asset);
+    let cfg = load_config(env, &key)?;
+    let now = env.ledger().timestamp();
+    Ok(now.saturating_sub(cfg.last_update_ts))
 }
 
 /// Return the configuration for a given asset.

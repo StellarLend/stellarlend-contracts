@@ -225,6 +225,8 @@ pub struct AssetConfig {
     /// Must be in 0..=38. Typical values: 6 (USD stablecoins), 8 (BTC/ETH
     /// feeds), 18 (18-decimal ERC-20-style tokens).
     pub price_decimals: u32,
+    /// Ledger timestamp when the asset price was last updated.
+    pub last_update_ts: u64,
 }
 
 /// A user's supply/debt balances for a single asset.
@@ -464,7 +466,11 @@ pub fn initialize_asset(
     {
         return Err(CrossAssetError::AssetAlreadyExists);
     }
-    save_config(env, &key, &config);
+    let mut cfg = config;
+    if cfg.last_update_ts == 0 {
+        cfg.last_update_ts = env.ledger().timestamp();
+    }
+    save_config(env, &key, &cfg);
     let mut list = load_asset_list(env);
     list.push_back(key);
     save_asset_list(env, &list);
@@ -580,8 +586,20 @@ pub fn update_asset_price(
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
     cfg.price = price;
+    cfg.last_update_ts = env.ledger().timestamp();
     save_config(env, &key, &cfg);
     Ok(())
+}
+
+/// Return how old (in seconds) the stored oracle price for an asset is.
+pub fn get_asset_price_age(
+    env: &Env,
+    asset: Option<Address>,
+) -> Result<u64, CrossAssetError> {
+    let key = asset_key(asset);
+    let cfg = load_config(env, &key)?;
+    let now = env.ledger().timestamp();
+    Ok(now.saturating_sub(cfg.last_update_ts))
 }
 
 /// Return the configuration for a given asset.

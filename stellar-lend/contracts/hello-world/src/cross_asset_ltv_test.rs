@@ -50,6 +50,7 @@ fn asset_config(price: i128, price_decimals: u32, factor_bps: i128) -> AssetConf
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -63,6 +64,7 @@ fn borrow_only_asset_config(price: i128, price_decimals: u32, factor_bps: i128) 
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -80,6 +82,7 @@ fn collateral_only_asset_config(
         can_borrow: false,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 

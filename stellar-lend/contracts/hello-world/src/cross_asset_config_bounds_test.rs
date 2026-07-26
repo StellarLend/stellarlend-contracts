@@ -43,6 +43,7 @@ fn default_config() -> AssetConfig {
         can_borrow: true,
         price: 1_000_000,
         price_decimals: 6,
+        last_update_ts: 0,
     }
 }
 
