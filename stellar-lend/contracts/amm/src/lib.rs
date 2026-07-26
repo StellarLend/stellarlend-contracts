@@ -1486,5 +1486,3 @@ mod dynamic_fee_test;
 mod inverse_swap_proptest;
 #[cfg(test)]
 mod swap_quote_test;
-
-

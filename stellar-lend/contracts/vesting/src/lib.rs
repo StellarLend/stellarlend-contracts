@@ -447,5 +447,3 @@ impl VestingContract {
 mod pause_offset_test;
 #[cfg(test)]
 mod vested_at_overflow_test;
-
-
