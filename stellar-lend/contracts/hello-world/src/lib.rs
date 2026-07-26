@@ -129,7 +129,7 @@ use crate::config::{config_backup, config_get, config_restore, config_set, Confi
 use crate::cross_asset::{
     get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
     get_user_asset_position, get_user_position_summary, initialize_asset, update_asset_config,
-    update_asset_price, AssetConfig, AssetKey, AssetPosition, CrossAssetError, UserPositionSummary,
+    update_asset_price, AssetConfig, AssetKey, AssetPosition, UserPositionSummary,
 };
 use crate::flash_loan::{
     configure_flash_loan, execute_flash_loan, repay_flash_loan, set_flash_loan_fee, FlashLoanConfig,
