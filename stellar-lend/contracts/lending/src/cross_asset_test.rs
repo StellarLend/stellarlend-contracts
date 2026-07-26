@@ -1,5 +1,6 @@
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::events::Event;
+use soroban_sdk::testutils::{Address as _, Events};
 
 fn setup() -> (
     Env,
@@ -71,6 +72,56 @@ fn test_set_asset_params_stores_and_reads() {
     assert_eq!(params.ltv_bps, 7500);
     assert_eq!(params.liquidation_threshold_bps, 8000);
     assert_eq!(params.debt_ceiling, 1_000_000_000_000i128);
+    assert_eq!(params.borrow_cap, 0);
+    assert_eq!(params.supply_cap, 0);
+}
+
+/// `AssetParamsSetEvent` must include `supply_cap` so off-chain indexers that
+/// consume events (without re-reading storage) observe the full asset config.
+///
+/// Regression guard for #1439.
+#[test]
+fn test_set_asset_params_emits_event_including_supply_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+    client.initialize(&admin);
+
+    let ltv_bps = 7500i128;
+    let liquidation_threshold_bps = 8000i128;
+    let debt_ceiling = 1_000_000_000_000i128;
+    let borrow_cap = 2_500_000i128;
+    let supply_cap = 5_000_000i128;
+
+    client.set_asset_params(
+        &admin,
+        &asset,
+        &ltv_bps,
+        &liquidation_threshold_bps,
+        &debt_ceiling,
+        &borrow_cap,
+        &supply_cap,
+    );
+
+    assert_eq!(
+        env.events().all(),
+        [AssetParamsSetEvent {
+            asset: asset.clone(),
+            ltv_bps,
+            liquidation_threshold_bps,
+            debt_ceiling,
+            borrow_cap,
+            supply_cap,
+        }
+        .to_xdr(&env, &cid)],
+        "AssetParamsSetEvent must carry supply_cap alongside all other params"
+    );
+
+    let stored = client.get_asset_params(&asset).unwrap();
+    assert_eq!(stored.supply_cap, supply_cap);
 }
 
 #[test]
