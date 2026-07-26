@@ -87,6 +87,8 @@ mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
+mod max_borrow_proptest;
+#[cfg(test)]
 mod missing_price_test;
 #[cfg(test)]
 mod mul_div_proptest;
@@ -591,10 +593,6 @@ impl LendingContract {
 
     pub fn get_admin(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Admin).unwrap()
-    }
-
-    pub fn try_get_admin(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::Admin)
     }
 
     /// Returns the accumulated protocol bad debt.
@@ -1704,7 +1702,8 @@ impl LendingContract {
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
     pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
-        Self::require_admin(&env)?;
+        require_initialized(&env)?;
+        assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }
