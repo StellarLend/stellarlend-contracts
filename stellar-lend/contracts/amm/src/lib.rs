@@ -1,3 +1,4 @@
+#![allow(clippy::absurd_extreme_comparisons)]
 #![allow(warnings)]
 #![no_std]
 //! `stellarlend-amm` — minimal Soroban AMM contract for the StellarLend protocol.
@@ -1485,4 +1486,5 @@ mod dynamic_fee_test;
 mod inverse_swap_proptest;
 #[cfg(test)]
 mod swap_quote_test;
+
 

@@ -1,3 +1,4 @@
+#![allow(clippy::absurd_extreme_comparisons)]
 #![allow(warnings)]
 #![no_std]
 use soroban_sdk::{
@@ -446,4 +447,5 @@ impl VestingContract {
 mod pause_offset_test;
 #[cfg(test)]
 mod vested_at_overflow_test;
+
 
