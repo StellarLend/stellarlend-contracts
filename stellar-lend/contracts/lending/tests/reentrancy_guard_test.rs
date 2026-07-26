@@ -83,7 +83,7 @@ impl DepositReentrant {
     ) -> Val {
         // `params` encodes the lending contract address to call back into.
         // We use LendingContractClient to call deposit.
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).unwrap();
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.deposit(&user, &100_i128);
@@ -109,7 +109,7 @@ impl WithdrawReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).unwrap();
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.withdraw(&user, &100_i128);
@@ -135,7 +135,7 @@ impl BorrowReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).unwrap();
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.borrow(&user, &100_i128);
@@ -161,7 +161,7 @@ impl RepayReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).unwrap();
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.repay(&user, &100_i128);
@@ -187,7 +187,7 @@ impl LiquidateReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).unwrap();
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let liquidator = Address::generate(&env);
         let borrower = Address::generate(&env);
@@ -222,7 +222,7 @@ impl NestedFlashReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).unwrap();
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let receiver2 = Address::generate(&env);
         lending_client.flash_loan(&initiator, &receiver2, &asset, &100_i128, &Bytes::new(&env));
