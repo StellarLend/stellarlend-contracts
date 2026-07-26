@@ -407,6 +407,226 @@ fn test_deposit_at_cap_boundary_emits_event() {
     }
 }
 
+// -----------------------------------------------------------------------
+// Admin-setter event tests
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_set_min_borrow_emits_event() {
+    let (env, client, _admin, _user) = setup();
+    let min_borrow = 100_i128;
+    client.set_min_borrow(&min_borrow);
+
+    let events = env.events().all();
+    let min_borrow_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "MinBorrowSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(
+        min_borrow_events.len(),
+        1,
+        "Should emit exactly one MinBorrowSetEvent"
+    );
+}
+
+#[test]
+fn test_set_min_borrow_event_zero() {
+    let (env, client, _admin, _user) = setup();
+    client.set_min_borrow(&0);
+
+    let events = env.events().all();
+    let min_borrow_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "MinBorrowSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(min_borrow_events.len(), 1);
+}
+
+#[test]
+fn test_set_max_move_bps_emits_event() {
+    let (env, client, _admin, _user) = setup();
+    let max_move_bps = 500_i128;
+    client.set_max_move_bps(&max_move_bps);
+
+    let events = env.events().all();
+    let max_move_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "MaxMoveBpsSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(
+        max_move_events.len(),
+        1,
+        "Should emit exactly one MaxMoveBpsSetEvent"
+    );
+}
+
+#[test]
+fn test_set_max_move_bps_at_boundary_emits_event() {
+    let (env, client, _admin, _user) = setup();
+    client.set_max_move_bps(&0);
+    let events = env.events().all();
+    let max_move_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "MaxMoveBpsSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+    assert_eq!(max_move_events.len(), 1);
+}
+
+#[test]
+fn test_set_max_flash_bps_emits_event() {
+    let (env, client, _admin, _user) = setup();
+    let max_flash_bps = 5000_i128;
+    client.set_max_flash_bps(&max_flash_bps);
+
+    let events = env.events().all();
+    let max_flash_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "MaxFlashBpsSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(
+        max_flash_events.len(),
+        1,
+        "Should emit exactly one MaxFlashBpsSetEvent"
+    );
+}
+
+#[test]
+fn test_set_max_flash_bps_default_emits_event() {
+    let (env, client, _admin, _user) = setup();
+    client.set_max_flash_bps(&10000); // BPS_DENOM
+
+    let events = env.events().all();
+    let max_flash_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "MaxFlashBpsSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+    assert_eq!(max_flash_events.len(), 1);
+}
+
+#[test]
+fn test_set_collateral_asset_emits_event() {
+    let (env, client, _admin, _user) = setup();
+    let asset = Address::generate(&env);
+    client.set_collateral_asset(&asset);
+
+    let events = env.events().all();
+    let collateral_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "CollateralAssetSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(
+        collateral_events.len(),
+        1,
+        "Should emit exactly one CollateralAssetSetEvent"
+    );
+}
+
+#[test]
+fn test_set_collateral_asset_replaces_event() {
+    let (env, client, _admin, _user) = setup();
+    let asset1 = Address::generate(&env);
+    let asset2 = Address::generate(&env);
+    client.set_collateral_asset(&asset1);
+    client.set_collateral_asset(&asset2);
+
+    let events = env.events().all();
+    let collateral_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "CollateralAssetSetEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(
+        collateral_events.len(),
+        2,
+        "Should emit two CollateralAssetSetEvent for two calls"
+    );
+}
+
 #[test]
 fn test_failed_operation_does_not_emit_event() {
     let (_env, client, _admin, user) = setup();
