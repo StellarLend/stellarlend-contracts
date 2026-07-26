@@ -239,10 +239,10 @@ The contract treats the current struct-returning getter responses as view schema
 
 Covered getters:
 
-- `get_user_debt() -> DebtPosition`
-- `get_user_collateral() -> BorrowCollateral`
-- `get_user_collateral_deposit() -> DepositCollateral`
-- `get_user_position() -> UserPositionSummary`
+- `get_debt_position(user: Address) -> DebtPosition`
+- `get_position(user: Address) -> PositionSummary` (aliased as `get_user_position(user: Address)`)
+- `get_cross_position_summary(user: Address) -> CrossPositionSummary`
+- `get_debt_asset_position(user: Address, asset: Address) -> DebtPosition`
 
 Wire-format guarantee:
 
@@ -259,7 +259,7 @@ Stable decoding guidance:
 Versioning strategy:
 
 - Existing getter response structs are preserved in place for schema `v1`.
-- Any additive or breaking change to one of the getter structs must ship as a new versioned getter/type, for example `get_user_position_v2()`, instead of mutating the current response shape.
+- Any additive or breaking change to one of the getter structs must ship as a new versioned getter/type, for example `get_position_v2()`, instead of mutating the current response shape. (No such versioned getter exists today — this describes the strategy to follow if/when one is needed.)
 - A runtime `schema` field is intentionally not added to the existing structs because that would itself be a breaking ABI change for the current getter surface.
 
 ## Contract Interface
