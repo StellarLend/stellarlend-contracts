@@ -60,13 +60,16 @@ mod flash_swap_test;
 #[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
+mod proportional_remove_test;
+#[cfg(test)]
 mod sqrt_precision_test;
 #[cfg(test)]
 mod stored_fee_test;
 
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,
+    Symbol, Vec,
 };
 
 use crate::liquidity_math::{
@@ -207,6 +210,25 @@ pub enum LpBalanceKey {
     User(Address),
 }
 
+/// Emitted by [`AmmContract::remove_liquidity_proportional`] after a successful
+/// proportional exit. Indexable by `(liquidity_removed, caller)`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiquidityRemovedEvent {
+    /// LP that exited.
+    pub caller: Address,
+    /// Token A amount transferred out.
+    pub out_a: i128,
+    /// Token B amount transferred out.
+    pub out_b: i128,
+    /// Pro-rata share of `KEY_FEE_A` settled (counter debit).
+    pub fee_a: i128,
+    /// Pro-rata share of `KEY_FEE_B` settled (counter debit).
+    pub fee_b: i128,
+    /// Requested exit fraction in basis points.
+    pub shares_bps: i128,
+}
+
 /// Maximum fee the admin may configure (50 % = 5 000 bps).
 pub const MAX_FEE_BPS: i128 = 5_000;
 
@@ -244,6 +266,8 @@ pub enum AmmPoolError {
     ZeroReserve = 13,
     /// Caller has insufficient LP balance for requested burn
     InsufficientLpBalance = 14,
+    /// `shares_bps` is outside the valid range `1..=10_000`
+    SharesBpsOutOfRange = 15,
 }
 
 /// Return value of [`AmmContract::get_swap_quote`].
@@ -616,6 +640,172 @@ impl AmmContract {
         );
 
         Ok((amount_a, amount_b))
+    }
+
+    /// Remove a **basis-point fraction** of the caller's LP position, settling
+    /// pro-rata protocol fees and preserving pool-favourable rounding.
+    ///
+    /// # Formula
+    ///
+    /// ```text
+    /// burn_shares = floor(user_lp_balance * shares_bps / 10_000)
+    /// out_a       = floor(reserve_a * burn_shares / total_supply)
+    /// out_b       = floor(reserve_b * burn_shares / total_supply)
+    /// fee_a_out   = floor(KEY_FEE_A * burn_shares / total_supply)
+    /// fee_b_out   = floor(KEY_FEE_B * burn_shares / total_supply)
+    /// ```
+    ///
+    /// Floor division on every path guarantees residual `k` never decreases
+    /// below the pre-withdrawal proportion (pool-favourable rounding).
+    ///
+    /// # Arguments
+    /// * `caller` — LP whose shares are burned (must authorize).
+    /// * `shares_bps` — fraction of the caller's balance to exit, in basis
+    ///   points. Valid range: `1..=10_000` (1 bps … 100 % of position).
+    ///
+    /// # Returns
+    /// `(out_a, out_b)` — tokens transferred to the caller (fees are already
+    /// embedded in reserves; fee counters are reduced pro-rata for accounting).
+    ///
+    /// # Errors
+    /// - [`AmmPoolError::SharesBpsOutOfRange`] if `shares_bps` ∉ `1..=10_000`
+    /// - [`AmmPoolError::InvalidBurnAmount`] if the computed burn is zero
+    /// - [`AmmPoolError::ReentrantFlashSwap`] during an active flash swap
+    /// - standard burn / reserve errors from the share math path
+    ///
+    /// # Events
+    /// Publishes `liquidity_removed` with
+    /// `(out_a, out_b, fee_a, fee_b, shares_bps)`.
+    ///
+    /// See: [PROPORTIONAL_WITHDRAWAL.md](./PROPORTIONAL_WITHDRAWAL.md)
+    pub fn remove_liquidity_proportional(
+        env: Env,
+        caller: Address,
+        shares_bps: i128,
+    ) -> Result<(i128, i128), AmmPoolError> {
+        caller.require_auth();
+        Self::assert_no_active_flash_swap(&env)?;
+
+        if shares_bps < 1 || shares_bps > 10_000 {
+            return Err(AmmPoolError::SharesBpsOutOfRange);
+        }
+
+        let lp_key = LpBalanceKey::User(caller.clone());
+        let user_balance: i128 = env.storage().persistent().get(&lp_key).unwrap_or(0);
+
+        // burn_shares = floor(user_balance * shares_bps / 10_000)
+        let burn_shares = user_balance
+            .checked_mul(shares_bps)
+            .ok_or(AmmPoolError::Overflow)?
+            .checked_div(10_000)
+            .ok_or(AmmPoolError::Overflow)?;
+        if burn_shares <= 0 {
+            return Err(AmmPoolError::InvalidBurnAmount);
+        }
+        if burn_shares > user_balance {
+            return Err(AmmPoolError::InsufficientLpBalance);
+        }
+
+        let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
+        let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
+        let total_supply: i128 = env
+            .storage()
+            .persistent()
+            .get(&KEY_LP_TOTAL_SUPPLY)
+            .unwrap_or(0);
+
+        // Absolute burn against live reserves so multi-LP pools remain fair.
+        // Rounding is always floor (pool-favourable) via calculate_burn_amounts.
+        let (out_a, out_b) =
+            calculate_burn_amounts(burn_shares, total_supply, ra, rb).map_err(|e| match e {
+                LiquidityMathError::InvalidBurnAmount => AmmPoolError::InvalidBurnAmount,
+                LiquidityMathError::ZeroSupply => AmmPoolError::ZeroSupply,
+                LiquidityMathError::BurnExceedsSupply => AmmPoolError::BurnExceedsSupply,
+                LiquidityMathError::Overflow => AmmPoolError::Overflow,
+                LiquidityMathError::ZeroReserve => AmmPoolError::ZeroReserve,
+                LiquidityMathError::InsufficientLiquidityMinted => AmmPoolError::Overflow,
+            })?;
+
+        // Pro-rata fee settlement (accounting counters; tokens already in reserves).
+        let fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
+        let fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
+        let fee_a_out = Self::compute_proportional_out(fee_a, burn_shares, total_supply)?;
+        let fee_b_out = Self::compute_proportional_out(fee_b, burn_shares, total_supply)?;
+
+        let new_ra = ra
+            .checked_sub(out_a)
+            .ok_or(AmmPoolError::InsufficientReserves)?;
+        let new_rb = rb
+            .checked_sub(out_b)
+            .ok_or(AmmPoolError::InsufficientReserves)?;
+        assert_k_monotonic(ra, rb, new_ra, new_rb, false)?;
+
+        // Checks-effects-interactions: mutate storage before transfers.
+        env.storage().persistent().set(&KEY_RES_A, &new_ra);
+        env.storage().persistent().set(&KEY_RES_B, &new_rb);
+
+        let new_total_supply = total_supply
+            .checked_sub(burn_shares)
+            .ok_or(AmmPoolError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&KEY_LP_TOTAL_SUPPLY, &new_total_supply);
+
+        let new_user_balance = user_balance
+            .checked_sub(burn_shares)
+            .ok_or(AmmPoolError::Overflow)?;
+        env.storage().persistent().set(&lp_key, &new_user_balance);
+
+        env.storage()
+            .persistent()
+            .set(&KEY_FEE_A, &(fee_a.saturating_sub(fee_a_out)));
+        env.storage()
+            .persistent()
+            .set(&KEY_FEE_B, &(fee_b.saturating_sub(fee_b_out)));
+
+        let token_a: Address = env
+            .storage()
+            .persistent()
+            .get(&KEY_TOKEN_A)
+            .ok_or(AmmPoolError::EmptyPool)?;
+        let token_b: Address = env
+            .storage()
+            .persistent()
+            .get(&KEY_TOKEN_B)
+            .ok_or(AmmPoolError::EmptyPool)?;
+        TokenClient::new(&env, &token_a).transfer(&env.current_contract_address(), &caller, &out_a);
+        TokenClient::new(&env, &token_b).transfer(&env.current_contract_address(), &caller, &out_b);
+
+        LiquidityRemovedEvent {
+            caller: caller.clone(),
+            out_a,
+            out_b,
+            fee_a: fee_a_out,
+            fee_b: fee_b_out,
+            shares_bps,
+        }
+        .publish(&env);
+
+        Ok((out_a, out_b))
+    }
+
+    /// Floor-divide `amount * numerator / denominator` with checked arithmetic.
+    ///
+    /// Used for pool-favourable proportional fee/share settlement. Rounding
+    /// always favours the pool (withdrawer rounds down).
+    fn compute_proportional_out(
+        amount: i128,
+        numerator: i128,
+        denominator: i128,
+    ) -> Result<i128, AmmPoolError> {
+        if denominator <= 0 {
+            return Err(AmmPoolError::ZeroSupply);
+        }
+        amount
+            .checked_mul(numerator)
+            .ok_or(AmmPoolError::Overflow)?
+            .checked_div(denominator)
+            .ok_or(AmmPoolError::Overflow)
     }
 
     /// Swap from A -> B using Uniswap-style formula with the stored fee.
