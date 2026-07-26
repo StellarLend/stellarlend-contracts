@@ -5,150 +5,194 @@
 /// Applying a new signer set whose size is smaller than the current threshold
 /// would permanently brick the multisig because quorum could never be reached.
 /// These tests verify the documented coupling between signer-set size and the
-/// live threshold at `apply_signers_change` time.
+/// live threshold inside `dispatch_action` when a `RotateSigners` proposal is
+/// executed.
 ///
 /// # Coverage
 ///
-/// 1. Shrink below threshold — rejected (bricking prevented).
+/// 1. Shrink below threshold — `RotateSigners` execution returns false (bricking prevented).
 /// 2. Shrink to exactly threshold size — succeeds (tight but valid quorum).
-/// 3. Live threshold getter is unchanged after a rejected apply.
-/// 4. Queued threshold reduction landing first enables a subsequent shrink.
-#[cfg(test)]
-mod signer_shrink_guard_tests {
-    use crate::{
-        MultisigContract, MultisigContractClient, MultisigError, MIN_SIGNERS_DELAY_LEDGERS,
-        MIN_THRESHOLD_DELAY_LEDGERS,
-    };
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::testutils::Ledger;
-    use soroban_sdk::{Address, Env, Vec};
+/// 3. Live threshold getter is unchanged after a rejected rotate.
+/// 4. Reducing the threshold first (via `SetThreshold`) enables a subsequent shrink.
+use super::*;
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{Address, Bytes, Env, Vec};
 
-    // -- Helpers --
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-    /// Build an initialised contract with `signer_count` registered signers
-    /// and an active threshold of `threshold`.
-    fn setup(threshold: u32, signer_count: usize) -> (Env, Address, MultisigContractClient<'static>) {
-        let env = Env::default();
-        env.mock_all_auths();
+fn make_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
+}
 
-        let admin = Address::generate(&env);
-        let contract_id = env.register_contract(None, MultisigContract);
-        let client = MultisigContractClient::new(&env, &contract_id);
+fn make_bytes(env: &Env, data: &[u8]) -> Bytes {
+    Bytes::from_slice(env, data)
+}
 
-        client.initialize(&admin, &threshold);
+/// Spin up a multisig with `signer_count` signers and the given `threshold`.
+fn setup(threshold: u32, signer_count: usize) -> (Env, Address, Vec<Address>) {
+    let env = make_env();
+    let contract_id = env.register(MultisigContract, ());
+    let client = MultisigContractClient::new(&env, &contract_id);
 
-        let mut signers = Vec::new(&env);
-        for _ in 0..signer_count {
-            signers.push_back(Address::generate(&env));
-        }
-        client.set_signers(&signers);
-
-        (env, admin, client)
+    let mut signers = Vec::new(&env);
+    for _ in 0..signer_count {
+        signers.push_back(Address::generate(&env));
     }
+    client.initialize(&signers, &threshold);
 
-    /// Build a `Vec<Address>` of `n` freshly generated addresses.
-    fn make_signers(env: &Env, n: usize) -> Vec<Address> {
-        let mut v = Vec::new(env);
-        for _ in 0..n {
-            v.push_back(Address::generate(env));
-        }
-        v
+    (env, contract_id, signers)
+}
+
+/// Build a `Vec<Address>` of `n` freshly generated addresses.
+fn make_signers(env: &Env, n: usize) -> Vec<Address> {
+    let mut v = Vec::new(env);
+    for _ in 0..n {
+        v.push_back(Address::generate(env));
     }
+    v
+}
 
-    /// Queue a signer-set change then advance past the delay so it is immediately applicable.
-    fn queue_and_ready(env: &Env, client: &MultisigContractClient, new_signers: Vec<Address>) {
-        client.queue_signers_change(&new_signers);
-        let seq = env.ledger().sequence();
-        env.ledger().set_sequence_number(seq + MIN_SIGNERS_DELAY_LEDGERS);
+/// Create a proposal, gather enough approvals to pass it, then return the id.
+fn create_and_pass(
+    env: &Env,
+    contract_id: &Address,
+    signers: &Vec<Address>,
+    action: ProposalAction,
+    hash: &Bytes,
+) -> u64 {
+    let client = MultisigContractClient::new(env, contract_id);
+    let threshold = client.get_threshold() as usize;
+
+    let id = client.create_proposal(&signers.get(0).unwrap(), &action, hash, &500u64);
+    for i in 0..threshold {
+        client.approve_proposal(&signers.get(i as u32).unwrap(), &id);
     }
+    id
+}
 
-    // -- Test 1: shrink below threshold is rejected --
+// ---------------------------------------------------------------------------
+// Test 1: shrink below threshold is rejected
+// ---------------------------------------------------------------------------
 
-    /// Applying a signer set whose size is less than the current threshold must
-    /// be rejected to prevent permanently bricking the multisig.
-    #[test]
-    fn test_shrink_below_threshold_is_rejected() {
-        // threshold = 3, initial signers = 5; attempting to shrink to 2.
-        let (env, _admin, client) = setup(3, 5);
-        assert_eq!(client.get_threshold(), 3);
+/// Executing a `RotateSigners` proposal whose new set is smaller than the
+/// current threshold must fail — the action returns `false` and the
+/// `dispatch_action` router panics with `InvalidAction`.
+#[test]
+#[should_panic(expected = "InvalidAction")]
+fn test_shrink_below_threshold_is_rejected() {
+    // threshold = 3, initial signers = 5; attempting to shrink to 2 (< 3).
+    let (env, contract_id, signers) = setup(3, 5);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    assert_eq!(client.get_threshold(), 3);
 
-        let tiny_set = make_signers(&env, 2); // 2 < 3
-        queue_and_ready(&env, &client, tiny_set);
+    let tiny_set = make_signers(&env, 2); // 2 < threshold 3
+    let hash = make_bytes(&env, b"shrink_below_hash");
+    let id = create_and_pass(&env, &contract_id, &signers, ProposalAction::RotateSigners(tiny_set), &hash);
 
-        let result = client.try_apply_signers_change();
-        assert!(
-            result.is_err(),
-            "applying a signer set smaller than the threshold must fail"
-        );
-    }
+    // execute_proposal must panic because the guard rejects the shrink.
+    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
+}
 
-    // -- Test 2: shrink to exactly threshold size succeeds --
+// ---------------------------------------------------------------------------
+// Test 2: shrink to exactly threshold size succeeds
+// ---------------------------------------------------------------------------
 
-    /// Shrinking to exactly the threshold size is the tightest valid quorum
-    /// and must be accepted.
-    #[test]
-    fn test_shrink_to_exactly_threshold_succeeds() {
-        // threshold = 3, initial signers = 5; shrink to 3.
-        let (env, _admin, client) = setup(3, 5);
+/// Shrinking to exactly the threshold size is the tightest valid quorum
+/// and must be accepted.
+#[test]
+fn test_shrink_to_exactly_threshold_succeeds() {
+    // threshold = 3, initial signers = 5; shrink to 3 (== threshold).
+    let (env, contract_id, signers) = setup(3, 5);
+    let client = MultisigContractClient::new(&env, &contract_id);
 
-        let exact_set = make_signers(&env, 3); // 3 == threshold
-        queue_and_ready(&env, &client, exact_set);
+    let exact_set = make_signers(&env, 3); // 3 == threshold
+    let hash = make_bytes(&env, b"shrink_exact_hash");
+    let id = create_and_pass(&env, &contract_id, &signers, ProposalAction::RotateSigners(exact_set.clone()), &hash);
 
-        client.apply_signers_change();
+    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
 
-        assert_eq!(
-            client.get_signers().unwrap().len(),
-            3,
-            "signer set must have exactly 3 members after shrink-to-threshold"
-        );
-    }
+    let stored = client.get_signers();
+    assert_eq!(
+        stored.len(),
+        3,
+        "signer set must have exactly 3 members after shrink-to-threshold"
+    );
+    assert!(
+        !stored.contains(&signers.get(0).unwrap()),
+        "old signers must not appear in the rotated set"
+    );
+}
 
-    // -- Test 3: threshold is unchanged after a rejected apply --
+// ---------------------------------------------------------------------------
+// Test 3: threshold is unchanged after a rejected rotate
+// ---------------------------------------------------------------------------
 
-    /// A rejected `apply_signers_change` must leave the live threshold intact.
-    #[test]
-    fn test_threshold_unchanged_after_rejected_apply() {
-        let (env, _admin, client) = setup(3, 4);
-        let threshold_before = client.get_threshold();
+/// A rejected `RotateSigners` execution must leave the live threshold intact.
+#[test]
+fn test_threshold_unchanged_after_rejected_rotate() {
+    // threshold = 3, initial signers = 4; try to shrink to 1 (< 3).
+    let (env, contract_id, signers) = setup(3, 4);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let threshold_before = client.get_threshold();
 
-        let tiny_set = make_signers(&env, 1); // 1 < 3
-        queue_and_ready(&env, &client, tiny_set);
+    let tiny_set = make_signers(&env, 1); // 1 < threshold 3
+    let hash = make_bytes(&env, b"unchanged_thresh_hash");
+    let id = create_and_pass(&env, &contract_id, &signers, ProposalAction::RotateSigners(tiny_set), &hash);
 
-        let _ = client.try_apply_signers_change();
+    // The execute attempt will fail; catch it so we can assert threshold afterward.
+    let result = client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash);
+    assert!(result.is_err(), "executing a shrink-below-threshold must fail");
 
-        assert_eq!(
-            client.get_threshold(),
-            threshold_before,
-            "threshold must be unchanged after a rejected shrink"
-        );
-    }
+    assert_eq!(
+        client.get_threshold(),
+        threshold_before,
+        "threshold must be unchanged after a rejected shrink"
+    );
+}
 
-    // -- Test 4: threshold reduction first then shrink succeeds --
+// ---------------------------------------------------------------------------
+// Test 4: threshold reduction first enables a subsequent shrink
+// ---------------------------------------------------------------------------
 
-    /// Reducing the threshold before applying the shrink makes the operation
-    /// valid that was previously invalid.
-    #[test]
-    fn test_threshold_reduction_enables_subsequent_shrink() {
-        // threshold = 3, signers = 5.  Reduce threshold to 2 first.
-        let (env, _admin, client) = setup(3, 5);
+/// Reducing the threshold (via a `SetThreshold` proposal) before rotating
+/// the signer set makes the previously invalid shrink valid.
+#[test]
+fn test_threshold_reduction_enables_subsequent_shrink() {
+    // threshold = 3, signers = 5.  Reduce threshold to 2 first, then shrink to 2.
+    let (env, contract_id, signers) = setup(3, 5);
+    let client = MultisigContractClient::new(&env, &contract_id);
 
-        client.queue_threshold_change(&2);
-        let seq = env.ledger().sequence();
-        env.ledger().set_sequence_number(seq + MIN_THRESHOLD_DELAY_LEDGERS);
-        client.apply_threshold_change();
-        assert_eq!(client.get_threshold(), 2);
+    // Step 1 — reduce threshold from 3 → 2 via a SetThreshold proposal.
+    let thresh_hash = make_bytes(&env, b"set_threshold_hash");
+    let thresh_id = create_and_pass(
+        &env,
+        &contract_id,
+        &signers,
+        ProposalAction::SetThreshold(2),
+        &thresh_hash,
+    );
+    client.execute_proposal(&signers.get(0).unwrap(), &thresh_id, &thresh_hash);
+    assert_eq!(client.get_threshold(), 2, "threshold must be 2 after SetThreshold");
 
-        // Now shrink to 2 — valid because threshold == 2.
-        let two_signers = make_signers(&env, 2);
-        let seq2 = env.ledger().sequence();
-        client.queue_signers_change(&two_signers);
-        env.ledger().set_sequence_number(seq2 + MIN_SIGNERS_DELAY_LEDGERS);
+    // Step 2 — shrink the signer set to 2 (== new threshold).
+    let two_signers = make_signers(&env, 2);
+    let rotate_hash = make_bytes(&env, b"rotate_to_two_hash");
+    let rotate_id = create_and_pass(
+        &env,
+        &contract_id,
+        &signers,
+        ProposalAction::RotateSigners(two_signers.clone()),
+        &rotate_hash,
+    );
+    client.execute_proposal(&signers.get(0).unwrap(), &rotate_id, &rotate_hash);
 
-        client.apply_signers_change();
-        assert_eq!(
-            client.get_signers().unwrap().len(),
-            2,
-            "signer set must have 2 members after valid shrink post threshold-reduction"
-        );
-    }
+    assert_eq!(
+        client.get_signers().len(),
+        2,
+        "signer set must have 2 members after valid shrink post threshold-reduction"
+    );
 }

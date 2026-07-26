@@ -343,6 +343,13 @@ impl MultisigContract {
                 if new_signers.is_empty() {
                     return false;
                 }
+                // Signer-shrink guard: the new signer set must be at least as
+                // large as the current threshold, otherwise quorum could never
+                // be reached again and the multisig would be permanently bricked.
+                let threshold = Self::fetch_threshold(env);
+                if (new_signers.len() as u32) < threshold {
+                    return false;
+                }
                 env.storage()
                     .persistent()
                     .set(&MultisigDataKey::Signers, new_signers);
@@ -534,3 +541,6 @@ mod batch_execute_test;
 
 #[cfg(test)]
 mod cancel_proposal_test;
+
+#[cfg(test)]
+mod signer_shrink_guard_test;
