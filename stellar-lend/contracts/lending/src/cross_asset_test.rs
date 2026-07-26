@@ -1,7 +1,7 @@
 use super::*;
 use soroban_sdk::testutils::Address as _;
 
-fn setup() -> (
+pub fn setup() -> (
     Env,
     LendingContractClient<'static>,
     Address,
