@@ -427,8 +427,10 @@ impl NoOpContract {}
 // Module initialization
 // ---------------------------------------------------------------------------
 
-/// Initialize the cross-asset module (no-op; reserved for future admin setup).
-pub fn initialize(_env: &Env, _admin: Address) -> Result<(), CrossAssetError> {
+/// Initialize the cross-asset module, setting the admin address for subsequent
+/// operations that require authorization.
+pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
+    set_admin(env, &admin);
     Ok(())
 }
 
@@ -569,11 +571,18 @@ pub fn update_asset_config(
 }
 
 /// Store the latest oracle price for an asset (raw units, `price_decimals` scale).
+///
+/// # Access control
+/// `caller` must be the stored protocol admin, else
+/// [`CrossAssetError::Unauthorized`] is returned before any state is touched.
 pub fn update_asset_price(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     price: i128,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+    
     if price <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }

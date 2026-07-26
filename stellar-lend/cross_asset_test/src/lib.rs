@@ -3,3 +3,5 @@ pub mod cross_asset;
 mod cross_asset_decimals_test;
 #[cfg(test)]
 mod cross_asset_config_bounds_test;
+#[cfg(test)]
+mod cross_asset_price_authorization_test;

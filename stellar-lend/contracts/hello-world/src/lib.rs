@@ -80,6 +80,8 @@ mod cross_asset_storage_doc_test;
 #[cfg(test)]
 mod cross_asset_config_bounds_test;
 #[cfg(test)]
+mod cross_asset_price_authorization_test;
+#[cfg(test)]
 mod utilization_clamp_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
@@ -848,12 +850,15 @@ impl HelloContract {
     }
 
     /// Update asset price (admin/oracle only).
+    ///
+    /// `caller` must be the stored protocol admin.
     pub fn update_asset_price(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         price: i128,
     ) -> Result<(), CrossAssetError> {
-        update_asset_price(&env, asset, price)
+        update_asset_price(&env, &caller, asset, price)
     }
 
     /// Get asset configuration.
