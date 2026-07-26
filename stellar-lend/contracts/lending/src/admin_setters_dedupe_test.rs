@@ -145,6 +145,13 @@ fn test_set_min_borrow_zero() {
     assert_eq!(client.get_min_borrow(), 0);
 }
 
+#[test]
+fn test_set_min_borrow_negative_rejected() {
+    let (env, client, _admin, _user) = setup();
+    let res = client.try_set_min_borrow(&(-1));
+    assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
+}
+
 // -----------------------------------------------------------------------
 // set_oracle_pubkey
 // -----------------------------------------------------------------------

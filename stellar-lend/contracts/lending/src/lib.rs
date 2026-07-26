@@ -141,8 +141,8 @@ use events::{emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_wi
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
-    Env, IntoVal, Symbol, Val, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
+    Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
@@ -989,6 +989,9 @@ impl LendingContract {
     pub fn set_min_borrow(env: Env, min_borrow: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
+        if min_borrow < 0 {
+            panic_with_error!(&env, LendingError::InvalidAmount);
+        }
         env.storage()
             .instance()
             .set(&DataKey::BorrowMinAmount, &min_borrow);
