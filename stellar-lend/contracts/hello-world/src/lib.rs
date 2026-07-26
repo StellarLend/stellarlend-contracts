@@ -322,7 +322,7 @@ impl HelloContract {
         caller: Address,
         guardians: soroban_sdk::Vec<Address>,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::set_guardians(&env, caller, guardians, threshold)
     }
 
@@ -331,15 +331,15 @@ impl HelloContract {
         initiator: Address,
         old_admin: Address,
         new_admin: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::start_recovery(&env, initiator, old_admin, new_admin)
     }
 
-    pub fn approve_recovery(env: Env, approver: Address) -> Result<(), errors::GovernanceError> {
+    pub fn approve_recovery(env: Env, approver: Address) -> Result<(), crate::governance::GovernanceError> {
         recovery::approve_recovery(&env, approver)
     }
 
-    pub fn execute_recovery(env: Env, executor: Address) -> Result<(), errors::GovernanceError> {
+    pub fn execute_recovery(env: Env, executor: Address) -> Result<(), crate::governance::GovernanceError> {
         recovery::execute_recovery(&env, executor)
     }
 
@@ -348,7 +348,7 @@ impl HelloContract {
         caller: Address,
         admins: soroban_sdk::Vec<Address>,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         multisig::ms_set_admins(&env, caller, admins, threshold)
     }
 
@@ -356,7 +356,7 @@ impl HelloContract {
         env: Env,
         proposer: Address,
         new_ratio: i128,
-    ) -> Result<u64, errors::GovernanceError> {
+    ) -> Result<u64, crate::governance::GovernanceError> {
         multisig::ms_propose_set_min_cr(&env, proposer, new_ratio)
     }
 
@@ -364,7 +364,7 @@ impl HelloContract {
         env: Env,
         approver: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         multisig::ms_approve(&env, approver, proposal_id)
     }
 
@@ -372,7 +372,7 @@ impl HelloContract {
         env: Env,
         executor: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         multisig::ms_execute(&env, executor, proposal_id)
     }
 
@@ -1005,7 +1005,7 @@ impl HelloContract {
         proposal_threshold: Option<i128>,
         timelock_duration: Option<u64>,
         default_voting_threshold: Option<i128>,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::initialize(
             &env,
             admin,
@@ -1026,7 +1026,7 @@ impl HelloContract {
         proposal_type: ProposalType,
         description: soroban_sdk::String,
         voting_threshold: Option<i128>,
-    ) -> Result<u64, errors::GovernanceError> {
+    ) -> Result<u64, crate::governance::GovernanceError> {
         let soroban_desc = soroban_sdk::String::from_str(&env, &description.to_string());
         governance::create_proposal(
             &env,
@@ -1043,7 +1043,7 @@ impl HelloContract {
         voter: Address,
         proposal_id: u64,
         vote_type: VoteType,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::vote(&env, voter, proposal_id, vote_type)
     }
 
@@ -1052,7 +1052,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         proposal_id: u64,
-    ) -> Result<ProposalOutcome, errors::GovernanceError> {
+    ) -> Result<ProposalOutcome, crate::governance::GovernanceError> {
         governance::queue_proposal(&env, caller, proposal_id)
     }
 
@@ -1061,7 +1061,7 @@ impl HelloContract {
         env: Env,
         executor: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::execute_proposal(&env, executor, proposal_id)
     }
 
@@ -1070,7 +1070,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::cancel_proposal(&env, caller, proposal_id)
     }
 
@@ -1079,7 +1079,7 @@ impl HelloContract {
         env: Env,
         approver: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::approve_proposal(&env, approver, proposal_id)
     }
 
@@ -1089,7 +1089,7 @@ impl HelloContract {
         caller: Address,
         admins: Vec<Address>,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::set_multisig_config(&env, caller, admins, threshold)
     }
 
@@ -1098,7 +1098,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         guardian: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::add_guardian(&env, caller, guardian)
     }
 
@@ -1107,7 +1107,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         guardian: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::remove_guardian(&env, caller, guardian)
     }
 
@@ -1116,7 +1116,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::set_guardian_threshold(&env, caller, threshold)
     }
 
@@ -1126,7 +1126,7 @@ impl HelloContract {
         initiator: Address,
         old_admin: Address,
         new_admin: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::start_recovery(&env, initiator, old_admin, new_admin)
     }
 
@@ -1134,7 +1134,7 @@ impl HelloContract {
     pub fn gov_approve_recovery(
         env: Env,
         approver: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::approve_recovery(&env, approver)
     }
 
@@ -1142,7 +1142,7 @@ impl HelloContract {
     pub fn gov_execute_recovery(
         env: Env,
         executor: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::execute_recovery(&env, executor)
     }
 
