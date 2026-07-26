@@ -1,3 +1,4 @@
+#![allow(warnings)]
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Val, Vec,
@@ -445,3 +446,4 @@ impl VestingContract {
 mod pause_offset_test;
 #[cfg(test)]
 mod vested_at_overflow_test;
+
