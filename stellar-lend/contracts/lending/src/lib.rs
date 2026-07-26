@@ -122,11 +122,11 @@ mod withdraw_overflow_test;
 mod withdraw_reserve_test;
 
 #[cfg(test)]
+mod test_flash_loan_reservation;
+#[cfg(test)]
 mod upgrade_governance_test;
 #[cfg(test)]
 mod utilization_history_test;
-#[cfg(test)]
-mod test_flash_loan_reservation;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,
@@ -1685,7 +1685,10 @@ impl LendingContract {
 
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
-    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
+    pub fn set_liquidation_threshold_bps(
+        env: Env,
+        threshold_bps: i128,
+    ) -> Result<(), LendingError> {
         assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);

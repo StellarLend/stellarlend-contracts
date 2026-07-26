@@ -139,13 +139,8 @@ pub struct ConfigUpdatedEvent {
 ///
 /// Topics: `("cross_asset", "config_updated")`
 pub fn emit_config_updated(env: &Env, event: ConfigUpdatedEvent) {
-    env.events().publish(
-        (
-            symbol_short!("crossAsst"),
-            symbol_short!("cfgUpd"),
-        ),
-        event,
-    );
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("cfgUpd")), event);
 }
 
 // ---------------------------------------------------------------------------
