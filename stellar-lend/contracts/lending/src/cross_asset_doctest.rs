@@ -1,3 +1,4 @@
+// PR fix: enable cross-asset doctest
 //! Doctest verifying the worked example from `cross_asset.md`
 
 #[cfg(test)]
