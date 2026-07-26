@@ -194,3 +194,6 @@ impl Bridge {
 
     // ... (rest of the file remains unchanged, including validator rotation, pause/unpause, inbound/outbound caps, etc.)
 }
+
+#[cfg(test)]
+mod outbound_nonce_test;
