@@ -91,7 +91,13 @@ fn test_shrink_below_threshold_is_rejected() {
 
     let tiny_set = make_signers(&env, 2); // 2 < threshold 3
     let hash = make_bytes(&env, b"shrink_below_hash");
-    let id = create_and_pass(&env, &contract_id, &signers, ProposalAction::RotateSigners(tiny_set), &hash);
+    let id = create_and_pass(
+        &env,
+        &contract_id,
+        &signers,
+        ProposalAction::RotateSigners(tiny_set),
+        &hash,
+    );
 
     // execute_proposal must panic because the guard rejects the shrink.
     client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
@@ -111,7 +117,13 @@ fn test_shrink_to_exactly_threshold_succeeds() {
 
     let exact_set = make_signers(&env, 3); // 3 == threshold
     let hash = make_bytes(&env, b"shrink_exact_hash");
-    let id = create_and_pass(&env, &contract_id, &signers, ProposalAction::RotateSigners(exact_set.clone()), &hash);
+    let id = create_and_pass(
+        &env,
+        &contract_id,
+        &signers,
+        ProposalAction::RotateSigners(exact_set.clone()),
+        &hash,
+    );
 
     client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
 
@@ -141,11 +153,20 @@ fn test_threshold_unchanged_after_rejected_rotate() {
 
     let tiny_set = make_signers(&env, 1); // 1 < threshold 3
     let hash = make_bytes(&env, b"unchanged_thresh_hash");
-    let id = create_and_pass(&env, &contract_id, &signers, ProposalAction::RotateSigners(tiny_set), &hash);
+    let id = create_and_pass(
+        &env,
+        &contract_id,
+        &signers,
+        ProposalAction::RotateSigners(tiny_set),
+        &hash,
+    );
 
     // The execute attempt will fail; catch it so we can assert threshold afterward.
     let result = client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash);
-    assert!(result.is_err(), "executing a shrink-below-threshold must fail");
+    assert!(
+        result.is_err(),
+        "executing a shrink-below-threshold must fail"
+    );
 
     assert_eq!(
         client.get_threshold(),
@@ -176,7 +197,11 @@ fn test_threshold_reduction_enables_subsequent_shrink() {
         &thresh_hash,
     );
     client.execute_proposal(&signers.get(0).unwrap(), &thresh_id, &thresh_hash);
-    assert_eq!(client.get_threshold(), 2, "threshold must be 2 after SetThreshold");
+    assert_eq!(
+        client.get_threshold(),
+        2,
+        "threshold must be 2 after SetThreshold"
+    );
 
     // Step 2 — shrink the signer set to 2 (== new threshold).
     let two_signers = make_signers(&env, 2);

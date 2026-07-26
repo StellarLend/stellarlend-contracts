@@ -114,15 +114,8 @@ pub enum RiskManagementError {
 ///
 /// Must be called once during contract initialization.  Subsequent calls
 /// return [`RiskManagementError::AlreadyInitialized`].
-pub fn initialize_risk_management(
-    env: &Env,
-    _admin: Address,
-) -> Result<(), RiskManagementError> {
-    if env
-        .storage()
-        .persistent()
-        .has(&RiskDataKey::RiskConfig)
-    {
+pub fn initialize_risk_management(env: &Env, _admin: Address) -> Result<(), RiskManagementError> {
+    if env.storage().persistent().has(&RiskDataKey::RiskConfig) {
         return Err(RiskManagementError::AlreadyInitialized);
     }
 
@@ -141,9 +134,7 @@ pub fn initialize_risk_management(
 
 /// Return the current [`RiskConfig`], or `None` if not yet initialized.
 pub fn get_risk_config(env: &Env) -> Option<RiskConfig> {
-    env.storage()
-        .persistent()
-        .get(&RiskDataKey::RiskConfig)
+    env.storage().persistent().get(&RiskDataKey::RiskConfig)
 }
 
 /// Return the minimum collateral ratio in bps, or `None` if not initialized.
@@ -206,10 +197,8 @@ pub fn set_emergency_pause(
     env.storage()
         .persistent()
         .set(&RiskDataKey::EmergencyPaused, &paused);
-    env.events().publish(
-        (symbol_short!("risk"), symbol_short!("emerg")),
-        paused,
-    );
+    env.events()
+        .publish((symbol_short!("risk"), symbol_short!("emerg")), paused);
     Ok(())
 }
 
