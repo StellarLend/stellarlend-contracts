@@ -52,10 +52,19 @@ jobs:
           cd stellar-lend
           cargo clippy --workspace --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast -A clippy::too-many-arguments -A clippy::enum_variant_names
 
+      - name: Add WASM target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Build project
         run: |
           cd stellar-lend
           cargo build --workspace --verbose
+
+      # Soroban contracts are deployed as optimized WASM artifacts and therefore must be validated in CI.
+      - name: Build WASM contracts
+        run: |
+          cd stellar-lend
+          cargo build --workspace --target wasm32-unknown-unknown --release
 
       - name: Run tests
         run: |
