@@ -81,6 +81,8 @@ mod cross_asset_storage_doc_test;
 mod cross_asset_config_bounds_test;
 #[cfg(test)]
 mod utilization_clamp_test;
+#[cfg(test)]
+mod risk_params_paced_change_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
@@ -296,6 +298,14 @@ impl HelloContract {
             RiskParamsError::InvalidLiquidationIncentive => {
                 RiskManagementError::InvalidLiquidationIncentive
             }
+            // Distinct arithmetic faults surfaced by `validate_change`.
+            // Routing them to the dedicated `Overflow` variant (rather than
+            // the generic `InvalidParameter` catch-all) lets operators
+            // distinguish a misconfigured value from a real i128-overflow in
+            // incident response. `DivisionByZero` cannot fire in practice
+            // (BASIS_POINTS = 10_000) but is mapped explicitly anyway.
+            RiskParamsError::Overflow => RiskManagementError::Overflow,
+            RiskParamsError::DivisionByZero => RiskManagementError::InvalidParameter,
             _ => RiskManagementError::InvalidParameter,
         })
     }
