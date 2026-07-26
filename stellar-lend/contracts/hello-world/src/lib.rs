@@ -13,7 +13,6 @@ pub mod admin;
 pub mod amm;
 pub mod amm_twap;
 pub mod analytics;
-pub mod borrow;
 pub mod bridge;
 pub mod config_snapshot;
 pub mod cross_asset;
@@ -88,7 +87,6 @@ mod utilization_clamp_test;
 
 use crate::oracle::FullOracleConfig;
 
-use borrow::borrow_asset;
 use deposit::deposit_collateral;
 use repay::repay_debt;
 
@@ -357,16 +355,6 @@ impl HelloContract {
         proposal_id: u64,
     ) -> Result<(), crate::governance::GovernanceError> {
         multisig::ms_execute(&env, executor, proposal_id)
-    }
-
-    /// Borrow assets from the protocol.
-    pub fn borrow_asset(
-        env: Env,
-        user: Address,
-        asset: Option<Address>,
-        amount: i128,
-    ) -> Result<i128, crate::borrow::BorrowError> {
-        crate::borrow::borrow_asset(&env, user, asset, amount)
     }
 
     /// Repay borrowed assets.
