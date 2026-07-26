@@ -2,7 +2,7 @@ use super::*;
 use soroban_sdk::events::Event;
 use soroban_sdk::testutils::{Address as _, Events};
 
-fn setup() -> (
+pub fn setup() -> (
     Env,
     LendingContractClient<'static>,
     Address,

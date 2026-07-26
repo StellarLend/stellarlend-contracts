@@ -37,6 +37,8 @@ mod cross_asset_price_cache_test;
 #[cfg(test)]
 mod cross_asset_test;
 #[cfg(test)]
+mod cross_asset_doctest;
+#[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
 mod deposit_cap_race_test;
