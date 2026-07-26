@@ -9,7 +9,7 @@
 //! - Events are emitted only after state mutations succeed
 //! - Edge cases (full repay, partial liquidation, cap boundaries) emit correct events
 
-use crate::{LendingContract, LendingContractClient};
+use crate::{DataKey, LendingContract, LendingContractClient};
 use crate::events::EVENT_SCHEMA_VERSION;
 use soroban_sdk::{
     testutils::{Address as _, Events},
@@ -375,11 +375,13 @@ fn test_event_emission_does_not_affect_operation_result() {
 
 #[test]
 fn test_deposit_at_cap_boundary_emits_event() {
-    let (env, client, admin, user) = setup();
+    let (env, client, _admin, user) = setup();
     
-    // Set a deposit cap
+    // Set a deposit cap directly via storage (no public set_deposit_cap on client)
     let cap = 1000_i128;
-    client.set_deposit_cap(&cap);
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::DepositCap, &cap);
+    });
     
     // Deposit exactly at cap
     let result = client.try_deposit(&user, &cap);
