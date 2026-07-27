@@ -3,6 +3,15 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
 };
 
+/// Parameters for cross-contract invocation action.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InvokeContractParams {
+    pub contract: Address,
+    pub fn_symbol: Symbol,
+    pub args_hash: soroban_sdk::Bytes,
+}
+
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
 /// The payload_hash binds the approved action so it cannot be swapped between
 /// approval and execution.
@@ -14,7 +23,7 @@ pub enum ProposalAction {
     /// Replace the full signer set with a new set
     RotateSigners(Vec<Address>),
     /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call
-    InvokeContract(Address, Symbol, soroban_sdk::Bytes),
+    InvokeContract(InvokeContractParams),
 }
 
 /// Lifecycle state of a proposal.
@@ -87,6 +96,7 @@ pub enum MultisigError {
     BatchSizeExceeded = 14,
     DuplicateProposalId = 15,
     AlreadyInitialized = 16,
+    ProposalIdOverflow = 17,
 }
 
 /// Maximum number of proposals that can be executed in a single
@@ -167,17 +177,19 @@ impl MultisigContract {
             .set(&MultisigDataKey::Proposal(proposal.id), proposal);
     }
 
-    fn next_proposal_id(env: &Env) -> u64 {
+    fn next_proposal_id(env: &Env) -> Result<u64, MultisigError> {
         let count: u64 = env
             .storage()
             .persistent()
             .get(&MultisigDataKey::ProposalCount)
             .unwrap_or(0);
-        let new_count = count + 1;
+        let new_count = count
+            .checked_add(1)
+            .ok_or(MultisigError::ProposalIdOverflow)?;
         env.storage()
             .persistent()
             .set(&MultisigDataKey::ProposalCount, &new_count);
-        count
+        Ok(count)
     }
 
     fn action_kind_symbol(env: &Env, action: &ProposalAction) -> Symbol {
@@ -216,7 +228,7 @@ impl MultisigContract {
             return Err(MultisigError::InvalidTtl);
         }
 
-        let id = Self::next_proposal_id(&env);
+        let id = Self::next_proposal_id(&env)?;
         let expires_at = (env.ledger().sequence() as u64).saturating_add(ttl_ledgers);
 
         let proposal = Proposal {
@@ -342,18 +354,26 @@ impl MultisigContract {
                 if new_signers.is_empty() {
                     return false;
                 }
+                // Signer-shrink guard: the new signer set must be at least as
+                // large as the current threshold, otherwise quorum could never
+                // be reached again and the multisig would be permanently bricked.
+                let threshold = Self::fetch_threshold(env);
+                if (new_signers.len() as u32) < threshold {
+                    return false;
+                }
                 env.storage()
                     .persistent()
                     .set(&MultisigDataKey::Signers, new_signers);
                 true
             }
-            ProposalAction::InvokeContract(contract, fn_symbol, _args_hash) => {
+            ProposalAction::InvokeContract(params) => {
                 // Dispatch to the lending upgrade entrypoint via cross-contract call.
                 // The args_hash was verified at the payload_hash check; here we
                 // perform the actual invocation with an empty args list since the
                 // concrete arguments were committed via the hash.
                 let args: soroban_sdk::Vec<soroban_sdk::Val> = soroban_sdk::Vec::new(env);
-                let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args);
+                let _res: soroban_sdk::Val =
+                    env.invoke_contract(&params.contract, &params.fn_symbol, args);
                 true
             }
         }
@@ -536,3 +556,6 @@ mod batch_execute_test;
 
 #[cfg(test)]
 mod cancel_proposal_test;
+
+#[cfg(test)]
+mod signer_shrink_guard_test;

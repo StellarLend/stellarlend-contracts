@@ -1,10 +1,12 @@
 # Cross-Asset Module Storage Layout
 
-This document describes the persistent storage structure of the cross‑asset module in the StellarLend hello‑world contract.
+This document describes the persistent storage structure of the cross‑asset module in the StellarLend **hello-world** contract (`src/cross_asset.rs`).
 
 ## Overview
 
 All cross‑asset storage keys are defined in a single `#[contracttype] enum CrossAssetDataKey` in [`src/cross_asset.rs`](../src/cross_asset.rs). All keys use the `persistent()` storage tier and require layout stability across contract upgrades.
+
+> **Note:** A related standalone crate, `stellar-lend/cross_asset_test`, shares the asset-registry / supply-debt balance key shapes (`Config`, `AssetList`, `UserSupply`, …) but does **not** include hello-world’s borrow-isolation cap key (`MaxDebtAssetsPerUser`). This doc describes **hello-world only**.
 
 ## Storage Map
 
@@ -16,6 +18,11 @@ All cross‑asset storage keys are defined in a single `#[contracttype] enum Cro
 | `UserDebt(AssetKey, Address)` | `persistent()` | `i128` | 0 | `cross_asset_borrow`, `cross_asset_repay` | Yes |
 | `TotalSupply(AssetKey)` | `persistent()` | `i128` | 0 | `cross_asset_deposit`, `cross_asset_withdraw` | Yes |
 | `TotalDebt(AssetKey)` | `persistent()` | `i128` | 0 | `cross_asset_borrow`, `cross_asset_repay` | Yes |
+| `MaxDebtAssetsPerUser` | `persistent()` | `u32` | Unlimited (`None` / key absent) | `set_max_debt_assets_per_user` | Yes |
+
+### What is *not* a hello-world key
+
+hello-world does **not** store a `UserDebtAssets(Address)` list under `CrossAssetDataKey`. That shape exists on the separate **lending** contract (`DataKey::UserDebtAssets`). hello-world’s isolation tier is the scalar cap `MaxDebtAssetsPerUser` only.
 
 ## TTL Policy
 
@@ -25,7 +32,7 @@ The cross‑asset module does not currently implement explicit TTL extension hel
 
 - **Append‑only**: New storage key variants must be added to the end of `CrossAssetDataKey`.
 - **Structural stability**: The `AssetConfig` struct must preserve field ordering and types across upgrades.
-- **Default values**: Absent numeric keys (`UserSupply`, `UserDebt`, `TotalSupply`, `TotalDebt`) are treated as 0.
+- **Default values**: Absent numeric keys (`UserSupply`, `UserDebt`, `TotalSupply`, `TotalDebt`) are treated as 0. Absent `MaxDebtAssetsPerUser` means no cap.
 
 ### Known field rename: `collateral_factor` → `collateral_factor_bps`
 

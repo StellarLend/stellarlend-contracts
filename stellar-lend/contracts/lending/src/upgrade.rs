@@ -179,7 +179,7 @@ pub fn upgrade_init(
     current_wasm_hash: BytesN<32>,
     required_approvals: u32,
 ) -> Result<(), LendingError> {
-    assert_admin(env);
+    assert_admin(env)?;
     caller.require_auth();
 
     if env.storage().instance().has(&UpgradeKey::Initialized) {
@@ -221,7 +221,7 @@ pub fn upgrade_add_approver(
     caller: &Address,
     approver: Address,
 ) -> Result<(), LendingError> {
-    assert_admin(env);
+    assert_admin(env)?;
     caller.require_auth();
     ensure_upgrade_initialized(env)?;
 
@@ -258,7 +258,7 @@ pub fn upgrade_remove_approver(
     caller: &Address,
     approver: Address,
 ) -> Result<(), LendingError> {
-    assert_admin(env);
+    assert_admin(env)?;
     caller.require_auth();
     ensure_upgrade_initialized(env)?;
 
@@ -308,7 +308,7 @@ pub fn upgrade_set_required_approvals(
     caller: &Address,
     required_approvals: u32,
 ) -> Result<(), LendingError> {
-    assert_admin(env);
+    assert_admin(env)?;
     caller.require_auth();
     ensure_upgrade_initialized(env)?;
 
@@ -341,7 +341,7 @@ pub fn upgrade_propose(
     new_wasm_hash: BytesN<32>,
     new_version: u32,
 ) -> Result<u64, LendingError> {
-    assert_admin(env);
+    assert_admin(env)?;
     caller.require_auth();
     ensure_upgrade_initialized(env)?;
 

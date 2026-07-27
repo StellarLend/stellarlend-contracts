@@ -183,7 +183,14 @@ mod borrow_index_tests {
         let (env, client, _admin, user) = setup();
         let mut prev_index = client.get_borrow_index();
 
-        let time_steps = [1u64, 60, 3600, 86400, SECONDS_PER_YEAR / 12, SECONDS_PER_YEAR];
+        let time_steps = [
+            1u64,
+            60,
+            3600,
+            86400,
+            SECONDS_PER_YEAR / 12,
+            SECONDS_PER_YEAR,
+        ];
         for step in time_steps {
             advance_time(&env, step);
             client.borrow(&user, &100);
@@ -556,10 +563,7 @@ mod borrow_index_tests {
             snap_t6m, index_t6m,
             "Snapshot after repay must equal current index"
         );
-        assert!(
-            index_t6m > index_t0,
-            "Index must advance after 6 months"
-        );
+        assert!(index_t6m > index_t0, "Index must advance after 6 months");
 
         // Step 4: Advance another 6 months.
         advance_time(&env, SECONDS_PER_YEAR / 2);
