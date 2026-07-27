@@ -14,8 +14,8 @@ where
     env.as_contract(&contract_id, || f(Address::generate(&env)))
 }
 
-fn init(env: &Env, admin: Address, total_deposits: i128, total_borrows: i128) {
-    initialize_interest_rate_config(env, admin).unwrap();
+fn init(env: &Env, total_deposits: i128, total_borrows: i128) {
+    initialize_interest_rate_config(env).unwrap();
     set_protocol_totals(env, total_deposits, total_borrows).unwrap();
 }
 
@@ -32,8 +32,8 @@ fn calculate_utilization_returns_zero_without_divide_by_zero_when_deposits_are_z
     let env = Env::default();
     env.mock_all_auths();
 
-    with_rate_contract(&env, |admin| {
-        init(&env, admin, 0, 1_000);
+    with_rate_contract(&env, |_| {
+        init(&env, 0, 1_000);
 
         let utilization = calculate_utilization(&env).unwrap();
         assert_eq!(utilization, 0);
@@ -46,8 +46,8 @@ fn calculate_utilization_clamps_to_full_utilization_when_borrows_cover_deposits(
     let env = Env::default();
     env.mock_all_auths();
 
-    with_rate_contract(&env, |admin| {
-        init(&env, admin.clone(), 1_000, 1_000);
+    with_rate_contract(&env, |_| {
+        init(&env, 1_000, 1_000);
 
         let equal_case = calculate_utilization(&env).unwrap();
         assert_eq!(equal_case, BASIS_POINTS_SCALE);
@@ -66,8 +66,8 @@ fn calculate_utilization_matches_exact_bps_for_common_ratios() {
     let env = Env::default();
     env.mock_all_auths();
 
-    with_rate_contract(&env, |admin| {
-        init(&env, admin.clone(), 1_000, 0);
+    with_rate_contract(&env, |_| {
+        init(&env, 1_000, 0);
 
         let cases = [
             (1_000, 250, 2_500),

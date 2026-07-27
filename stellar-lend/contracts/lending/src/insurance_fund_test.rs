@@ -53,7 +53,7 @@ fn advance_ledger_time(env: &Env, seconds: u64) {
 
 #[test]
 fn test_configure_insurance_share_bounds() {
-    let (_env, client, _id, admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
+    let (_env, client, _id, _admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
 
     // Check default is 0
     assert_eq!(client.get_insurance_share(), 0);
@@ -77,7 +77,7 @@ fn test_configure_insurance_share_bounds() {
 
 #[test]
 fn test_admin_explicit_funding() {
-    let (_env, client, _id, admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
+    let (_env, client, _id, _admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
 
     assert_eq!(client.get_insurance_fund(), 0);
 
@@ -106,7 +106,7 @@ fn test_accrual_interest_split() {
 
     // Borrow 10,000 units
     let borrow_amount = 10_000i128;
-    client.borrow(&user, &borrow_amount).unwrap();
+    client.borrow(&user, &borrow_amount);
 
     // Advance time by exactly one year to accrue 5% interest (500 tokens)
     advance_ledger_time(&env, SECONDS_PER_YEAR);
