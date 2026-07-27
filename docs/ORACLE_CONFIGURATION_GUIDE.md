@@ -20,8 +20,8 @@ This document outlines the procedures for managing oracle configurations in the 
 
 3. **Price Providers**
    - CoinGecko (primary, 60% weight)
-   - Binance (secondary, 40% weight)
-   - CoinMarketCap (optional, 35% weight)
+   - Binance (secondary, 25% weight)
+   - CoinMarketCap (optional, 15% weight)
 
 ## Role-Based Access Control
 
