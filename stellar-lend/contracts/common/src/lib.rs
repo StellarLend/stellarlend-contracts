@@ -24,22 +24,95 @@ pub enum LendingError {
     Overflow = 1002,
     /// Caller is not authorised for this operation.
     Unauthorized = 1003,
+    /// Pending admin address is not set.
+    PendingAdminNotSet = 1004,
+    /// Requested borrow is below the protocol minimum.
+    BelowMinimumBorrow = 1008,
     /// Contract has not been initialised yet.
     NotInitialized = 1009,
     /// `initialize` was called a second time.
     AlreadyInitialized = 1010,
-    /// Requested borrow is below the protocol minimum.
-    BelowMinimumBorrow = 1008,
     /// Position is adequately collateralised; liquidation not allowed.
     PositionHealthy = 1011,
+    /// Repayment amount exceeds the outstanding debt (including accrued interest).
+    RepayAmountTooHigh = 1012,
     /// Protocol-level debt ceiling would be exceeded.
     DebtCeilingExceeded = 2001,
     /// Asset deposit cap would be exceeded.
     DepositCapExceeded = 2002,
-    /// Collateral balance is insufficient for the requested withdrawal.
-    InsufficientCollateral = 2007,
+    /// A borrow would push total outstanding debt for the asset beyond the
+    /// configured per-asset `borrow_cap`.
+    BorrowCapExceeded = 2003,
     /// Flash-loan fee is outside the permitted range.
     InvalidFeeBps = 2005,
+    /// Flash-loan utilisation fee is outside the permitted range.
+    InvalidFlashUtilizationBps = 2006,
+    /// Collateral balance is insufficient for the requested withdrawal.
+    InsufficientCollateral = 2007,
+    /// Liquidator cannot self-liquidate.
+    SelfLiquidation = 2008,
+    /// Isolation-mode debt ceiling would be exceeded.
+    IsolationCeilingExceeded = 2009,
+    /// Isolation-mode ceiling value is invalid.
+    InvalidIsolationCeiling = 2010,
+    /// Liquidation parameters are invalid.
+    InvalidLiquidationParams = 2011,
+    /// The asset has not been configured via set_asset_params.
+    AssetNotConfigured = 3001,
+    /// Oracle price record is missing for the requested asset.
+    PriceFeedNotFound = 3002,
+    /// Operation would result in an unsafe health factor.
+    HealthFactorTooLow = 3003,
+    /// Oracle price is outside the configured bounds.
+    PriceOutOfBounds = 3004,
+    /// Price is temporarily unavailable.
+    PriceUnavailable = 3005,
+    /// Upgrade has not been initialised.
+    UpgradeNotInitialized = 4001,
+    /// Upgrade proposal not found.
+    ProposalNotFound = 4002,
+    /// Upgrade proposal is not yet ready for execution.
+    ProposalNotReady = 4003,
+    /// Upgrade proposal has expired.
+    ProposalExpired = 4004,
+    /// Upgrade proposal has already been executed.
+    ProposalAlreadyExecuted = 4005,
+    /// Caller has already approved this proposal.
+    AlreadyApproved = 4006,
+    /// Insufficient approvals to execute the upgrade.
+    InsufficientUpgradeApprovals = 4007,
+    /// Upgrade version string is invalid.
+    InvalidUpgradeVersion = 4008,
+    /// Approver not found.
+    ApproverNotFound = 4009,
+    /// Maximum number of approvers reached.
+    MaxApproversReached = 4010,
+    /// Upgrade configuration is invalid.
+    InvalidUpgradeConfig = 4011,
+    /// Oracle signature is invalid.
+    InvalidOracleSignature = 5001,
+    /// Oracle timestamp is stale.
+    StaleOracleTimestamp = 5002,
+    /// Oracle public key has not been set.
+    OraclePubkeyNotSet = 5003,
+    /// Oracle price max-move bound exceeded.
+    MaxMoveBpsExceeded = 5004,
+    /// Oracle price replay detected.
+    OracleReplay = 5005,
+    /// No bad debt to write off.
+    NoBadDebt = 6001,
+    /// Write-off amount exceeds recorded bad debt.
+    WriteOffExceedsBadDebt = 6002,
+    /// Liquidation threshold is outside the valid range.
+    InvalidLiquidationThresholdBps = 7000,
+    /// Close factor is outside the valid range.
+    InvalidCloseFactorBps = 7001,
+    /// Liquidation incentive is outside the valid range.
+    InvalidLiquidationIncentiveBps = 7002,
+    /// Deposit cap value is invalid.
+    InvalidDepositCap = 7005,
+    /// Rate parameters are internally inconsistent.
+    InvalidRateParams = 7006,
 }
 
 /// Multiply `value` by `rate_bps` and divide by [`BPS_DENOM`].
@@ -186,13 +259,49 @@ mod tests {
         assert_eq!(LendingError::InvalidAmount as u32, 1001);
         assert_eq!(LendingError::Overflow as u32, 1002);
         assert_eq!(LendingError::Unauthorized as u32, 1003);
+        assert_eq!(LendingError::PendingAdminNotSet as u32, 1004);
+        assert_eq!(LendingError::BelowMinimumBorrow as u32, 1008);
         assert_eq!(LendingError::NotInitialized as u32, 1009);
         assert_eq!(LendingError::AlreadyInitialized as u32, 1010);
-        assert_eq!(LendingError::BelowMinimumBorrow as u32, 1008);
         assert_eq!(LendingError::PositionHealthy as u32, 1011);
+        assert_eq!(LendingError::RepayAmountTooHigh as u32, 1012);
         assert_eq!(LendingError::DebtCeilingExceeded as u32, 2001);
         assert_eq!(LendingError::DepositCapExceeded as u32, 2002);
-        assert_eq!(LendingError::InsufficientCollateral as u32, 2007);
+        assert_eq!(LendingError::BorrowCapExceeded as u32, 2003);
         assert_eq!(LendingError::InvalidFeeBps as u32, 2005);
+        assert_eq!(LendingError::InvalidFlashUtilizationBps as u32, 2006);
+        assert_eq!(LendingError::InsufficientCollateral as u32, 2007);
+        assert_eq!(LendingError::SelfLiquidation as u32, 2008);
+        assert_eq!(LendingError::IsolationCeilingExceeded as u32, 2009);
+        assert_eq!(LendingError::InvalidIsolationCeiling as u32, 2010);
+        assert_eq!(LendingError::InvalidLiquidationParams as u32, 2011);
+        assert_eq!(LendingError::AssetNotConfigured as u32, 3001);
+        assert_eq!(LendingError::PriceFeedNotFound as u32, 3002);
+        assert_eq!(LendingError::HealthFactorTooLow as u32, 3003);
+        assert_eq!(LendingError::PriceOutOfBounds as u32, 3004);
+        assert_eq!(LendingError::PriceUnavailable as u32, 3005);
+        assert_eq!(LendingError::UpgradeNotInitialized as u32, 4001);
+        assert_eq!(LendingError::ProposalNotFound as u32, 4002);
+        assert_eq!(LendingError::ProposalNotReady as u32, 4003);
+        assert_eq!(LendingError::ProposalExpired as u32, 4004);
+        assert_eq!(LendingError::ProposalAlreadyExecuted as u32, 4005);
+        assert_eq!(LendingError::AlreadyApproved as u32, 4006);
+        assert_eq!(LendingError::InsufficientUpgradeApprovals as u32, 4007);
+        assert_eq!(LendingError::InvalidUpgradeVersion as u32, 4008);
+        assert_eq!(LendingError::ApproverNotFound as u32, 4009);
+        assert_eq!(LendingError::MaxApproversReached as u32, 4010);
+        assert_eq!(LendingError::InvalidUpgradeConfig as u32, 4011);
+        assert_eq!(LendingError::InvalidOracleSignature as u32, 5001);
+        assert_eq!(LendingError::StaleOracleTimestamp as u32, 5002);
+        assert_eq!(LendingError::OraclePubkeyNotSet as u32, 5003);
+        assert_eq!(LendingError::MaxMoveBpsExceeded as u32, 5004);
+        assert_eq!(LendingError::OracleReplay as u32, 5005);
+        assert_eq!(LendingError::NoBadDebt as u32, 6001);
+        assert_eq!(LendingError::WriteOffExceedsBadDebt as u32, 6002);
+        assert_eq!(LendingError::InvalidLiquidationThresholdBps as u32, 7000);
+        assert_eq!(LendingError::InvalidCloseFactorBps as u32, 7001);
+        assert_eq!(LendingError::InvalidLiquidationIncentiveBps as u32, 7002);
+        assert_eq!(LendingError::InvalidDepositCap as u32, 7005);
+        assert_eq!(LendingError::InvalidRateParams as u32, 7006);
     }
 }
