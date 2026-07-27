@@ -48,6 +48,13 @@ pub enum GovernanceError {
     InvalidConfig = 9,
     /// Total participation (yes + no votes) is below the configured quorum.
     QuorumNotMet = 10,
+    /// A recovery is currently in progress; threshold or guardian changes are
+    /// blocked until the recovery completes or is cancelled.
+    RecoveryInProgress = 11,
+    /// The requested guardian configuration would be invalid (e.g. threshold
+    /// of zero, threshold exceeding the guardian count, or a removal that
+    /// would make the current threshold unreachable).
+    InvalidGuardianConfig = 12,
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +479,15 @@ pub fn add_guardian(
 }
 
 /// Remove a guardian (admin only).
+///
+/// # Safety guardrails
+///
+/// - Blocked while a recovery is in progress (`RecoveryInProgress`): removing
+///   a guardian mid-recovery could drop the approval count below the threshold
+///   and permanently stall the recovery.
+/// - Blocked if the removal would leave fewer guardians than the current
+///   threshold (`InvalidGuardianConfig`): this would make the threshold
+///   unreachable and brick future recoveries.
 pub fn remove_guardian(
     env: &Env,
     caller: Address,
@@ -488,17 +504,35 @@ pub fn remove_guardian(
         return Err(GovernanceError::Unauthorized);
     }
 
+    // Block removal while a recovery is in progress.
+    if env
+        .storage()
+        .instance()
+        .has(&GovernanceDataKey::RecoveryRequest)
+    {
+        return Err(GovernanceError::RecoveryInProgress);
+    }
+
     let mut gc: crate::storage::GuardianConfig = env
         .storage()
         .instance()
         .get(&GovernanceDataKey::GuardianConfig)
         .ok_or(GovernanceError::Unauthorized)?;
 
-    let new_guardians: Vec<Address> = gc
-        .guardians
-        .iter()
-        .filter(|g| g != guardian)
-        .collect();
+    let new_guardians: Vec<Address> = {
+        let mut v: Vec<Address> = Vec::new(env);
+        for g in gc.guardians.iter() {
+            if g != guardian {
+                v.push_back(g);
+            }
+        }
+        v
+    };
+
+    // Block if the removal would make the threshold unreachable.
+    if (new_guardians.len() as u32) < gc.threshold {
+        return Err(GovernanceError::InvalidGuardianConfig);
+    }
 
     gc.guardians = new_guardians;
     env.storage()
@@ -508,6 +542,14 @@ pub fn remove_guardian(
 }
 
 /// Set the guardian threshold (admin only).
+///
+/// # Safety guardrails
+///
+/// - Blocked while a recovery is in progress (`RecoveryInProgress`): changing
+///   the threshold mid-recovery could retroactively invalidate existing
+///   approvals or raise the bar high enough to brick the recovery.
+/// - `threshold` must be ≥ 1 (`InvalidGuardianConfig`).
+/// - `threshold` must not exceed the current guardian count (`InvalidGuardianConfig`).
 pub fn set_guardian_threshold(
     env: &Env,
     caller: Address,
@@ -524,6 +566,15 @@ pub fn set_guardian_threshold(
         return Err(GovernanceError::Unauthorized);
     }
 
+    // Block threshold changes while a recovery is in progress.
+    if env
+        .storage()
+        .instance()
+        .has(&GovernanceDataKey::RecoveryRequest)
+    {
+        return Err(GovernanceError::RecoveryInProgress);
+    }
+
     let mut gc: crate::storage::GuardianConfig = env
         .storage()
         .instance()
@@ -532,6 +583,12 @@ pub fn set_guardian_threshold(
             guardians: Vec::new(env),
             threshold: 1,
         });
+
+    // threshold = 0 is always invalid; threshold > guardian count is unreachable.
+    if threshold == 0 || threshold > gc.guardians.len() as u32 {
+        return Err(GovernanceError::InvalidGuardianConfig);
+    }
+
     gc.threshold = threshold;
     env.storage()
         .instance()
