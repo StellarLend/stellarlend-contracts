@@ -4,7 +4,7 @@
 mod cross_asset;
 mod debt;
 mod events;
-mod math;
+pub mod math;
 mod rate_model;
 pub mod rounding_strategy;
 pub mod upgrade;
@@ -585,10 +585,6 @@ impl LendingContract {
 
     pub fn get_admin(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Admin).unwrap()
-    }
-
-    pub fn try_get_admin(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::Admin)
     }
 
     /// Returns the accumulated protocol bad debt.
@@ -1688,7 +1684,8 @@ impl LendingContract {
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
     pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
-        Self::require_admin(&env)?;
+        require_initialized(&env)?;
+        assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }

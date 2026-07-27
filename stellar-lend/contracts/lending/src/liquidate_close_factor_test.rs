@@ -16,7 +16,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 use crate::{
     debt::DebtPosition,
     liquidate_transfer_test::{MockToken, MockTokenClient},
-    DataKey, LendingContract, LendingContractClient, LendingError,
+    DataKey, LendingContract, LendingContractClient, LendingError, PriceRecord,
 };
 
 // Protocol constants mirrored from `LendingContract::liquidate` (lib.rs).
@@ -47,15 +47,29 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
     let cid = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &cid);
 
+    let admin = Address::generate(&env);
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
     let debt_asset = env.register(MockToken, ());
     let collateral_asset = env.register(MockToken, ());
 
+    client.initialize(&admin);
+    client.set_collateral_asset(&collateral_asset);
+
     MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
     MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
 
     let now = env.ledger().timestamp();
+    // Seed fresh oracle price so require_fresh_valuation_prices passes.
+    env.as_contract(&cid, || {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(collateral_asset.clone()),
+            &PriceRecord {
+                price: 1_000_000_000,
+                timestamp: now,
+            },
+        );
+    });
     env.as_contract(&cid, || {
         env.storage()
             .persistent()
