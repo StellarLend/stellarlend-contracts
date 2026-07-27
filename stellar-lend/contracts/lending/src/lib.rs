@@ -589,30 +589,6 @@ pub struct CrossWithdrawEvent {
     pub amount: i128,
 }
 
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MinBorrowSetEvent {
-    pub min_borrow: i128,
-}
-
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MaxMoveBpsSetEvent {
-    pub max_move_bps: i128,
-}
-
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MaxFlashBpsSetEvent {
-    pub max_flash_bps: i128,
-}
-
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CollateralAssetSetEvent {
-    pub asset: Address,
-}
-
 #[contract]
 pub struct LendingContract;
 
