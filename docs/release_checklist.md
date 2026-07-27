@@ -58,7 +58,7 @@ least one test each if the PR touches the relevant code paths.
 
 ### Repay semantics
 
-- [ ] Borrow-system `repay` returns `RepayAmountTooHigh` on overpay (no silent clamp).
+- [ ] Borrow-system `repay` returns `RepayAmountTooHigh` (error 1012) on overpay (no silent clamp).
 - [ ] Cross-asset `repay_asset` silently clamps overpay to the outstanding balance.
 - [ ] `get_debt_balance()` after a full repay returns 0; `health_factor` returns sentinel.
 - [ ] Interest is settled before principal on every borrow-system repay.
