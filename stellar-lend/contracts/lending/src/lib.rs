@@ -282,6 +282,30 @@ pub struct PriceBoundsSetEvent {
 
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinBorrowSetEvent {
+    pub min_borrow: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaxMoveBpsSetEvent {
+    pub max_move_bps: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaxFlashBpsSetEvent {
+    pub max_flash_bps: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollateralAssetSetEvent {
+    pub asset: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidationEventV1 {
     pub schema_version: u32,
     pub liquidator: Address,
@@ -817,6 +841,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::MaxMoveBps, &max_move_bps);
+        MaxMoveBpsSetEvent { max_move_bps }.publish(&env);
         Ok(())
     }
 
@@ -835,6 +860,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::MaxFlashUtilizationBps, &max_flash_bps);
+        MaxFlashBpsSetEvent { max_flash_bps }.publish(&env);
         Ok(())
     }
 
@@ -996,6 +1022,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::BorrowMinAmount, &min_borrow);
+        MinBorrowSetEvent { min_borrow }.publish(&env);
         Ok(())
     }
 
@@ -1176,6 +1203,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::ValuationCollateralAsset, &asset);
+        CollateralAssetSetEvent { asset }.publish(&env);
         Ok(())
     }
 
