@@ -192,15 +192,20 @@ pub enum AssetKey {
     Token(Address),
 }
 
+/// Persistent storage keys for the hello-world cross-asset module.
+///
+/// Documented in [`docs/CROSS_ASSET_STORAGE_LAYOUT.md`](../docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+/// New variants must be appended to preserve upgrade compatibility.
 #[contracttype]
 #[derive(Clone, Debug)]
-enum CrossAssetDataKey {
+pub enum CrossAssetDataKey {
     Config(AssetKey),
     AssetList,
     UserSupply(AssetKey, Address),
     UserDebt(AssetKey, Address),
     TotalSupply(AssetKey),
     TotalDebt(AssetKey),
+    /// Optional cap on distinct debt assets per user (`None` / absent = unlimited).
     MaxDebtAssetsPerUser,
 }
 
