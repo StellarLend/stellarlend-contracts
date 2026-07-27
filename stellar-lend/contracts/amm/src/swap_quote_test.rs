@@ -248,7 +248,10 @@ fn test_quoted_fee_zero_bps() {
 
     let quote = client.get_swap_quote(&amount_in, &0, &true);
     assert_eq!(quote.fee, 0, "zero fee_bps must yield fee=0 in quote");
-    assert!(quote.amount_out > 0, "zero-fee quote must still produce output");
+    assert!(
+        quote.amount_out > 0,
+        "zero-fee quote must still produce output"
+    );
 }
 
 // ---------------------------------------------------------------------------

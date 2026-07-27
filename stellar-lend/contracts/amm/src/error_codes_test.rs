@@ -9,6 +9,16 @@ fn test_error_codes_stability() {
     assert_eq!(AmmPoolError::Overflow as u32, 4);
     assert_eq!(AmmPoolError::InvariantViolation as u32, 5);
     assert_eq!(AmmPoolError::ReentrantFlashSwap as u32, 6);
+    assert_eq!(AmmPoolError::UnauthorizedCaller as u32, 7);
+    assert_eq!(AmmPoolError::FeeBpsOutOfRange as u32, 8);
+    assert_eq!(AmmPoolError::InsufficientLiquidityMinted as u32, 9);
+    assert_eq!(AmmPoolError::ZeroSupply as u32, 10);
+    assert_eq!(AmmPoolError::BurnExceedsSupply as u32, 11);
+    assert_eq!(AmmPoolError::InvalidBurnAmount as u32, 12);
+    assert_eq!(AmmPoolError::ZeroReserve as u32, 13);
+    assert_eq!(AmmPoolError::InsufficientLpBalance as u32, 14);
+    assert_eq!(AmmPoolError::ZeroOutput as u32, 15);
+    assert_eq!(AmmPoolError::AmountBelowMinSwapIn as u32, 16);
 }
 
 #[test]

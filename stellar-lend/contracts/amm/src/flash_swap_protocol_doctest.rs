@@ -197,7 +197,7 @@ fn doc_test_reentrancy_guard() {
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
         let caller = Address::generate(&env);
-        let result = client.try_remove_liquidity(&caller, &1, &1);
+        let result = client.try_remove_liquidity(&caller, &1_i128);
         assert!(
             result.is_err(),
             "remove_liquidity must be blocked while FlashActive"
@@ -211,7 +211,10 @@ fn doc_test_reentrancy_guard() {
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
         let result = client.try_swap_a_for_b(&1);
-        assert!(result.is_err(), "swap_a_for_b must be blocked while FlashActive");
+        assert!(
+            result.is_err(),
+            "swap_a_for_b must be blocked while FlashActive"
+        );
     }
 
     // nested flash_swap_a_for_b blocked

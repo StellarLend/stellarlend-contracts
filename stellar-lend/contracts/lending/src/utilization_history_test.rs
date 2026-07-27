@@ -145,10 +145,7 @@ fn utilization_history_capacity_boundary_evicts_oldest() {
         first_ledger + TEST_COUNT - 1
     );
     // Oldest last
-    assert_eq!(
-        sample(&full_history, TEST_COUNT - 1).ledger,
-        first_ledger
-    );
+    assert_eq!(sample(&full_history, TEST_COUNT - 1).ledger, first_ledger);
 
     // Write one more (still under capacity so no eviction)
     env.as_contract(&contract_id, || {
@@ -167,14 +164,12 @@ fn utilization_history_capacity_boundary_evicts_oldest() {
         }
     );
     // Oldest is still the first entry
-    assert_eq!(
-        sample(&after, TEST_COUNT).ledger,
-        first_ledger
-    );
+    assert_eq!(sample(&after, TEST_COUNT).ledger, first_ledger);
 }
 
 #[test]
 fn utilization_history_rate_math_reports_overflow() {
+    let env = Env::default();
     let snapshot = RateSnapshot {
         total_debt: i128::MAX,
         total_supply: 1,

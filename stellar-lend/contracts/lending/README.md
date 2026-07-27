@@ -158,15 +158,7 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 
 The functions listed below appear in older documentation but are **not yet implemented** in `src/lib.rs`. They are tracked for future milestones.
 
-| Function | Notes |
-|---|---|
-| `set_oracle(env, admin, oracle)` | External oracle contract adapter; signed `set_oracle_pubkey` / `set_price` flow is implemented today. |
-| `set_liquidation_threshold_bps(env, admin, bps)` | Configurable liquidation threshold (currently hardcoded at 8000 BPS). |
-| `set_close_factor_bps(env, admin, bps)` | Configurable close factor (currently hardcoded at 5000 BPS). |
-| `get_collateral_value(env, user)` | USD-denominated collateral value (requires oracle). |
-| `get_debt_value(env, user)` | USD-denominated debt value (requires oracle). |
-| `get_max_liquidatable_amount(env, user)` | Convenience helper for liquidators. |
-| `get_emergency_state(env)` | Public view for current lifecycle state (today exposed only via events). |
+
 | `deposit_collateral(env, user, asset, amount)` | Multi-asset collateral support. |
 | `data_store_init / data_save / data_load / data_backup / data_restore` | Persistent data-store management helpers. |
 
@@ -239,10 +231,10 @@ The contract treats the current struct-returning getter responses as view schema
 
 Covered getters:
 
-- `get_user_debt() -> DebtPosition`
-- `get_user_collateral() -> BorrowCollateral`
-- `get_user_collateral_deposit() -> DepositCollateral`
-- `get_user_position() -> UserPositionSummary`
+- `get_debt_position(user: Address) -> DebtPosition`
+- `get_position(user: Address) -> PositionSummary` (aliased as `get_user_position(user: Address)`)
+- `get_cross_position_summary(user: Address) -> CrossPositionSummary`
+- `get_debt_asset_position(user: Address, asset: Address) -> DebtPosition`
 
 Wire-format guarantee:
 
@@ -259,7 +251,7 @@ Stable decoding guidance:
 Versioning strategy:
 
 - Existing getter response structs are preserved in place for schema `v1`.
-- Any additive or breaking change to one of the getter structs must ship as a new versioned getter/type, for example `get_user_position_v2()`, instead of mutating the current response shape.
+- Any additive or breaking change to one of the getter structs must ship as a new versioned getter/type, for example `get_position_v2()`, instead of mutating the current response shape. (No such versioned getter exists today — this describes the strategy to follow if/when one is needed.)
 - A runtime `schema` field is intentionally not added to the existing structs because that would itself be a breaking ABI change for the current getter surface.
 
 ## Contract Interface

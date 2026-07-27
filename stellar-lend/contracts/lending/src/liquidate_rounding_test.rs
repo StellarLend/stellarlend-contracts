@@ -94,7 +94,16 @@ fn one_unit_repay_seizes_one_collateral() {
     let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Collateral = 2, debt = 3 → HF = 2 * 8000 / 3 = 5333 < 10000
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 2, 3);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        3,
+    );
 
     let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     assert!(result.is_ok(), "liquidation of 1 unit should succeed");
@@ -116,7 +125,16 @@ fn one_unit_repay_seizes_one_collateral() {
 fn one_unit_liquidate_returns_actual_repay() {
     let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 2, 3);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        3,
+    );
 
     let repay = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     assert_eq!(repay, 1, "liquidate must return actual_repay = 1");
@@ -134,7 +152,16 @@ fn fractional_seizure_rounds_down_for_liquidator() {
     // Collateral = 2, debt = 9 → HF = 2 * 8000 / 9 = 1777 < 10000
     // max_repay = 9 * 5000 / 10000 = 4
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 2, 9);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        9,
+    );
 
     // Liquidate with amount = 2
     // actual_repay = min(2, 4) = 2
@@ -160,7 +187,16 @@ fn fractional_seizure_at_one_unit_repay() {
     // Collateral = 3, debt = 3 → HF = 3 * 8000 / 3 = 8000 < 10000
     // max_repay = 3 * 5000 / 10000 = 1
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 3, 3);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        3,
+        3,
+    );
     client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     // seized = 1 * 11000 / 10000 = 1 (floor of 1.1)
     // new_col = 3 - 1 = 2
@@ -198,7 +234,16 @@ fn close_factor_exact_at_two_units_debt() {
     let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // HF = 2 * 8000 / 2 = 8000 < 10000
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 2, 2);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        2,
+    );
     let repay = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &2);
     // max_repay = 2 * 5000 / 10000 = 1
     assert_eq!(repay, 1, "max_repay caps at 1 for debt=2");
@@ -210,7 +255,16 @@ fn close_factor_floor_at_three_units_debt() {
     let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // HF = 2 * 8000 / 3 = 5333 < 10000
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 2, 3);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        3,
+    );
     let repay = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &2);
     // max_repay = 3 * 5000 / 10000 = 1
     assert_eq!(repay, 1, "max_repay = 1 (floor of 1.5)");
@@ -261,7 +315,16 @@ fn clamp_caps_seized_at_available_collateral() {
     // Collateral = 2, debt = 10 → HF = 2 * 8000 / 10 = 1600 < 10000
     // max_repay = 10 * 5000 / 10000 = 5
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 2, 10);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        10,
+    );
     // amount = 5 → actual_repay = min(5, 5) = 5
     // seized = 5 * 11000 / 10000 = 5 (floor of 5.5)
     // final_seized = min(5, 2) = 2 (clamp)
@@ -280,7 +343,16 @@ fn clamp_caps_seized_at_available_collateral() {
 fn clamp_exact_match() {
     let (_env, client, _admin, user, debt_asset, collateral_asset) = setup();
     let liquidator = Address::generate(&_env);
-    mint_and_make_unhealthy_position(&_env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 2, 10);
+    mint_and_make_unhealthy_position(
+        &_env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        10,
+    );
     client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &5);
     let pos = client.get_position(&user);
     assert_eq!(pos.collateral, 0, "clamp at 2 released all collateral");
@@ -298,7 +370,16 @@ fn repeated_dust_liquidations_dont_leak_value() {
     let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Position: collateral = 10, debt = 10 → HF = 8000 < 10000
     let liquidator = Address::generate(&env);
-    mint_and_make_unhealthy_position(&env, &client, &liquidator, &user, &debt_asset, &collateral_asset, 10, 10);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        10,
+        10,
+    );
 
     for i in 0..8 {
         let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);

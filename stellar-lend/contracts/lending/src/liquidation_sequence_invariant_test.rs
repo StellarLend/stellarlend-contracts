@@ -1,8 +1,8 @@
 extern crate alloc;
 
 use super::*;
-use alloc::vec::Vec;
 use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
+use alloc::vec::Vec;
 use proptest::prelude::*;
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};

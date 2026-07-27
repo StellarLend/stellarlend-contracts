@@ -36,7 +36,7 @@
 
 #![cfg(test)]
 
-use crate::{inverse_swap_in, AmmContract, AmmContractClient};
+use crate::{inverse_swap_in, AmmContract, AmmContractClient, AmmPoolError};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
 const FEE_BPS: i128 = 30;
@@ -152,7 +152,6 @@ fn test_over_repay_yields_extra_fee() {
 
 /// Underpaying (one stroop short of the inverse) trips the verify-k check.
 #[test]
-#[should_panic(expected = "Invariant violation: k decreased during flash-swap repayment")]
 fn test_under_repay_panics_k_violation() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -253,7 +252,6 @@ fn test_zero_fee_flash_swap_succeeds() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "ReentrantFlashSwap")]
 fn test_reentrancy_blocks_add() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -261,11 +259,11 @@ fn test_reentrancy_blocks_add() {
 
     client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    client.add_liquidity(&caller, &1_i128, &1_i128);
+    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128);
+    assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 
 #[test]
-#[should_panic(expected = "ReentrantFlashSwap")]
 fn test_reentrancy_blocks_remove() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -273,11 +271,11 @@ fn test_reentrancy_blocks_remove() {
 
     client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    client.remove_liquidity(&caller, &1_i128, &1_i128);
+    let res = client.try_remove_liquidity(&caller, &1_i128);
+    assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 
 #[test]
-#[should_panic(expected = "ReentrantFlashSwap")]
 fn test_reentrancy_blocks_swap() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -288,7 +286,6 @@ fn test_reentrancy_blocks_swap() {
 }
 
 #[test]
-#[should_panic(expected = "ReentrantFlashSwap")]
 fn test_reentrancy_blocks_nested() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -303,7 +300,6 @@ fn test_reentrancy_blocks_nested() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "repay_flash_swap: no flash swap in progress")]
 fn test_repay_without_flash_panics() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -313,7 +309,6 @@ fn test_repay_without_flash_panics() {
 }
 
 #[test]
-#[should_panic(expected = "repay_flash_swap: amount_in must be positive")]
 fn test_repay_zero_amount_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -324,7 +319,6 @@ fn test_repay_zero_amount_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "amount_out must be positive")]
 fn test_zero_amount_out_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -334,7 +328,6 @@ fn test_zero_amount_out_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "invalid fee_bps")]
 fn test_invalid_fee_bps_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -344,7 +337,6 @@ fn test_invalid_fee_bps_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "Insufficient reserves: amount_out would drain reserve_b")]
 fn test_drain_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);

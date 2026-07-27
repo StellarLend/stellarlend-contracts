@@ -38,9 +38,7 @@ fn uninit_client() -> (Env, LendingContractClient<'static>, Address) {
 /// Create a fresh, *initialized* contract client (standard setup).
 fn init_client() -> (Env, LendingContractClient<'static>, Address, Address) {
     let (env, client, admin) = uninit_client();
-    client
-        .initialize(&admin)
-        .expect("initialize must succeed on first call");
+    client.initialize(&admin);
     let user = Address::generate(&env);
     (env, client, admin, user)
 }
@@ -51,7 +49,7 @@ fn init_client() -> (Env, LendingContractClient<'static>, Address, Address) {
 #[test]
 fn test_initialize_first_call_succeeds() {
     let (_, client, admin) = uninit_client();
-    assert_eq!(client.initialize(&admin), Ok(()));
+    client.initialize(&admin);
     assert_eq!(client.get_admin(), admin);
 }
 
@@ -60,7 +58,7 @@ fn test_initialize_first_call_succeeds() {
 #[test]
 fn test_initialize_double_call_returns_already_initialized() {
     let (env, client, admin) = uninit_client();
-    client.initialize(&admin).unwrap();
+    client.initialize(&admin);
 
     let attacker = Address::generate(&env);
     let result = client.try_initialize(&attacker);
@@ -77,7 +75,7 @@ fn test_initialize_double_call_returns_already_initialized() {
 #[test]
 fn test_initialize_same_admin_twice_rejected() {
     let (_, client, admin) = uninit_client();
-    client.initialize(&admin).unwrap();
+    client.initialize(&admin);
     let result = client.try_initialize(&admin);
     assert!(
         matches!(result, Err(Ok(LendingError::AlreadyInitialized))),
@@ -297,25 +295,37 @@ fn test_set_price_bounds_before_init_returns_not_initialized() {
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_set_guardian_before_init_panics_not_initialized() {
+fn test_set_guardian_before_init_returns_not_initialized() {
     let (env, client, _admin) = uninit_client();
     let guardian = Address::generate(&env);
-    client.set_guardian(&guardian);
+    let result = client.try_set_guardian(&guardian);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_set_emergency_state_before_init_panics_not_initialized() {
+fn test_set_emergency_state_before_init_returns_not_initialized() {
     let (_, client, _admin) = uninit_client();
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    let result = client.try_set_emergency_state(&EmergencyState::Shutdown);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_set_pause_before_init_panics_not_initialized() {
+fn test_set_pause_before_init_returns_not_initialized() {
     let (_, client, _admin) = uninit_client();
-    client.set_pause(&PauseType::Deposit, &true, &100);
+    let result = client.try_set_pause(&PauseType::Deposit, &true, &100);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -387,11 +397,15 @@ fn test_set_asset_isolation_before_init_returns_not_initialized() {
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_propose_admin_before_init_panics_not_initialized() {
+fn test_propose_admin_before_init_returns_not_initialized() {
     let (env, client, _admin) = uninit_client();
     let new_admin = Address::generate(&env);
-    client.propose_admin(&new_admin);
+    let result = client.try_propose_admin(&new_admin);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -551,15 +565,15 @@ fn test_get_pause_state_before_init_returns_false() {
 fn test_normal_operations_succeed_after_initialize() {
     let (_env, client, _admin, user) = init_client();
 
-    let col = client.deposit(&user, &200).expect("deposit should succeed");
+    let col = client.deposit(&user, &200);
     assert_eq!(col, 200);
 
-    let debt = client.borrow(&user, &50).expect("borrow should succeed");
+    let debt = client.borrow(&user, &50);
     assert_eq!(debt, 50);
 
-    let remaining = client.repay(&user, &20).expect("repay should succeed");
+    let remaining = client.repay(&user, &20);
     assert_eq!(remaining, 30);
 
-    let after_withdraw = client.withdraw(&user, &10).expect("withdraw should succeed");
+    let after_withdraw = client.withdraw(&user, &10);
     assert_eq!(after_withdraw, 190);
 }
