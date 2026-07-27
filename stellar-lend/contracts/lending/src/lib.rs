@@ -82,7 +82,7 @@ mod liquidate_pause_test;
 mod liquidate_perf_test;
 #[cfg(test)]
 mod liquidate_rounding_test;
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzing"))]
 mod liquidate_transfer_test;
 #[cfg(test)]
 mod liquidation_branch_test;
