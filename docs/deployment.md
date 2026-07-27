@@ -53,7 +53,7 @@ stellarlend-contracts/
 └── stellar-lend/
     ├── Cargo.toml         # Workspace root
     └── contracts/
-        ├── hello-world/   # Main lending contract  (crate: hello-world)
+        ├── lending/       # Main lending contract  (crate: stellarlend-lending)
         └── amm/           # AMM integration contract (crate: stellarlend-amm)
 ```
 
@@ -61,10 +61,10 @@ Compiled WASM artefacts land in:
 
 ```
 stellar-lend/target/wasm32-unknown-unknown/release/
-  hello_world.wasm
-  hello_world.optimized.wasm        ← deployed to chain
+  stellarlend_lending.wasm
+  stellarlend_lending.optimized.wasm ← deployed to chain (main lending contract)
   stellarlend_amm.wasm
-  stellarlend_amm.optimized.wasm    ← deployed to chain
+  stellarlend_amm.optimized.wasm    ← deployed to chain (AMM integration)
 ```
 
 ---
