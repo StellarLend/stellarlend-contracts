@@ -198,7 +198,6 @@ stellar contract deploy \
 stellarlend-contracts/
 ├── README.md                 # This file
 ├── local-ci.sh               # Local CI reproduction script
-├── ci-doc.md                 # CI/CD documentation
 ├── docs/                     # Protocol documentation
 │   ├── README.md            # Detailed protocol documentation
 │   └── examples/            # Example JSON reports
@@ -207,38 +206,68 @@ stellarlend-contracts/
 └── stellar-lend/            # Main contract workspace
     ├── Cargo.toml           # Workspace configuration
     └── contracts/
-        └── hello-world/     # Main StellarLend contract
+        ├── lending/         # Main StellarLend contract (Single Canonical Tree)
+        │   ├── Cargo.toml
+        │   ├── Makefile     # Build/test shortcuts
+        │   ├── README.md    # Contract-specific docs
+        │   └── src/
+        │       ├── lib.rs   # Main contract entry point
+        │       ├── rounding_strategy.rs # Mathematical utilities
+        │       └── interest_drift_regression_test.rs # Regression tests
+        └── hello-world/     # Minimal placeholder contract
             ├── Cargo.toml
-            ├── Makefile     # Build/test shortcuts
-            ├── README.md    # Contract-specific docs
+            ├── Makefile
+            ├── README.md
             └── src/
-                ├── lib.rs   # Main contract entry point
-                ├── deposit.rs
-                ├── borrow.rs
-                ├── repay.rs
-                ├── withdraw.rs
-                ├── liquidate.rs
-                ├── oracle.rs
-                ├── governance.rs
-                ├── amm.rs
-                ├── flash_loan.rs
-                ├── analytics.rs
-                └── test.rs  # Test suite
+                └── lib.rs
 ```
 
 ---
 
 ## Contract Modules
 
-The StellarLend contract is organized into the following modules:
+This workspace contains two separate contract crates whose module layouts should not be
+conflated: the canonical `lending` contract, and the `hello-world` contract, which is a
+larger, mostly-independent parallel implementation, not a "minimal placeholder" for `lending`.
 
-- **Core Lending** (`deposit.rs`, `borrow.rs`, `repay.rs`, `withdraw.rs`): Deposit collateral, borrow assets, repay debt, and withdraw collateral
-- **Liquidation** (`liquidate.rs`): Partial liquidation with close factor and liquidation incentives
-- **Oracle** (`oracle.rs`): Price feed integration with validation, fallback, and caching
-- **Governance** (`governance.rs`): Admin controls, multisig, and parameter management
-- **AMM Integration** (`amm.rs`): Automated market maker hooks for swaps and liquidity
-- **Flash Loans** (`flash_loan.rs`): Configurable flash loan functionality
-- **Analytics** (`analytics.rs`): Protocol and user metrics, activity feeds, and reporting
+### `lending` (`stellar-lend/contracts/lending/src/`) — the canonical contract
+
+Core lending logic (deposit, withdraw, borrow, repay, liquidation, pausing, oracle price
+handling, cross-asset positions, etc.) lives directly in `lib.rs` as `#[contractimpl]`
+functions on `LendingContract` — there are no separate `deposit.rs`/`borrow.rs`/`repay.rs`/
+`withdraw.rs`/`liquidate.rs`/`oracle.rs`/`governance.rs`/`amm.rs`/`flash_loan.rs`/`analytics.rs`
+files in this crate. The supporting modules that do exist are:
+
+- **`debt.rs`**: Debt position accounting and interest accrual (global borrow-index model plus legacy elapsed-time accrual).
+- **`cross_asset.rs`**: Multi-asset collateral/debt storage helpers and cross-asset health-factor computation.
+- **`rate_model.rs`**: Kink-model interest rate curve, plus rate smoothing/hysteresis.
+- **`rounding_strategy.rs`**: Configurable-rounding interest calculator used by `debt.rs`.
+- **`math.rs`**: Shared checked-arithmetic helpers.
+- **`events.rs`**: Versioned event structs/emitters for deposit/withdraw/borrow/repay/liquidate.
+- **`upgrade.rs`**: Self-contained timelocked multisig upgrade governance (propose/approve/execute).
+
+### `hello-world` (`stellar-lend/contracts/hello-world/src/`) — a separate, parallel contract
+
+Despite its name, this is a large, independently-evolving contract with its own
+deposit/borrow/repay/withdraw/liquidate/oracle/governance/AMM/bridge logic. It shares no
+Cargo dependency and no code with `lending`, and several of its files are still one-line
+stubs rather than real implementations:
+
+- **Implemented**: `oracle.rs` (primary/fallback oracle + AMM-TWAP fallback), `governance.rs`
+  (DAO-style proposal/vote/queue/execute + guardian recovery), `amm.rs` / `amm_twap.rs`
+  (AMM reserve and TWAP bookkeeping), `bridge.rs` (guardian-gated freeze switch),
+  `cross_asset.rs` (multi-asset lending), `risk_management.rs` / `risk_params.rs`
+  (collateral ratio, liquidation threshold, close factor config), `interest_rate.rs`,
+  `admin.rs`, `withdraw.rs`, `repay.rs`, `flash_loan.rs`.
+- **Stubs, not yet implemented**: `deposit.rs`, `borrow.rs`, `liquidate.rs`, `analytics.rs`,
+  `multisig.rs`, `recovery.rs` (one-line `// Stub module` placeholders), plus `reentrancy.rs`
+  and `reserve.rs`, which are currently empty files. The crate's own
+  bare-bones `deposit`/`withdraw`/`borrow`/`repay` demo entrypoints (used by its basic test
+  suite) are implemented directly in `hello-world`'s own `lib.rs`, independently of these stub
+  files.
+
+If you're integrating with StellarLend, `lending` is the contract you want — see its own
+[README](stellar-lend/contracts/lending/README.md) for the full, accurate interface.
 
 ---
 
@@ -249,61 +278,63 @@ The StellarLend contract is organized into the following modules:
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
 | `initialize`                  | Initialize contract and set admin                 |
-| `deposit_collateral`          | Deposit collateral to the protocol                |
+| `deposit`                     | Deposit collateral to the protocol                |
 | `borrow`                      | Borrow assets against collateral                  |
 | `repay`                       | Repay borrowed assets                            |
 | `withdraw`                    | Withdraw collateral                              |
 | `liquidate`                   | Liquidate undercollateralized positions          |
 
-### Cross-Asset Operations
+### Oracle, Admin, and Emergency Controls
 
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
-| `set_asset_params`            | Configure asset-specific parameters              |
-| `deposit_collateral_asset`    | Deposit specific asset as collateral             |
-| `borrow_asset`                | Borrow specific asset                            |
-| `repay_asset`                 | Repay specific asset                             |
-| `withdraw_asset`              | Withdraw specific asset                          |
-| `get_cross_position_summary`  | Get unified position across all assets           |
+| `get_admin`                   | Read current admin                               |
+| `propose_admin`               | Propose admin handoff                            |
+| `accept_admin`                | Accept pending admin role                        |
+| `set_guardian`                | Configure shutdown guardian                      |
+| `get_guardian`                | Read shutdown guardian                           |
+| `set_emergency_state`         | Set protocol emergency state                     |
+| `set_min_borrow`              | Configure minimum borrow amount                  |
+| `get_min_borrow`              | Read minimum borrow amount                       |
+| `set_debt_ceiling`            | Configure debt ceiling                           |
+| `set_flash_fee`               | Configure flash loan fee                         |
+| `set_oracle_pubkey`           | Configure signed price oracle public key         |
+| `get_oracle_pubkey`           | Read oracle public key                           |
+| `set_price`                   | Store a signed oracle price update               |
+| `get_price_record`            | Read stored oracle price                         |
 
-### Admin & Configuration
+### Flash Loans
 
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
-| `set_risk_params`             | Set close factor and liquidation incentive       |
-| `set_pause_switches`          | Pause/unpause protocol actions                   |
-| `set_oracle`                  | Set oracle address                               |
-| `set_min_collateral_ratio`    | Set minimum collateral ratio                    |
-| `set_base_rate`               | Set base interest rate                          |
-| `set_kink_utilization`        | Set kink utilization point                      |
-| `set_multiplier`              | Set interest rate multiplier                    |
-| `set_reserve_factor`          | Set protocol reserve factor                     |
-| `set_rate_limits`             | Set interest rate floor/ceiling                 |
-| `emergency_rate_adjustment`   | Emergency interest rate adjustment               |
+| `flash_loan`                  | Issue a callback-based flash loan                |
+| `repay_flash_loan`            | Repay flash-loan funds to treasury storage       |
 
 ### Query Functions
 
 | Function                      | Description                                      |
 |-------------------------------|--------------------------------------------------|
 | `get_position`                | Query user position (collateral, debt, ratio)    |
-| `get_protocol_params`         | Query protocol parameters                        |
-| `get_risk_config`             | Query risk management configuration              |
-| `get_system_stats`            | Query system-wide stats                          |
-| `get_protocol_report`         | Get comprehensive protocol analytics             |
-| `get_user_report`             | Get user-specific analytics                      |
-| `get_recent_activity`         | Get activity feed                                |
+| `get_debt_position`           | Query raw debt principal and last update time    |
+| `get_health_factor`           | Query current health factor                      |
+| `get_protocol_metrics`        | Query aggregate debt, supply, utilization, ledger |
 
-For a complete list of entrypoints including AMM, flash loans, bridge, governance, and upgrade functions, see the [contract README](stellar-lend/contracts/hello-world/README.md) and [protocol documentation](docs/README.md).
+For exact signatures and planned-but-not-shipping names, see
+[docs/interface_quick_reference.md](docs/interface_quick_reference.md).
 
 ---
 
 ## Documentation
 
+- **[Developer Glossary](docs/glossary.md)**: Key protocol terms, numeric scales (BPS, Health Factor), and common pitfalls for integrators
 - **[Protocol Documentation](docs/README.md)**: Comprehensive protocol documentation including modules, admin operations, monitoring, analytics, and upgrade procedures
+- **[Release Checklist](docs/release_checklist.md)**: Required tests, invariant coverage, upgrade safety, security notes template, and CI gates for every contract PR
 - **[Upgrade Authorization](docs/UPGRADE_AUTHORIZATION.md)**: Strict upgrade authorization boundaries, key rotation workflow, and security assumptions
 - **[Storage Layout and Migration](docs/storage.md)**: Detailed documentation of the contract's persistent storage structure, keys, types, and upgrade/migration strategies
+- **[Cross-Asset Rules](docs/CROSS_ASSET_RULES.md)**: Borrowing/repay rules, view guarantees (G-1..G-10), and invariants for multi-asset positions
+- **[Repay Semantics](stellar-lend/docs/REPAY_SEMANTICS.md)**: Both repay paths (single-asset vs cross-asset), overpay behaviour, interest ordering, and dust prevention
 - **[Contract README](stellar-lend/contracts/hello-world/README.md)**: Contract-specific documentation and entrypoint reference
-- **[CI/CD Documentation](ci-doc.md)**: Continuous integration setup and local reproduction guide
+- **[CI/CD Overview](docs/CI_OVERVIEW.md)**: Continuous integration setup and local reproduction guide
 - **[Example Reports](docs/examples/)**: Example JSON outputs for protocol and user analytics
 
 ---
@@ -391,4 +422,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 For questions, issues, or contributions:
 - Open an issue on GitHub for bug reports or feature requests
 - Check the [documentation](docs/README.md) for detailed protocol information
-- Review [CI documentation](ci-doc.md) for build and test issues
+- Review [CI documentation](docs/CI_OVERVIEW.md) for build and test issues

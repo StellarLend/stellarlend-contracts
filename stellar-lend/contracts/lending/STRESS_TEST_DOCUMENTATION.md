@@ -159,6 +159,14 @@ cargo test stress_test -- --nocapture
 - **Network Conditions**: Tests don't model network latency or failures
 - **Gas Optimization**: Limited gas usage optimization testing
 
+## Multi-User Contention & Transaction Ordering
+Unlike EVM networks where mempool ordering allows MEV sandwich attacks on interest calculation, Soroban smart contract executions rely on deterministic ledger timestamps. 
+
+### Core Fairness Invariants
+1. **Timestamp Equivalence**: Multiple users interacting with the protocol in the same ledger sequence will calculate state against the exact same timestamp (`env.ledger().timestamp()`). 
+2. **Interest Accrual Fairness**: Accrued interest is globalized per ledger sequence. If User A and User B borrow at ledger $L_1$ and repay at ledger $L_2$, their accrued interest will be mathematically identical down to the stroop, regardless of transaction execution order within those ledgers.
+3. **Liquidation Races**: Concurrent liquidation attempts are safely serialized. The first transaction to process against the ledger state will capture the close factor. Subsequent transactions will recalculate against the *new* state dynamically, preventing double-liquidation of the same debt fraction.
+
 ### Future Enhancements
 - **True Concurrency**: Implement actual concurrent operation testing
 - **Load Testing**: Extended duration tests with continuous operation

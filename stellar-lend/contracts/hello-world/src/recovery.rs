@@ -1,541 +1,286 @@
-//! Social recovery helpers for guardian-managed admin rotation.
+//! Social-recovery module — guardian-based admin rotation.
 //!
-//! This module owns the legacy contract surface exported from [`crate::lib`]
-//! for bulk guardian configuration and recovery approval/execution.
+//! This module owns the **recovery-specific** entrypoints that `lib.rs`
+//! exposes as top-level contract functions:
 //!
-//! # Trust Boundaries
+//! | Entrypoint          | Description                                              |
+//! |---------------------|----------------------------------------------------------|
+//! | [`set_guardians`]   | Admin-only: replace the full guardian set + threshold.   |
+//! | [`start_recovery`]  | Guardian: open a new recovery request.                   |
+//! | [`approve_recovery`]| Guardian: add an approval to the open request.           |
+//! | [`execute_recovery`]| Any caller: execute once the threshold is reached.       |
 //!
-//! - Multisig admins may configure guardians while no recovery is active.
-//! - Guardians may initiate and approve admin rotation, but cannot transfer
-//!   protocol funds through this module.
-//! - Recovery only mutates the multisig admin set after quorum is met.
+//! ## Storage
 //!
-//! # Security
+//! Recovery state is stored under the *same* `GovernanceDataKey` variants
+//! that `governance.rs` uses (`GuardianConfig`, `RecoveryRequest`,
+//! `RecoveryApprovals`).  This means the `gov_*` entrypoints and the direct
+//! `recovery::*` entrypoints share one consistent view of guardian / recovery
+//! state.
 //!
-//! - Guardian configuration changes are blocked while an unexpired recovery is
-//!   active so the approval threshold cannot be changed mid-flight.
-//! - Recovery targets are validated against the current multisig admin set on
-//!   start, approval, and execution.
-//! - This module performs no external contract calls and therefore exposes no
-//!   reentrancy surface of its own.
-#![allow(unused)]
+//! ## Admin rotation
+//!
+//! On successful execution the protocol admin stored by `admin.rs`
+//! (`AdminDataKey::Admin`) is updated directly.  The governance config admin
+//! is updated in parallel when governance has been initialised, so both
+//! access paths stay in sync.
+//!
+//! ## Security notes
+//!
+//! * `set_guardians` requires the current protocol admin.
+//! * `start_recovery` and `approve_recovery` require the caller to be a
+//!   configured guardian (checked against storage, not via a passed-in flag).
+//! * Double-approval by the same guardian is silently ignored (idempotent).
+//! * `execute_recovery` requires no special role — anyone may submit the
+//!   transaction once the threshold is met; the threshold check itself is the
+//!   security gate.
+//! * Opening a new recovery request while one is already pending overwrites
+//!   the previous request.  Guardians should coordinate off-chain.
 
 use soroban_sdk::{Address, Env, Vec};
-use crate::prelude::*;
 
-use crate::errors::GovernanceError;
-use crate::governance::{
-    emit_guardian_added_event, emit_guardian_removed_event, emit_recovery_approved_event,
-    emit_recovery_executed_event, emit_recovery_started_event,
-};
-use crate::storage::GovernanceDataKey;
-use crate::types::RecoveryRequest;
+use crate::governance::{GovernanceDataKey, GovernanceError};
+use crate::storage::GuardianConfig;
+use crate::types::{GovernanceConfig, RecoveryRequest};
 
-const DEFAULT_RECOVERY_PERIOD: u64 = 3 * 24 * 60 * 60;
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
-fn require_multisig_admin(env: &Env, caller: &Address) -> Result<(), GovernanceError> {
-    let config =
-        crate::governance::get_multisig_config(env).ok_or(GovernanceError::NotInitialized)?;
-    if !config.admins.contains(caller.clone()) {
-        return Err(GovernanceError::Unauthorized);
-    }
-    Ok(())
-}
-
-fn clear_recovery_state(env: &Env) {
+/// Return the stored [`GuardianConfig`], or `None` if none has been set.
+fn load_guardian_config(env: &Env) -> Option<GuardianConfig> {
     env.storage()
-        .persistent()
-        .remove(&GovernanceDataKey::RecoveryRequest);
-    env.storage()
-        .persistent()
-        .remove(&GovernanceDataKey::RecoveryApprovals);
+        .instance()
+        .get(&GovernanceDataKey::GuardianConfig)
 }
 
-fn clear_expired_recovery(env: &Env) -> Result<(), GovernanceError> {
-    if let Some(recovery) = env
-        .storage()
-        .persistent()
-        .get::<GovernanceDataKey, RecoveryRequest>(&GovernanceDataKey::RecoveryRequest)
-    {
-        if env.ledger().timestamp() > recovery.expires_at {
-            clear_recovery_state(env);
-            return Err(GovernanceError::ProposalExpired);
-        }
+/// Return `true` when `address` is a configured guardian.
+fn is_guardian(env: &Env, address: &Address) -> bool {
+    match load_guardian_config(env) {
+        Some(gc) => gc.guardians.contains(address),
+        None => false,
     }
-
-    Ok(())
 }
 
-fn ensure_no_active_recovery(env: &Env) -> Result<(), GovernanceError> {
-    match clear_expired_recovery(env) {
-        Ok(()) => {}
-        Err(GovernanceError::ProposalExpired) => {}
-        Err(err) => return Err(err),
-    }
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
-    if env
-        .storage()
-        .persistent()
-        .has(&GovernanceDataKey::RecoveryRequest)
-    {
-        return Err(GovernanceError::RecoveryInProgress);
-    }
-
-    Ok(())
-}
-
-fn get_multisig_admins(env: &Env) -> Result<Vec<Address>, GovernanceError> {
-    env.storage()
-        .persistent()
-        .get(&GovernanceDataKey::MultisigAdmins)
-        .ok_or(GovernanceError::InvalidMultisigConfig)
-}
-
-fn validate_recovery_targets(
-    admins: &Vec<Address>,
-    old_admin: &Address,
-    new_admin: &Address,
-) -> Result<(), GovernanceError> {
-    if old_admin == new_admin {
-        return Err(GovernanceError::InvalidProposal);
-    }
-
-    if !admins.contains(old_admin.clone()) || admins.contains(new_admin.clone()) {
-        return Err(GovernanceError::InvalidProposal);
-    }
-
-    Ok(())
-}
-
-fn count_valid_unique_approvals(guardians: &Vec<Address>, approvals: &Vec<Address>) -> u32 {
-    let mut valid = 0u32;
-    for guardian in guardians.iter() {
-        if approvals.contains(guardian) {
-            valid += 1;
-        }
-    }
-    valid
-}
-
-/// Replace the guardian set and threshold in one atomic update.
+/// Replace the full guardian set and threshold (admin-only).
+///
+/// This is a **bulk replace** operation: the new `guardians` list completely
+/// supersedes the previous one.  The admin must call this at least once before
+/// any recovery can be initiated.
+///
+/// # Arguments
+///
+/// * `caller`    – Must be the stored protocol admin.
+/// * `guardians` – New list of guardian addresses.  May be empty, but an
+///                 empty list means recovery can never be started.
+/// * `threshold` – How many guardian approvals are required to execute a
+///                 recovery.  Must satisfy `1 ≤ threshold ≤ guardians.len()`.
 ///
 /// # Errors
 ///
-/// - `Unauthorized` if `caller` is not a multisig admin.
-/// - `RecoveryInProgress` if a non-expired recovery is active.
-/// - `InvalidGuardianConfig` if the guardian set is empty, contains duplicates,
-///   or `threshold` is zero / greater than the guardian count.
-///
-/// # Security
-///
-/// Guardian changes are blocked while recovery is active so approval quorum
-/// cannot be manipulated during admin rotation.
+/// * [`GovernanceError::Unauthorized`]  – `caller` is not the protocol admin.
+/// * [`GovernanceError::InvalidConfig`] – `threshold` is 0, or exceeds the
+///                                        length of `guardians`.
 pub fn set_guardians(
     env: &Env,
     caller: Address,
     guardians: Vec<Address>,
     threshold: u32,
 ) -> Result<(), GovernanceError> {
-    require_multisig_admin(env, &caller)?;
-    ensure_no_active_recovery(env)?;
+    caller.require_auth();
 
-    if guardians.is_empty() {
-        return Err(GovernanceError::InvalidGuardianConfig);
-    }
-    if threshold == 0 || threshold > guardians.len() {
-        return Err(GovernanceError::InvalidGuardianConfig);
-    }
+    // Require the caller to be the stored protocol admin.
+    crate::admin::require_admin(env, &caller)
+        .map_err(|_| GovernanceError::Unauthorized)?;
 
-    for i in 0..guardians.len() {
-        for j in (i + 1)..guardians.len() {
-            if guardians.get(i).unwrap() == guardians.get(j).unwrap() {
-                return Err(GovernanceError::InvalidGuardianConfig);
-            }
-        }
+    // Validate threshold.
+    if threshold == 0 || threshold as usize > guardians.len() as usize {
+        return Err(GovernanceError::InvalidConfig);
     }
 
-    env.storage()
-        .persistent()
-        .set(&GovernanceDataKey::Guardians, &guardians);
-    env.storage()
-        .persistent()
-        .set(&GovernanceDataKey::GuardianThreshold, &threshold);
-
-    for g in guardians.iter() {
-        emit_guardian_added_event(env, &g);
-    }
+    env.storage().instance().set(
+        &GovernanceDataKey::GuardianConfig,
+        &GuardianConfig { guardians, threshold },
+    );
 
     Ok(())
 }
 
-/// Add a single guardian to the active guardian set.
+/// Open a new recovery request (guardian-only).
+///
+/// The initiating guardian is automatically recorded as the first approval, so
+/// a single-guardian configuration can proceed immediately to
+/// [`execute_recovery`] (if the threshold is 1).
+///
+/// Opening a new request while a prior one is still pending overwrites it and
+/// resets approvals.  Guardians should coordinate off-chain to agree on
+/// `new_admin` before one of them calls this function.
+///
+/// # Arguments
+///
+/// * `initiator`  – Must be a configured guardian.
+/// * `old_admin`  – The current admin address (informational / integrity check
+///                  — the on-chain admin is not validated here; execution
+///                  reads the stored admin directly).
+/// * `new_admin`  – The address to install as admin on execution.
 ///
 /// # Errors
 ///
-/// - `Unauthorized` if `caller` is not a multisig admin.
-/// - `RecoveryInProgress` if a non-expired recovery is active.
-/// - `GuardianAlreadyExists` if `guardian` is already configured.
-///
-/// # Security
-///
-/// The guardian set is only mutable outside of active recovery windows.
-pub fn add_guardian(env: &Env, caller: Address, guardian: Address) -> Result<(), GovernanceError> {
-    require_multisig_admin(env, &caller)?;
-    ensure_no_active_recovery(env)?;
-
-    let mut guardians: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&GovernanceDataKey::Guardians)
-        .unwrap_or_else(|| Vec::new(env));
-
-    if guardians.contains(guardian.clone()) {
-        return Err(GovernanceError::GuardianAlreadyExists);
-    }
-
-    guardians.push_back(guardian.clone());
-    env.storage()
-        .persistent()
-        .set(&GovernanceDataKey::Guardians, &guardians);
-
-    emit_guardian_added_event(env, &guardian);
-    Ok(())
-}
-
-/// Remove a guardian while preserving a valid non-zero threshold.
-///
-/// # Errors
-///
-/// - `Unauthorized` if `caller` is not a multisig admin.
-/// - `RecoveryInProgress` if a non-expired recovery is active.
-/// - `GuardianNotFound` if `guardian` is not configured.
-/// - `InvalidGuardianConfig` if removal would leave an empty guardian set.
-///
-/// # Security
-///
-/// Threshold is clamped downward when needed so recovery cannot become
-/// permanently unexecutable after guardian rotation.
-pub fn remove_guardian(
-    env: &Env,
-    caller: Address,
-    guardian: Address,
-) -> Result<(), GovernanceError> {
-    require_multisig_admin(env, &caller)?;
-    ensure_no_active_recovery(env)?;
-
-    // Check if recovery is in progress - prevent guardian removal during recovery
-    if env
-        .storage()
-        .persistent()
-        .has(&GovernanceDataKey::RecoveryRequest)
-    {
-        return Err(GovernanceError::RecoveryInProgress);
-    }
-
-    let guardians: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&GovernanceDataKey::Guardians)
-        .ok_or(GovernanceError::GuardianNotFound)?;
-
-    let mut new_guardians = Vec::new(env);
-    let mut found = false;
-    for g in guardians.iter() {
-        if g == guardian {
-            found = true;
-        } else {
-            new_guardians.push_back(g);
-        }
-    }
-
-    if !found {
-        return Err(GovernanceError::GuardianNotFound);
-    }
-
-    if new_guardians.is_empty() {
-        return Err(GovernanceError::InvalidGuardianConfig);
-    }
-
-    env.storage()
-        .persistent()
-        .set(&GovernanceDataKey::Guardians, &new_guardians);
-
-    let threshold = get_guardian_threshold(env).min(new_guardians.len());
-    env.storage()
-        .persistent()
-        .set(&GovernanceDataKey::GuardianThreshold, &threshold);
-
-    emit_guardian_removed_event(env, &guardian);
-    Ok(())
-}
-
-/// Update the guardian approval threshold.
-///
-/// # Errors
-///
-/// - `Unauthorized` if `caller` is not a multisig admin.
-/// - `RecoveryInProgress` if a non-expired recovery is active.
-/// - `InvalidGuardianConfig` if `threshold` is zero or exceeds guardian count.
-///
-/// # Security
-///
-/// Threshold changes are blocked during recovery to prevent mid-flight quorum
-/// changes after approvals have started.
-pub fn set_guardian_threshold(
-    env: &Env,
-    caller: Address,
-    threshold: u32,
-) -> Result<(), GovernanceError> {
-    require_multisig_admin(env, &caller)?;
-    ensure_no_active_recovery(env)?;
-
-    // Check if recovery is in progress - prevent threshold changes during recovery
-    if env
-        .storage()
-        .persistent()
-        .has(&GovernanceDataKey::RecoveryRequest)
-    {
-        return Err(GovernanceError::RecoveryInProgress);
-    }
-
-    let guardians: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&GovernanceDataKey::Guardians)
-        .unwrap_or_else(|| Vec::new(env));
-
-    if threshold == 0 || threshold > guardians.len() {
-        return Err(GovernanceError::InvalidGuardianConfig);
-    }
-
-    env.storage()
-        .persistent()
-        .set(&GovernanceDataKey::GuardianThreshold, &threshold);
-    Ok(())
-}
-
-/// Start a guardian-approved recovery request for admin rotation.
-///
-/// # Errors
-///
-/// - `Unauthorized` if `initiator` is not a guardian.
-/// - `RecoveryInProgress` if another non-expired recovery exists.
-/// - `InvalidProposal` if the target admin rotation is invalid.
-/// - `MathOverflow` if the expiry timestamp overflows.
-///
-/// # Security
-///
-/// The requested `old_admin` must still be an active multisig admin and
-/// `new_admin` must not already be in the admin set.
+/// * [`GovernanceError::Unauthorized`] – `initiator` is not a guardian.
 pub fn start_recovery(
     env: &Env,
     initiator: Address,
     old_admin: Address,
     new_admin: Address,
 ) -> Result<(), GovernanceError> {
-    let guardians: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&GovernanceDataKey::Guardians)
-        .ok_or(GovernanceError::Unauthorized)?;
+    initiator.require_auth();
 
-    if !guardians.contains(initiator.clone()) {
+    if !is_guardian(env, &initiator) {
         return Err(GovernanceError::Unauthorized);
     }
 
-    ensure_no_active_recovery(env)?;
-
-    let admins = get_multisig_admins(env)?;
-    validate_recovery_targets(&admins, &old_admin, &new_admin)?;
-
-    let now = env.ledger().timestamp();
-    let recovery = RecoveryRequest {
-        old_admin: old_admin.clone(),
-        new_admin: new_admin.clone(),
-        initiator: initiator.clone(),
-        initiated_at: now,
-        expires_at: now
-            .checked_add(DEFAULT_RECOVERY_PERIOD)
-            .ok_or(GovernanceError::MathOverflow)?,
+    let request = RecoveryRequest {
+        old_admin,
+        new_admin,
+        initiated_at: env.ledger().timestamp(),
+        // approval_count mirrors the approvals Vec length; the Vec is the
+        // canonical source of truth, but we keep this field for cheap
+        // threshold comparisons.
+        approval_count: 1,
     };
 
-    env.storage()
-        .persistent()
-        .set(&GovernanceDataKey::RecoveryRequest, &recovery);
+    // Initiator counts as the first approval.
+    let mut approvals: Vec<Address> = Vec::new(env);
+    approvals.push_back(initiator);
 
-    let mut approvals = Vec::new(env);
-    approvals.push_back(initiator.clone());
     env.storage()
-        .persistent()
+        .instance()
+        .set(&GovernanceDataKey::RecoveryRequest, &request);
+    env.storage()
+        .instance()
         .set(&GovernanceDataKey::RecoveryApprovals, &approvals);
 
-    emit_recovery_started_event(env, &old_admin, &new_admin, &initiator);
     Ok(())
 }
 
-/// Approve an active recovery request as a guardian.
+/// Add a guardian approval to the open recovery request (guardian-only).
+///
+/// Calling this more than once with the same `approver` is a no-op
+/// (idempotent): the approver is only added once.
 ///
 /// # Errors
 ///
-/// - `Unauthorized` if `approver` is not a guardian.
-/// - `NoRecoveryInProgress` if no active request exists.
-/// - `ProposalExpired` if the recovery window elapsed.
-/// - `AlreadyVoted` if `approver` already approved the request.
-/// - `InvalidProposal` if the recovery target is no longer valid.
-///
-/// # Security
-///
-/// The recovery target is revalidated against the current admin set before
-/// additional approvals are accepted.
+/// * [`GovernanceError::Unauthorized`]    – `approver` is not a guardian.
+/// * [`GovernanceError::NotInitialized`]  – No recovery request is open.
 pub fn approve_recovery(env: &Env, approver: Address) -> Result<(), GovernanceError> {
-    let guardians: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&GovernanceDataKey::Guardians)
-        .ok_or(GovernanceError::Unauthorized)?;
+    approver.require_auth();
 
-    if !guardians.contains(approver.clone()) {
+    if !is_guardian(env, &approver) {
         return Err(GovernanceError::Unauthorized);
     }
 
-    let recovery: RecoveryRequest = env
+    // There must be an open request to approve.
+    if !env
         .storage()
-        .persistent()
-        .get(&GovernanceDataKey::RecoveryRequest)
-        .ok_or(GovernanceError::NoRecoveryInProgress)?;
-
-    let now = env.ledger().timestamp();
-    if now > recovery.expires_at {
-        clear_recovery_state(env);
-        return Err(GovernanceError::ProposalExpired);
-    }
-
-    let admins = get_multisig_admins(env)?;
-    if let Err(err) = validate_recovery_targets(&admins, &recovery.old_admin, &recovery.new_admin) {
-        clear_recovery_state(env);
-        return Err(err);
+        .instance()
+        .has(&GovernanceDataKey::RecoveryRequest)
+    {
+        return Err(GovernanceError::NotInitialized);
     }
 
     let mut approvals: Vec<Address> = env
         .storage()
-        .persistent()
+        .instance()
         .get(&GovernanceDataKey::RecoveryApprovals)
         .unwrap_or_else(|| Vec::new(env));
 
-    if approvals.contains(approver.clone()) {
-        return Err(GovernanceError::AlreadyVoted);
+    // Idempotent: only add if not already present.
+    if !approvals.contains(&approver) {
+        approvals.push_back(approver);
     }
 
-    approvals.push_back(approver.clone());
     env.storage()
-        .persistent()
+        .instance()
         .set(&GovernanceDataKey::RecoveryApprovals, &approvals);
 
-    emit_recovery_approved_event(env, &approver);
     Ok(())
 }
 
-/// Execute a recovery request after guardian quorum is met.
+/// Execute the recovery once the guardian threshold has been reached.
+///
+/// On success:
+/// 1. The protocol admin stored by `admin.rs` is replaced with
+///    `request.new_admin`.
+/// 2. If governance has been initialised, the governance config admin is
+///    updated to the same address.
+/// 3. The `RecoveryRequest` and `RecoveryApprovals` storage entries are
+///    removed (one-shot execution).
+///
+/// The executor does not need to be a guardian; anyone may submit the
+/// transaction once the threshold is met.
 ///
 /// # Errors
 ///
-/// - `NoRecoveryInProgress` if no active request exists.
-/// - `ProposalExpired` if the recovery window elapsed.
-/// - `InsufficientApprovals` if unique guardian approvals are below threshold.
-/// - `InvalidGuardianConfig` if the guardian threshold no longer fits the set.
-/// - `InvalidProposal` if the target admin rotation is no longer valid.
-/// - `InvalidMultisigConfig` if the multisig admin set is unavailable.
-///
-/// # Security
-///
-/// Approval counting only includes unique addresses that are still guardians,
-/// which prevents stale or duplicated approvals from satisfying quorum.
+/// * [`GovernanceError::NotInitialized`] – No open recovery request exists.
+/// * [`GovernanceError::Unauthorized`]   – Approval count is below the
+///                                         guardian threshold.
 pub fn execute_recovery(env: &Env, executor: Address) -> Result<(), GovernanceError> {
-    let recovery: RecoveryRequest = env
-        .storage()
-        .persistent()
-        .get(&GovernanceDataKey::RecoveryRequest)
-        .ok_or(GovernanceError::NoRecoveryInProgress)?;
+    executor.require_auth();
 
-    let now = env.ledger().timestamp();
-    if now > recovery.expires_at {
-        clear_recovery_state(env);
-        return Err(GovernanceError::ProposalExpired);
-    }
+    let request: RecoveryRequest = env
+        .storage()
+        .instance()
+        .get(&GovernanceDataKey::RecoveryRequest)
+        .ok_or(GovernanceError::NotInitialized)?;
+
+    let gc: GuardianConfig = env
+        .storage()
+        .instance()
+        .get(&GovernanceDataKey::GuardianConfig)
+        .ok_or(GovernanceError::Unauthorized)?;
 
     let approvals: Vec<Address> = env
         .storage()
-        .persistent()
+        .instance()
         .get(&GovernanceDataKey::RecoveryApprovals)
         .unwrap_or_else(|| Vec::new(env));
 
-    let guardians: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&GovernanceDataKey::Guardians)
-        .unwrap_or_else(|| Vec::new(env));
-
-    let threshold = get_guardian_threshold(env);
-    if threshold == 0 || threshold > guardians.len() {
-        clear_recovery_state(env);
-        return Err(GovernanceError::InvalidGuardianConfig);
+    if (approvals.len() as u32) < gc.threshold {
+        return Err(GovernanceError::Unauthorized);
     }
 
-    let valid_approvals = count_valid_unique_approvals(&guardians, &approvals);
-    if valid_approvals < threshold {
-        return Err(GovernanceError::InsufficientApprovals);
-    }
-
-    let admins = get_multisig_admins(env)?;
-    if let Err(err) = validate_recovery_targets(&admins, &recovery.old_admin, &recovery.new_admin) {
-        clear_recovery_state(env);
-        return Err(err);
-    }
-
-    let mut new_admins = Vec::new(env);
-    for admin in admins.iter() {
-        if admin != recovery.old_admin {
-            new_admins.push_back(admin);
-        }
-    }
-    new_admins.push_back(recovery.new_admin.clone());
-
-    config.admins = new_admins;
+    // ── 1. Rotate the low-level admin stored by admin.rs ──────────────────
+    //
+    // We bypass `admin::set_admin`'s two-step auth check here because the
+    // social-recovery mechanism is itself the authentication: threshold
+    // guardian signatures already authorise the rotation.
     env.storage()
         .instance()
-        .set(&GovernanceDataKey::MultisigConfig, &config);
+        .set(&crate::admin::AdminDataKey::Admin, &request.new_admin);
 
-    clear_recovery_state(env);
+    // ── 2. Keep governance config admin in sync (if initialised) ──────────
+    if let Some(mut config) = env
+        .storage()
+        .instance()
+        .get::<GovernanceDataKey, GovernanceConfig>(&GovernanceDataKey::Config)
+    {
+        config.admin = request.new_admin.clone();
+        env.storage()
+            .instance()
+            .set(&GovernanceDataKey::Config, &config);
+    }
 
-    emit_recovery_executed_event(env, &recovery.old_admin, &recovery.new_admin, &executor);
+    // ── 3. Clean up recovery state (one-shot) ─────────────────────────────
+    env.storage()
+        .instance()
+        .remove(&GovernanceDataKey::RecoveryRequest);
+    env.storage()
+        .instance()
+        .remove(&GovernanceDataKey::RecoveryApprovals);
+
     Ok(())
-}
-
-/// Return the configured guardian set, if any.
-pub fn get_guardians(env: &Env) -> Option<Vec<Address>> {
-    env.storage()
-        .persistent()
-        .get(&GovernanceDataKey::Guardians)
-}
-
-/// Return the configured guardian threshold, defaulting to `1`.
-pub fn get_guardian_threshold(env: &Env) -> u32 {
-    env.storage()
-        .persistent()
-        .get(&GovernanceDataKey::GuardianThreshold)
-        .unwrap_or(1u32)
-}
-
-/// Return the pending recovery request, if any.
-pub fn get_recovery_request(env: &Env) -> Option<RecoveryRequest> {
-    env.storage()
-        .persistent()
-        .get(&GovernanceDataKey::RecoveryRequest)
-}
-
-/// Return recovery approvals collected so far, if any.
-pub fn get_recovery_approvals(env: &Env) -> Option<Vec<Address>> {
-    env.storage()
-        .persistent()
-        .get(&GovernanceDataKey::RecoveryApprovals)
 }

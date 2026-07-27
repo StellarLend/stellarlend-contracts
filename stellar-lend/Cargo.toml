@@ -1,21 +1,26 @@
 [workspace]
 resolver = "2"
 members = [
-  "client",
   "contracts/amm",
   "contracts/bridge",
   "contracts/common",
-  "contracts/hello-world",
+  # hello-world is intentionally excluded: the crate is in a broken mid-migration
+  # state (hundreds of compile errors from duplicate modules / unresolved imports).
+  # Keeping it as a workspace member makes `cargo clippy --workspace` and other
+  # CI --workspace jobs fail on main and blocks unrelated feature PRs.
+  # Restore once hello-world compiles again, or treat it as a standalone package.
+  # "contracts/hello-world",
   "contracts/lending",
-]
-exclude = [
-  "contracts/hello-world",
-  "indexing_system"
+  "contracts/vesting",
+  "contracts/multisig",
+  "cross_asset_test",
 ]
 
 [workspace.dependencies]
-soroban-sdk = "25.3.0"
-soroban-token-sdk = { version = "25.3.0" }
+# Keep shared Soroban and test dependency versions pinned in one place.
+soroban-sdk = "=25.3.1"
+soroban-token-sdk = "=25.3.1"
+proptest = "1.5"
 
 [profile.release]
 opt-level = "z"

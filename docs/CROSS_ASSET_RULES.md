@@ -4,6 +4,8 @@
 
 The StellarLend protocol supports cross-asset borrowing and repaying, allowing users to deposit multiple types of collateral and borrow different assets. This document outlines the rules, invariants, and edge cases for these operations.
 
+For cross‑asset module storage details, see [Cross‑Asset Storage Layout](../stellar-lend/contracts/hello-world/docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+
 ## Core Concepts
 
 ### Asset Configuration
@@ -188,6 +190,45 @@ Example:
 - **Result**: Transaction fails
 - **Reason**: Remaining collateral ($15k) × 0.75 = $11.25k < $14k debt
 
+### Withdrawal Boundary Constraints
+
+The protocol enforces deterministic withdrawal limits precisely at the collateral ratio boundaries. These boundaries ensure that no withdrawal can leave a position undercollateralized or liquidatable.
+
+#### Deterministic Edge Cases
+
+1. **Exact Capacity Withdrawal**
+   - **Position**: $100 Collateral (80% LTV), $80 Debt.
+   - **Boundary**: Weighted Collateral ($80) == Debt ($80).
+   - **Constraint**: Any withdrawal of > 0 units will fail.
+   - **Rounding**: Even a withdrawal of 1 atomic unit (10^-7) is rejected if it drops the weighted value below the debt.
+
+2. **Multi-Asset Weighted Boundary**
+   - **Position**: $50 Asset A (80% LTV) + $50 Asset B (60% LTV). Total Weighted = $40 + $30 = $70.
+   - **Debt**: $70.
+   - **Constraint**: Withdrawal from Asset A is blocked. Withdrawal from Asset B is blocked.
+   - **Buffer**: Repaying $1 of debt allows withdrawing up to $1 / 0.8 = $1.25 of Asset A.
+
+3. **Price Move Boundary**
+   - **Position**: 1 ETH @ $2000 (80% LTV). Weighted = $1600. Debt = $1500.
+   - **Event**: ETH price drops to $1875.
+   - **New Weighted**: $1875 * 0.8 = $1500.
+   - **Result**: Position hits the withdrawal boundary. All further withdrawals are blocked until debt is repaid or price recovers.
+
+### Security Notes
+
+1. **Prevention of Undercollateralized Withdrawals**
+   - Every withdrawal operation triggers a full `health_factor` re-calculation using real-time oracle prices.
+   - The operation is atomic: if the post-withdrawal `health_factor` is < 1.0 (10000), the entire transaction reverts.
+   - This prevents users from "gaming" rounding errors or price lags to extract more value than their collateral supports.
+
+2. **Oracle Reliability**
+   - Withdrawal constraints are only as strong as the price feed.
+   - If an oracle update is stale or missing, the protocol enters a fail-safe mode where withdrawals (and borrows) are blocked to prevent state corruption.
+
+3. **Rounding Direction**
+   - To maintain protocol safety, the system always rounds **down** for collateral value and **up** for debt value.
+   - This conservative rounding ensures that at the boundary, the protocol always errs on the side of over-collateralization.
+
 ## Invariants
 
 ### System-Wide Invariants
@@ -317,6 +358,245 @@ Result:
 4. **Partial Repayments**: Regularly repay debt to maintain healthy position
 5. **Avoid Maximum Borrowing**: Don't borrow at full capacity to prevent liquidation
 
+## View Guarantees
+
+The following guarantees hold for `get_cross_position_summary` and all other read-only view functions. These are verified by the invariant test suite in `cross_asset_view_invariants_test.rs`.
+
+### G-1 — Read-only (no state mutation)
+
+`get_cross_position_summary` reads from persistent storage only; it never writes. Calling it any number of times in any order does not change collateral balances, debt balances, or any other contract state.
+
+### G-2 — Determinism
+
+For a fixed contract state, every call to `get_cross_position_summary` for the same user returns the same `PositionSummary`. The function is purely deterministic.
+
+### G-3 — Total collateral consistency
+
+`total_collateral_usd` always equals the arithmetic sum of `amount_i × price_i ÷ PRICE_DIVISOR` for every asset `i` in the user's `collateral_balances` map. No asset is double-counted or omitted.
+
+```
+total_collateral_usd = Σ_i  (collateral_balances[i] × price_i) / 10_000_000
+```
+
+### G-4 — Total debt consistency
+
+`total_debt_usd` always equals the arithmetic sum of `amount_j × price_j ÷ PRICE_DIVISOR` for every asset `j` in the user's `debt_balances` map.
+
+```
+total_debt_usd = Σ_j  (debt_balances[j] × price_j) / 10_000_000
+```
+
+### G-5 — Health factor formula
+
+`health_factor` is computed from the above totals using:
+
+```
+if total_debt_usd == 0:
+    health_factor = 1_000_000   # HF_NO_DEBT sentinel
+else:
+    weighted_collateral = Σ_i (collateral_value_i × ltv_i) / BPS_SCALE
+    health_factor       = weighted_collateral × BPS_SCALE / total_debt_usd
+```
+
+All divisions use integer floor semantics (truncation toward zero). `BPS_SCALE = 10_000`.
+
+### G-6 — Monotonicity in collateral and debt
+
+- Adding collateral (while debt is constant) never decreases `health_factor`.
+- Adding debt (while collateral is constant) never increases `health_factor`.
+
+These properties hold as long as prices are positive (guaranteed by asset param validation).
+
+### G-7 — User isolation
+
+`get_cross_position_summary(user_A)` depends only on `user_A`'s position storage. Operations by `user_B` (deposits, borrows, repayments) have no effect on `user_A`'s summary.
+
+### G-8 — Ordering invariance
+
+Depositing assets in any order produces the same `total_collateral_usd` and `health_factor` because position maps accumulate balances additively regardless of insertion sequence.
+
+### G-9 — Rounding is conservative (floor division)
+
+All LTV weighting and USD-value conversions use integer floor division. This means:
+- `weighted_collateral` can only be less than or equal to the real-valued result.
+- A borrow is only permitted when the floor-divided health factor is **strictly above 1.0** (> `BPS_SCALE`).
+- Borrowers cannot extract more value than the floor-rounded weighted collateral.
+
+### G-10 — No view-based exploitation
+
+Because view functions are read-only and deterministic, there is no mechanism through which a caller can:
+- Manipulate another user's health factor by calling the view.
+- Gain assets or reduce debt through repeated view calls.
+- Trigger liquidation thresholds without an actual price or balance change.
+
+### Boundary conditions
+
+| Condition | Guaranteed behaviour |
+|-----------|----------------------|
+| No collateral, no debt | `total_collateral_usd = 0`, `total_debt_usd = 0`, `health_factor = HF_NO_DEBT` |
+| Collateral but no debt | `total_collateral_usd ≥ 0`, `total_debt_usd = 0`, `health_factor = HF_NO_DEBT` |
+| LTV = 0 | `weighted_collateral = 0`; borrow rejected by health check |
+| Overpayment of debt | Capped at outstanding balance; `total_debt_usd` goes to 0 |
+| Same asset in collateral and debt | Counted independently in both totals (no netting) |
+
+## Isolation Mode Rules
+
+### Definition
+
+An asset is in **isolation mode** when its `IsolationConfig.isolated` flag is `true`. Isolated assets are permitted as collateral but subject to two hard constraints:
+
+1. **Debt ceiling** — The aggregate outstanding debt backed by the isolated asset across all users must not exceed `isolation_debt_ceiling`. New borrows that would push the running `IsolationDebt` past this ceiling are rejected with `IsolationCeilingExceeded` (error code 2008).
+2. **Non-amplifying** — An isolated asset's collateral contribution does not combine with other collateral to produce additional borrowing capacity beyond what the ceiling allows. Users must call `borrow_against_collateral` (not the generic `borrow`) to have isolation mode enforced and tracked.
+
+### Isolation-Mode Invariants
+
+1. **Ceiling never exceeded** — After every successful `borrow_against_collateral`, `IsolationDebt(asset) ≤ isolation_debt_ceiling`.
+2. **IsolationDebt non-negative** — The running counter is always ≥ 0. Over-repayment is absorbed by saturating subtraction.
+3. **Non-isolated assets unaffected** — A call to `borrow_against_collateral` with a non-isolated `collateral_asset` does not touch `IsolationDebt` and passes through with no overhead.
+4. **Counter consistency** — `IsolationDebt(asset)` equals the sum of all net principal additions from `borrow_against_collateral` minus all net principal reductions from `repay_against_collateral` for that asset, over all users.
+5. **Ceiling change is immediate** — Updating `isolation_debt_ceiling` takes effect on the very next borrow check. Existing debt is not retroactively invalidated; only new borrows are affected.
+6. **Disabling is immediate** — Setting `isolated = false` removes all ceiling enforcement; the `IsolationDebt` counter is left in storage but never consulted until isolation is re-enabled.
+
+### Worked Example
+
+```
+Config:  EXOTIC  isolated=true  isolation_debt_ceiling=500_000
+
+Step 1 — User A borrows 300_000 against EXOTIC:
+  check: 0 + 300_000 = 300_000 ≤ 500_000  ✓
+  IsolationDebt(EXOTIC) = 300_000
+
+Step 2 — User B borrows 200_000 against EXOTIC:
+  check: 300_000 + 200_000 = 500_000 ≤ 500_000  ✓  (exactly at ceiling)
+  IsolationDebt(EXOTIC) = 500_000
+
+Step 3 — User C tries to borrow 1 against EXOTIC:
+  check: 500_000 + 1 = 500_001 > 500_000  ✗  → IsolationCeilingExceeded
+
+Step 4 — Admin lowers ceiling to 400_000:
+  User C cannot borrow any amount now (500_000 > 400_000 already).
+
+Step 5 — User A repays 150_000:
+  IsolationDebt(EXOTIC) = 500_000 − 150_000 = 350_000
+
+Step 6 — User C borrows 50_000:
+  check: 350_000 + 50_000 = 400_000 ≤ 400_000  ✓
+  IsolationDebt(EXOTIC) = 400_000
+```
+
 ## Conclusion
 
-The cross-asset system provides flexibility for users to manage positions across multiple assets while maintaining protocol solvency through health factor enforcement. Understanding these rules and invariants is crucial for safe protocol usage and integration.
+The cross-asset system provides flexibility for users to manage positions across multiple assets while maintaining protocol solvency through health factor enforcement. Isolation mode adds a risk-containment layer for volatile or thinly-traded assets, capping their systemic exposure without removing them from the protocol entirely. Understanding these rules and invariants is crucial for safe protocol usage and integration.
+
+## E2E Lifecycle: Worked Scenario (Issue #1143)
+
+This section walks through the complete cross-asset lifecycle tested by
+`cross_asset_e2e_test.rs`: deposit collateral in Asset A, borrow Asset B,
+trigger a price shock, and verify the position is liquidatable with correct
+post-liquidation accounting.
+
+### Setup
+
+| Parameter | Asset A (collateral) | Asset B (debt) |
+|-----------|---------------------|----------------|
+| Initial price | $1.00 (10\_000\_000) | $1.00 (10\_000\_000) |
+| LTV (bps) | 7 500 | 6 000 |
+| Liquidation threshold (bps) | 8 000 | 7 000 |
+| Debt ceiling | 1 000 000 000 000 | 1 000 000 000 000 |
+
+```
+PRICE_DIVISOR      = 10_000_000   ($1.00 = 10_000_000 raw)
+HEALTH_FACTOR_SCALE = 10_000       (HF = 1.0 → 10_000)
+HEALTH_FACTOR_NO_DEBT = 100_000_000 (sentinel, no debt)
+```
+
+### Step 1 — Deposit Collateral
+
+```
+cross_asset_deposit(user, asset_A, 10_000)
+→ collateral_balance[A] = 10_000
+→ HF = HEALTH_FACTOR_NO_DEBT  (no debt yet)
+```
+
+### Step 2 — Borrow Asset B
+
+```
+cross_asset_borrow(user, asset_B, 7_000)
+
+weighted_collateral = 10_000 × 10_000_000 × 8_000 / 10_000
+                    = 10_000 × 8_000  (price terms cancel at 1:1)
+                    = 80_000_000
+
+total_debt_value    = 7_000 × 10_000_000
+                    = 70_000_000
+
+HF = weighted_collateral / total_debt_value
+   = 80_000_000 / 70_000_000
+   = 11_428  (> 10_000 → healthy ✓)
+```
+
+### Step 3 — Price Shock
+
+Collateral asset price drops 40 %: $1.00 → $0.60 (6\_000\_000 raw).
+
+```
+weighted_collateral = 10_000 × 6_000_000 × 8_000 / 10_000
+                    = 48_000_000
+
+total_debt_value    = 7_000 × 10_000_000
+                    = 70_000_000
+
+HF = 48_000_000 / 70_000_000 = 6_857  (< 10_000 → liquidatable ✗)
+```
+
+### Step 4 — Liquidation (close-factor 50 %, incentive 10 %)
+
+```
+repaid_amount  = 7_000 × 5_000 / 10_000 = 3_500   (50 % close factor)
+seized_amount  = 3_500 × 11_000 / 10_000 = 3_850   (10 % bonus)
+                 min(3_850, 10_000) = 3_850          (within balance)
+
+collateral_after = 10_000 − 3_850 = 6_150
+debt_after       =  7_000 − 3_500 = 3_500
+```
+
+### Post-Liquidation Invariants
+
+| Invariant | Expression | Result |
+|-----------|-----------|--------|
+| No value created | seized ≤ collateral\_before | 3 850 ≤ 10 000 ✓ |
+| Debt reduced by repaid | debt\_after = debt\_before − repaid | 3 500 = 7 000 − 3 500 ✓ |
+| Collateral reduced by seized | col\_after = col\_before − seized | 6 150 = 10 000 − 3 850 ✓ |
+| Position improved | HF\_after ≥ HF\_before\_liq | (verified in test) ✓ |
+
+### Step 5 — Borrower Repays Remaining Debt
+
+```
+cross_asset_repay(user, asset_B, 3_500)
+→ debt_balance[B] = 0
+→ HF = HEALTH_FACTOR_NO_DEBT  (no debt)
+```
+
+### Step 6 — Withdraw Remaining Collateral
+
+```
+cross_asset_withdraw(user, asset_A, 6_150)
+→ collateral_balance[A] = 0
+→ Position fully closed ✓
+```
+
+### Test Coverage (cross_asset_e2e_test.rs)
+
+| Test | Scenario |
+|------|---------|
+| `e2e_deposit_borrow_repay_withdraw_full_lifecycle` | Happy path |
+| `e2e_price_shock_collateral_crash_makes_position_liquidatable` | Col price halved |
+| `e2e_price_shock_debt_spike_makes_position_liquidatable` | Debt price doubled |
+| `e2e_post_liquidation_invariants_no_value_created` | Invariant assertions |
+| `e2e_exactly_at_liquidation_threshold` | HF = 10\_000 boundary |
+| `e2e_deep_underwater_seizure_capped_at_available_collateral` | Full seizure clamp |
+| `e2e_partial_liquidation_then_full_repay_and_withdraw` | Full lifecycle incl. liq |
+| `e2e_two_collateral_one_debt_shock` | Multi-collateral aggregate HF |
+| `e2e_user_isolation_shock_does_not_bleed_to_other_user` | G-7 isolation |
+| `e2e_withdraw_blocked_when_hf_below_threshold_after_shock` | Withdraw blocked |
+| `e2e_borrow_blocked_when_hf_below_threshold_after_shock` | Borrow blocked |

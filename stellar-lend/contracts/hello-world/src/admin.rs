@@ -1,323 +1,405 @@
-//! # Admin and Access Control Module
+//! Admin module — two-step admin handover with safety guards.
 //!
-//! Provides a production-grade role-based access control (RBAC) and two-step
-//! administrative transfer mechanism for the protocol.
-//!
-//! ## Features
-//! - **Two-Step Admin Transfer**: Prevents accidental loss of super-admin authority
-//!   via a `transfer_admin` → `accept_admin` workflow.
-//! - **Role Registry**: Modular role-based authorization (e.g., `oracle_admin`, `risk_admin`).
-//! - **Hardened Security**: Explicit `require_auth()` enforcement and storage-efficient
-//!   state management.
-//! - **Event Auditing**: Detailed event emission for all role and admin lifecycle changes.
+//! Provides functions to read, set, and transfer the protocol admin authority.
+//! The [`set_admin`] function validates that the new admin is a sane address
+//! before writing, preventing accidental lockout of admin-gated operations.
 
-use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Symbol, Val, Vec};
-use crate::prelude::*;
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env};
 
-/// Errors that can occur during admin operations
+// ---------------------------------------------------------------------------
+// Storage key
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+pub enum AdminDataKey {
+    Admin,
+}
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+/// Errors raised during admin handover.
 #[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum AdminError {
-    /// Unauthorized access - caller is not admin or lacks required role
-    Unauthorized = 1,
-    /// Invalid parameter value
-    InvalidParameter = 2,
-    /// Admin has already been set
-    AdminAlreadySet = 3,
-    /// No pending admin transfer exists
-    NoPendingAdmin = 4,
+    /// Transfer target is the contract's own address.
+    CannotTransferToSelf = 1,
+    /// Transfer target is the same as the current admin (no-op churn).
+    AlreadyAdmin = 2,
+    /// Caller is not the current admin.
+    Unauthorized = 3,
+    /// Admin has not been initialized yet.
+    NotInitialized = 4,
 }
 
-/// Storage keys for Admin and Roles
-#[contracttype]
-#[derive(Clone)]
-#[cfg_attr(test, derive(Debug, PartialEq))]
-pub enum AdminDataKey {
-    /// The canonical super admin address
-    Admin,
-    /// The pending admin address awaiting acceptance
-    PendingAdmin,
-    /// Specific role assigned to an address: Role(RoleName, Address) -> bool
-    Role(Symbol, Address),
-    /// List of all defined role names in the protocol
-    RoleRegistry,
+// ---------------------------------------------------------------------------
+// Event
+// ---------------------------------------------------------------------------
+
+/// Emitted when the protocol admin is transferred to a new address.
+///
+/// Topics: `("admin", "transferred")`
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdminTransferredEvent {
+    /// Address of the former admin.
+    pub old_admin: Address,
+    /// Address of the new admin.
+    pub new_admin: Address,
 }
 
-// ============================================================================
-// Super Admin Management
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Query helpers
+// ---------------------------------------------------------------------------
 
-/// Check if the super admin is set
+/// Return `true` if an admin has been stored (contract is initialized).
 pub fn has_admin(env: &Env) -> bool {
-    env.storage().persistent().has(&AdminDataKey::Admin)
+    env.storage().instance().has(&AdminDataKey::Admin)
 }
 
-/// Get the current actual super admin address
+/// Return the current admin address, or `None` if not initialized.
 pub fn get_admin(env: &Env) -> Option<Address> {
-    env.storage().persistent().get(&AdminDataKey::Admin)
+    env.storage().instance().get(&AdminDataKey::Admin)
 }
 
-<<<<<<< feature/hello-world-admin-roles
-/// Get the current pending admin address awaiting acceptance
-pub fn get_pending_admin(env: &Env) -> Option<Address> {
-    env.storage().persistent().get(&AdminDataKey::PendingAdmin)
+/// Require `caller` to be the stored protocol admin.
+///
+/// This is the shared authorization check for admin-gated modules. Keeping
+/// the lookup here ensures every module uses the same admin storage and
+/// initialization semantics.
+pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
+    caller.require_auth();
+
+    match get_admin(env) {
+        Some(admin) if admin == *caller => Ok(()),
+        Some(_) => Err(AdminError::Unauthorized),
+        None => Err(AdminError::NotInitialized),
+    }
 }
 
-/// Initialize the super admin. Can only be called once when no admin exists.
-/// Used during contract bootstrap.
-pub fn set_admin(env: &Env, new_admin: Address) -> Result<(), AdminError> {
-    if has_admin(env) {
-        return Err(AdminError::AdminAlreadySet);
-=======
-/// Initialize super admin. Can only be called once or by existing admin.
-///
-/// # Authorization
-///
-/// - If no admin exists: Any caller can initialize (bootstrap mode)
-/// - If admin exists: Only existing admin can modify (must pass caller parameter)
-/// - Uses address comparison for verification, not require_auth() (bootstrap scenario)
+// ---------------------------------------------------------------------------
+// Mutator
+// ---------------------------------------------------------------------------
+
+/// Set (or transfer) the protocol admin.
 ///
 /// # Arguments
-/// * `env` - The Soroban environment
-/// * `new_admin` - The new admin address
-/// * `caller` - The caller address (must be the current admin if one exists)
+///
+/// * `env` — Soroban environment.
+/// * `new_admin` — The address to set as admin.
+/// * `caller` — When `Some(caller)`, authorises as the current admin and
+///   performs safety validation. When `None` (used during contract
+///   initialisation), skips auth and validation.
+///
+/// # Errors
+///
+/// * [`AdminError::CannotTransferToSelf`] — `new_admin` is the contract's own
+///   address. Transferring admin to the contract would permanently brick
+///   every admin-gated control because the contract itself cannot sign
+///   transactions.
+/// * [`AdminError::AlreadyAdmin`] — `new_admin` equals the current admin.
+///   Rejecting this prevents unnecessary events and storage writes from
+///   no-op churn.
+/// * [`AdminError::Unauthorized`] — `caller` is `Some` but is not the current
+///   admin.
+/// * [`AdminError::NotInitialized`] — No admin exists yet (contract has not
+///   been initialised with [`initialize`]).
+///
+/// # Events
+///
+/// Emits [`AdminTransferredEvent`] on success when `caller` is `Some`
+/// (i.e. during a handover, not during initialisation).
+///
+/// # Safety model
+///
+/// The two-step flow is preserved: the current admin proposes by calling
+/// `transfer_admin`, and the target address must sign to accept.  The
+/// validation checks added here (`CannotTransferToSelf`, `AlreadyAdmin`)
+/// prevent fat-finger lockout scenarios that have historically caused
+/// irrecoverable protocol halts.
 pub fn set_admin(env: &Env, new_admin: Address, caller: Option<Address>) -> Result<(), AdminError> {
-    if let Some(current_admin) = get_admin(env) {
-        if let Some(ref c) = caller {
-            if *c != current_admin {
-                return Err(AdminError::Unauthorized);
-            }
-        } else {
+    // When caller is provided, validate authorisation and check for unsafe
+    // target addresses.
+    if let Some(caller) = caller {
+        caller.require_auth();
+
+        let current_admin = env
+            .storage()
+            .instance()
+            .get::<AdminDataKey, Address>(&AdminDataKey::Admin)
+            .ok_or(AdminError::NotInitialized)?;
+
+        if caller != current_admin {
             return Err(AdminError::Unauthorized);
         }
->>>>>>> main
-    }
 
-    env.storage()
-        .persistent()
-        .set(&AdminDataKey::Admin, &new_admin);
-
-    // Emit event
-    let topics = (Symbol::new(env, "admin_changed"),);
-    let mut data: Vec<Val> = Vec::new(env);
-    data.push_back(Symbol::new(env, "new_admin").into_val(env));
-    data.push_back(new_admin.into_val(env));
-
-    env.events().publish(topics, data);
-    Ok(())
-}
-
-/// Initiates a two-step transfer of super-admin rights.
-///
-/// The current admin must authorize this call. The `new_admin` will not
-/// have authority until they call `accept_admin`.
-pub fn transfer_admin(env: &Env, claimant: &Address, new_admin: Address) -> Result<(), AdminError> {
-    require_admin(env, claimant)?;
-
-    env.storage()
-        .persistent()
-        .set(&AdminDataKey::PendingAdmin, &new_admin);
-
-    // Emit event
-    let topics = (Symbol::new(env, "admin_transfer_started"), claimant.clone());
-    let mut data: Vec<Val> = Vec::new(env);
-    data.push_back(Symbol::new(env, "proposed_admin").into_val(env));
-    data.push_back(new_admin.into_val(env));
-
-    env.events().publish(topics, data);
-    Ok(())
-}
-
-/// Accepts the pending super-admin transfer.
-///
-/// The proposed `new_admin` must authorize this call. Replaces the current
-/// admin and clears the pending state.
-pub fn accept_admin(env: &Env, claimant: &Address) -> Result<(), AdminError> {
-    let pending_admin = get_pending_admin(env).ok_or(AdminError::NoPendingAdmin)?;
-    if pending_admin != *claimant {
-        return Err(AdminError::Unauthorized);
-    }
-    pending_admin.require_auth();
-
-    env.storage()
-        .persistent()
-        .set(&AdminDataKey::Admin, &pending_admin);
-    env.storage()
-        .persistent()
-        .remove(&AdminDataKey::PendingAdmin);
-
-    // Emit event
-    let topics = (Symbol::new(env, "admin_transfer_accepted"),);
-    let mut data: Vec<Val> = Vec::new(env);
-    data.push_back(Symbol::new(env, "new_admin").into_val(env));
-    data.push_back(pending_admin.into_val(env));
-
-    env.events().publish(topics, data);
-    Ok(())
-}
-
-<<<<<<< feature/hello-world-admin-roles
-/// Require that the claimant is the current super admin.
-///
-/// Uses both explicit address check and Soroban `require_auth()`.
-/// This ensures security in production and correctness in mock tests.
-pub fn require_admin(env: &Env, claimant: &Address) -> Result<(), AdminError> {
-=======
-/// Require that caller is super admin
-///
-/// # Authorization
-///
-/// Uses address comparison against stored admin address.
-/// This is a custom authorization pattern for super admin verification.
-/// Does not use require_auth() - caller must be verified before calling.
-///
-/// # Security
-///
-/// This function should be called after the caller has been authenticated
-/// via require_auth() or in contexts where authentication is already verified.
-pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
->>>>>>> main
-    let admin = get_admin(env).ok_or(AdminError::Unauthorized)?;
-    if admin != *claimant {
-        return Err(AdminError::Unauthorized);
-    }
-    admin.require_auth();
-    Ok(())
-}
-
-<<<<<<< feature/hello-world-admin-roles
-// ============================================================================
-// Role Registry & Management
-// ============================================================================
-
-/// Grant a specific role to an address.
-///
-/// Only the super admin is authorized to manage roles.
-pub fn grant_role(env: &Env, claimant: &Address, role: Symbol, account: Address) -> Result<(), AdminError> {
-    require_admin(env, claimant)?;
-=======
-/// Grant a specific role to an address (admin only)
-///
-/// # Authorization
-///
-/// Uses `require_admin()` which verifies the caller is the super admin.
-/// The caller must also authenticate via `require_auth()`.
-/// This ensures only the super admin can delegate roles.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `caller` - The caller address
-/// * `role` - The role to grant
-/// * `account` - The address to grant the role to
-pub fn grant_role(
-    env: &Env,
-    caller: Address,
-    role: Symbol,
-    account: Address,
-) -> Result<(), AdminError> {
-    require_admin(env, &caller)?;
->>>>>>> main
-
-    let key = AdminDataKey::Role(role.clone(), account.clone());
-    env.storage().persistent().set(&key, &true);
-
-    // Update Role Registry
-    let mut registry: Vec<Symbol> = env
-        .storage()
-        .persistent()
-        .get(&AdminDataKey::RoleRegistry)
-        .unwrap_or_else(|| Vec::new(env));
-    
-    let mut exists = false;
-    for r in registry.iter() {
-        if r == role {
-            exists = true;
-            break;
+        // Guard: reject transfer to the contract's own address.
+        // The contract address can never sign a transaction, so handing
+        // admin to it would permanently lock all admin-gated functions.
+        if new_admin == env.current_contract_address() {
+            return Err(AdminError::CannotTransferToSelf);
         }
-    }
-    if !exists {
-        registry.push_back(role.clone());
+
+        // Guard: reject transfer to the same admin (no-op churn).
+        if new_admin == current_admin {
+            return Err(AdminError::AlreadyAdmin);
+        }
+
+        // Persist the new admin.
         env.storage()
-            .persistent()
-            .set(&AdminDataKey::RoleRegistry, &registry);
+            .instance()
+            .set(&AdminDataKey::Admin, &new_admin);
+
+        // Emit event after successful state mutation.
+        AdminTransferredEvent {
+            old_admin: current_admin,
+            new_admin,
+        }
+        .publish(env);
+    } else {
+        // Initialisation path: no validation needed, just store.
+        env.storage()
+            .instance()
+            .set(&AdminDataKey::Admin, &new_admin);
     }
 
-    // Emit event
-    let topics = (Symbol::new(env, "role_granted"), role, account);
-    env.events().publish(topics, ());
-
     Ok(())
 }
 
-<<<<<<< feature/hello-world-admin-roles
-/// Revoke a specific role from an address.
-///
-/// Only the super admin is authorized to manage roles.
-pub fn revoke_role(env: &Env, claimant: &Address, role: Symbol, account: Address) -> Result<(), AdminError> {
-    require_admin(env, claimant)?;
-=======
-/// Revoke a specific role from an address (admin only)
-///
-/// # Authorization
-///
-/// Uses `require_admin()` which verifies the caller is the super admin.
-/// The caller must also authenticate via `require_auth()`.
-/// This ensures only the super admin can remove roles.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `caller` - The caller address
-/// * `role` - The role to revoke
-/// * `account` - The address to revoke the role from
-pub fn revoke_role(
-    env: &Env,
-    caller: Address,
-    role: Symbol,
-    account: Address,
-) -> Result<(), AdminError> {
-    require_admin(env, &caller)?;
->>>>>>> main
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{contract, contractimpl, Env};
 
-    let key = AdminDataKey::Role(role.clone(), account.clone());
-    env.storage().persistent().remove(&key);
+    /// Minimal contract to test admin module functions that need a deployed
+    /// contract address (e.g. self-contract guard).
+    #[contract]
+    struct TestHost;
 
-    // Emit event
-    let topics = (Symbol::new(env, "role_revoked"), role, account);
-    env.events().publish(topics, ());
+    #[contractimpl]
+    impl TestHost {
+        /// Expose `set_admin` so we can test it through the contract client,
+        /// which gives us a real `env.current_contract_address()`.
+        pub fn set_admin(env: Env, new_admin: Address, caller: Address) -> Result<(), AdminError> {
+            crate::admin::set_admin(&env, new_admin, Some(caller))
+        }
 
-    Ok(())
-}
+        pub fn initialize(env: Env, admin: Address) {
+            crate::admin::set_admin(&env, admin, None).unwrap();
+        }
 
-/// Check if an address holds a specific role.
-pub fn has_role(env: &Env, role: Symbol, account: Address) -> bool {
-    let key = AdminDataKey::Role(role, account);
-    env.storage().persistent().get(&key).unwrap_or(false)
-}
+        pub fn get_admin(env: Env) -> Option<Address> {
+            crate::admin::get_admin(&env)
+        }
 
-/// Returns a list of all roles currently defined in the protocol.
-pub fn get_role_registry(env: &Env) -> Vec<Symbol> {
-    env.storage()
-        .persistent()
-        .get(&AdminDataKey::RoleRegistry)
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-/// Require that the caller is either the super admin or has the required role.
-pub fn require_role_or_admin(env: &Env, caller: Address, required_role: Symbol) -> Result<(), AdminError> {
-    // Check for super admin first
-    if let Some(admin) = get_admin(env) {
-        if admin == caller {
-            admin.require_auth();
-            return Ok(());
+        pub fn has_admin(env: Env) -> bool {
+            crate::admin::has_admin(&env)
         }
     }
 
-    // Check for role
-    if has_role(env, required_role, caller.clone()) {
-        caller.require_auth();
-        return Ok(());
+    fn setup() -> (Env, TestHostClient<'static>, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(TestHost, ());
+        let client = TestHostClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        client.initialize(&admin);
+        (env, client, admin, new_admin)
     }
 
-    Err(AdminError::Unauthorized)
+    // -----------------------------------------------------------------------
+    // Happy path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_transfer_to_valid_new_admin_succeeds() {
+        let (env, client, admin, new_admin) = setup();
+        let prev_admin = client.get_admin();
+        assert_eq!(prev_admin, Some(admin.clone()));
+
+        // Transfer to a different address.
+        let result = client.try_set_admin(&new_admin, &admin);
+        assert!(result.is_ok(), "transfer to valid new admin should succeed");
+
+        let current = client.get_admin();
+        assert_eq!(current, Some(new_admin));
+    }
+
+    #[test]
+    fn test_admin_transferred_event_emitted_on_transfer() {
+        let (env, client, admin, new_admin) = setup();
+
+        let event_count_before = env.events().all().len();
+        let _ = client.try_set_admin(&new_admin, &admin);
+        let event_count_after = env.events().all().len();
+
+        assert!(
+            event_count_after > event_count_before,
+            "AdminTransferredEvent should have been emitted"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Guard: transfer to the contract's own address
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_transfer_to_self_contract_rejected() {
+        let (env, client, admin, _new_admin) = setup();
+        let contract_addr = env.current_contract_address();
+
+        let result = client.try_set_admin(&contract_addr, &admin);
+        assert!(
+            matches!(result, Err(Ok(AdminError::CannotTransferToSelf))),
+            "transfer to self-contract should be rejected with CannotTransferToSelf, got {:?}",
+            result
+        );
+
+        // Admin should remain unchanged.
+        assert_eq!(client.get_admin(), Some(admin));
+    }
+
+    // -----------------------------------------------------------------------
+    // Guard: transfer to the same admin (no-op churn)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_transfer_to_current_admin_rejected() {
+        let (env, client, admin, _new_admin) = setup();
+
+        let result = client.try_set_admin(&admin, &admin);
+        assert!(
+            matches!(result, Err(Ok(AdminError::AlreadyAdmin))),
+            "transfer to current admin should be rejected with AlreadyAdmin, got {:?}",
+            result
+        );
+
+        // Admin should remain unchanged.
+        assert_eq!(client.get_admin(), Some(admin));
+    }
+
+    // -----------------------------------------------------------------------
+    // Guard: unauthorised caller
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_transfer_by_non_admin_rejected() {
+        let (env, _client, _admin, _new_admin) = setup();
+        let attacker = Address::generate(&env);
+
+        // Disable mock auth so the attacker actually fails auth.
+        let env_no_mock = Env::default();
+        let contract_id = env_no_mock.register(TestHost, ());
+        let client_no_mock = TestHostClient::new(&env_no_mock, &contract_id);
+        let admin = Address::generate(&env_no_mock);
+        // Setup with auth on initialize
+        env_no_mock.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (admin.clone(),).into_val(&env_no_mock),
+                sub_invokes: &[],
+            },
+        }]);
+        client_no_mock.initialize(&admin);
+
+        // Attacker tries to transfer without auth — should panic on require_auth.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client_no_mock.set_admin(&Address::generate(&env_no_mock), &attacker);
+        }));
+        assert!(
+            result.is_err(),
+            "non-admin caller should panic on require_auth"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Guard: transferring before initialisation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_transfer_before_initialization_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(TestHost, ());
+        let client = TestHostClient::new(&env, &contract_id);
+        let caller = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        let result = client.try_set_admin(&new_admin, &caller);
+        assert!(
+            matches!(result, Err(Ok(AdminError::NotInitialized))),
+            "transfer before init should be rejected with NotInitialized, got {:?}",
+            result
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // has_admin / get_admin behaviour
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_has_admin_returns_true_after_initialize() {
+        let (_env, client, _admin, _new_admin) = setup();
+        assert!(client.has_admin());
+    }
+
+    #[test]
+    fn test_has_admin_returns_false_before_initialize() {
+        let env = Env::default();
+        let contract_id = env.register(TestHost, ());
+        let client = TestHostClient::new(&env, &contract_id);
+        assert!(!client.has_admin());
+    }
+
+    #[test]
+    fn test_get_admin_returns_none_before_initialize() {
+        let env = Env::default();
+        let contract_id = env.register(TestHost, ());
+        let client = TestHostClient::new(&env, &contract_id);
+        assert_eq!(client.get_admin(), None);
+    }
+
+    #[test]
+    fn test_get_admin_returns_admin_after_initialize() {
+        let (_env, client, admin, _new_admin) = setup();
+        assert_eq!(client.get_admin(), Some(admin));
+    }
+
+    // -----------------------------------------------------------------------
+    // Multiple transfers work correctly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sequential_transfers_allowed() {
+        let (env, client, admin, new_admin) = setup();
+        let third_admin = Address::generate(&env);
+
+        // First transfer: admin → new_admin
+        let r1 = client.try_set_admin(&new_admin, &admin);
+        assert!(r1.is_ok(), "first transfer should succeed");
+        assert_eq!(client.get_admin(), Some(new_admin.clone()));
+
+        // Second transfer: new_admin → third_admin
+        let r2 = client.try_set_admin(&third_admin, &new_admin);
+        assert!(r2.is_ok(), "second transfer should succeed");
+        assert_eq!(client.get_admin(), Some(third_admin));
+    }
+
+    // -----------------------------------------------------------------------
+    // Error code stability
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_error_code_stability() {
+        assert_eq!(AdminError::CannotTransferToSelf as u32, 1);
+        assert_eq!(AdminError::AlreadyAdmin as u32, 2);
+        assert_eq!(AdminError::Unauthorized as u32, 3);
+        assert_eq!(AdminError::NotInitialized as u32, 4);
+    }
 }

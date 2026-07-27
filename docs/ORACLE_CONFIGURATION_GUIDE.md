@@ -41,6 +41,56 @@ This document outlines the procedures for managing oracle configurations in the 
 3. **Price Updates**: Validate caller authorization and price data
 4. **Configuration Changes**: Admin-only with additional validation
 
+## Price Move-Cap Circuit Breaker
+
+### Overview
+
+A single compromised oracle key can push an outlier price quote in one block,
+triggering mass liquidations or enabling under-collateralised borrows. The
+**max-move-bps** guard limits how far the stored price may move in a single
+`set_price` call, bounding the blast radius of any one bad update.
+
+### How It Works
+
+| Condition | Behaviour |
+|-----------|-----------|
+| `MaxMoveBps` not set | No move limit — any valid price is accepted (default / backward-compatible). |
+| `MaxMoveBps` set, **no** prior `PriceRecord` for the asset | First-ever price is **exempt** — accepted unconditionally. |
+| `MaxMoveBps` set, prior record exists | Move is checked: `\|new − old\| × 10 000 / old ≤ max_move_bps`. Exceeding the cap returns `MaxMoveBpsExceeded (5005)`. |
+
+### Configuration Functions
+
+| Function | Access | Description |
+|----------|--------|-------------|
+| `set_max_move_bps(env, max_move_bps)` | Admin only | Sets the cap in basis points (500 = 5%). Pass `0` to disable the cap without removing the key. |
+| `get_max_move_bps(env)` | Public | Returns `Some(bps)` if configured, `None` if never set. |
+
+### Error Codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| `5005` | `MaxMoveBpsExceeded` | Proposed price moves more than `max_move_bps` basis points from the last stored price. |
+
+### Recommended Settings
+
+| Risk Tier | `max_move_bps` | Max single-update move |
+|-----------|---------------|------------------------|
+| Conservative | 200 | 2 % |
+| Standard | 500 | 5 % |
+| Permissive | 1 000 | 10 % |
+| Disabled | not set / 0 | unlimited |
+
+### Security Notes
+
+* The guard uses **checked arithmetic** throughout; overflow returns `Overflow (1002)`.
+* The check occurs **after** signature verification but **before** storage write, so a
+  rejected update leaves the stored price unchanged.
+* Decreasing the cap takes effect immediately on the next `set_price` call.
+* The cap applies **per asset address**; different assets may have different implicit
+  volatility profiles but currently share one global setting.
+
+---
+
 ## Configuration Parameters
 
 ### Oracle Safety Parameters
@@ -195,6 +245,20 @@ contract.configure_oracle(admin, new_config)
 # Verify deviation limits work
 # Check staleness enforcement
 ```
+
+#### Tested Boundary Behaviour
+
+The lending contract currently hardcodes `DEFAULT_ORACLE_MAX_AGE_SECS = 3600`.
+The oracle-consumption paths in `borrow` and `liquidate` enforce that boundary
+at the point of use:
+
+- `age <= 3600` seconds: accepted
+- `age == 3601` seconds: rejected with `LendingError::StaleOracleTimestamp`
+
+The regression coverage in
+`stellar-lend/contracts/lending/src/oracle_staleness_test.rs` verifies both
+edges and checks each configured valuation asset independently by refreshing one
+asset while intentionally leaving the other stale.
 
 ### 4. Emergency Procedures
 
@@ -462,3 +526,71 @@ contract.health_check()
 Effective oracle configuration management is critical for the security and reliability of the StellarLend protocol. This guide provides the procedures and considerations necessary for maintaining a robust oracle system while ensuring proper role separation and security controls.
 
 Regular review of configurations, continuous monitoring, and adherence to security best practices are essential for maintaining system integrity and protecting user assets.
+
+
+
+## AMM TWAP Fallback (Issue #868)
+
+### Overview
+
+When the primary oracle is stale or unavailable, the lending contract automatically
+falls back to a Time-Weighted Average Price (TWAP) derived from the on-chain AMM pool.
+
+### Fallback chain
+
+Call external oracle → accept if age ≤ max_staleness_seconds
+If stale/absent    → emit OrcStale event, use AMM TWAP
+If TWAP has no history → panic (fail-safe, never price on nothing)
+
+
+### TWAP formula
+
+For a pool with reserves `(R₀, R₁)`, after `Δt` seconds:
+price0_cumulative += (R₁ / R₀) × 10¹⁸ × Δt
+TWAP over window W = Δprice0_cumulative / W
+
+Divide the result by `10¹⁸` to get the human-readable price.
+
+### Configuration
+
+The `twap_window_secs` field in `OracleConfig` controls the fallback look-back window.
+
+| Window       | Seconds | Use case                        |
+|--------------|---------|---------------------------------|
+| Minimum      | 25 s    | Testing / low-value positions   |
+| Recommended  | 150 s   | Standard liquidation checks     |
+| High-value   | 1500 s  | Large / high-value positions    |
+
+### Manipulation resistance
+
+A single flash-loan or block-level swap cannot meaningfully move a 150 s+ TWAP because
+the manipulated price only affects one slot out of many. The attacker must hold the
+position open across multiple ledger closes, bearing full impermanent loss and
+liquidation risk throughout.
+
+### Events emitted
+
+| Event       | Trigger                                  |
+|-------------|------------------------------------------|
+| `OrcStale`  | Primary oracle age > max_staleness_seconds |
+| `OrcFallbk` | TWAP fallback was used for pricing       |
+
+Monitor both events to detect oracle health issues in production.
+
+### Collateral Asset Configuration
+
+To support multi-asset operations or require price availability checks on specific assets:
+- **`set_collateral_asset(env, asset)`**: Admin-only method to configure the address of the asset used as collateral.
+- **`get_collateral_asset(env)`**: Returns the configured collateral asset address, if any.
+
+If a collateral asset is configured, both `borrow` and `liquidate` operations (and view functions like `get_position` and `get_health_factor`) require a valid on-chain `OraclePrice` record to value the collateral. If the price record is absent or cannot be loaded, the contract rejects the transaction with a `PriceUnavailable (5004)` error code.
+
+### New files added
+
+| File                   | Location                                      |
+|------------------------|-----------------------------------------------|
+| `amm_twap.rs`          | `stellar-lend/contracts/hello-world/src/`     |
+| `twap_tests.rs`        | `stellar-lend/contracts/hello-world/src/`     |
+| `missing_price_test.rs` | `stellar-lend/contracts/lending/src/`         |
+| Modified: `amm.rs`     | `stellar-lend/contracts/hello-world/src/`     |
+| Modified: `oracle.rs`  | `stellar-lend/contracts/hello-world/src/`     |

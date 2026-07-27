@@ -756,3 +756,8 @@ For questions or issues:
 
 MIT License - See LICENSE file for details
 
+
+
+## Error Mapping: Minimum Borrow Requirements
+When a borrow request fails with `BelowMinimumBorrow` (Error Code 8), the frontend should fetch the `min_borrow_amount` for that specific asset from contract storage.
+Guidance: Display a message like 'The minimum borrow amount for this asset is {min_borrow_amount}. Please increase your loan size.'

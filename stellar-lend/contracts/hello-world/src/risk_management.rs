@@ -1,362 +1,202 @@
-//! # Risk Management Module
+//! Risk management module for the StellarLend lending protocol.
 //!
-//! Provides configurable risk parameters and pause controls for the lending protocol.
+//! Manages the top-level risk configuration (`RiskConfig`), emergency pause
+//! state, per-operation pause switches, and core risk parameter storage.
+//! All rates are expressed in basis points (bps) where `10_000` equals 100%.
 //!
-//! ## Risk Parameters (all in basis points)
-//! - **Minimum collateral ratio** (default 110%): below this, new borrows are rejected
-//! - **Liquidation threshold** (default 105%): below this, positions can be liquidated
-//! - **Close factor** (default 50%): max percentage of debt liquidatable per transaction
-//! - **Liquidation incentive** (default 10%): bonus awarded to liquidators
-//!
-//! ## Pause Controls
-//! - Per-operation pause switches (deposit, withdraw, borrow, repay, liquidate)
-//! - Global emergency pause that halts all operations immediately
-//!
-//! ## Safety
-//! - Parameter changes are limited to ±10% per update to prevent drastic shifts.
-//! - Min collateral ratio must always be ≥ liquidation threshold.
-//! - Only the admin address can modify risk parameters.
+//! This module is the single source of truth for all risk-related state.
 
-#![allow(unused)]
-use crate::events::{
-    emit_admin_action, emit_pause_state_changed, emit_risk_params_updated, AdminActionEvent,
-    PauseStateChangedEvent, RiskParamsUpdatedEvent,
-};
-use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Map, Symbol, Val, Vec};
-use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Symbol};
 
-/// Errors that can occur during risk management operations
+use crate::admin;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const BASIS_POINTS: i128 = 10_000;
+
+/// Default minimum collateral ratio: 150% (15 000 bps).
+pub const DEFAULT_MIN_COLLATERAL_RATIO_BPS: i128 = 15_000;
+/// Default liquidation threshold: 120% (12 000 bps).
+pub const DEFAULT_LIQUIDATION_THRESHOLD_BPS: i128 = 12_000;
+/// Default close factor: 50% (5 000 bps).
+pub const DEFAULT_CLOSE_FACTOR_BPS: i128 = 5_000;
+/// Default liquidation incentive: 5% (500 bps).
+pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 500;
+
+/// Minimum allowed collateral ratio: 100% (a ratio below this is always unsafe).
+const MIN_COLLATERAL_RATIO_FLOOR: i128 = BASIS_POINTS;
+/// Maximum allowed collateral ratio: 1000%.
+const MAX_COLLATERAL_RATIO: i128 = 100_000;
+/// Maximum allowed liquidation threshold.
+const MAX_LIQUIDATION_THRESHOLD: i128 = 100_000;
+/// Close factor must be in (0, 100%].
+const MAX_CLOSE_FACTOR: i128 = BASIS_POINTS;
+/// Liquidation incentive is bounded to 0–50%.
+const MAX_LIQUIDATION_INCENTIVE: i128 = 5_000;
+/// Maximum parameter change per update: 50% (5 000 bps).
+const MAX_CHANGE_BPS: i128 = 5_000;
+
+// ---------------------------------------------------------------------------
+// Storage keys
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RiskDataKey {
+    /// The admin-configurable risk parameters.
+    RiskConfig,
+    /// Global emergency pause flag.
+    EmergencyPaused,
+    /// Per-operation pause flag, keyed by operation symbol.
+    OperationPaused(Symbol),
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// Admin-configurable top-level risk parameters.
+///
+/// All ratio fields are expressed in basis points (bps).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RiskConfig {
+    /// Minimum collateral ratio required to open / maintain a position, in bps.
+    pub min_collateral_ratio_bps: i128,
+    /// Collateral value threshold at which a position becomes liquidatable, in bps.
+    pub liquidation_threshold_bps: i128,
+    /// Maximum fraction of a position's debt that can be repaid in a single
+    /// liquidation, in bps.
+    pub close_factor_bps: i128,
+    /// Additional collateral awarded to the liquidator as a percentage of the
+    /// seized collateral, in bps.
+    pub liquidation_incentive_bps: i128,
+}
+
+impl Default for RiskConfig {
+    fn default() -> Self {
+        Self {
+            min_collateral_ratio_bps: DEFAULT_MIN_COLLATERAL_RATIO_BPS,
+            liquidation_threshold_bps: DEFAULT_LIQUIDATION_THRESHOLD_BPS,
+            close_factor_bps: DEFAULT_CLOSE_FACTOR_BPS,
+            liquidation_incentive_bps: DEFAULT_LIQUIDATION_INCENTIVE_BPS,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Errors returned by risk management operations.
 #[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum RiskManagementError {
-    /// Unauthorized access - caller is not admin
+    /// Caller is not the stored protocol admin.
     Unauthorized = 1,
-    /// Invalid parameter value
-    InvalidParameter = 2,
-    /// Parameter change exceeds maximum allowed change
-    ParameterChangeTooLarge = 3,
-    /// Minimum collateral ratio not met
-    InsufficientCollateralRatio = 4,
-    /// Operation is paused
-    OperationPaused = 5,
-    /// Emergency pause is active
-    EmergencyPaused = 6,
-    /// Invalid collateral ratio (must be >= liquidation threshold)
-    InvalidCollateralRatio = 7,
-    /// Invalid liquidation threshold (must be <= collateral ratio)
-    InvalidLiquidationThreshold = 8,
-    /// Close factor out of valid range (0-100%)
-    InvalidCloseFactor = 9,
-    /// Liquidation incentive out of valid range (0-50%)
-    InvalidLiquidationIncentive = 10,
-    /// Overflow occurred during calculation
-    Overflow = 11,
-    /// Action requires governance approval
-    GovernanceRequired = 12,
-    /// Contract has already been initialized
-    AlreadyInitialized = 13,
-}
-/// Storage keys for risk management data
-#[contracttype]
-#[derive(Clone)]
-#[cfg_attr(test, derive(Debug, PartialEq))]
-pub enum RiskDataKey {
-    /// Global risk configuration parameters (MCR, liquidation threshold, etc.)
-    /// Value type: RiskConfig
-    RiskConfig,
-    /// Global emergency pause flag. If true, all protocol operations are halted.
-    /// Value type: bool
-    EmergencyPause,
-    /// Timelock for safety of sensitive parameter changes
-    /// Value type: u64 (timestamp)
-    ParameterChangeTimelock,
+    /// Contract has not been initialised.
+    NotInitialized = 2,
+    /// Contract is already initialised.
+    AlreadyInitialized = 3,
+    /// A provided parameter is outside its allowed range.
+    InvalidParameter = 4,
+    /// The protocol is currently in emergency pause mode.
+    EmergencyPaused = 5,
+    /// The requested operation is individually paused.
+    OperationPaused = 6,
+    /// A parameter change exceeds the maximum allowed delta.
+    ParameterChangeTooLarge = 7,
+    /// The supplied collateral ratio is invalid.
+    InvalidCollateralRatio = 8,
+    /// The supplied liquidation threshold is invalid.
+    InvalidLiquidationThreshold = 9,
+    /// The supplied close factor is invalid.
+    InvalidCloseFactor = 10,
+    /// The supplied liquidation incentive is invalid.
+    InvalidLiquidationIncentive = 11,
+    /// Checked arithmetic overflowed.
+    Overflow = 12,
+    /// The position does not meet the minimum collateral ratio.
+    InsufficientCollateralRatio = 13,
 }
 
-/// Risk configuration parameters for pause switches
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct RiskConfig {
-    /// Pause switches for different operations
-    pub pause_switches: Map<Symbol, bool>,
-    /// Last update timestamp
-    pub last_update: u64,
-}
+// ---------------------------------------------------------------------------
+// Initialization
+// ---------------------------------------------------------------------------
 
-/// Pause switch operation types
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum PauseOperation {
-    /// Pause deposit operations
-    Deposit,
-    /// Pause withdraw operations
-    Withdraw,
-    /// Pause borrow operations
-    Borrow,
-    /// Pause repay operations
-    Repay,
-    /// Pause liquidation operations
-    Liquidate,
-    /// Pause all operations (emergency)
-    All,
-}
-
-/// Initialize risk management system
+/// Initialize risk management with default parameters.
 ///
-/// Sets up default risk parameters and admin address.
-/// Should be called during contract initialization.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `admin` - The admin address
-///
-/// # Returns
-/// Returns Ok(()) on success
-///
-/// # Errors
-/// * `RiskManagementError::InvalidParameter` - If default parameters are invalid
-pub fn initialize_risk_management(env: &Env, admin: Address) -> Result<(), RiskManagementError> {
-    // Check if initialized
-    let config_key = RiskDataKey::RiskConfig;
-    if env.storage().persistent().has(&config_key) {
-        return Ok(());
+/// Must be called once during contract initialization. Subsequent calls
+/// return [`RiskManagementError::AlreadyInitialized`].
+pub fn initialize_risk_management(env: &Env, _admin: Address) -> Result<(), RiskManagementError> {
+    if env.storage().persistent().has(&RiskDataKey::RiskConfig) {
+        return Err(RiskManagementError::AlreadyInitialized);
     }
 
-    // Admin is already set in the centralized admin module during contract initialize
-    // We don't set it here anymore to maintain a single source of truth.
-
-
-    // Initialize default risk config for pause switches
-    let default_config = RiskConfig {
-        pause_switches: create_default_pause_switches(env),
-        last_update: env.ledger().timestamp(),
-    };
-
-    let config_key = RiskDataKey::RiskConfig;
-    env.storage().persistent().set(&config_key, &default_config);
-
-    // Initialize emergency pause as false
-    let emergency_key = RiskDataKey::EmergencyPause;
-    env.storage().persistent().set(&emergency_key, &false);
-
-    emit_admin_action(
-        env,
-        AdminActionEvent {
-            actor: admin.clone(),
-            action: Symbol::new(env, "initialize"),
-            timestamp: env.ledger().timestamp(),
-        },
-    );
-
+    env.storage()
+        .persistent()
+        .set(&RiskDataKey::RiskConfig, &RiskConfig::default());
+    env.storage()
+        .persistent()
+        .set(&RiskDataKey::EmergencyPaused, &false);
     Ok(())
 }
 
-/// Create default pause switches map
-fn create_default_pause_switches(env: &Env) -> Map<Symbol, bool> {
-    let mut switches = Map::new(env);
-    switches.set(Symbol::new(env, "pause_deposit"), false);
-    switches.set(Symbol::new(env, "pause_withdraw"), false);
-    switches.set(Symbol::new(env, "pause_borrow"), false);
-    switches.set(Symbol::new(env, "pause_repay"), false);
-    switches.set(Symbol::new(env, "pause_liquidate"), false);
-    switches
-}
+// ---------------------------------------------------------------------------
+// RiskConfig accessors
+// ---------------------------------------------------------------------------
 
-/// Get the admin address (deprecated, delegates to new admin module)
-#[deprecated(note = "Use crate::admin::get_admin instead")]
-pub fn get_admin(env: &Env) -> Option<Address> {
-    crate::admin::get_admin(env)
-}
-
-/// Check if caller is admin (delegates to new admin module)
-pub fn require_admin(env: &Env, caller: &Address) -> Result<(), RiskManagementError> {
-    crate::admin::require_admin(env, caller).map_err(|_| RiskManagementError::Unauthorized)
-}
-
-/// Get current risk configuration
+/// Return the current [`RiskConfig`], or `None` if not yet initialized.
 pub fn get_risk_config(env: &Env) -> Option<RiskConfig> {
-    let config_key = RiskDataKey::RiskConfig;
-    env.storage()
-        .persistent()
-        .get::<RiskDataKey, RiskConfig>(&config_key)
+    env.storage().persistent().get(&RiskDataKey::RiskConfig)
 }
 
-/// Set pause switches (admin only)
-///
-/// Updates pause switches for different operations.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `caller` - The caller address (must be admin)
-/// * `operation` - The operation to pause/unpause (as Symbol)
-/// * `paused` - Whether to pause (true) or unpause (false)
-///
-/// # Returns
-/// Returns Ok(()) on success
-///
-/// # Errors
-/// * `RiskManagementError::Unauthorized` - If caller is not admin
-pub fn set_pause_switch(
-    env: &Env,
-    caller: Address,
-    operation: Symbol,
-    paused: bool,
-) -> Result<(), RiskManagementError> {
-    // Check admin
-    require_admin(env, &caller)?;
-
-    // Get current config
-    let mut config = get_risk_config(env).ok_or(RiskManagementError::InvalidParameter)?;
-
-    // Update pause switch
-    config.pause_switches.set(operation.clone(), paused);
-
-    // Update timestamp
-    config.last_update = env.ledger().timestamp();
-
-    // Save config
-    let config_key = RiskDataKey::RiskConfig;
-    env.storage().persistent().set(&config_key, &config);
-
-    // Emit event
-    emit_pause_switch_updated_event(env, &caller, &operation, paused);
-
-    Ok(())
+/// Return the minimum collateral ratio in bps, or `None` if not initialized.
+pub fn get_min_collateral_ratio(env: &Env) -> Option<i128> {
+    get_risk_config(env).map(|c| c.min_collateral_ratio_bps)
 }
 
-/// Set multiple pause switches at once (admin only)
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `caller` - The caller address (must be admin)
-/// * `switches` - Map of operation symbols to pause states
-///
-/// # Returns
-/// Returns Ok(()) on success
-pub fn set_pause_switches(
-    env: &Env,
-    caller: Address,
-    switches: Map<Symbol, bool>,
-) -> Result<(), RiskManagementError> {
-    // Check admin
-    require_admin(env, &caller)?;
-
-    // Get current config
-    let mut config = get_risk_config(env).ok_or(RiskManagementError::InvalidParameter)?;
-
-    // Update all pause switches
-    for (op, paused) in switches.iter() {
-        config.pause_switches.set(op, paused);
-    }
-
-    // Update timestamp
-    config.last_update = env.ledger().timestamp();
-
-    // Save config
-    let config_key = RiskDataKey::RiskConfig;
-    env.storage().persistent().set(&config_key, &config);
-
-    // Emit event
-    emit_pause_switches_updated_event(env, &caller, &switches);
-
-    Ok(())
+/// Return the liquidation threshold in bps, or `None` if not initialized.
+pub fn get_liquidation_threshold(env: &Env) -> Option<i128> {
+    get_risk_config(env).map(|c| c.liquidation_threshold_bps)
 }
 
-/// Check if an operation is paused
-pub fn is_operation_paused(env: &Env, operation: Symbol) -> bool {
-    if let Some(config) = get_risk_config(env) {
-        config.pause_switches.get(operation).unwrap_or(false)
-    } else {
-        false
-    }
+/// Return the close factor in bps, or `None` if not initialized.
+pub fn get_close_factor(env: &Env) -> Option<i128> {
+    get_risk_config(env).map(|c| c.close_factor_bps)
 }
 
-/// Require that an operation is not paused.
-///
-/// Checks the **emergency pause first**, then the per-operation switch.
-/// This layering ensures a single `set_emergency_pause(true)` call halts
-/// every operation without having to update every individual switch.
-///
-/// ## Pause precedence matrix
-///
-/// | emergency | per-op | result                        |
-/// |-----------|--------|-------------------------------|
-/// | false     | false  | ✅ allowed                     |
-/// | false     | true   | ❌ `OperationPaused`           |
-/// | true      | false  | ❌ `EmergencyPaused`           |
-/// | true      | true   | ❌ `EmergencyPaused` (wins)    |
-///
-/// # Errors
-/// * [`RiskManagementError::EmergencyPaused`] – global emergency halt is active.
-/// * [`RiskManagementError::OperationPaused`] – this specific operation is paused.
-///
-/// # Security
-/// Always call this at the start of every user-facing entry point before
-/// reading or writing any protocol state.
-pub fn require_operation_not_paused(
-    env: &Env,
-    operation: Symbol,
-) -> Result<(), RiskManagementError> {
-    // Emergency pause takes precedence over per-operation switches.
-    if is_emergency_paused(env) {
-        return Err(RiskManagementError::EmergencyPaused);
-    }
-    if is_operation_paused(env, operation) {
-        return Err(RiskManagementError::OperationPaused);
-    }
-    Ok(())
+/// Return the liquidation incentive in bps, or `None` if not initialized.
+pub fn get_liquidation_incentive(env: &Env) -> Option<i128> {
+    get_risk_config(env).map(|c| c.liquidation_incentive_bps)
 }
 
-/// Check if operation is paused (public helper for other modules)
-/// This is a convenience function that can be called from other modules
-pub fn check_operation_paused(env: &Env, operation: Symbol) -> bool {
-    // First check emergency pause
-    if is_emergency_paused(env) {
-        return true;
-    }
-    // Then check specific operation pause
-    is_operation_paused(env, operation)
-}
+// ---------------------------------------------------------------------------
+// Pause controls
+// ---------------------------------------------------------------------------
 
-/// Set emergency pause (admin only)
-///
-/// Emergency pause stops all operations immediately.
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `caller` - The caller address (must be admin)
-/// * `paused` - Whether to enable (true) or disable (false) emergency pause
-///
-/// # Returns
-/// Returns Ok(()) on success
-pub fn set_emergency_pause(
-    env: &Env,
-    caller: Address,
-    paused: bool,
-) -> Result<(), RiskManagementError> {
-    // Check admin
-    require_admin(env, &caller)?;
-
-    // Set emergency pause
-    let emergency_key = RiskDataKey::EmergencyPause;
-    env.storage().persistent().set(&emergency_key, &paused);
-
-    // Emit event
-    emit_emergency_pause_event(env, &caller, paused);
-
-    Ok(())
-}
-
-/// Check if emergency pause is active
+/// Return `true` if the global emergency pause is active.
 pub fn is_emergency_paused(env: &Env) -> bool {
-    let emergency_key = RiskDataKey::EmergencyPause;
     env.storage()
         .persistent()
-        .get::<RiskDataKey, bool>(&emergency_key)
+        .get::<RiskDataKey, bool>(&RiskDataKey::EmergencyPaused)
         .unwrap_or(false)
 }
 
-/// Require that emergency pause is not active
+/// Return `true` if the named operation is individually paused.
+pub fn is_operation_paused(env: &Env, operation: Symbol) -> bool {
+    env.storage()
+        .persistent()
+        .get::<RiskDataKey, bool>(&RiskDataKey::OperationPaused(operation))
+        .unwrap_or(false)
+}
+
+/// Check that neither the emergency pause nor the named operation pause is
+/// active. Returns [`RiskManagementError::EmergencyPaused`] or
+/// [`RiskManagementError::OperationPaused`] if either is set.
 pub fn check_emergency_pause(env: &Env) -> Result<(), RiskManagementError> {
     if is_emergency_paused(env) {
         return Err(RiskManagementError::EmergencyPaused);
@@ -364,43 +204,220 @@ pub fn check_emergency_pause(env: &Env) -> Result<(), RiskManagementError> {
     Ok(())
 }
 
-/// Emit pause switch updated event
-fn emit_pause_switch_updated_event(env: &Env, caller: &Address, operation: &Symbol, paused: bool) {
-    emit_pause_state_changed(
-        env,
-        PauseStateChangedEvent {
-            actor: caller.clone(),
-            operation: operation.clone(),
-            paused,
-            timestamp: env.ledger().timestamp(),
-        },
-    );
+/// Set or clear the global emergency pause (admin only).
+pub fn set_emergency_pause(
+    env: &Env,
+    admin: Address,
+    paused: bool,
+) -> Result<(), RiskManagementError> {
+    admin::require_admin(env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
+    env.storage()
+        .persistent()
+        .set(&RiskDataKey::EmergencyPaused, &paused);
+    env.events()
+        .publish((symbol_short!("risk"), symbol_short!("emerg")), paused);
+    Ok(())
 }
 
-/// Emit pause switches updated event
-fn emit_pause_switches_updated_event(env: &Env, caller: &Address, switches: &Map<Symbol, bool>) {
-    for (operation, paused) in switches.iter() {
-        emit_pause_state_changed(
-            env,
-            PauseStateChangedEvent {
-                actor: caller.clone(),
-                operation,
-                paused,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
+/// Set or clear a pause switch for a specific operation (admin only).
+pub fn set_pause_switch(
+    env: &Env,
+    admin: Address,
+    operation: Symbol,
+    paused: bool,
+) -> Result<(), RiskManagementError> {
+    admin::require_admin(env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
+    env.storage()
+        .persistent()
+        .set(&RiskDataKey::OperationPaused(operation.clone()), &paused);
+    env.events().publish(
+        (symbol_short!("risk"), symbol_short!("pause")),
+        (operation, paused),
+    );
+    Ok(())
+}
+
+/// Set pause switches for multiple operations at once (admin only).
+pub fn set_pause_switches(
+    env: &Env,
+    admin: Address,
+    operations: soroban_sdk::Vec<(Symbol, bool)>,
+) -> Result<(), RiskManagementError> {
+    admin::require_admin(env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
+    for item in operations.iter() {
+        let (operation, paused) = item;
+        env.storage()
+            .persistent()
+            .set(&RiskDataKey::OperationPaused(operation), &paused);
     }
+    Ok(())
 }
 
-/// Emit emergency pause event
-fn emit_emergency_pause_event(env: &Env, caller: &Address, paused: bool) {
-    emit_pause_state_changed(
-        env,
-        PauseStateChangedEvent {
-            actor: caller.clone(),
-            operation: Symbol::new(env, "emergency"),
-            paused,
-            timestamp: env.ledger().timestamp(),
-        },
-    );
+// ---------------------------------------------------------------------------
+// Parameter updates
+// ---------------------------------------------------------------------------
+
+/// Validate and store updated risk parameters (admin only).
+///
+/// Any `None` field is left unchanged. Each provided value is validated
+/// independently; an out-of-range value returns the corresponding error before
+/// any storage is modified.
+pub fn set_risk_params(
+    env: &Env,
+    admin: Address,
+    min_collateral_ratio: Option<i128>,
+    liquidation_threshold: Option<i128>,
+    close_factor: Option<i128>,
+    liquidation_incentive: Option<i128>,
+) -> Result<(), RiskManagementError> {
+    admin::require_admin(env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
+
+    let config = get_risk_config(env).ok_or(RiskManagementError::NotInitialized)?;
+
+    let new_min_cr = min_collateral_ratio.unwrap_or(config.min_collateral_ratio_bps);
+    let new_liq_thresh = liquidation_threshold.unwrap_or(config.liquidation_threshold_bps);
+    let new_close = close_factor.unwrap_or(config.close_factor_bps);
+    let new_incentive = liquidation_incentive.unwrap_or(config.liquidation_incentive_bps);
+
+    // Validate min_collateral_ratio
+    if let Some(v) = min_collateral_ratio {
+        validate_bounded(v, MIN_COLLATERAL_RATIO_FLOOR, MAX_COLLATERAL_RATIO)
+            .map_err(|_| RiskManagementError::InvalidCollateralRatio)?;
+        validate_change(v, config.min_collateral_ratio_bps)
+            .map_err(|_| RiskManagementError::ParameterChangeTooLarge)?;
+    }
+
+    // Validate liquidation_threshold
+    if let Some(v) = liquidation_threshold {
+        validate_bounded(v, 1, MAX_LIQUIDATION_THRESHOLD)
+            .map_err(|_| RiskManagementError::InvalidLiquidationThreshold)?;
+        validate_change(v, config.liquidation_threshold_bps)
+            .map_err(|_| RiskManagementError::ParameterChangeTooLarge)?;
+    }
+
+    // Validate close_factor
+    if let Some(v) = close_factor {
+        if v <= 0 || v > MAX_CLOSE_FACTOR {
+            return Err(RiskManagementError::InvalidCloseFactor);
+        }
+    }
+
+    // Validate liquidation_incentive
+    if let Some(v) = liquidation_incentive {
+        if v < 0 || v > MAX_LIQUIDATION_INCENTIVE {
+            return Err(RiskManagementError::InvalidLiquidationIncentive);
+        }
+    }
+
+    // Store the updated config
+    let updated = RiskConfig {
+        min_collateral_ratio_bps: new_min_cr,
+        liquidation_threshold_bps: new_liq_thresh,
+        close_factor_bps: new_close,
+        liquidation_incentive_bps: new_incentive,
+    };
+    env.storage()
+        .persistent()
+        .set(&RiskDataKey::RiskConfig, &updated);
+
+    Ok(())
+}
+
+/// Validate `value` is within `[min, max]`.
+fn validate_bounded(value: i128, min: i128, max: i128) -> Result<(), RiskManagementError> {
+    if value < min || value > max {
+        return Err(RiskManagementError::InvalidParameter);
+    }
+    Ok(())
+}
+
+/// Validate that the change from `current` to `new_value` does not exceed
+/// `MAX_CHANGE_BPS` (50%).
+fn validate_change(new_value: i128, current: i128) -> Result<(), RiskManagementError> {
+    let delta = (new_value - current).abs();
+    let limit = current
+        .checked_mul(MAX_CHANGE_BPS)
+        .ok_or(RiskManagementError::Overflow)?
+        .checked_div(BASIS_POINTS)
+        .ok_or(RiskManagementError::InvalidParameter)?;
+    if delta > limit {
+        return Err(RiskManagementError::ParameterChangeTooLarge);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Liquidation logic
+// ---------------------------------------------------------------------------
+
+/// Return `true` if `collateral_value * 10_000 < debt_value *
+/// liquidation_threshold_bps` (position is undercollateralized).
+pub fn can_be_liquidated(
+    env: &Env,
+    collateral_value: i128,
+    debt_value: i128,
+) -> Result<bool, RiskManagementError> {
+    if debt_value <= 0 {
+        return Ok(false);
+    }
+    let threshold = get_liquidation_threshold(env).ok_or(RiskManagementError::NotInitialized)?;
+    let lhs = collateral_value
+        .checked_mul(BASIS_POINTS)
+        .ok_or(RiskManagementError::Overflow)?;
+    let rhs = debt_value
+        .checked_mul(threshold)
+        .ok_or(RiskManagementError::Overflow)?;
+    Ok(lhs < rhs)
+}
+
+/// Return the maximum amount that may be repaid in a single liquidation call:
+/// `debt_value * close_factor_bps / 10_000`.
+pub fn get_max_liquidatable_amount(
+    env: &Env,
+    debt_value: i128,
+) -> Result<i128, RiskManagementError> {
+    let close_factor = get_close_factor(env).ok_or(RiskManagementError::NotInitialized)?;
+    debt_value
+        .checked_mul(close_factor)
+        .ok_or(RiskManagementError::Overflow)?
+        .checked_div(BASIS_POINTS)
+        .ok_or(RiskManagementError::InvalidParameter)
+}
+
+/// Return the collateral bonus paid to the liquidator:
+/// `liquidated_amount * liquidation_incentive_bps / 10_000`.
+pub fn get_liquidation_incentive_amount(
+    env: &Env,
+    liquidated_amount: i128,
+) -> Result<i128, RiskManagementError> {
+    let incentive = get_liquidation_incentive(env).ok_or(RiskManagementError::NotInitialized)?;
+    liquidated_amount
+        .checked_mul(incentive)
+        .ok_or(RiskManagementError::Overflow)?
+        .checked_div(BASIS_POINTS)
+        .ok_or(RiskManagementError::InvalidParameter)
+}
+
+/// Require that `collateral_value / debt_value >= min_collateral_ratio`.
+///
+/// Expressed as: `collateral_value * 10_000 >= debt_value * min_ratio_bps`.
+pub fn require_min_collateral_ratio(
+    env: &Env,
+    collateral_value: i128,
+    debt_value: i128,
+) -> Result<(), RiskManagementError> {
+    if debt_value <= 0 {
+        return Ok(());
+    }
+    let min_ratio = get_min_collateral_ratio(env).ok_or(RiskManagementError::NotInitialized)?;
+    let lhs = collateral_value
+        .checked_mul(BASIS_POINTS)
+        .ok_or(RiskManagementError::Overflow)?;
+    let rhs = debt_value
+        .checked_mul(min_ratio)
+        .ok_or(RiskManagementError::Overflow)?;
+    if lhs < rhs {
+        return Err(RiskManagementError::InsufficientCollateralRatio);
+    }
+    Ok(())
 }

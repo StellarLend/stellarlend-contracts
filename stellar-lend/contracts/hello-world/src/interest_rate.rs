@@ -1,719 +1,412 @@
-//! # Interest Rate Module
+//! Interest-rate model for the hello-world lending contract.
 //!
-//! Implements a kink-based (piecewise linear) interest rate model for the lending protocol.
-//!
-//! ## Rate Model
-//!
-//! The borrow rate is determined by protocol utilization (`borrows / deposits`):
-//!
-//! - **Below kink** (default 80%):
-//!   `rate = base_rate + (utilization / kink_utilization) × multiplier`
-//! - **Above kink**:
-//!   `rate = base_rate + multiplier + ((utilization − kink) / (1 − kink)) × jump_multiplier`
-//!
-//! The supply rate is derived as: `supply_rate = borrow_rate − spread`
-//!
-//! All rates are expressed in **basis points** (1 bp = 0.01%).
-//!
-//! ## Configuration Defaults
-//!
-//! | Parameter          | Default  | Meaning             |
-//! |--------------------|----------|---------------------|
-//! | `base_rate_bps`    | 100      | 1% APY              |
-//! | `kink_utilization`  | 8000     | 80%                 |
-//! | `multiplier_bps`   | 2000     | 20% slope below kink|
-//! | `jump_multiplier`   | 10000    | 100% slope above    |
-//! | `rate_floor_bps`   | 50       | 0.5% minimum        |
-//! | `rate_ceiling_bps` | 10000    | 100% maximum        |
-//! | `spread_bps`       | 200      | 2% supply/borrow gap|
-//!
-//! ## Interest Accrual
-//!
-//! Simple interest: `interest = principal × rate_bps × elapsed_seconds / (10_000 × SECONDS_PER_YEAR)`
-//!
-//! For long horizons the module also provides a **compound accrual** helper that splits
-//! the elapsed time into yearly chunks and compounds, preventing overflow on
-//! multi-year accumulations while remaining deterministic.
-//!
-//! ## Emergency Adjustment
-//!
-//! Admin can apply a positive or negative emergency adjustment to the calculated rate,
-//! bounded to ±100% (±10 000 bps).
-//!
-//! ## Numeric Assumptions
-//!
-//! See `INTEREST_NUMERIC_ASSUMPTIONS.md` at the crate root for the full invariant list.
-//! Key constraints:
-//! - All basis-point values are `i128` in `[0, 10_000]` unless otherwise noted.
-//! - `kink_utilization_bps` is in `(0, 10_000)` (exclusive).
-//! - Checked arithmetic is used throughout — no unchecked ops.
-//! - `SECONDS_PER_YEAR = 365 × 86_400 = 31_536_000` (no leap seconds).
+//! The module stores an admin-managed jump-rate configuration and exposes
+//! deterministic helpers for utilization, borrow-rate, and supply-rate
+//! calculation.  All externally visible rates are expressed in basis points
+//! (bps), where `10_000` is 100%.
 
-use soroban_sdk::{contracterror, contracttype, Address, Env};
-use crate::prelude::*;
+use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env};
 
-use crate::deposit::{DepositDataKey, ProtocolAnalytics};
+use crate::admin;
 
-// =============================================================================
-// Errors
-// =============================================================================
+/// Number of basis points representing 100%.
+pub const BASIS_POINTS_SCALE: i128 = 10_000;
 
-/// Errors that can occur during interest rate operations.
-///
-/// Error codes are **stable** and must never be renumbered to preserve
-/// cross-version compatibility with off-chain decoders.
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum InterestRateError {
-    /// Unauthorized access — caller is not admin.
-    Unauthorized = 1,
-    /// Invalid parameter value (out of range or violates constraints).
-    InvalidParameter = 2,
-    /// Parameter change exceeds maximum allowed delta.
-    ParameterChangeTooLarge = 3,
-    /// Arithmetic overflow during calculation.
-    Overflow = 4,
-    /// Division by zero (e.g., no deposits in utilization calc).
-    DivisionByZero = 5,
-    /// Contract has already been initialized.
-    AlreadyInitialized = 6,
-}
+/// Maximum slope accepted for multiplier parameters (1,000%).
+pub const MAX_SLOPE_BPS: i128 = 100_000;
 
-// =============================================================================
-// Storage Keys
-// =============================================================================
+/// Default ceiling that preserves the old effectively unbounded behaviour.
+pub const DEFAULT_MAX_RATE_BPS: i128 = i128::MAX;
 
-/// Storage keys for interest rate data.
-///
-/// All values are stored in the **persistent** storage layer so they survive
-/// contract upgrades.
+/// Storage keys used by the interest-rate module.
 #[contracttype]
-#[derive(Clone)]
-#[cfg_attr(test, derive(Debug, PartialEq))]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InterestRateDataKey {
-    /// Kink-based interest rate model parameters.
-    /// Value type: [`InterestRateConfig`]
+    /// Persisted [`InterestRateConfig`].
     InterestRateConfig,
-    /// Module admin address authorized for rate adjustments.
-    /// Value type: `Address`
-    Admin,
-    /// Placeholder for emergency rate adjustment status.
+    /// Protocol-wide supplied amount used for utilization.
+    TotalDeposits,
+    /// Protocol-wide borrowed amount used for utilization.
+    TotalBorrows,
+    /// Additive emergency adjustment in bps.
     EmergencyRateAdjustment,
 }
 
-// =============================================================================
-// Configuration Struct
-// =============================================================================
-
-/// Interest rate configuration parameters.
-///
-/// Every field uses **basis points** (1 bp = 0.01%) unless noted otherwise.
-///
-/// # Invariants
-/// - `0 ≤ base_rate_bps ≤ 10_000`
-/// - `0 < kink_utilization_bps < 10_000`
-/// - `multiplier_bps ≥ 0`
-/// - `jump_multiplier_bps ≥ 0`
-/// - `0 ≤ rate_floor_bps ≤ rate_ceiling_bps ≤ 10_000`
-/// - `0 ≤ spread_bps ≤ 10_000`
-/// - `|emergency_adjustment_bps| ≤ 10_000`
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct InterestRateConfig {
-    /// Base interest rate (e.g. 100 = 1% APY).
-    /// This is the minimum rate when utilization is 0%.
-    pub base_rate_bps: i128,
-    /// Kink utilization point (e.g. 8000 = 80%).
-    /// Below this, the rate increases with `multiplier_bps`.
-    /// Above this, the rate increases with `jump_multiplier_bps`.
-    pub kink_utilization_bps: i128,
-    /// Slope below kink (e.g. 2000 = 20%).
-    /// Rate below kink = `base_rate + (utilization / kink) × multiplier`.
-    pub multiplier_bps: i128,
-    /// Slope above kink (e.g. 10000 = 100%).
-    /// Rate above kink = `base_rate + multiplier + ((util − kink) / (1 − kink)) × jump_multiplier`.
-    pub jump_multiplier_bps: i128,
-    /// Minimum interest rate floor.
-    pub rate_floor_bps: i128,
-    /// Maximum interest rate ceiling.
-    pub rate_ceiling_bps: i128,
-    /// Spread between borrow and supply rates (e.g. 200 = 2%).
-    /// `supply_rate = borrow_rate − spread`.
-    pub spread_bps: i128,
-    /// Emergency rate adjustment — added to the calculated borrow rate.
-    /// Can be positive (increase) or negative (decrease).
-    pub emergency_adjustment_bps: i128,
-    /// Ledger timestamp of the last configuration change.
-    pub last_update: u64,
+/// Errors returned by interest-rate configuration and math paths.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum InterestRateError {
+    /// Interest-rate module was already initialized.
+    AlreadyInitialized = 1,
+    /// Caller is not the stored interest-rate admin.
+    Unauthorized = 2,
+    /// A provided parameter is outside its allowed range.
+    InvalidParameter = 3,
+    /// Checked arithmetic overflowed.
+    Overflow = 4,
+    /// Division by zero was prevented.
+    DivisionByZero = 5,
+    /// Interest-rate configuration has not been initialized.
+    NotInitialized = 6,
 }
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-/// 100% expressed in basis points.
-const BASIS_POINTS_SCALE: i128 = 10_000;
-
-/// Seconds in a non-leap year: 365 × 86 400 = 31 536 000.
-const SECONDS_PER_YEAR: u64 = 365 * 86_400;
-
-/// Maximum allowed value for slope parameters (`multiplier_bps`, `jump_multiplier_bps`).
-/// Set to 100 000 bps (1000%) to allow aggressive-but-bounded curves.
-const MAX_SLOPE_BPS: i128 = 100_000;
-
-// =============================================================================
-// Default Configuration
-// =============================================================================
-
-/// Returns the default interest rate configuration.
+/// Admin-configurable jump-rate model parameters.
 ///
-/// These defaults produce a standard DeFi kink model:
-/// - 1% base, 80% kink, 20% slope₁, 100% slope₂
-/// - Floor 0.5%, ceiling 100%, spread 2%
-fn get_default_config() -> InterestRateConfig {
-    InterestRateConfig {
-        base_rate_bps: 100,
-        kink_utilization_bps: 8000,
-        multiplier_bps: 2000,
-        jump_multiplier_bps: 10_000,
-        rate_floor_bps: 50,
-        rate_ceiling_bps: 10_000,
-        spread_bps: 200,
-        emergency_adjustment_bps: 0,
-        last_update: 0,
+/// Rates are calculated in bps.  `min_rate_bps` and `max_rate_bps` are applied
+/// as the final borrow-rate clamp after utilization math and emergency
+/// adjustment:
+///
+/// `effective_borrow_rate = clamp(raw_rate + emergency_adjustment, min_rate_bps, max_rate_bps)`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterestRateConfig {
+    /// Base borrow APR at 0 utilization, in bps.
+    pub base_rate_bps: i128,
+    /// Utilization kink, in bps, exclusive range `(0, 10_000)`.
+    pub kink_utilization_bps: i128,
+    /// Secondary utilization kink, in bps, exclusive range `(kink1, 10_000)`.
+    pub kink2_bps: i128,
+    /// Total pre-kink increase added by the time utilization reaches the kink.
+    pub multiplier_bps: i128,
+    /// Total post-kink increase added between kink and 100% utilization.
+    pub jump_multiplier_bps: i128,
+    /// Total increase added between kink2 and 100% utilization.
+    pub slope3_bps: i128,
+    /// Legacy floor used by older deployments; retained for storage/API compatibility.
+    pub rate_floor_bps: i128,
+    /// Legacy ceiling used by older deployments; retained for storage/API compatibility.
+    pub rate_ceiling_bps: i128,
+    /// Spread subtracted from the clamped borrow rate to derive supply rate.
+    pub spread_bps: i128,
+    /// Hard minimum effective borrow rate, applied last.
+    pub min_rate_bps: i128,
+    /// Hard maximum effective borrow rate, applied last.
+    pub max_rate_bps: i128,
+}
+
+impl Default for InterestRateConfig {
+    fn default() -> Self {
+        Self {
+            base_rate_bps: 100,
+            kink_utilization_bps: 8_000,
+            kink2_bps: 9_000,
+            multiplier_bps: 2_000,
+            jump_multiplier_bps: 10_000,
+            slope3_bps: 20_000,
+            rate_floor_bps: 0,
+            rate_ceiling_bps: DEFAULT_MAX_RATE_BPS,
+            spread_bps: 0,
+            min_rate_bps: 0,
+            max_rate_bps: DEFAULT_MAX_RATE_BPS,
+        }
     }
 }
 
-// =============================================================================
-// Storage Accessors
-// =============================================================================
-
-/// Retrieve the current [`InterestRateConfig`] from persistent storage.
+/// Initialize the module with default rate parameters.
 ///
-/// Returns `None` if the module has not been initialized.
-pub fn get_interest_rate_config(env: &Env) -> Option<InterestRateConfig> {
-    env.storage()
-        .persistent()
-        .get::<InterestRateDataKey, InterestRateConfig>(&InterestRateDataKey::InterestRateConfig)
-}
-
-// =============================================================================
-// Initialization
-// =============================================================================
-
-/// Initialize the interest rate module with default parameters.
-///
-/// Must be called exactly once during contract initialization.
-///
-/// # Errors
-/// - [`InterestRateError::AlreadyInitialized`] if called more than once.
-///
-/// # Security
-/// - Idempotency guard prevents re-initialization after deployment.
-pub fn initialize_interest_rate_config(
-    env: &Env,
-    _admin: Address,
-) -> Result<(), InterestRateError> {
-    let config_key = InterestRateDataKey::InterestRateConfig;
-
+/// Defaults intentionally preserve previous unclamped behaviour: floor `0` and
+/// ceiling `i128::MAX`, until an admin explicitly configures a narrower band.
+pub fn initialize_interest_rate_config(env: &Env) -> Result<(), InterestRateError> {
     if env
         .storage()
         .persistent()
-        .has::<InterestRateDataKey>(&config_key)
+        .has(&InterestRateDataKey::InterestRateConfig)
     {
         return Err(InterestRateError::AlreadyInitialized);
     }
 
-    let config = get_default_config();
-    env.storage().persistent().set(&config_key, &config);
-
+    env.storage().persistent().set(
+        &InterestRateDataKey::InterestRateConfig,
+        &InterestRateConfig::default(),
+    );
+    env.storage()
+        .persistent()
+        .set(&InterestRateDataKey::EmergencyRateAdjustment, &0_i128);
     Ok(())
 }
 
-// =============================================================================
-// Utilization
-// =============================================================================
+/// Return the current interest-rate configuration, if initialized.
+pub fn get_interest_rate_config(env: &Env) -> Option<InterestRateConfig> {
+    env.storage()
+        .persistent()
+        .get(&InterestRateDataKey::InterestRateConfig)
+}
 
-/// Calculate protocol utilization in basis points.
+/// Update selected interest-rate model parameters.
 ///
-/// `utilization = (total_borrows × 10 000) / total_deposits`
+/// `rate_floor`/`rate_ceiling` update the hard clamp band for backwards
+/// compatibility with the existing contract entrypoint.  They are stored in
+/// both the legacy fields and the new `min_rate_bps`/`max_rate_bps` fields.
+pub fn update_interest_rate_config(
+    env: &Env,
+    admin: Address,
+    base_rate: Option<i128>,
+    kink: Option<i128>,
+    multiplier: Option<i128>,
+    jump_multiplier: Option<i128>,
+    rate_floor: Option<i128>,
+    rate_ceiling: Option<i128>,
+    spread: Option<i128>,
+) -> Result<(), InterestRateError> {
+    require_rate_admin(env, &admin)?;
+    let mut config = get_interest_rate_config(env).ok_or(InterestRateError::NotInitialized)?;
+
+    if let Some(v) = base_rate {
+        config.base_rate_bps = v;
+    }
+    if let Some(v) = kink {
+        config.kink_utilization_bps = v;
+    }
+    if let Some(v) = multiplier {
+        config.multiplier_bps = v;
+    }
+    if let Some(v) = jump_multiplier {
+        config.jump_multiplier_bps = v;
+    }
+    if let Some(v) = rate_floor {
+        config.rate_floor_bps = v;
+        config.min_rate_bps = v;
+    }
+    if let Some(v) = rate_ceiling {
+        config.rate_ceiling_bps = v;
+        config.max_rate_bps = v;
+    }
+    if let Some(v) = spread {
+        config.spread_bps = v;
+    }
+
+    validate_config(&config)?;
+    env.storage()
+        .persistent()
+        .set(&InterestRateDataKey::InterestRateConfig, &config);
+    Ok(())
+}
+
+/// Set the protocol totals used by utilization calculation.
 ///
-/// # Returns
-/// Utilization in `[0, 10 000]` basis points, capped at 100%.
+/// This small helper is useful for tests and for integration paths that update
+/// accounting in a module separate from the rate model.
+pub fn set_protocol_totals(
+    env: &Env,
+    total_deposits: i128,
+    total_borrows: i128,
+) -> Result<(), InterestRateError> {
+    if total_deposits < 0 || total_borrows < 0 {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    env.storage()
+        .persistent()
+        .set(&InterestRateDataKey::TotalDeposits, &total_deposits);
+    env.storage()
+        .persistent()
+        .set(&InterestRateDataKey::TotalBorrows, &total_borrows);
+    Ok(())
+}
+
+/// Set an emergency additive adjustment, in bps.
 ///
-/// # Errors
-/// - [`InterestRateError::Overflow`] on arithmetic overflow.
+/// The adjustment is applied before the final `[min_rate_bps, max_rate_bps]`
+/// clamp and is bounded to ±100% APR.
+pub fn set_emergency_rate_adjustment(
+    env: &Env,
+    admin: Address,
+    adjustment_bps: i128,
+) -> Result<(), InterestRateError> {
+    require_rate_admin(env, &admin)?;
+    if !(-BASIS_POINTS_SCALE..=BASIS_POINTS_SCALE).contains(&adjustment_bps) {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    env.storage().persistent().set(
+        &InterestRateDataKey::EmergencyRateAdjustment,
+        &adjustment_bps,
+    );
+    Ok(())
+}
+
+/// Calculate utilization in bps from stored protocol totals.
 ///
-/// # Security
-/// - Returns `0` when there are no deposits (avoids division by zero).
-/// - Caps the result at `10 000` even if borrows exceed deposits.
+/// Formula: `utilization = total_borrows * 10_000 / total_deposits`.
+/// If deposits are zero, utilization returns zero.  The value is capped at
+/// `10_000` to keep downstream rate math in the expected range.
 pub fn calculate_utilization(env: &Env) -> Result<i128, InterestRateError> {
-    let analytics = env
+    let total_deposits = env
         .storage()
         .persistent()
-        .get::<DepositDataKey, ProtocolAnalytics>(&DepositDataKey::ProtocolAnalytics)
-        .unwrap_or(ProtocolAnalytics {
-            total_deposits: 0,
-            total_borrows: 0,
-            total_value_locked: 0,
-        });
+        .get::<InterestRateDataKey, i128>(&InterestRateDataKey::TotalDeposits)
+        .unwrap_or(0);
+    let total_borrows = env
+        .storage()
+        .persistent()
+        .get::<InterestRateDataKey, i128>(&InterestRateDataKey::TotalBorrows)
+        .unwrap_or(0);
 
-    if analytics.total_deposits <= 0 {
+    if total_deposits <= 0 {
+        return Ok(0);
+    }
+    if total_borrows <= 0 {
         return Ok(0);
     }
 
-    let utilization = analytics
-        .total_borrows
+    let util = total_borrows
         .checked_mul(BASIS_POINTS_SCALE)
         .ok_or(InterestRateError::Overflow)?
-        .checked_div(analytics.total_deposits)
+        .checked_div(total_deposits)
         .ok_or(InterestRateError::DivisionByZero)?;
-
-    // Cap at 100%
-    Ok(utilization.clamp(0, BASIS_POINTS_SCALE))
+    Ok(clamp_rate(util, 0, BASIS_POINTS_SCALE))
 }
 
-// =============================================================================
-// Borrow Rate
-// =============================================================================
-
-/// Calculate the borrow interest rate based on current utilization.
+/// Calculate the effective borrow rate in bps.
 ///
-/// Uses a **piecewise-linear (kink) model**:
-///
-/// - Below kink: `rate = base + (utilization / kink) × multiplier`
-/// - Above kink: `rate = base + multiplier + ((util − kink) / (10 000 − kink)) × jump_multiplier`
-///
-/// The emergency adjustment is added, then the result is clamped to `[floor, ceiling]`.
-///
-/// # Errors
-/// - [`InterestRateError::InvalidParameter`] if config is missing.
-/// - [`InterestRateError::Overflow`] on arithmetic overflow.
-/// - [`InterestRateError::DivisionByZero`] if kink is misconfigured.
-///
-/// # Security
-/// - All arithmetic uses checked operations.
-/// - Rate is always clamped to `[rate_floor_bps, rate_ceiling_bps]`.
+/// The final step always clamps the rate to
+/// `[InterestRateConfig::min_rate_bps, InterestRateConfig::max_rate_bps]`, so
+/// degenerate curve outputs and emergency adjustments cannot escape the
+/// configured band.
 pub fn calculate_borrow_rate(env: &Env) -> Result<i128, InterestRateError> {
-    let config = get_interest_rate_config(env).ok_or(InterestRateError::InvalidParameter)?;
-    let utilization = calculate_utilization(env)?;
+    let utilization_bps = calculate_utilization(env)?;
+    let config = get_interest_rate_config(env).unwrap_or_default();
+    let emergency_adjustment = env
+        .storage()
+        .persistent()
+        .get::<InterestRateDataKey, i128>(&InterestRateDataKey::EmergencyRateAdjustment)
+        .unwrap_or(0);
 
-    let mut rate = config.base_rate_bps;
-
-    if utilization <= config.kink_utilization_bps {
-        // Below kink: linear increase
-        if config.kink_utilization_bps > 0 {
-            let rate_increase = utilization
-                .checked_mul(config.multiplier_bps)
-                .ok_or(InterestRateError::Overflow)?
-                .checked_div(config.kink_utilization_bps)
-                .ok_or(InterestRateError::DivisionByZero)?;
-            rate = rate
-                .checked_add(rate_increase)
-                .ok_or(InterestRateError::Overflow)?;
-        }
-    } else {
-        // Above kink: steeper increase via jump multiplier
-        let rate_at_kink = config
-            .base_rate_bps
-            .checked_add(config.multiplier_bps)
-            .ok_or(InterestRateError::Overflow)?;
-
-        let utilization_above_kink = utilization
-            .checked_sub(config.kink_utilization_bps)
-            .ok_or(InterestRateError::Overflow)?;
-
-        let max_utilization_above_kink = BASIS_POINTS_SCALE
-            .checked_sub(config.kink_utilization_bps)
-            .ok_or(InterestRateError::Overflow)?;
-
-        if max_utilization_above_kink > 0 {
-            let additional_rate = utilization_above_kink
-                .checked_mul(config.jump_multiplier_bps)
-                .ok_or(InterestRateError::Overflow)?
-                .checked_div(max_utilization_above_kink)
-                .ok_or(InterestRateError::DivisionByZero)?;
-
-            rate = rate_at_kink
-                .checked_add(additional_rate)
-                .ok_or(InterestRateError::Overflow)?;
-        } else {
-            rate = rate_at_kink;
-        }
-    }
-
-    // Apply emergency adjustment (can be negative)
-    rate = rate
-        .checked_add(config.emergency_adjustment_bps)
-        .ok_or(InterestRateError::Overflow)?;
-
-    // Clamp to [floor, ceiling]
-    rate = rate.max(config.rate_floor_bps).min(config.rate_ceiling_bps);
-
-    Ok(rate)
+    compute_borrow_rate(utilization_bps, emergency_adjustment, &config)
 }
 
-// =============================================================================
-// Supply Rate
-// =============================================================================
-
-/// Calculate the supply interest rate.
+/// Calculate the supply rate in bps from the clamped borrow rate.
 ///
-/// `supply_rate = max(borrow_rate − spread, rate_floor)`
-///
-/// # Errors
-/// - Propagates errors from [`calculate_borrow_rate`].
-///
-/// # Security
-/// - Supply rate is never negative — clamped to `rate_floor_bps`.
+/// Supply-rate calculation intentionally calls [`calculate_borrow_rate`], so it
+/// always remains consistent with the same final borrow-rate clamp seen by
+/// borrowers.
 pub fn calculate_supply_rate(env: &Env) -> Result<i128, InterestRateError> {
-    let config = get_interest_rate_config(env).ok_or(InterestRateError::InvalidParameter)?;
+    let config = get_interest_rate_config(env).unwrap_or_default();
     let borrow_rate = calculate_borrow_rate(env)?;
-
     let supply_rate = borrow_rate
         .checked_sub(config.spread_bps)
         .ok_or(InterestRateError::Overflow)?;
-
-    // Ensure supply rate doesn't go below floor
-    Ok(supply_rate.max(config.rate_floor_bps))
+    Ok(supply_rate.max(0).max(config.min_rate_bps))
 }
 
-// =============================================================================
-// Simple Interest Accrual
-// =============================================================================
-
-/// Calculate accrued interest using simple (linear) interest.
+/// Pure borrow-rate calculation for a supplied utilization and config.
 ///
-/// `interest = principal × rate_bps × elapsed_seconds / (10_000 × SECONDS_PER_YEAR)`
+/// Formula:
 ///
-/// # Arguments
-/// * `principal` — The outstanding principal amount.
-/// * `last_accrual_time` — Unix timestamp of the last accrual.
-/// * `current_time` — Current Unix timestamp.
-/// * `rate_bps` — Annual interest rate in basis points.
-///
-/// # Returns
-/// The accrued interest amount (always ≥ 0).
-///
-/// # Errors
-/// - [`InterestRateError::Overflow`] if the intermediate product overflows `i128`.
-///
-/// # Security
-/// - Returns `0` for zero principal or non-positive elapsed time.
-/// - All arithmetic is checked.
-pub fn calculate_accrued_interest(
-    principal: i128,
-    last_accrual_time: u64,
-    current_time: u64,
-    rate_bps: i128,
+/// - Below kink: `base + utilization * multiplier / kink`
+/// - Above kink: `base + multiplier + (utilization - kink) * jump / (10_000 - kink)`
+/// - Effective: `clamp(raw + emergency_adjustment, min_rate_bps, max_rate_bps)`
+pub fn compute_borrow_rate(
+    utilization_bps: i128,
+    emergency_adjustment_bps: i128,
+    config: &InterestRateConfig,
 ) -> Result<i128, InterestRateError> {
-    if principal <= 0 || rate_bps <= 0 {
-        return Ok(0);
-    }
+    validate_config(config)?;
+    let utilization = clamp_rate(utilization_bps, 0, BASIS_POINTS_SCALE);
 
-    if current_time <= last_accrual_time {
-        return Ok(0);
-    }
-
-    let time_elapsed = current_time
-        .checked_sub(last_accrual_time)
-        .ok_or(InterestRateError::Overflow)?;
-
-    // interest = principal * rate_bps * time_elapsed / (10_000 * SECONDS_PER_YEAR)
-    let denominator = BASIS_POINTS_SCALE
-        .checked_mul(SECONDS_PER_YEAR as i128)
-        .ok_or(InterestRateError::Overflow)?;
-
-    let numerator = principal
-        .checked_mul(rate_bps)
-        .ok_or(InterestRateError::Overflow)?
-        .checked_mul(time_elapsed as i128)
-        .ok_or(InterestRateError::Overflow)?;
-
-    let quotient = numerator
-        .checked_div(denominator)
-        .ok_or(InterestRateError::DivisionByZero)?;
-    let remainder = numerator
-        .checked_rem(denominator)
-        .ok_or(InterestRateError::DivisionByZero)?;
-    let interest = if numerator > 0 && remainder > 0 {
-        quotient.checked_add(1).ok_or(InterestRateError::Overflow)?
+    let raw_rate = if utilization <= config.kink_utilization_bps {
+        config
+            .base_rate_bps
+            .checked_add(
+                utilization
+                    .checked_mul(config.multiplier_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_div(config.kink_utilization_bps)
+                    .ok_or(InterestRateError::DivisionByZero)?,
+            )
+            .ok_or(InterestRateError::Overflow)?
+    } else if utilization <= config.kink2_bps {
+        let post_kink_denominator = config
+            .kink2_bps
+            .checked_sub(config.kink_utilization_bps)
+            .ok_or(InterestRateError::DivisionByZero)?;
+        config
+            .base_rate_bps
+            .checked_add(config.multiplier_bps)
+            .ok_or(InterestRateError::Overflow)?
+            .checked_add(
+                utilization
+                    .checked_sub(config.kink_utilization_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_mul(config.jump_multiplier_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_div(post_kink_denominator)
+                    .ok_or(InterestRateError::DivisionByZero)?,
+            )
+            .ok_or(InterestRateError::Overflow)?
     } else {
-        quotient
+        let post_kink2_denominator = BASIS_POINTS_SCALE
+            .checked_sub(config.kink2_bps)
+            .ok_or(InterestRateError::DivisionByZero)?;
+        config
+            .base_rate_bps
+            .checked_add(config.multiplier_bps)
+            .ok_or(InterestRateError::Overflow)?
+            .checked_add(config.jump_multiplier_bps)
+            .ok_or(InterestRateError::Overflow)?
+            .checked_add(
+                utilization
+                    .checked_sub(config.kink2_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_mul(config.slope3_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_div(post_kink2_denominator)
+                    .ok_or(InterestRateError::DivisionByZero)?,
+            )
+            .ok_or(InterestRateError::Overflow)?
     };
 
-    Ok(interest.max(0))
-}
-
-// =============================================================================
-// Compound Interest Accrual
-// =============================================================================
-
-/// Calculate accrued interest using **discrete yearly compounding**.
-///
-/// Splits `elapsed` into full years and a remaining fraction:
-/// 1. For each full year: `balance = balance + balance × rate_bps / 10_000`
-/// 2. For the remaining fraction: simple interest on the compounded balance.
-///
-/// This prevents overflow for very long horizons by accumulating incrementally
-/// rather than computing `principal × rate × total_time` in one multiplication.
-///
-/// # Arguments
-/// * `principal` — The outstanding principal amount.
-/// * `last_accrual_time` — Unix timestamp of the last accrual.
-/// * `current_time` — Current Unix timestamp.
-/// * `rate_bps` — Annual interest rate in basis points.
-///
-/// # Returns
-/// The total accrued interest (compound − principal).
-///
-/// # Errors
-/// - [`InterestRateError::Overflow`] on arithmetic overflow.
-///
-/// # Security
-/// - Deterministic: no floating-point, no randomness.
-/// - Handles up to ~200 years at 100% APR without overflow for principals ≤ 10^30.
-/// - Returns `0` for zero/negative principal, zero rate, or non-positive elapsed time.
-pub fn calculate_compound_interest(
-    principal: i128,
-    last_accrual_time: u64,
-    current_time: u64,
-    rate_bps: i128,
-) -> Result<i128, InterestRateError> {
-    if principal <= 0 || rate_bps <= 0 {
-        return Ok(0);
-    }
-    if current_time <= last_accrual_time {
-        return Ok(0);
-    }
-
-    let elapsed = current_time
-        .checked_sub(last_accrual_time)
+    let adjusted_rate = raw_rate
+        .checked_add(emergency_adjustment_bps)
         .ok_or(InterestRateError::Overflow)?;
 
-    let full_years = elapsed / (SECONDS_PER_YEAR);
-    let remaining_seconds = elapsed % (SECONDS_PER_YEAR);
-
-    let mut balance = principal;
-
-    // Compound for each full year
-    for _ in 0..full_years {
-        let yearly_interest = balance
-            .checked_mul(rate_bps)
-            .ok_or(InterestRateError::Overflow)?
-            .checked_div(BASIS_POINTS_SCALE)
-            .ok_or(InterestRateError::DivisionByZero)?;
-        balance = balance
-            .checked_add(yearly_interest)
-            .ok_or(InterestRateError::Overflow)?;
-    }
-
-    // Simple interest for the remaining partial year
-    if remaining_seconds > 0 {
-        let partial_interest = balance
-            .checked_mul(rate_bps)
-            .ok_or(InterestRateError::Overflow)?
-            .checked_mul(remaining_seconds as i128)
-            .ok_or(InterestRateError::Overflow)?
-            .checked_div(
-                BASIS_POINTS_SCALE
-                    .checked_mul(SECONDS_PER_YEAR as i128)
-                    .ok_or(InterestRateError::Overflow)?,
-            )
-            .ok_or(InterestRateError::DivisionByZero)?;
-        balance = balance
-            .checked_add(partial_interest)
-            .ok_or(InterestRateError::Overflow)?;
-    }
-
-    // Total interest = compounded balance − original principal
-    let interest = balance
-        .checked_sub(principal)
-        .ok_or(InterestRateError::Overflow)?;
-
-    Ok(interest.max(0))
+    Ok(clamp_rate(
+        adjusted_rate,
+        config.min_rate_bps,
+        config.max_rate_bps,
+    ))
 }
 
-// =============================================================================
-// Admin: Update Configuration
-// =============================================================================
+/// Clamp `rate_bps` to the inclusive configured band.
+pub fn clamp_rate(rate_bps: i128, min_rate_bps: i128, max_rate_bps: i128) -> i128 {
+    rate_bps.max(min_rate_bps).min(max_rate_bps)
+}
 
-/// Update interest rate configuration parameters.
-///
-/// Only callable by the protocol admin. Each parameter is optional — pass `None`
-/// to keep the current value.
-///
-/// # Arguments
-/// * `env` — The Soroban environment.
-/// * `caller` — Must be the super admin.
-/// * `base_rate_bps` — New base rate in `[0, 10_000]`.
-/// * `kink_utilization_bps` — New kink in `(0, 10_000)` (exclusive).
-/// * `multiplier_bps` — New slope₁ in `[0, MAX_SLOPE_BPS]`.
-/// * `jump_multiplier_bps` — New slope₂ in `[0, MAX_SLOPE_BPS]`.
-/// * `rate_floor_bps` — New floor in `[0, 10_000]`, must be ≤ ceiling.
-/// * `rate_ceiling_bps` — New ceiling in `[0, 10_000]`, must be ≥ floor.
-/// * `spread_bps` — New spread in `[0, 10_000]`.
-///
-/// # Errors
-/// - [`InterestRateError::Unauthorized`] if caller is not admin.
-/// - [`InterestRateError::InvalidParameter`] if any value is out of range or
-///   violates constraints (e.g. `floor > ceiling`).
-///
-/// # Security
-/// - Enforces strict authorization via `require_admin`.
-/// - All parameters are range-checked before storage write.
-/// - `last_update` is set to the current ledger timestamp.
-#[allow(clippy::too_many_arguments)]
-pub fn update_interest_rate_config(
-    env: &Env,
-    caller: Address,
-    base_rate_bps: Option<i128>,
-    kink_utilization_bps: Option<i128>,
-    multiplier_bps: Option<i128>,
-    jump_multiplier_bps: Option<i128>,
-    rate_floor_bps: Option<i128>,
-    rate_ceiling_bps: Option<i128>,
-    spread_bps: Option<i128>,
-) -> Result<(), InterestRateError> {
-    // Authorization
-    crate::admin::require_admin(env, &caller).map_err(|_| InterestRateError::Unauthorized)?;
+fn require_rate_admin(env: &Env, caller: &Address) -> Result<(), InterestRateError> {
+    admin::require_admin(env, caller).map_err(|e| match e {
+        crate::admin::AdminError::NotInitialized => InterestRateError::NotInitialized,
+        _ => InterestRateError::Unauthorized,
+    })
+}
 
-    let config_key = InterestRateDataKey::InterestRateConfig;
-    let mut config = get_interest_rate_config(env).ok_or(InterestRateError::InvalidParameter)?;
-
-    // --- Validate and apply each parameter ---
-
-    if let Some(rate) = base_rate_bps {
-        if !(0..=BASIS_POINTS_SCALE).contains(&rate) {
-            return Err(InterestRateError::InvalidParameter);
-        }
-        config.base_rate_bps = rate;
-    }
-
-    if let Some(kink) = kink_utilization_bps {
-        // kink must be strictly between 0 and 10_000
-        if kink <= 0 || kink >= BASIS_POINTS_SCALE {
-            return Err(InterestRateError::InvalidParameter);
-        }
-        config.kink_utilization_bps = kink;
-    }
-
-    if let Some(mult) = multiplier_bps {
-        if !(0..=MAX_SLOPE_BPS).contains(&mult) {
-            return Err(InterestRateError::InvalidParameter);
-        }
-        config.multiplier_bps = mult;
-    }
-
-    if let Some(jump) = jump_multiplier_bps {
-        if !(0..=MAX_SLOPE_BPS).contains(&jump) {
-            return Err(InterestRateError::InvalidParameter);
-        }
-        config.jump_multiplier_bps = jump;
-    }
-
-    // Floor/ceiling: validate individually, then cross-check.
-    // We need to resolve the effective floor and ceiling *after* applying
-    // both optional updates so the cross-check is correct.
-    if let Some(floor) = rate_floor_bps {
-        if !(0..=BASIS_POINTS_SCALE).contains(&floor) {
-            return Err(InterestRateError::InvalidParameter);
-        }
-        config.rate_floor_bps = floor;
-    }
-
-    if let Some(ceiling) = rate_ceiling_bps {
-        if !(0..=BASIS_POINTS_SCALE).contains(&ceiling) {
-            return Err(InterestRateError::InvalidParameter);
-        }
-        config.rate_ceiling_bps = ceiling;
-    }
-
-    // Cross-check: floor must not exceed ceiling
-    if config.rate_floor_bps > config.rate_ceiling_bps {
+fn validate_config(config: &InterestRateConfig) -> Result<(), InterestRateError> {
+    if config.base_rate_bps < 0 || config.base_rate_bps > BASIS_POINTS_SCALE {
         return Err(InterestRateError::InvalidParameter);
     }
-
-    if let Some(spread) = spread_bps {
-        if !(0..=BASIS_POINTS_SCALE).contains(&spread) {
-            return Err(InterestRateError::InvalidParameter);
-        }
-        config.spread_bps = spread;
+    if config.kink_utilization_bps <= 0 || config.kink_utilization_bps >= BASIS_POINTS_SCALE {
+        return Err(InterestRateError::InvalidParameter);
     }
-
-    config.last_update = env.ledger().timestamp();
-    env.storage().persistent().set(&config_key, &config);
-
+    if config.multiplier_bps < 0 || config.multiplier_bps > MAX_SLOPE_BPS {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    if config.jump_multiplier_bps < 0 || config.jump_multiplier_bps > MAX_SLOPE_BPS {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    if config.spread_bps < 0 || config.spread_bps > BASIS_POINTS_SCALE {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    if config.kink2_bps <= config.kink_utilization_bps || config.kink2_bps > BASIS_POINTS_SCALE {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    if config.slope3_bps < 0 || config.slope3_bps > MAX_SLOPE_BPS {
+        return Err(InterestRateError::InvalidParameter);
+    }
     Ok(())
 }
 
-// =============================================================================
-// Admin: Emergency Rate Adjustment
-// =============================================================================
-
-/// Set an emergency rate adjustment.
-///
-/// The adjustment (in basis points) is added to the calculated borrow rate.
-/// It can be positive (to increase rates during a crisis) or negative
-/// (to reduce rates temporarily).
-///
-/// # Arguments
-/// * `env` — The Soroban environment.
-/// * `caller` — Must be the super admin.
-/// * `adjustment_bps` — The adjustment value, bounded to `[-10_000, 10_000]`.
-///
-/// # Errors
-/// - [`InterestRateError::Unauthorized`] if caller is not admin.
-/// - [`InterestRateError::InvalidParameter`] if `|adjustment| > 10_000`.
-///
-/// # Security
-/// - Admin-only operation.
-/// - The final borrow rate is still clamped to `[floor, ceiling]` regardless
-///   of the adjustment magnitude.
-pub fn set_emergency_rate_adjustment(
-    env: &Env,
-    caller: Address,
-    adjustment_bps: i128,
-) -> Result<(), InterestRateError> {
-    crate::admin::require_admin(env, &caller).map_err(|_| InterestRateError::Unauthorized)?;
-
-    if adjustment_bps.abs() > BASIS_POINTS_SCALE {
-        return Err(InterestRateError::InvalidParameter);
-    }
-
-    let config_key = InterestRateDataKey::InterestRateConfig;
-    let mut config = get_interest_rate_config(env).ok_or(InterestRateError::InvalidParameter)?;
-
-    config.emergency_adjustment_bps = adjustment_bps;
-    config.last_update = env.ledger().timestamp();
-
-    env.storage().persistent().set(&config_key, &config);
-
-    Ok(())
-}
-
-// =============================================================================
-// Public Query Helpers
-// =============================================================================
-
-/// Get the current borrow rate in basis points.
-///
-/// Convenience wrapper around [`calculate_borrow_rate`].
-pub fn get_current_borrow_rate(env: &Env) -> Result<i128, InterestRateError> {
-    calculate_borrow_rate(env)
-}
-
-/// Get the current supply rate in basis points.
-///
-/// Convenience wrapper around [`calculate_supply_rate`].
-pub fn get_current_supply_rate(env: &Env) -> Result<i128, InterestRateError> {
-    calculate_supply_rate(env)
-}
-
-/// Get the current utilization in basis points.
-///
-/// Convenience wrapper around [`calculate_utilization`].
-pub fn get_current_utilization(env: &Env) -> Result<i128, InterestRateError> {
-    calculate_utilization(env)
+/// Emit a compact rate-configuration update event.
+pub fn emit_rate_config_updated(env: &Env, min_rate_bps: i128, max_rate_bps: i128) {
+    env.events().publish(
+        (symbol_short!("rate"), symbol_short!("clamp")),
+        (min_rate_bps, max_rate_bps),
+    );
 }

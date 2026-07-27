@@ -27,6 +27,7 @@ No overlapping discriminants or ambiguous tuple layouts are introduced in this a
 
 - `hello-world` contract only.
 - Does not cover cross-contract key collisions.
+- `src/lib.rs` now defines a typed `DataKey` enum for admin, balance, and debt storage keys.
 
 ## Trust Boundaries
 

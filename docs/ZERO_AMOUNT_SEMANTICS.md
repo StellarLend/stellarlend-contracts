@@ -1,60 +1,46 @@
-# Zero-Amount Operation Semantics
+# Zero Amount and Overpayment Semantics
 
-This document specifies the expected behavior of all amount-bearing operations
-in the StellarLend contracts when called with zero or negative amounts.
+## Overview
 
-## Core Lending Operations
+This document defines the expected behavior of the StellarLend protocol when handling zero, negative, or excessive amounts in state-mutating operations.
 
-All core lending operations **reject** amounts ≤ 0 with their respective
-`InvalidAmount` error variants. No state mutations occur on rejection.
+## Zero and Negative Amounts
 
-| Operation              | Zero / Negative Amount Result              |
-|------------------------|--------------------------------------------|
-| `deposit_collateral`   | `Err(DepositError::InvalidAmount)`         |
-| `withdraw_collateral`  | `Err(WithdrawError::InvalidAmount)`        |
-| `borrow_asset`         | `Err(BorrowError::InvalidAmount)`          |
-| `repay_debt`           | `Err(RepayError::InvalidAmount)`           |
-| `liquidate`            | `Err(LiquidationError::InvalidAmount)`     |
+All core lending entrypoints (`deposit`, `withdraw`, `borrow`, `repay`, `liquidate`) MUST reject zero and negative amounts.
 
-### Invariants
+- Providing `amount <= 0` results in `LendingError::InvalidAmount`.
+- No state is mutated, and the transaction reverts.
 
-1. **No state mutation**: When an operation returns an error, storage (balances,
-   positions, analytics) must remain exactly as before the call.
-2. **Clean revert**: The operation returns a typed `Result::Err`, not an
-   unhandled panic or abort.
-3. **Composability**: A rejected zero-amount operation must not corrupt state
-   for subsequent valid operations.
+## Overpayment (Repay)
 
-## Security Notes
+When a user repays an amount greater than their outstanding debt (principal + accrued interest):
 
-- **Trust boundaries**: Admin and guardian roles can change protocol-wide
-  configuration and recovery state, but they do not bypass the amount checks on
-  user entrypoints.
-- **Token transfer flows**: Deposit, repay, and token-based liquidation use
-  token `transfer_from`; withdraw and collateral payout paths use outbound
-  contract transfers. The zero-amount guard executes before those external call
-  paths.
-- **Authorization and reentrancy**: User-facing state-changing flows enforce
-  caller authorization and/or reentrancy guards within their modules. Zero
-  amounts are rejected before any external token transfer or storage mutation.
-- **Arithmetic safety**: Amount validation short-circuits before balance math,
-  and the protocol uses checked arithmetic on value-changing paths to avoid
-  overflow-induced state corruption.
+- The protocol **silently clamps** the repayment to the exact outstanding balance.
+- The remaining debt becomes exactly `0`.
+- Debt balances are **never** allowed to become negative. A negative debt must not be used to represent a credit balance.
+- The `repay` function returns an explicit `i128` value indicating the **remaining principal debt after repayment**:
+  - On exact or overpayment: returns `0`.
+  - On partial repayment: returns the positive remaining principal.
+- By clamping rather than rejecting overpayments, the protocol ensures users can easily clear their entire debt even as interest accrues between transaction creation and execution.
 
-## Risk Management / Liquidation Functions
+## No Prior Debt (Repay)
 
-These functions accept zero values and handle them gracefully:
+If a user calls `repay` when they have no outstanding debt:
 
-| Function                            | Zero-Value Behavior                       |
-|-------------------------------------|-------------------------------------------|
-| `can_be_liquidated(_, 0)`           | `Ok(false)` — no debt means not liquidatable |
-| `can_be_liquidated(0, debt)`        | `Ok(true)` — zero collateral is liquidatable |
-| `can_be_liquidated(0, 0)`           | `Ok(false)` — no debt means not liquidatable |
-| `get_max_liquidatable_amount(0)`    | `Ok(0)` — nothing to liquidate             |
-| `get_liquidation_incentive_amount(0)` | `Ok(0)` — no incentive for zero amount   |
-| `require_min_collateral_ratio(_, 0)`| `Ok(())` — no debt always satisfies ratio  |
+- The protocol treats this as a zero-debt repay and clamps cleanly to `0`.
+- No negative debt (credit balance) is created.
+- The return value is `0`.
 
-## References
+## View Functions
 
-- **Issue**: [#385 - Zero-Amount Operation Handling Tests](https://github.com/StellarLend/stellarlend-contracts/issues/385)
-- **Test module**: `stellar-lend/contracts/hello-world/src/test_zero_amount.rs`
+Read-only view functions such as `get_position` and `get_health_factor` are guaranteed to never report negative debt balances:
+
+- `get_position().debt` always returns a value `>= 0`. If underlying interest arithmetic ever results in a sub-zero calculation, it is clamped to `0`.
+- `get_debt_position().principal` reflects the raw stored principal, which is always written as `>= 0` by `repay` and `borrow`.
+- `get_health_factor` similarly clamps the effective debt to `0` before the health-factor division.
+
+## Implementation Notes
+
+- The clamp is applied in `debt::repay_amount` by comparing the repay amount against the accrual-settled principal; if `amount >= settled.principal`, the resulting principal is set to `0`.
+- An additional `.max(0)` guard is applied in `LendingContract::get_position` before constructing the `PositionSummary`, providing defense-in-depth against any future rounding edge case.
+- The `TotalDebt` protocol counter is decremented by `prev_principal - updated.principal` (floored at `0` via `saturating_sub`), so it also cannot become negative.

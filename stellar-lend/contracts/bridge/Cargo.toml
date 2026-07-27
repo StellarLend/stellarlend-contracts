@@ -1,5 +1,5 @@
 [package]
-name = "bridge"
+name = "stellarlend-bridge"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -10,7 +10,6 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true }
-stellarlend-common = { path = "../common" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

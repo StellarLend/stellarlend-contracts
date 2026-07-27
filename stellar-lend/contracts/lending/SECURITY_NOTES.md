@@ -28,3 +28,180 @@ Protocol parameters strictly utilize `checked_add`, `checked_sub`, `checked_mul`
 - **Pause module**: Withdraw is blocked when `pause::is_paused(Withdraw)` is true (this includes global `PauseType::All`), when the legacy `WithdrawDataKey::Paused` flag is set, or when the protocol is in **emergency shutdown** (`blocks_high_risk_ops` and not in **recovery**). In **recovery**, users may still withdraw (and repay) to unwind positions.
 - **Collateral ratio**: Post-withdraw collateral must satisfy the same minimum ratio as borrows, via shared `borrow::validate_collateral_ratio` (150% default, `MIN_COLLATERAL_RATIO_BPS`).
 - **Authorization**: Only the position owner can withdraw; `user.require_auth()` is enforced before state changes.
+
+### Liquidation Boundary and Health Factor Scaling
+The protocol represents the Health Factor using a scalar where `10_000` equates to `1.0`. 
+To ensure determinism and avoid rounding ambiguity, the protocol strictly enforces the `<` threshold for liquidation eligibility. 
+* A position with a Health Factor `<= 9_999` **is eligible** for liquidation.
+* A position with a Health Factor `>= 10_000` **is completely immune** to liquidation. 
+
+There are no edge cases where a `10_000` Health Factor allows for liquidation. All price oracle rounding uses integer truncations designed to safely error on the side of protecting the borrower from false-positive liquidations.
+
+### Self-Liquidation Guard
+The `liquidate` entry point now rejects any call where the liquidator address matches the borrower address. This guard triggers before any collateral or debt state reads, preventing a borrower from liquidating their own position to capture the liquidation incentive and profit from the protocol's close-factor mechanics.
+
+## Oracle Migration Risks and Mitigation
+
+Changing the protocol oracle (either the legacy address or the hardened module primary/fallback slots) is a high-risk administrative action that impacts the valuation of all open positions.
+
+### Risks
+- **Price Jump Liquidation**: Swapping to an oracle that reports a significantly lower price for collateral (or higher for debt) can instantly push healthy positions into liquidation eligibility.
+- **Staleness Gaps**: If a new oracle has not yet submitted a price feed, valuation will fail (returning 0), blocking withdrawals and potentially enabling liquidations if not handled safely.
+- **Misconfiguration**: Setting an incorrect oracle address or one with different decimal scales (the protocol expects 8 decimals) leads to incorrect health factor calculations.
+
+### Mitigation and Operational Guidance
+- **Deterministic Precedence**: The protocol prioritizes the Hardened Oracle Module over the Legacy Oracle address. This allows for a "staged" migration where a hardened feed is configured and verified before removing the legacy fallback.
+- **Auditable Transitions**: All oracle changes emit events (`OracleSetEvent` or `OracleConfigEvent`) containing the admin, the new address, and the timestamp, ensuring a clear audit trail of price-source transitions.
+- **Safe Failure Modes**: If an oracle returns an invalid price or is missing, the health factor defaults to 0. The `liquidate` function explicitly rejects positions with HF=0 to prevent "phantom liquidations" caused by missing price data.
+- **Pre-Migration Valuation**: Admins should use view functions (`get_user_position`) with the proposed oracle price off-chain before committing the change on-chain to ensure no mass-liquidation event is triggered.
+
+---
+
+## Overflow and Underflow Protection (Integer Arithmetic Safety)
+
+### Core Policy
+
+All state-mutating operations (deposit, withdraw, borrow, repay) in the StellarLend lending contract use **checked arithmetic** (`i128::checked_add`, `i128::checked_sub`) to prevent integer overflow and underflow vulnerabilities. This is enforced independently of compiler flags via explicit error handling, providing defense-in-depth protection.
+
+### Threat Model
+
+In unprotected systems, integer overflow/underflow can cause:
+- Silent balance wraparound (e.g., i128::MAX + 1 wraps to i128::MIN)
+- Loss of user collateral or protocol insolvency  
+- Broken accounting invariants that accumulate over time
+
+### Protected Operations
+
+**Deposit**: User collateral and protocol total deposits increased via `checked_add`
+```rust
+let new_balance = current.checked_add(amount).ok_or(LendingError::Overflow)?;
+let new_total = total_deposits.checked_add(amount).ok_or(LendingError::Overflow)?;
+```
+
+**Withdraw**: User collateral and protocol total deposits decreased via `checked_sub`
+```rust
+let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+let new_total = total_deposits.checked_sub(amount).ok_or(LendingError::Overflow)?;
+```
+
+**Borrow**: User principal and protocol total debt increased via `checked_add`
+```rust
+let new_total = total_debt.checked_add(amount).ok_or(LendingError::Overflow)?;
+```
+
+**Repay**: User principal and protocol total debt decreased via `checked_sub`
+```rust
+let new_total = total_debt.checked_sub(amount).ok_or(LendingError::Overflow)?;
+```
+
+**Flash Loans**: Treasury and receiver balances transferred via `checked_add/checked_sub`, fee calculated with `checked_mul`
+
+**Health Factor Calculation**: Collateral * 8000 (coefficient) computed with `checked_mul`, defaults to `i128::MAX` (safe) on overflow
+
+### Error Propagation
+
+All overflow conditions return `LendingError::Overflow` (error code 2003) consistently:
+- Caller matches on `Err(LendingError::Overflow)` to reject transaction
+- Error clearly distinguishes from other failure modes (cap exceeded, insufficient collateral, etc.)
+- Enables robust monitoring and user-facing error messages
+
+### Build Profile Independence
+
+Cargo.toml enables `overflow-checks = true` for all profiles (debug, release, test) as a secondary defense. The primary defense is the explicit checked arithmetic in code:
+- **Future-proof**: Changes to build settings cannot silently re-enable wraparound
+- **Auditable**: Code review can verify all arithmetic uses checked variants
+- **Testable**: Adversarial tests verify error returns, not just panic prevention
+
+### Testing Verification
+
+Adversarial test suite (minimum 95% coverage) validates:
+- Deposit/borrow at i128::MAX / N for N = 2, 3, 4, 5...
+- Repay/withdraw at extreme values without underflow
+- Protocol-level total tracking with multiple users at near-max values
+- Health factor calculation near i128::MAX without overflow
+
+Example test: `test_deposit_at_max_balance_near_limit` deposits i128::MAX/2, then verifies second large deposit fails with Overflow error.
+
+### Debt Module Consistency
+
+The `debt.rs` module (interest accrual, principal mutations) follows the same checked arithmetic discipline:
+- `settle_accrual()`: `checked_add` for interest + principal
+- `effective_debt()`: `checked_add` for cumulative debt
+- `borrow_amount()`: `checked_add` for new borrowing
+- `repay_amount()`: `checked_sub` for repayment
+- All return `Result<_, DebtError::Overflow>` on arithmetic failure
+
+## Liquidation Rounding Policy
+
+All three divisions in the `liquidate` path use **floor rounding** (truncation
+toward zero for positive inputs) so that every sub-unit remainder favours
+protocol solvency over the liquidator:
+
+| Division | Rounding | Effect |
+|---|---|---|
+| `hf = collateral × 8000 ÷ debt` | floor | Lower HF → position appears more underwater → liquidation triggered sooner |
+| `max_repay = debt × 5000 ÷ 10000` | floor | Smaller close-factor cap → less debt extinguished per liquidation → more rounds remain |
+| `seized = repay × 11000 ÷ 10000` | floor | Liquidator receives *less* collateral than the exact 10 % bonus → remainder stays with borrower/protocol |
+
+These are enforced via `math::checked_mul_div_floor`, which uses
+`checked_mul` + `checked_div` with explicit floor semantics.  A companion
+`math::checked_mul_div_ceil` exists for non-liquidation paths that need the
+opposite direction, but it is **never** used in `liquidate`.
+
+### Dust attack mitigation
+
+A liquidator who repeatedly triggers small (dust) liquidations
+can never accumulate a net positive due to rounding, because every truncation
+transfers value *away* from the liquidator.  Concretely:
+
+- If `seized_collateral` would be 1.1, the liquidator receives 1 and the 0.1
+  stays with the borrower.
+- If `max_repay` would be 0.5, the cap rounds to 0 (and the liquidation is
+  rejected via the `actual_repay <= 0` dust guard), preventing a no-op call
+  from wasting gas.
+
+### Audit Checklist
+
+- ✅ All core flows (deposit, withdraw, borrow, repay) use checked arithmetic
+- ✅ LendingError::Overflow defined with unique error code (2003)
+- ✅ Flash loan functions use checked_add/checked_sub/checked_mul
+- ✅ Query functions (get_position) use checked_mul for health factor
+- ✅ NatSpec documentation comments document overflow invariants per entrypoint
+- ✅ Adversarial tests cover extreme values and overflow scenarios
+- ✅ Test coverage ≥ 95% for core flows and error paths
+- ✅ No silent wraparound in any build profile (checked_add/sub primary defense)
+- ✅ Error messages explicit ("deposit: collateral overflow", "repay_flash_loan: treasury balance overflow")
+
+### Related Documentation
+
+- **Implementation**: [lib.rs - Core Flows](./src/lib.rs) (deposit, withdraw, borrow, repay functions)
+- **Tests**: [lib.rs - Adversarial Tests](./src/lib.rs#L889) (test_deposit_at_max_balance_near_limit, etc.)
+- **Debt Module**: [debt.rs](./src/debt.rs) - Interest accrual with checked arithmetic
+- **Rounding Strategy**: [rounding_strategy.rs](./src/rounding_strategy.rs) - Pattern for checked operations
+
+
+## Liquidation Invariant: Checked Subtraction
+
+`liquidate` computes `new_debt = debt - actual_repay` and
+`new_col = collateral - final_seized`.
+
+Both operations use `checked_sub` returning `LendingError::Overflow` on
+underflow. This turns a silent `saturating_sub` floor-to-zero into a loud
+failure, surfacing any logic bug where the close-factor or seizure clamp is
+incorrect.
+
+### Why underflow is unreachable on valid inputs
+
+| Variable | Clamp that prevents underflow |
+|---|---|
+| `actual_repay` | Clamped to `min(amount, debt * CLOSE_FACTOR / 10000)` ≤ `debt` |
+| `final_seized` | Clamped to `min(seized_collateral, collateral)` ≤ `collateral` |
+
+### Why checked_sub is still necessary
+
+If the clamp arithmetic is ever changed incorrectly, `saturating_sub` would
+silently write `0` to debt or collateral, masking the bug. `checked_sub`
+causes the transaction to revert with `LendingError::Overflow`, making the
+violation observable in tests and on-chain.
+
+**Test coverage:** `src/liquidate_checked_sub_test.rs`

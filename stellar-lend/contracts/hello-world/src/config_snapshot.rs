@@ -1,84 +1,108 @@
-//! # Configuration Snapshot Module
+//! Protocol configuration snapshot.
 //!
-//! Provides a read-only view of key protocol configuration parameters
-//! for observability, monitoring, and off-chain tooling.
+//! Provides a single read that aggregates the current risk parameters,
+//! interest-rate model configuration, and emergency/pause state into a
+//! flat [`ConfigSnapshot`] struct — a one-shot "protocol health dashboard"
+//! query suitable for off-chain monitoring, dashboards, and integrator
+//! health checks.
 //!
-//! ## Response Schema
-//!
-//! `ConfigSnapshot` contains:
-//! - `min_collateral_ratio` — minimum collateral ratio in basis points (e.g. 11000 = 110%)
-//! - `liquidation_threshold` — liquidation threshold in basis points (e.g. 10500 = 105%)
-//! - `close_factor` — max liquidatable debt per tx in basis points (e.g. 5000 = 50%)
-//! - `liquidation_incentive` — liquidator bonus in basis points (e.g. 1000 = 10%)
-//! - `emergency_paused` — whether the global emergency pause is active
-//! - `base_borrow_rate` — current base borrow rate in basis points
-//! - `snapshot_time` — ledger timestamp when snapshot was taken
-//!
-//! ## Security
-//! - All fields are read-only; no state is modified
-//! - No sensitive data (admin address, user positions) is included
-//! - Safe to call by any address without authorization
+//! The snapshot is purely read-only; it never mutates contract state and
+//! requires no authorization.  Returns `None` when the contract has not yet
+//! been initialized (i.e. when neither risk params nor interest-rate config
+//! exist in storage).
 
-use crate::risk_management::RiskDataKey;
-use crate::risk_params::{RiskParams, RiskParamsDataKey};
 use soroban_sdk::{contracttype, Env};
-use crate::prelude::*;
 
-/// Represents a point-in-time snapshot of the protocol's configuration.
+use crate::interest_rate::get_interest_rate_config;
+use crate::risk_management::is_emergency_paused;
+use crate::risk_management::{
+    get_close_factor, get_liquidation_incentive, get_liquidation_threshold,
+    get_min_collateral_ratio,
+};
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// A point-in-time snapshot of the protocol's configuration.
 ///
-/// Contains key risk parameters and global state variables required by off-chain
-/// tooling, liquidators, and monitoring services.
+/// All rate/ratio fields are expressed in basis points (bps) where
+/// `10_000` equals 100%.
 ///
-/// # Security
-/// - All fields are read-only views of the contract's persistent storage.
-/// - No state mutations occur during the creation of this snapshot.
-/// - Does not expose sensitive user data or admin-only configuration details.
+/// Fields are `None` when the underlying module has not been initialized.
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigSnapshot {
-    pub min_collateral_ratio: i128,
-    pub liquidation_threshold: i128,
-    pub close_factor: i128,
-    pub liquidation_incentive: i128,
+    // ---- Risk parameters ---------------------------------------------------
+    /// Minimum collateral ratio required to open or maintain a position, in bps.
+    pub min_collateral_ratio_bps: i128,
+    /// Collateral-value threshold at which a position becomes eligible for
+    /// liquidation, in bps.
+    pub liquidation_threshold_bps: i128,
+    /// Maximum fraction of a position's debt that can be repaid in a single
+    /// liquidation call, in bps.
+    pub close_factor_bps: i128,
+    /// Collateral bonus paid to liquidators as a percentage of the repaid
+    /// amount, in bps.
+    pub liquidation_incentive_bps: i128,
+
+    // ---- Interest-rate model -----------------------------------------------
+    /// Base borrow APR at 0% utilization, in bps.
+    pub base_rate_bps: i128,
+    /// Utilization kink where the rate curve steepens, in bps.
+    pub kink_utilization_bps: i128,
+    /// Pre-kink slope: total rate increase from 0 to kink utilization, in bps.
+    pub multiplier_bps: i128,
+    /// Post-kink slope: total rate increase from kink to 100% utilization, in bps.
+    pub jump_multiplier_bps: i128,
+    /// Spread subtracted from the effective borrow rate to derive the supply
+    /// rate, in bps.
+    pub spread_bps: i128,
+    /// Hard minimum borrow rate enforced after all adjustments, in bps.
+    pub min_rate_bps: i128,
+    /// Hard maximum borrow rate enforced after all adjustments, in bps.
+    pub max_rate_bps: i128,
+
+    // ---- Pause state -------------------------------------------------------
+    /// `true` when the global emergency pause is active.
     pub emergency_paused: bool,
-    pub base_borrow_rate: i128,
-    pub snapshot_time: u64,
 }
 
-/// Retrieves the current configuration snapshot of the protocol.
+// ---------------------------------------------------------------------------
+// Query
+// ---------------------------------------------------------------------------
+
+/// Return a [`ConfigSnapshot`] of the current protocol configuration, or
+/// `None` if the contract has not been initialized.
 ///
-/// Reads persistent storage to assemble a `ConfigSnapshot` containing risk
-/// parameters, emergency pause status, and the current base borrow rate.
-///
-/// # Returns
-/// - `Some(ConfigSnapshot)` if the protocol has been initialized and risk parameters exist.
-/// - `None` if the protocol is uninitialized.
-///
-/// # Security
-/// - **Authorization:** None required. Safe to call by any address.
-/// - **Reentrancy:** Safe. This function is strictly read-only and makes no external cross-contract calls that could trigger reentrancy.
-/// - **State Mutation:** Guaranteed read-only. Uses only `get` operations on storage.
+/// This function is read-only and requires no authorization.
 pub fn get_config_snapshot(env: &Env) -> Option<ConfigSnapshot> {
-    let risk_params = env
-        .storage()
-        .persistent()
-        .get::<RiskParamsDataKey, RiskParams>(&RiskParamsDataKey::RiskParamsConfig)?;
+    // Require at least the risk params to be initialized before returning a
+    // snapshot; avoids a partially-zero snapshot that could mislead callers.
+    let min_collateral_ratio_bps = get_min_collateral_ratio(env).ok()?;
+    let liquidation_threshold_bps = get_liquidation_threshold(env).ok()?;
+    let close_factor_bps = get_close_factor(env).ok()?;
+    let liquidation_incentive_bps = get_liquidation_incentive(env).ok()?;
 
-    let emergency_paused = env
-        .storage()
-        .persistent()
-        .get::<RiskDataKey, bool>(&RiskDataKey::EmergencyPause)
-        .unwrap_or(false);
+    // Interest-rate config may not be initialized in all test environments;
+    // fall back to zero-valued defaults rather than returning None so that
+    // dashboards still receive the risk-param half of the snapshot.
+    let ir = get_interest_rate_config(env).unwrap_or_default();
 
-    let base_borrow_rate = crate::interest_rate::calculate_borrow_rate(env).unwrap_or(0);
+    let emergency_paused = is_emergency_paused(env);
 
     Some(ConfigSnapshot {
-        min_collateral_ratio: risk_params.min_collateral_ratio,
-        liquidation_threshold: risk_params.liquidation_threshold,
-        close_factor: risk_params.close_factor,
-        liquidation_incentive: risk_params.liquidation_incentive,
+        min_collateral_ratio_bps,
+        liquidation_threshold_bps,
+        close_factor_bps,
+        liquidation_incentive_bps,
+        base_rate_bps: ir.base_rate_bps,
+        kink_utilization_bps: ir.kink_utilization_bps,
+        multiplier_bps: ir.multiplier_bps,
+        jump_multiplier_bps: ir.jump_multiplier_bps,
+        spread_bps: ir.spread_bps,
+        min_rate_bps: ir.min_rate_bps,
+        max_rate_bps: ir.max_rate_bps,
         emergency_paused,
-        base_borrow_rate,
-        snapshot_time: env.ledger().timestamp(),
     })
 }

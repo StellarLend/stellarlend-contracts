@@ -1,63 +1,59 @@
-# StellarLend AMM Integration Contract
+# StellarLend AMM
 
-This contract provides Automated Market Maker (AMM) integration for the StellarLend protocol, enabling automated swaps and liquidity operations within lending operations.
+A constant-product AMM contract for the Stellar Soroban platform, implementing
+Uniswap-v2-style swap mechanics with configurable basis-point fees, LP share
+minting, and flash swaps.
 
-## Features
+---
 
-- **Multi-Protocol Support**: Integrates with multiple AMM protocols
-- **Automated Swaps**: Execute token swaps with slippage protection
-- **Liquidity Operations**: Add/remove liquidity from AMM pools
-- **Callback Validation**: Secure callback handling with replay protection
-- **Event Emission**: Comprehensive event logging for all operations
-- **Collateral Optimization**: Auto-swap functionality for optimal collateral ratios
+## Documentation Index
 
-## Key Functions
+| Document | Description |
+|---|---|
+| [AMM_MATH.md](./AMM_MATH.md) | Constant-product formula derivation, fee model, and worked examples |
+| [FLASH_SWAP_PROTOCOL.md](./FLASH_SWAP_PROTOCOL.md) | **Flash-swap call sequence, verify-k invariant, reentrancy guard, rollback semantics** |
+| [SWAP_BOUND_INVARIANTS.md](./SWAP_BOUND_INVARIANTS.md) | Output-bound and k-monotonicity invariants proven by property tests |
+| [SWAP_SYMMETRY.md](./SWAP_SYMMETRY.md) | Forward/backward swap symmetry proofs |
+| [FEE_ACCOUNTING.md](./FEE_ACCOUNTING.md) | Per-side fee accumulator model |
+| [MINT_INVARIANTS.md](./MINT_INVARIANTS.md) | LP share minting edge cases and invariants |
+| [SQRT_PRECISION.md](./SQRT_PRECISION.md) | Integer square root precision guarantees |
 
-### Admin Functions
-- `initialize_amm_settings`: Set up AMM parameters
-- `add_amm_protocol`: Register new AMM protocols
-- `update_amm_settings`: Modify AMM settings
+---
 
-### User Functions
-- `execute_swap`: Perform token swaps
-- `add_liquidity`: Add liquidity to pools
-- `remove_liquidity`: Remove liquidity from pools
-- `auto_swap_for_collateral`: Optimize collateral ratios
+## Quick Start
 
-### Protocol Functions
-- `validate_amm_callback`: Validate AMM protocol callbacks
+```rust
+// Initialize pool
+client.init_pool(&1_000_i128, &1_000_i128);
 
-## Security Features
+// Regular swap A → B
+let out = client.swap_a_for_b(&100_i128, &30_i128 /*fee_bps*/);
 
-- Slippage protection with configurable tolerances
-- Callback validation with nonce-based replay protection and deadline (expiry) checks
-- Admin-only configuration functions
-- Comprehensive parameter validation
-- Emergency pause functionality integration
-- Authorization checks (`require_auth`) on admin/user/protocol entrypoints
+// Flash swap (two ops in a single multi-op transaction)
+client.flash_swap_a_for_b(&100_i128, &30_i128, &Bytes::new(&env));
+// … caller executes arbitrary logic …
+client.repay_flash_swap(&amount_in_min);
+```
 
-## Liquidity Share Math and Rounding
+For a complete walkthrough of the flash-swap call sequence, invariants, and
+failure modes see [FLASH_SWAP_PROTOCOL.md](./FLASH_SWAP_PROTOCOL.md).
 
-- Initial LP minting uses `floor(sqrt(amount_a * amount_b))`.
-- Subsequent LP minting uses `floor(min(amount_a * total_lp / reserve_a, amount_b * total_lp / reserve_b))`.
-- LP burns return `floor(lp_burned * reserve / total_lp)` per token.
-- All rounding is floor-biased to preserve solvency and prevent over-credit/over-withdraw.
+---
 
-## Trust Boundaries
+## Running Tests
 
-- **Admin authority**: can initialize and update AMM settings, and register protocol configs.
-- **User authority**: users must authorize their own swap/add/remove operations.
-- **Protocol callbacks**: registered AMM protocol addresses must authorize callback validation calls.
-- **Token transfer flows**: this integration tracks AMM routing/LP accounting and callback safety; actual token transfer semantics depend on the integrated AMM/token contracts.
+```sh
+cargo test -p stellarlend-amm
+```
 
-## Events
+To run only flash-swap tests:
 
-- `swap_executed`: Token swap details
-- `liquidity_added`: Liquidity addition events
-- `liquidity_removed`: Liquidity removal events
-- `amm_operation`: General AMM operation tracking
-- `callback_validated`: Callback validation events
+```sh
+cargo test -p stellarlend-amm flash_swap
+```
 
-## Usage
+To run only the protocol doc-tests:
 
-The AMM contract is designed to work seamlessly with the main StellarLend lending protocol, providing automated market making capabilities for optimal capital efficiency.
+```sh
+cargo test -p stellarlend-amm flash_swap_protocol
+```
