@@ -23,7 +23,6 @@ fn repay_exact_amount_leaves_zero_debt() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -42,7 +41,6 @@ fn repay_overpay_by_one_unit_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -62,7 +60,6 @@ fn repay_overpay_by_2x_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -84,7 +81,6 @@ fn repay_overpay_after_interest_accrual_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: initial_timestamp,
     };
 
@@ -108,7 +104,6 @@ fn repay_partial_payment_leaves_remaining_debt() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
