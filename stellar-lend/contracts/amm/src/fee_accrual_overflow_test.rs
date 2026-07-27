@@ -29,15 +29,18 @@ const BIG_RESERVE: i128 = 1_000_000_000_000_000_000; // 10^18
 
 /// Helper: set up a pool and return `(env, amm_id, client)` so that tests
 /// needing direct storage access can use `env.as_contract(&amm_id, ...)`.
-fn setup(ra: i128, rb: i128) -> (Env, Address, AmmContractClient<'static>) {
+fn setup(ra: i128, rb: i128) -> (Env, Address, AmmContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let amm_id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &amm_id);
-    client.init_pool(&ra, &rb);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let admin = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
-    (env, amm_id, client)
+    (env, amm_id, client, admin)
 }
 
 /// Seed `fee_a` storage to a value near `i128::MAX` directly, bypassing
@@ -61,7 +64,7 @@ fn seed_fee_b(env: &Env, amm_id: &Address, value: i128) {
 
 #[test]
 fn test_normal_accrual_unchanged() {
-    let (_env, _id, client) = setup(10_000, 10_000);
+    let (_env, _id, client, _admin) = setup(10_000, 10_000);
     client.swap_a_for_b(&1_000);
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 3, "normal fee must still be exact");
@@ -70,7 +73,7 @@ fn test_normal_accrual_unchanged() {
     client.swap_b_for_a(&2_000);
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 3, "fee_a unchanged after B→A swap");
-    assert_eq!(fee_b, 10, "fee_b = 2000 * 50 / 10000 = 10");
+    assert_eq!(fee_b, 6, "fee_b = 2000 * 30 / 10000 = 6 (DEFAULT_FEE_BPS)");
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +82,7 @@ fn test_normal_accrual_unchanged() {
 
 #[test]
 fn test_saturate_at_max_for_a_side() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     // Seed fee_a to one below max
     seed_fee_a(&env, &amm_id, i128::MAX - 1);
@@ -103,7 +106,7 @@ fn test_saturate_at_max_for_a_side() {
 
 #[test]
 fn test_saturate_at_max_for_b_side() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     seed_fee_b(&env, &amm_id, i128::MAX - 1);
 
@@ -124,7 +127,7 @@ fn test_saturate_at_max_for_b_side() {
 
 #[test]
 fn test_saturate_then_other_side_untouched() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     // Saturate fee_a only
     seed_fee_a(&env, &amm_id, i128::MAX - 1);
@@ -143,7 +146,7 @@ fn test_saturate_then_other_side_untouched() {
 
 #[test]
 fn test_both_sides_saturate_independently() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     seed_fee_a(&env, &amm_id, i128::MAX - 1);
     seed_fee_b(&env, &amm_id, i128::MAX - 1);
@@ -162,9 +165,13 @@ fn test_both_sides_saturate_independently() {
 
 #[test]
 fn test_zero_fee_safe_near_max() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     seed_fee_a(&env, &amm_id, i128::MAX - 1);
+
+    // Explicitly set a zero fee: the test's premise is a zero-fee swap, but
+    // the default fee (DEFAULT_FEE_BPS) would otherwise accrue a few units.
+    client.set_fee_bps(&admin, &0);
 
     // Zero-fee swap must not alter accumulator and must not panic
     client.swap_a_for_b(&1_000);
@@ -183,7 +190,7 @@ fn test_zero_fee_safe_near_max() {
 
 #[test]
 fn test_saturate_never_exceeds_max() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     // Start from various seed values and verify we never exceed MAX
     let seeds = [i128::MAX - 100, i128::MAX - 1, i128::MAX];
@@ -208,13 +215,15 @@ fn test_saturate_never_exceeds_max() {
 
 #[test]
 fn test_reinit_resets_saturated_fees() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     seed_fee_a(&env, &amm_id, i128::MAX);
     seed_fee_b(&env, &amm_id, i128::MAX);
 
     // Re-initialize the pool with new reserves
-    client.init_pool(&50_000, &50_000);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    client.init_pool(&50_000, &50_000, &token_a, &token_b);
 
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "re-init must reset fee_a to zero");
@@ -232,7 +241,7 @@ fn test_reinit_resets_saturated_fees() {
 
 #[test]
 fn test_no_panic_on_large_fee() {
-    let (env, amm_id, client) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     // Pre-seed the fee accumulator close to max, then do a swap whose fee
     // would overflow if unchecked.

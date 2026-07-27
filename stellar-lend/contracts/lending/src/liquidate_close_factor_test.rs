@@ -13,7 +13,11 @@
 
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-use crate::{debt::DebtPosition, DataKey, LendingContract, LendingContractClient, LendingError};
+use crate::{
+    debt::DebtPosition,
+    liquidate_transfer_test::{MockToken, MockTokenClient},
+    DataKey, LendingContract, LendingContractClient, LendingError,
+};
 
 // Protocol constants mirrored from `LendingContract::liquidate` (lib.rs).
 const CLOSE_FACTOR_BPS: i128 = 5_000;
@@ -43,10 +47,17 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
     let cid = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &cid);
 
+    let admin = Address::generate(&env);
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+
+    // `liquidate` requires an initialized contract (admin key present).
+    client.initialize(&admin);
+
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
 
     let now = env.ledger().timestamp();
     env.as_contract(&cid, || {
@@ -57,6 +68,7 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: debt,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );

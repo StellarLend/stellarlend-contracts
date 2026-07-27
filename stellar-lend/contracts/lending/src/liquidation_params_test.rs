@@ -18,8 +18,10 @@ use soroban_sdk::{
 };
 
 use crate::{
-    debt::DebtPosition, DataKey, LendingContract, LendingContractClient, LendingError,
-    DEFAULT_CLOSE_FACTOR_BPS, DEFAULT_LIQUIDATION_INCENTIVE_BPS, MAX_LIQUIDATION_INCENTIVE_BPS,
+    debt::DebtPosition,
+    liquidate_transfer_test::{MockToken, MockTokenClient},
+    DataKey, LendingContract, LendingContractClient, LendingError, DEFAULT_CLOSE_FACTOR_BPS,
+    DEFAULT_LIQUIDATION_INCENTIVE_BPS, MAX_LIQUIDATION_INCENTIVE_BPS,
 };
 
 fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
@@ -48,6 +50,7 @@ fn seed_position(env: &Env, cid: &Address, borrower: &Address, collateral: i128,
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: debt,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -235,8 +238,10 @@ fn liquidate_uses_default_close_factor_and_incentive_when_unset() {
 
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
     seed_position(&env, &cid, &borrower, 100, 200);
 
     // max_repay = 200 * 5000 / 10000 = 100 (default close factor)
@@ -260,8 +265,10 @@ fn liquidate_honours_governed_close_factor_override() {
 
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
     // hf = 900 * 8000 / 800 = 9000 < 10000 -> unhealthy.
     seed_position(&env, &cid, &borrower, 900, 800);
 
@@ -291,8 +298,10 @@ fn liquidate_honours_governed_incentive_override() {
 
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
     // hf = 200 * 8000 / 200 = 8000 < 10000 -> unhealthy.
     seed_position(&env, &cid, &borrower, 200, 200);
 

@@ -11,6 +11,7 @@
 
 use crate::{
     debt::{save_debt, DebtPosition, DEFAULT_APR_BPS},
+    liquidate_transfer_test::{MockToken, MockTokenClient},
     rounding_strategy::SECONDS_PER_YEAR,
     DataKey, LendingContract, LendingContractClient, LendingError,
 };
@@ -38,10 +39,13 @@ fn setup() -> (
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let liquidator = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
 
     client.initialize(&admin);
+
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
 
     (
         env,
@@ -64,6 +68,7 @@ fn advance_ledger_time(env: &Env, seconds: u64) {
 
 /// Calculate expected simple interest.
 fn calculate_expected_interest(principal: i128, elapsed_seconds: u64, rate_bps: i128) -> i128 {
+borrow_index_snapshot: 0,
     let numerator = principal
         .checked_mul(elapsed_seconds as i128)
         .and_then(|v| v.checked_mul(rate_bps))
@@ -97,6 +102,7 @@ fn test_liquidate_accrual_parity() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -155,6 +161,7 @@ fn test_liquidate_long_horizon_accrual() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -210,6 +217,7 @@ fn test_liquidate_health_factor_after_settle_boundary() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );

@@ -34,7 +34,7 @@
 use proptest::prelude::*;
 
 use crate::liquidity_math::{calculate_mint_shares, LiquidityMathError, MINIMUM_LIQUIDITY};
-use crate::math::sqrt;
+use crate::math::try_sqrt;
 
 // ---------------------------------------------------------------------------
 // Strategies
@@ -89,7 +89,7 @@ proptest! {
             Some(p) => p,
             None => return Ok(()),
         };
-        let sqrt_product = sqrt(product);
+        let sqrt_product = try_sqrt(product).unwrap_or(0);
 
         let result = calculate_mint_shares(0, amount_0, amount_1, 0, 0);
 

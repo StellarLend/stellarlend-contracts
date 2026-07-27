@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::debt::DebtPosition;
+use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
 use crate::rounding_strategy::SECONDS_PER_YEAR;
 use crate::{DataKey, LendingContract, LendingContractClient};
 use soroban_sdk::{
@@ -25,8 +26,10 @@ fn setup() -> (
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let liquidator = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&id, &1_000_000);
     client.initialize(&admin);
     (
         env,
@@ -50,7 +53,7 @@ fn advance_ledger_time(env: &Env, seconds: u64) {
 
 #[test]
 fn test_configure_insurance_share_bounds() {
-    let (_env, client, _id, admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
+    let (_env, client, _id, _admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
 
     // Check default is 0
     assert_eq!(client.get_insurance_share(), 0);
@@ -74,7 +77,7 @@ fn test_configure_insurance_share_bounds() {
 
 #[test]
 fn test_admin_explicit_funding() {
-    let (_env, client, _id, admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
+    let (_env, client, _id, _admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
 
     assert_eq!(client.get_insurance_fund(), 0);
 
@@ -101,9 +104,12 @@ fn test_accrual_interest_split() {
     // Configure 30% insurance share
     client.set_insurance_share(&3000);
 
+    // Deposit collateral so borrow passes InsufficientCollateral check.
+    client.deposit(&user, &50_000i128);
+
     // Borrow 10,000 units
     let borrow_amount = 10_000i128;
-    client.borrow(&user, &borrow_amount).unwrap();
+    client.borrow(&user, &borrow_amount);
 
     // Advance time by exactly one year to accrue 5% interest (500 tokens)
     advance_ledger_time(&env, SECONDS_PER_YEAR);
@@ -142,7 +148,9 @@ fn test_liquidation_empty_insurance_fund() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -181,7 +189,9 @@ fn test_liquidation_partial_insurance_coverage() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -216,7 +226,9 @@ fn test_liquidation_full_insurance_coverage() {
             &env,
             &user,
             &DebtPosition {
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

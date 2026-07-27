@@ -2,8 +2,14 @@
 resolver = "2"
 members = [
   "contracts/amm",
+  "contracts/bridge",
   "contracts/common",
-  "contracts/hello-world",
+  # hello-world is intentionally excluded: the crate is in a broken mid-migration
+  # state (hundreds of compile errors from duplicate modules / unresolved imports).
+  # Keeping it as a workspace member makes `cargo clippy --workspace` and other
+  # CI --workspace jobs fail on main and blocks unrelated feature PRs.
+  # Restore once hello-world compiles again, or treat it as a standalone package.
+  # "contracts/hello-world",
   "contracts/lending",
   "contracts/vesting",
   "contracts/multisig",

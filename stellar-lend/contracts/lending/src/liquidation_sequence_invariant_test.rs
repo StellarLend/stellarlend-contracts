@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use super::*;
+use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
 use alloc::vec::Vec;
 use proptest::prelude::*;
 use proptest::strategy::Strategy;
@@ -62,10 +63,15 @@ fn setup_sequence_case() -> (
     let admin = Address::generate(&env);
     let borrower = Address::generate(&env);
     let liquidator = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
     client.initialize(&admin);
-    client.deposit(&borrower, &100);
+    // Deposit enough so that borrow(200) passes the solvency check:
+    // collateral * 8000 >= debt * 10000  →  collateral >= 200 * 10000 / 8000 = 250
+    // Using 300 for a comfortable margin.
+    client.deposit(&borrower, &300);
     client.borrow(&borrower, &200);
     (
         env,
@@ -107,7 +113,7 @@ fn liquidation_sequence_invariants_hold_across_seeded_sequences() {
         .run(&strategy, |ops| {
             let (_env, client, borrower, liquidator, debt_asset, collateral_asset) =
                 setup_sequence_case();
-            let mut expected_collateral = 100i128;
+            let mut expected_collateral = 300i128;
             let mut expected_debt = 200i128;
             let mut total_repaid = 0i128;
             let mut total_seized = 0i128;
