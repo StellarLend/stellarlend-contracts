@@ -108,10 +108,7 @@ fn zero_collateral_returns_zero() {
 
 #[test]
 fn negative_collateral_is_out_of_range() {
-    assert_eq!(
-        compute_max_borrow(-1, 5_000),
-        Err(MathError::OutOfRange)
-    );
+    assert_eq!(compute_max_borrow(-1, 5_000), Err(MathError::OutOfRange));
 }
 
 #[test]

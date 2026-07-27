@@ -28,10 +28,10 @@
 //! can detect oracle degradation in real time without polling.
 
 #![allow(unused)]
+use crate::admin::get_admin;
 use crate::events::{
     emit_price_updated, emit_twap_fallback_used, PriceUpdatedEvent, PRIMARY_FEED_ABSENT,
 };
-use crate::admin::get_admin;
 use soroban_sdk::{
     contracterror, contracttype, symbol_short, Address, Env, IntoVal, Map, Symbol, Val, Vec,
 };

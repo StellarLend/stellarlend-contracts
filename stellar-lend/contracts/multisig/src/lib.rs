@@ -183,7 +183,9 @@ impl MultisigContract {
             .persistent()
             .get(&MultisigDataKey::ProposalCount)
             .unwrap_or(0);
-        let new_count = count.checked_add(1).ok_or(MultisigError::ProposalIdOverflow)?;
+        let new_count = count
+            .checked_add(1)
+            .ok_or(MultisigError::ProposalIdOverflow)?;
         env.storage()
             .persistent()
             .set(&MultisigDataKey::ProposalCount, &new_count);

@@ -31,6 +31,8 @@ mod borrow_index_test;
 #[cfg(test)]
 mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
+mod cross_asset_doctest;
+#[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
 mod cross_asset_health_perf_test;
@@ -38,8 +40,6 @@ mod cross_asset_health_perf_test;
 mod cross_asset_price_cache_test;
 #[cfg(test)]
 mod cross_asset_test;
-#[cfg(test)]
-mod cross_asset_doctest;
 #[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
@@ -128,11 +128,11 @@ mod withdraw_overflow_test;
 mod withdraw_reserve_test;
 
 #[cfg(test)]
+mod events_test;
+#[cfg(test)]
 mod upgrade_governance_test;
 #[cfg(test)]
 mod utilization_history_test;
-#[cfg(test)]
-mod events_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,
@@ -587,30 +587,6 @@ pub struct CrossWithdrawEvent {
     pub user: Address,
     pub asset: Address,
     pub amount: i128,
-}
-
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MinBorrowSetEvent {
-    pub min_borrow: i128,
-}
-
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MaxMoveBpsSetEvent {
-    pub max_move_bps: i128,
-}
-
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MaxFlashBpsSetEvent {
-    pub max_flash_bps: i128,
-}
-
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CollateralAssetSetEvent {
-    pub asset: Address,
 }
 
 #[contract]
@@ -1294,6 +1270,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1371,6 +1348,7 @@ impl LendingContract {
         let rate = current_borrow_rate(&env);
         let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1758,7 +1736,10 @@ impl LendingContract {
 
     /// Set the effective liquidation threshold (basis points) used for
     /// health-factor computations.
-    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
+    pub fn set_liquidation_threshold_bps(
+        env: Env,
+        threshold_bps: i128,
+    ) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
@@ -2916,7 +2897,11 @@ pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
 /// Assert that the transaction signer is the protocol admin.
 /// Panics with the default auth error if not.
 pub(crate) fn assert_admin(env: &Env) -> Result<(), LendingError> {
-    let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(LendingError::NotInitialized)?;
+    let admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(LendingError::NotInitialized)?;
     admin.require_auth();
     Ok(())
 }

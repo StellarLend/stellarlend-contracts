@@ -48,11 +48,7 @@ pub struct RepayEvent {
     pub remaining_debt: i128,
 }
 
-pub fn compute_interest(
-    principal: i128,
-    elapsed: u64,
-    rate_bps: i128,
-) -> Result<i128, RepayError> {
+fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, RepayError> {
     if principal <= 0 || elapsed == 0 || rate_bps <= 0 {
         return Ok(0);
     }
@@ -63,7 +59,9 @@ pub fn compute_interest(
     let denominator = BPS_DENOM
         .checked_mul(SECONDS_PER_YEAR as i128)
         .ok_or(RepayError::Overflow)?;
-    numerator.checked_div(denominator).ok_or(RepayError::Overflow)
+    numerator
+        .checked_div(denominator)
+        .ok_or(RepayError::Overflow)
 }
 
 pub fn load_position(env: &Env, user: &Address) -> Position {

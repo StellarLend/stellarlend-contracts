@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cross_asset::{AssetConfig, AssetKey, CrossAssetDataKey};
-    use soroban_sdk::{
-        testutils::Address as _, vec, Address, Env, Vec,
-    };
+    use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
     #[test]
     fn test_config_round_trip() {
@@ -11,12 +9,11 @@ mod tests {
         let asset = AssetKey::Token(Address::generate(&env));
 
         // Test initial state: absent key
-        assert!(
-            env.storage()
-                .persistent()
-                .get::<CrossAssetDataKey, AssetConfig>(&CrossAssetDataKey::Config(asset.clone()))
-                .is_none()
-        );
+        assert!(env
+            .storage()
+            .persistent()
+            .get::<CrossAssetDataKey, AssetConfig>(&CrossAssetDataKey::Config(asset.clone()))
+            .is_none());
 
         // Write config
         let config = AssetConfig {
@@ -39,8 +36,14 @@ mod tests {
             .persistent()
             .get::<CrossAssetDataKey, AssetConfig>(&CrossAssetDataKey::Config(asset.clone()))
             .unwrap();
-        assert_eq!(read_config.collateral_factor_bps, config.collateral_factor_bps);
-        assert_eq!(read_config.liquidation_threshold, config.liquidation_threshold);
+        assert_eq!(
+            read_config.collateral_factor_bps,
+            config.collateral_factor_bps
+        );
+        assert_eq!(
+            read_config.liquidation_threshold,
+            config.liquidation_threshold
+        );
         assert_eq!(read_config.max_supply, config.max_supply);
         assert_eq!(read_config.max_borrow, config.max_borrow);
         assert_eq!(read_config.can_collateralize, config.can_collateralize);

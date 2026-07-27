@@ -10,8 +10,8 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::cross_asset::{
     cross_asset_borrow, cross_asset_deposit, cross_asset_repay, get_user_position_summary,
-    initialize, initialize_asset, normalize_price, normalize_price_ceil, update_asset_price, AssetConfig,
-    CrossAssetError,
+    initialize, initialize_asset, normalize_price, normalize_price_ceil, update_asset_price,
+    AssetConfig, CrossAssetError,
 };
 
 // ---------------------------------------------------------------------------

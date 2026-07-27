@@ -153,9 +153,7 @@ pub fn reconcile_debt_with_drift_correction(
         let delta = freshly_calculated_debt
             .checked_sub(stored_debt)
             .ok_or(RoundingError::Overflow)?;
-        let scaled = delta
-            .checked_mul(10_000)
-            .ok_or(RoundingError::Overflow)?;
+        let scaled = delta.checked_mul(10_000).ok_or(RoundingError::Overflow)?;
         scaled / stored_debt
     } else {
         0
