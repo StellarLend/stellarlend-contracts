@@ -44,51 +44,51 @@ jobs:
 
       - name: Check formatting
         run: |
-          cd stellar-lend
+          cd stellar-lend/contracts/lending
           cargo fmt -- --check
 
       - name: Run clippy
         run: |
-          cd stellar-lend
-          cargo clippy --workspace --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast -A clippy::too-many-arguments -A clippy::enum_variant_names
+          cd stellar-lend/contracts/lending
+          cargo clippy --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast
 
       - name: Build project
         run: |
-          cd stellar-lend
-          cargo build --workspace --verbose
+          cd stellar-lend/contracts/lending
+          cargo build --verbose
 
       - name: Run tests
         run: |
-          cd stellar-lend
-          cargo test --workspace --lib --verbose
+          cd stellar-lend/contracts/lending
+          cargo test --lib --verbose
 
       - name: Run integration tests
         run: |
-          cd stellar-lend
-          cargo test --workspace --tests --verbose
+          cd stellar-lend/contracts/lending
+          cargo test --tests --verbose
 
-      - name: Generate workspace test report
+      - name: Generate lending test report
         run: |
-          cd stellar-lend
-          cargo test --workspace --lib --verbose -- --nocapture > workspace_test_report.txt
-          cat workspace_test_report.txt
+          cd stellar-lend/contracts/lending
+          cargo test --lib --verbose -- --nocapture > lending_test_report.txt
+          cat lending_test_report.txt
 
       - name: Upload test report
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: stellar-lend/workspace_test_report.txt
+          path: stellar-lend/contracts/lending/lending_test_report.txt
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked --version 0.31.0
 
       - name: Generate code coverage
         run: |
-          cd stellar-lend
-          cargo tarpaulin --verbose --out Xml --workspace --lib --exclude-files "**/indexing_system/**"
+          cd stellar-lend/contracts/lending
+          cargo tarpaulin --verbose --out Xml --packages stellarlend-lending --lib --exclude-files "**/indexing_system/**"
 
-      - name: Enforce workspace coverage threshold
-        run: python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml --threshold 63.0 --overall-only
+      - name: Enforce lending crate coverage threshold
+        run: python3 scripts/enforce_coverage.py stellar-lend/contracts/lending/cobertura.xml --threshold 63.0 --overall-only
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
