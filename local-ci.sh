@@ -1,8 +1,6 @@
 #!/bin/bash
 # local-ci.sh - Reproduce CI checks locally
 
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,6 +23,9 @@ fi
 
 cd "$PROJECT_DIR"
 
+# Track overall pass/fail across all checks
+FAILED=0
+
 # Function to run a command and report status
 run_check() {
     local name=$1
@@ -35,7 +36,7 @@ run_check() {
         echo -e "${GREEN}✅ $name passed${NC}"
     else
         echo -e "${RED}❌ $name failed${NC}"
-        return 1
+        FAILED=1
     fi
 }
 
@@ -127,9 +128,12 @@ run_check "Cargo.toml Check" "cargo check --verbose"
 # Verify documentation builds
 run_check "Documentation Check" "cargo doc --no-deps --verbose"
 
-echo -e "\n${GREEN}🎉 All CI checks completed!${NC}"
+if [ "$FAILED" -eq 0 ]; then
+    echo -e "\n${GREEN}🎉 All CI checks passed!${NC}"
+else
+    echo -e "\n${RED}❌ Some CI checks failed.${NC}"
+fi
 echo "=============================="
-echo -e "${GREEN}If all checks passed, your code should pass CI pipeline.${NC}"
 echo -e "${YELLOW}Note: Some checks might behave slightly differently in CI environment.${NC}"
 
 # Summary of what to fix if any checks failed
@@ -138,3 +142,6 @@ echo "- Format issues: Run 'cargo fmt'"
 echo "- Clippy warnings: Run 'cargo clippy --fix'"
 echo "- Build issues: Check error messages and fix code"
 echo "- Security issues: Update dependencies with 'cargo update'"
+
+# Exit with non-zero if any check failed
+exit "$FAILED"
