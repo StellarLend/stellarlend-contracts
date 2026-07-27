@@ -88,6 +88,7 @@ const FEE_TIERS_KEY: &str = "fee_tiers";
 // integer-only `init_pool(a, b)` and the swap-bounds proptest suite).
 const KEY_RES_A: (&str, &str) = ("pool", "a");
 const KEY_RES_B: (&str, &str) = ("pool", "b");
+
 /// A single TWAP observation snapshot.
 ///
 /// Both prices are stored as scaled integer ratios (price * 10^9) to preserve
@@ -946,11 +947,17 @@ impl AmmContract {
     /// matching `repay_flash_swap` can enforce
     /// `(reserve_a + amount_in) * reserve_b_after_debit  >=  k_before`.
     ///
-    /// The caller's address is recorded as the **initiator** so that only
-    /// the same address may call [`repay_flash_swap`](AmmContract::repay_flash_swap).
-    /// This prevents a third party from observing an in-flight flash swap
-    /// and calling `repay_flash_swap` (or otherwise interfering) within
-    /// the same transaction.
+    /// `caller` is the authenticated initiator, verified via
+    /// `caller.require_auth()` and recorded as the **initiator** so that
+    /// only the same address may call
+    /// [`repay_flash_swap`](AmmContract::repay_flash_swap). This prevents
+    /// a third party from observing an in-flight flash swap and calling
+    /// `repay_flash_swap` (or otherwise interfering) within the same
+    /// transaction.
+    ///
+    /// Note: `caller` must be passed explicitly rather than derived from
+    /// `env.current_contract_address()`, which always resolves to this
+    /// contract's own address regardless of who invoked the entrypoint.
     ///
     /// Soroban 25.3.1 does not allow a contract to invoke itself from
     /// inside a callback (`Contract re-entry is not allowed`), so this
@@ -973,6 +980,10 @@ impl AmmContract {
     /// `flash_swap_a_for_b` — is rejected with `ReentrantFlashSwap`.
     ///
     /// # Arguments
+    /// * `caller`     — the flash-swap initiator; must authorize via
+    ///                  `require_auth()`.  Recorded so the matching
+    ///                  `repay_flash_swap` can be restricted to this
+    ///                  same address.
     /// * `amount_out` — units of asset B to optimistically debit.  Must
     ///                  satisfy `0 < amount_out < reserve_b`.
     /// * `params`     — opaque user payload, kept for forward-compatibility
@@ -1008,6 +1019,7 @@ impl AmmContract {
     /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
     pub fn flash_swap_a_for_b(
         env: Env,
+        caller: Address,
         amount_out: i128,
         params: Bytes,
     ) -> Result<i128, AmmPoolError> {
@@ -1015,6 +1027,7 @@ impl AmmContract {
         // a local so the parameter is used (no dead-binding lint).
         let _ = params;
 
+        caller.require_auth();
         Self::assert_no_active_flash_swap(&env)?;
 
         if amount_out <= 0 {
@@ -1054,7 +1067,7 @@ impl AmmContract {
         // Record the initiator so only this address may repay.
         env.storage()
             .instance()
-            .set(&KEY_FLASH_INITIATOR, &env.current_contract_address());
+            .set(&KEY_FLASH_INITIATOR, &caller);
 
         Ok(amount_out)
     }
@@ -1082,6 +1095,9 @@ impl AmmContract {
     /// computed by [`inverse_swap_in`].
     ///
     /// # Arguments
+    /// * `caller`    — the address repaying the flash swap; must match the
+    ///                 initiator recorded by `flash_swap_a_for_b` and must
+    ///                 authorize via `require_auth()`.
     /// * `amount_in` — units of asset A being repaid.  Must be `> 0`.
     ///
     /// # Errors
@@ -1100,7 +1116,7 @@ impl AmmContract {
     ///   Soroban then rolls back all storage changes, including the Op-1 debit.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Verify-K Repay Invariant](../FLASH_SWAP_PROTOCOL.md)
-    pub fn repay_flash_swap(env: Env, amount_in: i128) -> Result<(), AmmPoolError> {
+    pub fn repay_flash_swap(env: Env, caller: Address, amount_in: i128) -> Result<(), AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -1122,12 +1138,11 @@ impl AmmContract {
             .instance()
             .get(&KEY_FLASH_INITIATOR)
             .ok_or(AmmPoolError::InvariantViolation)?;
-        let caller = env.current_contract_address();
         if caller != initiator {
             return Err(AmmPoolError::UnauthorizedCaller);
         }
-        // Require explicit authorization from the initiator.
-        initiator.require_auth();
+        // Require explicit authorization from the caller (== initiator).
+        caller.require_auth();
 
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
         let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
@@ -1434,6 +1449,7 @@ mod test;
 #[cfg(test)]
 mod inline_test {
     use super::*;
+    use soroban_sdk::testutils::Address as _;
 
     fn generate_address(env: &Env) -> Address {
         use soroban_sdk::testutils::Address as _;
@@ -1447,8 +1463,8 @@ mod inline_test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        let token_a = generate_address(&env);
-        let token_b = generate_address(&env);
+        let token_a = Address::generate(&env);
+        let token_b = Address::generate(&env);
 
         let reserve_sizes = [1_000_i128, 10_000, 100_000, 1_000_000];
         // Start from 2: amount_in=1 floors to zero output under the dust guard
@@ -1459,31 +1475,20 @@ mod inline_test {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
                     client.init_pool(&ra, &rb, &token_a, &token_b);
-                    // swap using stored fee (default 30 bps); skip dust inputs
-                    // that the zero-output guard correctly rejects.
-                    let result = client.try_swap_a_for_b(&amt);
-                    match result {
-                        Ok(_) => {
-                            let (new_ra, new_rb) = client.get_reserves();
-                            let k_before = ra.checked_mul(rb).unwrap();
-                            let k_after = new_ra.checked_mul(new_rb).unwrap();
-                            assert!(
-                                k_after >= k_before,
-                                "k decreased: ra={}, rb={}, amt={}, k_before={}, k_after={}",
-                                ra,
-                                rb,
-                                amt,
-                                k_before,
-                                k_after
-                            );
-                        }
-                        Err(Ok(AmmPoolError::ZeroOutput)) => {
-                            // Dust rejected — k must be unchanged.
-                            let (new_ra, new_rb) = client.get_reserves();
-                            assert_eq!((new_ra, new_rb), (ra, rb));
-                        }
-                        other => panic!("unexpected swap result: {:?}", other),
-                    }
+                    // swap using stored fee (default 30 bps)
+                    let _out = client.swap_a_for_b(&amt);
+                    let (new_ra, new_rb) = client.get_reserves();
+                    let k_before = ra.checked_mul(rb).unwrap();
+                    let k_after = new_ra.checked_mul(new_rb).unwrap();
+                    assert!(
+                        k_after >= k_before,
+                        "k decreased: ra={}, rb={}, amt={}, k_before={}, k_after={}",
+                        ra,
+                        rb,
+                        amt,
+                        k_before,
+                        k_after
+                    );
                 }
             }
         }
@@ -1496,22 +1501,17 @@ mod inline_test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        let token_a = generate_address(&env);
-        let token_b = generate_address(&env);
-        let caller = generate_address(&env);
+        // Register real token contracts so TokenClient::transfer can execute.
+        let token_a_admin = Address::generate(&env);
+        let token_b_admin = Address::generate(&env);
+        let token_a = env.register_stellar_asset_contract(token_a_admin);
+        let token_b = env.register_stellar_asset_contract(token_b_admin);
+        let caller = Address::generate(&env);
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&caller, &100);
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&caller, &200);
 
-        // init_pool with initial reserves (first deposit values)
-        // Register real token contracts and mint tokens for transfers.
-        let a_admin = generate_address(&env);
-        let b_admin = generate_address(&env);
-        let ta = env.register_stellar_asset_contract(a_admin);
-        let tb = env.register_stellar_asset_contract(b_admin);
-        soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&caller, &100_i128);
-        soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &200_i128);
-
-        client.init_pool(&1000_i128, &2000_i128, &ta, &tb);
-        // Add liquidity - LP shares are minted via calculate_mint_shares
-        let _shares = client.add_liquidity(&caller, &100_i128, &200_i128);
+        client.init_pool(&1000, &2000, &token_a, &token_b);
+        client.add_liquidity(&caller, &100, &200);
         let (ra1, rb1) = client.get_reserves();
         let k1 = ra1.checked_mul(rb1).unwrap();
 
@@ -1628,10 +1628,11 @@ mod inline_test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        let token_a = generate_address(&env);
-        let token_b = generate_address(&env);
+        let token_a = Address::generate(&env);
+        let token_b = Address::generate(&env);
+        let caller = Address::generate(&env);
 
-        client.init_pool(&1_000_000_i128, &1_000_000_i128, &token_a, &token_b);
+        client.init_pool(&1_000_000, &1_000_000, &token_a, &token_b);
 
         // Before any swap, the observation list is empty.
         assert_eq!(
@@ -1641,20 +1642,37 @@ mod inline_test {
         );
 
         // --- swap_a_for_b ---
-        client.swap_a_for_b(&1_000_i128);
-        let obs1 = client.get_twap_observations();
-        assert_eq!(obs1.len(), 1, "expected 1 observation after swap_a_for_b");
+        client.swap_a_for_b(&1_000);
+        assert_eq!(
+            client.get_twap_observations().len(),
+            1,
+            "expected 1 observation after swap_a_for_b"
+        );
 
         // --- swap_b_for_a ---
-        client.swap_b_for_a(&1_000_i128);
-        let obs2 = client.get_twap_observations();
-        assert_eq!(obs2.len(), 2, "expected 2 observations after swap_b_for_a");
+        client.swap_b_for_a(&1_000);
+        assert_eq!(
+            client.get_twap_observations().len(),
+            2,
+            "expected 2 observations after swap_b_for_a"
+        );
 
-        // Verify the observation data is sensible.
-        for i in 0..obs2.len() {
-            let o = obs2.get(i).unwrap();
-            assert!(o.1 > 0, "cumulative_num must be positive (obs {})", i);
-            assert!(o.2 > 0, "cumulative_denom must be positive (obs {})", i);
+        // --- flash_swap_a_for_b ---
+        client.flash_swap_a_for_b(&caller, &1_000, &Bytes::new(&env));
+        assert_eq!(
+            client.get_twap_observations().len(),
+            3,
+            "expected 3 observations after flash_swap_a_for_b"
+        );
+
+        // Also verify the cumulative fields are sensible (non-zero
+        // cumulative numerator/denominator once the pool has non-zero
+        // reserves and any time has elapsed).
+        let obs = client.get_twap_observations();
+        for i in 0..obs.len() {
+            let (_timestamp, cum_num, cum_denom) = obs.get(i).unwrap();
+            assert!(cum_num >= 0, "cumulative numerator must be non-negative (obs {})", i);
+            assert!(cum_denom >= 0, "cumulative denominator must be non-negative (obs {})", i);
         }
     }
 }

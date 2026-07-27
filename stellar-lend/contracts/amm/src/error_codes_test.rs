@@ -39,25 +39,25 @@ fn test_error_paths() {
     let res = client.try_swap_a_for_b(&100);
     assert_eq!(res, Err(Ok(AmmPoolError::EmptyPool)));
 
-    // Test InsufficientReserves in remove_liquidity (burns shares with no balance)
-    client.init_pool(&1000_i128, &1000_i128, &ta, &tb);
-    let res = client.try_remove_liquidity(&caller, &2000_i128);
-    assert_eq!(res, Err(Ok(AmmPoolError::InsufficientLpBalance)));
+    client.init_pool(&1000, &1000, &ta, &tb);
 
-    // Test InvalidBurnAmount in remove_liquidity (zero shares)
-    let res = client.try_remove_liquidity(&caller, &0_i128);
-    assert_eq!(res, Err(Ok(AmmPoolError::InvalidBurnAmount)));
+    // Test InsufficientReserves in remove_liquidity (hits check before token transfer)
+    let res = client.try_remove_liquidity(&caller, &2000, &2000);
+    assert_eq!(res, Err(Ok(AmmPoolError::InsufficientReserves)));
 
-    // Test InsufficientLiquidityMinted in add_liquidity (tiny deposit to seeded pool)
-    // Init pool with small reserves and zero LP supply, then try a micro deposit.
-    // sqrt(1*1)=1 < MINIMUM_LIQUIDITY, so first-deposit path rejects it.
-    client.init_pool(&0_i128, &0_i128, &ta, &tb);
-    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128);
-    assert_eq!(res, Err(Ok(AmmPoolError::InsufficientLiquidityMinted)));
+    // Test Overflow in add_liquidity (hits checked_add before token transfer)
+    client.init_pool(&i128::MAX, &1000, &ta, &tb);
+    let res = client.try_add_liquidity(&caller, &1, &1);
+    assert_eq!(res, Err(Ok(AmmPoolError::Overflow)));
+
+    // Test InvariantViolation in add_liquidity (hits assert_k_monotonic before token transfer)
+    client.init_pool(&1000, &1000, &ta, &tb);
+    let res = client.try_add_liquidity(&caller, &-1, &0);
+    assert_eq!(res, Err(Ok(AmmPoolError::InvariantViolation)));
 
     // Test ReentrantFlashSwap
-    client.init_pool(&1000_i128, &1000_i128, &ta, &tb);
-    client.flash_swap_a_for_b(&100_i128, &Bytes::new(&env));
-    let res = client.try_swap_a_for_b(&100_i128);
+    client.init_pool(&1000, &1000, &ta, &tb);
+    client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
+    let res = client.try_swap_a_for_b(&100);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }

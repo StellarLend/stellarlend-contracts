@@ -14,6 +14,7 @@ fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) {
     let client = AmmContractClient::new(&env, &id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b);
     let admin = Address::generate(&env);
     client.init_pool(&ra, &rb, &token_a, &token_b);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
@@ -123,8 +124,8 @@ fn test_symmetric_output_equal_reserves() {
     let tb1 = Address::generate(&env);
     let ta2 = Address::generate(&env);
     let tb2 = Address::generate(&env);
-    c_ab.init_pool(&50_000_i128, &50_000_i128, &ta1, &tb1);
-    c_ba.init_pool(&50_000_i128, &50_000_i128, &ta2, &tb2);
+    c_ab.init_pool(&50_000, &50_000, &ta1, &tb1);
+    c_ba.init_pool(&50_000, &50_000, &ta2, &tb2);
 
     let out_ab = c_ab.swap_a_for_b(&1_000_i128);
     let out_ba = c_ba.swap_b_for_a(&1_000_i128);
@@ -160,8 +161,8 @@ fn test_swap_b_for_a_empty_pool_panics() {
 fn test_swap_b_for_a_zero_fee() {
     // Admin sets fee to 0 -> output maximised (no fee deducted).
     let (_env, client, admin) = setup(10_000, 10_000);
-    client.set_fee_bps(&admin, &0_i128);
-    let out_zero_fee = client.swap_b_for_a(&1_000_i128);
+    client.set_fee_bps(&admin, &0);
+    let out_zero_fee = client.swap_b_for_a(&1_000);
 
     // Compare with default-fee pool (30 bps).
     let (_env2, client2, _admin2) = setup(10_000, 10_000);
@@ -170,4 +171,62 @@ fn test_swap_b_for_a_zero_fee() {
         out_zero_fee >= out_with_fee,
         "zero-fee output must be >= fee output"
     );
+}
+
+#[test]
+fn test_swap_b_for_a_max_fee_gives_reduced_output() {
+    // Admin sets fee to MAX_FEE_BPS (5_000 = 50%) → output is much lower than with default fee.
+    use crate::MAX_FEE_BPS;
+    let (_env, client, admin) = setup(10_000, 10_000);
+    client.set_fee_bps(&admin, &MAX_FEE_BPS);
+    let out_max_fee = client.swap_b_for_a(&1_000);
+
+    let (_env2, client2, _admin2) = setup(10_000, 10_000);
+    let out_default_fee = client2.swap_b_for_a(&1_000);
+    assert!(
+        out_max_fee < out_default_fee,
+        "max fee output must be less than default fee output"
+    );
+}
+
+#[test]
+fn test_swap_b_for_a_dust_input_rounds_down() {
+    // 1-unit input on a large pool: output must be 0 (floor division) or 1, never > input value.
+    let (_env, client, _admin) = setup(1_000_000, 1_000_000);
+    let out = client.swap_b_for_a(&1);
+    assert!(out <= 1, "dust input must not produce more than 1 unit out");
+}
+
+// ---------------------------------------------------------------------------
+// Fuzz-style sweep
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fuzz_swap_b_for_a_k_monotonic() {
+    let reserve_sizes = [1_000_i128, 10_000, 100_000, 1_000_000];
+    let amounts = [1_i128, 10, 100, 1_000, 10_000];
+
+    for &ra in &reserve_sizes {
+        for &rb in &reserve_sizes {
+            for &amt in &amounts {
+                if amt >= rb {
+                    continue; // skip if amount_in would drain reserve_b entirely
+                }
+                let (_env, client, _admin) = setup(ra, rb);
+                let _out = client.swap_b_for_a(&amt);
+                let (new_ra, new_rb) = client.get_reserves();
+                let k_before = ra.checked_mul(rb).unwrap();
+                let k_after = new_ra.checked_mul(new_rb).unwrap();
+                assert!(
+                    k_after >= k_before,
+                    "k decreased: ra={}, rb={}, amt={}, k_before={}, k_after={}",
+                    ra,
+                    rb,
+                    amt,
+                    k_before,
+                    k_after
+                );
+            }
+        }
+    }
 }
