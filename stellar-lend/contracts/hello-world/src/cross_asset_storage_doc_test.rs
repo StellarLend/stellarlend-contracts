@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{
-        symbol_short, testutils::Address as _, vec, Address, Env,
-    };
+    use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
     #[test]
     fn test_config_round_trip() {
@@ -11,12 +9,11 @@ mod tests {
         let asset = AssetKey::Token(Address::generate(&env));
 
         // Test initial state: absent key
-        assert!(
-            env.storage()
-                .persistent()
-                .get::<CrossAssetDataKey, AssetConfig>(&CrossAssetDataKey::Config(asset.clone()))
-                .is_none()
-        );
+        assert!(env
+            .storage()
+            .persistent()
+            .get::<CrossAssetDataKey, AssetConfig>(&CrossAssetDataKey::Config(asset.clone()))
+            .is_none());
 
         // Write config
         let config = AssetConfig {
@@ -39,8 +36,14 @@ mod tests {
             .persistent()
             .get::<CrossAssetDataKey, AssetConfig>(&CrossAssetDataKey::Config(asset.clone()))
             .unwrap();
-        assert_eq!(read_config.collateral_factor_bps, config.collateral_factor_bps);
-        assert_eq!(read_config.liquidation_threshold, config.liquidation_threshold);
+        assert_eq!(
+            read_config.collateral_factor_bps,
+            config.collateral_factor_bps
+        );
+        assert_eq!(
+            read_config.liquidation_threshold,
+            config.liquidation_threshold
+        );
         assert_eq!(read_config.max_supply, config.max_supply);
         assert_eq!(read_config.max_borrow, config.max_borrow);
         assert_eq!(read_config.can_collateralize, config.can_collateralize);
@@ -206,5 +209,28 @@ mod tests {
             .get::<CrossAssetDataKey, i128>(&CrossAssetDataKey::TotalDebt(asset.clone()))
             .unwrap();
         assert_eq!(read_total, amount);
+    }
+
+    #[test]
+    fn test_max_debt_assets_per_user_round_trip_and_default() {
+        let env = Env::default();
+
+        // Absent key means unlimited (None)
+        let initial = env
+            .storage()
+            .persistent()
+            .get::<CrossAssetDataKey, u32>(&CrossAssetDataKey::MaxDebtAssetsPerUser);
+        assert!(initial.is_none());
+
+        env.storage()
+            .persistent()
+            .set(&CrossAssetDataKey::MaxDebtAssetsPerUser, &3u32);
+
+        let read = env
+            .storage()
+            .persistent()
+            .get::<CrossAssetDataKey, u32>(&CrossAssetDataKey::MaxDebtAssetsPerUser)
+            .unwrap();
+        assert_eq!(read, 3);
     }
 }

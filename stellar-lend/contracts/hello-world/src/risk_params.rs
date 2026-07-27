@@ -25,15 +25,25 @@ const MAX_COLLATERAL_RATIO: i128 = 100_000;
 /// in a well-configured system, but we only enforce an upper bound here).
 const MAX_LIQUIDATION_THRESHOLD: i128 = 100_000;
 
-/// Close factor must be in (0, 100%].
+/// Close factor must be in [1, 100%].  Zero is rejected so liquidations can
+/// always clear at least one unit of bad debt.
+const MIN_CLOSE_FACTOR: i128 = 1;
+/// Close factor must be in [1, 100%].
 const MAX_CLOSE_FACTOR: i128 = BASIS_POINTS;
 
-/// Liquidation incentive is bounded to 0–50%.
+/// Liquidation incentive is bounded to [0, 50%].
+const MIN_LIQUIDATION_INCENTIVE: i128 = 0;
+/// Liquidation incentive is bounded to [0, 50%].
 const MAX_LIQUIDATION_INCENTIVE: i128 = 5_000;
 
 /// Maximum parameter change per update expressed as a fraction of the current
-/// value, in bps.  50% change in one call (5_000 bps).
-const MAX_CHANGE_BPS: i128 = 5_000;
+/// value, in bps.  10% change in one call (1_000 bps).  Matches the paced-rate
+/// governance cap documented in `stellar-lend/risk_params.md` (and
+/// `docs/deployment.md` / `INITIALIZATION_SECURITY_NOTES.md`).
+///
+/// Applied uniformly to all four parameters below the MAX_* bounds:
+///   `| new_value - current_value | <= current_value * MAX_CHANGE_BPS / 10_000`
+const MAX_CHANGE_BPS: i128 = 1_000;
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -197,6 +207,11 @@ pub fn set_risk_params(
         )
         .map_err(|e| match e {
             RiskParamsError::ParameterChangeTooLarge => RiskParamsError::ParameterChangeTooLarge,
+            // Pass internal arithmetic faults through unchanged so they can
+            // surface as `RiskManagementError::Overflow` at the contract
+            // entrypoint instead of being misreported as parameter bounds.
+            RiskParamsError::Overflow => RiskParamsError::Overflow,
+            RiskParamsError::DivisionByZero => RiskParamsError::DivisionByZero,
             _ => RiskParamsError::InvalidCollateralRatio,
         })?;
         env.storage()
@@ -214,6 +229,8 @@ pub fn set_risk_params(
         )
         .map_err(|e| match e {
             RiskParamsError::ParameterChangeTooLarge => RiskParamsError::ParameterChangeTooLarge,
+            RiskParamsError::Overflow => RiskParamsError::Overflow,
+            RiskParamsError::DivisionByZero => RiskParamsError::DivisionByZero,
             _ => RiskParamsError::InvalidLiquidationThreshold,
         })?;
         env.storage()
@@ -222,18 +239,45 @@ pub fn set_risk_params(
     }
 
     if let Some(v) = close_factor {
-        if v <= 0 || v > MAX_CLOSE_FACTOR {
-            return Err(RiskParamsError::InvalidCloseFactor);
-        }
+        // `validate_change` enforces both the absolute bounds and the paced
+        // 10% delta cap.  Without it, `close_factor` could be spiked from its
+        // default straight to `MAX_CLOSE_FACTOR` in a single transaction —
+        // see `stellar-lend/risk_params.md` "Paced Rate Changes".
+        validate_change(
+            env,
+            &RiskParamsDataKey::CloseFactor,
+            v,
+            MIN_CLOSE_FACTOR,
+            MAX_CLOSE_FACTOR,
+        )
+        .map_err(|e| match e {
+            RiskParamsError::ParameterChangeTooLarge => RiskParamsError::ParameterChangeTooLarge,
+            RiskParamsError::Overflow => RiskParamsError::Overflow,
+            RiskParamsError::DivisionByZero => RiskParamsError::DivisionByZero,
+            _ => RiskParamsError::InvalidCloseFactor,
+        })?;
         env.storage()
             .persistent()
             .set(&RiskParamsDataKey::CloseFactor, &v);
     }
 
     if let Some(v) = liquidation_incentive {
-        if v < 0 || v > MAX_LIQUIDATION_INCENTIVE {
-            return Err(RiskParamsError::InvalidLiquidationIncentive);
-        }
+        // `validate_change` enforces both the absolute bounds and the paced
+        // 10% delta cap.  Without it, `liquidation_incentive` could similarly
+        // jump from default to maximum in one call.
+        validate_change(
+            env,
+            &RiskParamsDataKey::LiquidationIncentive,
+            v,
+            MIN_LIQUIDATION_INCENTIVE,
+            MAX_LIQUIDATION_INCENTIVE,
+        )
+        .map_err(|e| match e {
+            RiskParamsError::ParameterChangeTooLarge => RiskParamsError::ParameterChangeTooLarge,
+            RiskParamsError::Overflow => RiskParamsError::Overflow,
+            RiskParamsError::DivisionByZero => RiskParamsError::DivisionByZero,
+            _ => RiskParamsError::InvalidLiquidationIncentive,
+        })?;
         env.storage()
             .persistent()
             .set(&RiskParamsDataKey::LiquidationIncentive, &v);
@@ -302,10 +346,7 @@ pub fn can_be_liquidated(
 
 /// Return the maximum amount that may be repaid in a single liquidation call:
 /// `debt_value * close_factor_bps / 10_000`.
-pub fn get_max_liquidatable_amount(
-    env: &Env,
-    debt_value: i128,
-) -> Result<i128, RiskParamsError> {
+pub fn get_max_liquidatable_amount(env: &Env, debt_value: i128) -> Result<i128, RiskParamsError> {
     let close_factor = get_close_factor(env)?;
     debt_value
         .checked_mul(close_factor)

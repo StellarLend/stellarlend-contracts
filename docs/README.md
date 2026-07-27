@@ -37,9 +37,8 @@ StellarLend is a lending and borrowing protocol built on Soroban. It features cr
 - Monitoring: health, performance, and security alerts
 - Social recovery: guardians, timelock approvals, execution
 - Multisig for admin min-collateral changes
-- Upgrade: propose/approve/execute/rollback and status
-- Data management: generic data store, backup/restore, migration
-- Configuration: versioned param store with backup/restore
+- Upgrade: propose/approve/execute and status
+- Data management: generic data store, migration
 
 ## Admin Operations
 
@@ -50,14 +49,12 @@ Key admin entrypoints (see contract for full list):
 - `set_pause_switch(operation, paused)`, `set_pause_switches(operations)`
 - `register_bridge(caller, network_id, bridge, fee_bps)`
 - `set_bridge_fee(caller, network_id, fee_bps)`
-- `upgrade_propose/approve/execute/rollback`
-- `config_set/config_backup/config_restore`
+- `upgrade_propose/approve/execute`
 - `ms_set_admins`, `ms_propose_set_min_cr`, `ms_approve`, `ms_execute`
 
 ## Monitoring & Analytics
 
 - Analytics auto-update on deposit/borrow/repay/withdraw
-- Monitoring entrypoints: `monitor_report_health/performance/security`, `monitor_get`
 
 ### Analytics Read APIs
 

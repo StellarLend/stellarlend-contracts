@@ -10,8 +10,8 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::cross_asset::{
     cross_asset_borrow, cross_asset_deposit, cross_asset_repay, get_user_position_summary,
-    initialize_asset, normalize_price, normalize_price_ceil, update_asset_price, AssetConfig,
-    CrossAssetError,
+    initialize, initialize_asset, normalize_price, normalize_price_ceil, update_asset_price,
+    AssetConfig, CrossAssetError,
 };
 
 // ---------------------------------------------------------------------------
@@ -271,8 +271,10 @@ fn test_price_update_reflected_in_summary() {
     let env = make_env();
     env.mock_all_auths();
     let user = Address::generate(&env);
+    let admin = Address::generate(&env);
 
     with_contract(&env, || {
+        initialize(&env, admin.clone()).unwrap();
         initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
         cross_asset_deposit(&env, user.clone(), None, 10).unwrap();
 
@@ -281,7 +283,7 @@ fn test_price_update_reflected_in_summary() {
         assert_eq!(s1.total_collateral_value, 10);
 
         // Double the price to $2.00.
-        update_asset_price(&env, None, 2_000_000).unwrap();
+        update_asset_price(&env, &admin, None, 2_000_000).unwrap();
         let s2 = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(s2.total_collateral_value, 20);
     });
