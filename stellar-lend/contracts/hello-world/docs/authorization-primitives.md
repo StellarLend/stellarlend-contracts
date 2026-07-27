@@ -9,8 +9,7 @@
 ## Overview
 
 The `hello-world` contract uses a **single-admin plus guardian** model. There is
-no general-purpose RBAC system, no `grant_role` / `revoke_role` / `require_role_or_admin`
-primitive, and no `gov_can_vote` function exported as a public authorization
+no general-purpose RBAC system, and no `gov_can_vote` function exported as a public authorization
 helper. Each module that needs privileged access either calls `admin::require_admin`
 or performs its own inline guardian check.
 
@@ -126,13 +125,6 @@ Source: `src/governance.rs`, tested in `src/gov_can_vote_test.rs`.
 ---
 
 ## What Does NOT Exist
-
-The following names are **not present** anywhere in `stellar-lend/contracts/hello-world/src/`:
-
-- `require_role_or_admin` — no RBAC helper exists
-- `grant_role` / `revoke_role` — no role table exists
-- `has_role` — no role table exists
-- Any generic "role" concept beyond admin and guardian
 
 If you are writing a new module and are tempted to add role-based logic, discuss
 the design in an issue first. For now, use `admin::require_admin` for admin

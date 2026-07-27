@@ -19,7 +19,6 @@ The contract exports a comprehensive API surface covering all major protocol fun
 - `hello` - Health check endpoint
 - `initialize` - Contract initialization
 - `transfer_admin` - Admin transfer
-- `grant_role` / `revoke_role` - Role management
 - `get_config_snapshot` - Configuration snapshot
 - `current_version` / `current_wasm_hash` - Version info
 
