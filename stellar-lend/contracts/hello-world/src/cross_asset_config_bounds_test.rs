@@ -55,12 +55,13 @@ fn default_config() -> AssetConfig {
 #[test]
 fn test_update_rejects_non_admin() {
     let env = make_env();
+    env.mock_all_auths();
     with_contract(&env, || {
         let admin = Address::generate(&env);
         let non_admin = Address::generate(&env);
 
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         let r = update_asset_config(
             &env, &non_admin, None, None, None, None, None, None, None, None,
@@ -77,12 +78,10 @@ fn test_update_rejects_non_admin() {
 #[test]
 fn test_update_rejects_when_no_admin_set() {
     let env = make_env();
+    env.mock_all_auths();
     with_contract(&env, || {
-        initialize_asset(&env, None, default_config()).unwrap();
         let caller = Address::generate(&env);
-        let r = update_asset_config(
-            &env, &caller, None, None, None, None, None, None, None, None,
-        );
+        let r = initialize_asset(&env, &caller, None, default_config());
         assert_eq!(r, Err(CrossAssetError::Unauthorized));
     });
 }
@@ -100,7 +99,7 @@ fn test_update_rejects_ltv_above_threshold() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         // Factor 8001 > threshold 8000 → reject.
         let r = update_asset_config(
@@ -132,7 +131,7 @@ fn test_update_rejects_threshold_below_current_factor() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         // Drop threshold to 7000 without changing factor (7500 > 7000) → reject.
         let r = update_asset_config(
@@ -160,7 +159,7 @@ fn test_update_accepts_ltv_equal_to_threshold() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         // Set factor == threshold (8000 == 8000) → accept.
         let r = update_asset_config(
@@ -196,14 +195,10 @@ fn test_update_rejects_ltv_above_100_pct() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(
-            &env,
-            None,
-            AssetConfig {
-                liquidation_threshold: 10_000,
-                ..default_config()
-            },
-        )
+        initialize_asset(&env, &admin, None, AssetConfig {
+            liquidation_threshold: 10_000,
+            ..default_config()
+        })
         .unwrap();
 
         let r = update_asset_config(
@@ -230,7 +225,7 @@ fn test_update_rejects_negative_factor() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         let r = update_asset_config(
             &env,
@@ -260,7 +255,7 @@ fn test_update_rejects_zero_decimals() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         let r = update_asset_config(
             &env,
@@ -286,7 +281,7 @@ fn test_update_rejects_decimals_above_38() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         let r = update_asset_config(
             &env,
@@ -316,7 +311,7 @@ fn test_update_valid_persists_changes() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         let r = update_asset_config(
             &env,
@@ -351,7 +346,7 @@ fn test_update_all_none_is_noop() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         update_asset_config(&env, &admin, None, None, None, None, None, None, None, None).unwrap();
 
@@ -374,7 +369,7 @@ fn test_update_emits_config_updated_event() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         update_asset_config(
             &env,
@@ -402,7 +397,7 @@ fn test_failed_update_emits_no_event() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
-        initialize_asset(&env, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
 
         let _ = update_asset_config(
             &env,
@@ -431,8 +426,8 @@ fn test_update_preserves_other_assets() {
         set_admin(&env, &admin);
 
         let other_asset = Address::generate(&env);
-        initialize_asset(&env, None, default_config()).unwrap();
-        initialize_asset(&env, Some(other_asset.clone()), default_config()).unwrap();
+        initialize_asset(&env, &admin, None, default_config()).unwrap();
+        initialize_asset(&env, &admin, Some(other_asset.clone()), default_config()).unwrap();
 
         update_asset_config(
             &env,

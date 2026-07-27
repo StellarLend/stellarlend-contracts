@@ -815,12 +815,15 @@ impl HelloContract {
     }
 
     /// Initialize/register a new asset with configuration.
+    ///
+    /// `caller` must be the stored protocol admin.
     pub fn initialize_asset(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         config: AssetConfig,
     ) -> Result<(), CrossAssetError> {
-        initialize_asset(&env, asset, config)
+        initialize_asset(&env, &caller, asset, config)
     }
 
     /// Update asset configuration (admin only).
