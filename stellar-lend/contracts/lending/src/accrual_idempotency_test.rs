@@ -38,6 +38,7 @@ mod accrual_idempotency_tests {
     fn make_position(principal: i128, last_update: u64) -> DebtPosition {
     borrow_index_snapshot: 0,
         DebtPosition {
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
             principal,
             last_update,
         }
