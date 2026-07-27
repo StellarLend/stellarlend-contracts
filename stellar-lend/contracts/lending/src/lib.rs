@@ -12,6 +12,8 @@ pub mod upgrade;
 #[cfg(test)]
 mod accrual_idempotency_test;
 #[cfg(test)]
+mod accrual_state_doc_test;
+#[cfg(test)]
 mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;

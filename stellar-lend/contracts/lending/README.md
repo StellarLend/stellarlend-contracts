@@ -288,6 +288,7 @@ sequenceDiagram
 - [Storage Layout](../../../../docs/storage.md) — persistent key schema and TTL policy.
 - [Developer Glossary](../../../../docs/glossary.md) — key protocol terms and numeric scales.
 - [Interest Rate Kink Model](RATE_MODEL.md) — borrow rate curve formula, parameters, and worked examples.
+- [Debt Accrual State Machine](DEBT_ACCRUAL_STATE_MACHINE.md) — borrow, accrue, settle, repay, and rate-cache ordering rules.
 - [Liquidation Accrual Notes](LIQUIDATE_ACCRUAL_NOTES.md) — details the settle-then-liquidate ordering guarantee and worked numeric examples.
 - [Liquidation Mechanics](../LIQUIDATION_MECHANICS.md) — detailed liquidation formulas and examples.
 
