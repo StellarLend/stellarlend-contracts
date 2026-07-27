@@ -1,5 +1,7 @@
-pub use crate::governance::GovernanceError;
+//! Centralised error re-exports.
+//!
+//! `lib.rs` references `errors::GovernanceError` throughout its entrypoint
+//! signatures.  The canonical definition lives in `governance.rs`; this module
+//! re-exports it so the short path resolves.
 
-pub fn _placeholder() -> GovernanceError {
-    GovernanceError::NotInitialized
-}
+pub use crate::governance::GovernanceError;

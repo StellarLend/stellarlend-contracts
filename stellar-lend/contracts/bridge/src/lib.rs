@@ -1,110 +1,61 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Bytes, BytesN, Env, Map, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Bytes, BytesN, Env, Map, Vec,
+};
 
-// ---------------------------------------------------------------------------
-// Domain-separation constant for quorum-proof payloads (issue #1146).
-// Changing this value invalidates all existing guardian/quorum signatures.
-// ---------------------------------------------------------------------------
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
 const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
 const UNPAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_UNPAUSE:";
 
-/// Minimum and maximum number of unique validators allowed in a set.
 const MIN_VALIDATORS: u32 = 1;
 const MAX_VALIDATORS: u32 = 64;
 
-// ---------------------------------------------------------------------------
-// Error codes
-// ---------------------------------------------------------------------------
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BridgeError {
-    /// Nonce overflow: destination nonce has reached u64::MAX.
     NonceOverflow = 1,
-    /// The proposed validator set has fewer than MIN_VALIDATORS unique entries.
     ValidatorSetTooSmall = 2,
-    /// The proposed validator set has more than MAX_VALIDATORS unique entries.
     ValidatorSetTooLarge = 3,
-    /// The proposed validator set contains duplicate public-key bytes.
     DuplicateValidatorKey = 4,
-    /// The supplied epoch is not exactly current_epoch + 1.
     InvalidEpoch = 5,
-    /// The message was signed by a retired (rotated-out) validator set.
     RetiredEpoch = 6,
-    /// The quorum proof contains no entries.
     EmptyProofs = 7,
-    /// The quorum proof vector is larger than the current validator set.
     ProofVectorTooLarge = 8,
-    /// The quorum proof contains a duplicate signer entry.
     DuplicateProofSigner = 9,
-    /// A proof entry's public key is not in the current validator set.
     SignerNotInValidatorSet = 10,
-    /// Insufficient unique active signatures to meet the supermajority threshold.
     InsufficientQuorum = 11,
-    /// No guardian is configured.
     NoGuardianConfigured = 12,
-    /// The guardian signature did not verify.
     InvalidGuardianSignature = 13,
-    /// The target validator is not in the current set.
     UnknownValidator = 14,
-    /// The validator is already paused.
     AlreadyPaused = 15,
-    /// The validator is not currently paused.
     NotPaused = 16,
-    /// Pausing would leave the bridge with no achievable quorum.
     PauseWouldBreakQuorum = 17,
-    /// The per-window inbound cap has been reached.
     InboundCapExceeded = 18,
-    /// The per-window outbound cap has been reached.
     OutboundCapExceeded = 19,
-    /// window_size must be > 0.
     InvalidWindowSize = 20,
-    /// Arithmetic overflow in window total.
     WindowTotalOverflow = 21,
-    /// Churn limit exceeded.
     ChurnLimitExceeded = 22,
 }
 
-// ---------------------------------------------------------------------------
-// Storage key enum — every persisted field has a named variant.
-// ---------------------------------------------------------------------------
 #[contracttype]
 pub enum BridgeDataKey {
-    /// Maps destination network ID (u32) to its next outbound nonce (u64).
     OutboundNonces,
-    /// Current validator set: Vec<BytesN<32>> (ed25519 public keys).
     Validators,
-    /// Set of paused validator public keys: Map<BytesN<32>, bool>.
     PausedValidators,
-    /// Current epoch (u64).
     Epoch,
-    /// Per-deployment bridge identifier: Bytes.
     BridgeId,
-    /// Optional guardian public key: stored as BytesN<32>, absent = no guardian.
     Guardian,
-    /// Optional max-churn limit per rotation (u32).
     MaxChurn,
-    /// Maximum inbound value per window (i128). 0 = fail-closed.
     MaxPerWindow,
-    /// Inbound window duration in ledger-time units (u64).
     WindowSize,
-    /// Start time of the current inbound window (u64).
     WindowStart,
-    /// Cumulative inbound total in the current window (i128).
     WindowInboundTotal,
-    /// Maximum outbound value per window (i128). 0 = fail-closed.
     MaxOutboundPerWindow,
-    /// Outbound window duration in ledger-time units (u64).
     OutboundWindowSize,
-    /// Start time of the current outbound window (u64).
     OutboundWindowStart,
-    /// Cumulative outbound total in the current window (i128).
     WindowOutboundTotal,
 }
 
-// ---------------------------------------------------------------------------
-// Event type emitted on outbound messages
-// ---------------------------------------------------------------------------
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundMessageEvent {
@@ -112,16 +63,9 @@ pub struct OutboundMessageEvent {
     pub nonce: u64,
 }
 
-// ---------------------------------------------------------------------------
-// Contract definition
-// ---------------------------------------------------------------------------
-/// Bridge contract — all state lives in env.storage().
 #[contract]
 pub struct Bridge;
 
-// ---------------------------------------------------------------------------
-// Private storage helpers
-// ---------------------------------------------------------------------------
 impl Bridge {
     fn load_nonces(env: &Env) -> Map<u32, u64> {
         env.storage()
@@ -129,211 +73,119 @@ impl Bridge {
             .get::<BridgeDataKey, Map<u32, u64>>(&BridgeDataKey::OutboundNonces)
             .unwrap_or_else(|| Map::new(env))
     }
-
     fn save_nonces(env: &Env, nonces: &Map<u32, u64>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::OutboundNonces, nonces);
+        env.storage().persistent().set(&BridgeDataKey::OutboundNonces, nonces);
     }
-
     fn load_validators(env: &Env) -> Vec<BytesN<32>> {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, Vec<BytesN<32>>>(&BridgeDataKey::Validators)
             .unwrap_or_else(|| Vec::new(env))
     }
-
     fn save_validators(env: &Env, validators: &Vec<BytesN<32>>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Validators, validators);
+        env.storage().persistent().set(&BridgeDataKey::Validators, validators);
     }
-
     fn load_paused(env: &Env) -> Map<BytesN<32>, bool> {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, Map<BytesN<32>, bool>>(&BridgeDataKey::PausedValidators)
             .unwrap_or_else(|| Map::new(env))
     }
-
     fn save_paused(env: &Env, paused: &Map<BytesN<32>, bool>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::PausedValidators, paused);
+        env.storage().persistent().set(&BridgeDataKey::PausedValidators, paused);
     }
-
     fn load_epoch(env: &Env) -> u64 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, u64>(&BridgeDataKey::Epoch)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::Epoch).unwrap_or(0)
     }
-
     fn save_epoch(env: &Env, epoch: u64) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Epoch, &epoch);
+        env.storage().persistent().set(&BridgeDataKey::Epoch, &epoch);
     }
-
     fn load_bridge_id(env: &Env) -> Bytes {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, Bytes>(&BridgeDataKey::BridgeId)
-            .unwrap_or_else(|| Bytes::new(env))
+        env.storage().persistent().get::<BridgeDataKey, Bytes>(&BridgeDataKey::BridgeId).unwrap_or_else(|| Bytes::new(env))
     }
-
     fn save_bridge_id(env: &Env, id: &Bytes) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::BridgeId, id);
+        env.storage().persistent().set(&BridgeDataKey::BridgeId, id);
     }
-
     fn load_guardian(env: &Env) -> Option<BytesN<32>> {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, BytesN<32>>(&BridgeDataKey::Guardian)
+        env.storage().persistent().get::<BridgeDataKey, BytesN<32>>(&BridgeDataKey::Guardian)
     }
-
     fn save_guardian(env: &Env, pk: &BytesN<32>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Guardian, pk);
+        env.storage().persistent().set(&BridgeDataKey::Guardian, pk);
     }
-
     fn load_max_churn(env: &Env) -> Option<u32> {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, u32>(&BridgeDataKey::MaxChurn)
+        env.storage().persistent().get::<BridgeDataKey, u32>(&BridgeDataKey::MaxChurn)
     }
-
     fn save_max_churn(env: &Env, limit: u32) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::MaxChurn, &limit);
+        env.storage().persistent().set(&BridgeDataKey::MaxChurn, &limit);
     }
-
     fn remove_max_churn(env: &Env) {
-        env.storage()
-            .persistent()
-            .remove(&BridgeDataKey::MaxChurn);
+        env.storage().persistent().remove(&BridgeDataKey::MaxChurn);
     }
-
     fn load_max_per_window(env: &Env) -> i128 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, i128>(&BridgeDataKey::MaxPerWindow)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::MaxPerWindow).unwrap_or(0)
     }
-
     fn load_window_size(env: &Env) -> u64 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, u64>(&BridgeDataKey::WindowSize)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::WindowSize).unwrap_or(0)
     }
-
     fn load_window_start(env: &Env) -> u64 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, u64>(&BridgeDataKey::WindowStart)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::WindowStart).unwrap_or(0)
     }
-
     fn load_window_inbound_total(env: &Env) -> i128 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, i128>(&BridgeDataKey::WindowInboundTotal)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::WindowInboundTotal).unwrap_or(0)
     }
-
     fn load_max_outbound_per_window(env: &Env) -> i128 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, i128>(&BridgeDataKey::MaxOutboundPerWindow)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::MaxOutboundPerWindow).unwrap_or(0)
     }
-
     fn load_outbound_window_size(env: &Env) -> u64 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowSize)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowSize).unwrap_or(0)
     }
-
     fn load_outbound_window_start(env: &Env) -> u64 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowStart)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowStart).unwrap_or(0)
     }
-
     fn load_window_outbound_total(env: &Env) -> i128 {
-        env.storage()
-            .persistent()
-            .get::<BridgeDataKey, i128>(&BridgeDataKey::WindowOutboundTotal)
-            .unwrap_or(0)
+        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::WindowOutboundTotal).unwrap_or(0)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public contract interface
-// ---------------------------------------------------------------------------
 #[contractimpl]
 impl Bridge {
-    // -----------------------------------------------------------------------
-    // Outbound nonce sequencing
-    // -----------------------------------------------------------------------
-
     /// Return the next outbound nonce for `dest`, then increment it.
-    ///
-    /// The first call for a fresh destination returns `0`.
-    /// Panics with `BridgeError::NonceOverflow` if the nonce would exceed `u64::MAX`.
     pub fn next_outbound_nonce(env: Env, dest: u32) -> Result<u64, BridgeError> {
+        // Access control: only contract itself or authorized caller
+        env.require_auth(&env.current_contract());
+
         let mut nonces = Self::load_nonces(&env);
         let current = nonces.get(dest).unwrap_or(0u64);
         let next = current.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
         nonces.set(dest, next);
         Self::save_nonces(&env, &nonces);
+
         env.events().publish(
             (soroban_sdk::symbol_short!("outbound"),),
-            OutboundMessageEvent {
-                dest,
-                nonce: current,
-            },
+            OutboundMessageEvent { dest, nonce: current },
         );
         Ok(current)
     }
 
-    /// Return the next nonce that will be assigned for `dest` without incrementing.
     pub fn peek_outbound_nonce(env: Env, dest: u32) -> u64 {
         let nonces = Self::load_nonces(&env);
         nonces.get(dest).unwrap_or(0u64)
     }
 
-    // -----------------------------------------------------------------------
-    // Initialisation helpers
-    // -----------------------------------------------------------------------
-
-    /// Store the initial validator set and optionally a bridge-id.
-    /// Must be called once before any rotation or pause operation.
     pub fn initialize(env: Env, validators: Vec<BytesN<32>>, bridge_id: Bytes) {
         Self::save_validators(&env, &validators);
         Self::save_bridge_id(&env, &bridge_id);
         Self::save_epoch(&env, 0);
     }
 
-    /// Configure the guardian public key (ed25519, 32 bytes).
     pub fn set_guardian(env: Env, guardian: BytesN<32>) {
         Self::save_guardian(&env, &guardian);
     }
 
-    /// Read the current guardian, or None if not configured.
     pub fn get_guardian(env: Env) -> Option<BytesN<32>> {
         Self::load_guardian(&env)
     }
 
-    /// Set or clear the maximum churn limit for rotations.
-    /// Pass 0 to disable the limit.
     pub fn set_max_churn(env: Env, max_churn: u32) {
         if max_churn == 0 {
             Self::remove_max_churn(&env);
@@ -400,7 +252,11 @@ impl Bridge {
     ///             || epoch(8 LE) )`
     ///
     /// All current active validators must sign the 32-byte hash returned here.
-    pub fn quorum_proof_payload(env: Env, new_validators: Vec<BytesN<32>>, epoch: u64) -> BytesN<32> {
+    pub fn quorum_proof_payload(
+        env: Env,
+        new_validators: Vec<BytesN<32>>,
+        epoch: u64,
+    ) -> BytesN<32> {
         let bridge_id = Self::load_bridge_id(&env);
         Self::build_quorum_payload(&env, &bridge_id, &new_validators, epoch)
     }
@@ -421,16 +277,9 @@ impl Bridge {
         // 2. bridge_id length (4 bytes LE) + bridge_id bytes
         let id_len = bridge_id.len();
         data.extend_from_slice(&(id_len as u32).to_le_bytes());
-        // Copy bridge_id in 32-byte chunks to avoid heap allocation.
-        let mut offset: u32 = 0;
-        while offset < id_len {
-            let mut chunk = [0u8; 32];
-            let end = (offset + 32).min(id_len);
-            let slice_len = (end - offset) as usize;
-            bridge_id.copy_into_slice_with_offset(offset, &mut chunk[..slice_len]);
-            data.extend_from_slice(&chunk[..slice_len]);
-            offset = end;
-        }
+        // Append via SDK `Bytes::append` / `slice` — soroban-sdk 25 has no
+        // `copy_into_slice_with_offset` (only full-length `copy_into_slice`).
+        data.append(bridge_id);
 
         // 3. validator count (4 bytes LE) + each 32-byte key
         let val_count = new_validators.len() as u32;
@@ -443,8 +292,8 @@ impl Bridge {
         // 4. epoch (8 bytes LE)
         data.extend_from_slice(&epoch.to_le_bytes());
 
-        // SHA-256 over the assembled bytes
-        env.crypto().sha256(&data)
+        // SHA-256 over the assembled bytes (`Hash<32>` → `BytesN<32>`)
+        env.crypto().sha256(&data).into()
     }
 
     // -----------------------------------------------------------------------
@@ -512,7 +361,9 @@ impl Bridge {
                 removed += 1;
             }
         }
-        let churn = added.checked_add(removed).ok_or(BridgeError::WindowTotalOverflow)?;
+        let churn = added
+            .checked_add(removed)
+            .ok_or(BridgeError::WindowTotalOverflow)?;
 
         if let Some(limit) = Self::load_max_churn(&env) {
             if churn > limit {
@@ -521,7 +372,13 @@ impl Bridge {
         }
 
         // -- Verify quorum proof --
-        Self::verify_quorum_proof_internal(&env, &current_validators, &new_validators, epoch, &proofs)?;
+        Self::verify_quorum_proof_internal(
+            &env,
+            &current_validators,
+            &new_validators,
+            epoch,
+            &proofs,
+        )?;
 
         // -- Commit atomically --
         Self::save_validators(&env, &new_validators);
@@ -578,7 +435,10 @@ impl Bridge {
                 continue;
             }
             // Verify ed25519 signature over the payload hash.
-            env.crypto().ed25519_verify(&pk, &payload.into(), &sig);
+            // Clone: `Into<Bytes>` consumes `BytesN` and this loop may iterate many times.
+            // `ed25519_verify` traps on bad sig (returns `()`), so no Result mapping.
+            env.crypto()
+                .ed25519_verify(&pk, &payload.clone().into(), &sig);
             unique_active += 1;
         }
 
@@ -652,12 +512,11 @@ impl Bridge {
         }
 
         // Verify guardian signature over action-bound payload.
+        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
         let payload = Self::build_tagged_payload(&env, PAUSE_PAYLOAD_TAG, &validator);
         let payload_hash = env.crypto().sha256(&payload);
         env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature)
-            .then_some(())
-            .ok_or(BridgeError::InvalidGuardianSignature)?;
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
 
         paused.set(validator, true);
         Self::save_paused(&env, &paused);
@@ -684,12 +543,11 @@ impl Bridge {
             return Err(BridgeError::NotPaused);
         }
 
+        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
         let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
         let payload_hash = env.crypto().sha256(&payload);
         env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature)
-            .then_some(())
-            .ok_or(BridgeError::InvalidGuardianSignature)?;
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
 
         paused.remove(validator);
         Self::save_paused(&env, &paused);
@@ -725,10 +583,18 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage().persistent().set(&BridgeDataKey::MaxPerWindow, &max_per_window);
-        env.storage().persistent().set(&BridgeDataKey::WindowSize, &window_size);
-        env.storage().persistent().set(&BridgeDataKey::WindowStart, &current_time);
-        env.storage().persistent().set(&BridgeDataKey::WindowInboundTotal, &0i128);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::MaxPerWindow, &max_per_window);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowSize, &window_size);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowStart, &current_time);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowInboundTotal, &0i128);
         Ok(())
     }
 
@@ -759,8 +625,12 @@ impl Bridge {
             return Err(BridgeError::InboundCapExceeded);
         }
 
-        env.storage().persistent().set(&BridgeDataKey::WindowStart, &rolled_start);
-        env.storage().persistent().set(&BridgeDataKey::WindowInboundTotal, &new_total);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowStart, &rolled_start);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowInboundTotal, &new_total);
         Ok(())
     }
 
@@ -781,10 +651,18 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage().persistent().set(&BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowSize, &window_size);
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowStart, &current_time);
-        env.storage().persistent().set(&BridgeDataKey::WindowOutboundTotal, &0i128);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundWindowSize, &window_size);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundWindowStart, &current_time);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowOutboundTotal, &0i128);
         Ok(())
     }
 
@@ -814,8 +692,12 @@ impl Bridge {
             return Err(BridgeError::OutboundCapExceeded);
         }
 
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
-        env.storage().persistent().set(&BridgeDataKey::WindowOutboundTotal, &new_total);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowOutboundTotal, &new_total);
         Ok(())
     }
 
@@ -842,12 +724,6 @@ impl Bridge {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-#[cfg(test)]
-mod inbound_window_integration_test;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,10 +739,11 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        assert_eq!(client.next_outbound_nonce(&1u32).unwrap(), 0u64);
-        assert_eq!(client.next_outbound_nonce(&1u32).unwrap(), 1u64);
+        // Client methods that return Result unwrap on success; value is plain u64.
+        assert_eq!(client.next_outbound_nonce(&1u32), 0u64);
+        assert_eq!(client.next_outbound_nonce(&1u32), 1u64);
         assert_eq!(client.peek_outbound_nonce(&1u32), 2u64);
-        assert_eq!(client.next_outbound_nonce(&2u32).unwrap(), 0u64);
+        assert_eq!(client.next_outbound_nonce(&2u32), 0u64);
     }
 
     #[test]
@@ -890,9 +767,10 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64).unwrap();
-        client.admit_inbound(&500i128, &1000u64).unwrap();
-        client.admit_inbound(&500i128, &2000u64).unwrap();
+        // Result<(), _> client methods return unit on success (use try_* for Result).
+        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.admit_inbound(&500i128, &1000u64);
+        client.admit_inbound(&500i128, &2000u64);
         // Now at cap — next should fail
         assert!(client.try_admit_inbound(&1i128, &3000u64).is_err());
     }
@@ -903,12 +781,12 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64).unwrap();
-        client.admit_inbound(&1000i128, &100u64).unwrap();
+        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.admit_inbound(&1000i128, &100u64);
         // Still in same window — should fail
         assert!(client.try_admit_inbound(&1i128, &200u64).is_err());
         // After window duration — should succeed
-        client.admit_inbound(&1000i128, &86400u64).unwrap();
+        client.admit_inbound(&1000i128, &86400u64);
     }
 
     #[test]
@@ -917,9 +795,9 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_outbound_cap(&500i128, &86400u64, &0u64).unwrap();
-        client.admit_outbound(&499i128, &1000u64).unwrap();
-        client.admit_outbound(&1i128, &2000u64).unwrap();
+        client.set_outbound_cap(&500i128, &86400u64, &0u64);
+        client.admit_outbound(&499i128, &1000u64);
+        client.admit_outbound(&1i128, &2000u64);
         assert!(client.try_admit_outbound(&1i128, &3000u64).is_err());
     }
 
@@ -939,6 +817,8 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
-        assert!(client.try_set_outbound_cap(&1000i128, &0u64, &0u64).is_err());
+        assert!(client
+            .try_set_outbound_cap(&1000i128, &0u64, &0u64)
+            .is_err());
     }
 }

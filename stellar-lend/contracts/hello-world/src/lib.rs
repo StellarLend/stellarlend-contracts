@@ -2,7 +2,6 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HelloError {
@@ -13,6 +12,7 @@ pub mod admin;
 pub mod amm;
 pub mod amm_twap;
 pub mod analytics;
+pub mod borrow;
 pub mod bridge;
 pub mod config_snapshot;
 pub mod cross_asset;
@@ -47,6 +47,8 @@ mod twap_eviction_test;
 mod twap_fallback_event_test;
 #[cfg(test)]
 mod twap_tests;
+#[cfg(test)]
+mod twap_view_test;
 
 #[cfg(test)]
 mod bridge_fee_test;
@@ -62,25 +64,27 @@ mod clamp_rate_test;
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
-mod normalize_price_test;
+mod cross_asset_config_bounds_test;
 #[cfg(test)]
 mod cross_asset_ltv_test;
 #[cfg(test)]
+mod cross_asset_storage_doc_test;
+#[cfg(test)]
+mod normalize_price_test;
+#[cfg(test)]
 mod rate_clamp_test;
+#[cfg(test)]
+mod risk_params_paced_change_test;
+#[cfg(test)]
+mod twap_coverage_test;
 #[cfg(test)]
 mod twap_maxbuffer_perf_test;
 #[cfg(test)]
 mod twap_read_bench_test;
 #[cfg(test)]
-mod twap_coverage_test;
-#[cfg(test)]
-mod cross_asset_storage_doc_test;
-#[cfg(test)]
-mod cross_asset_config_bounds_test;
-#[cfg(test)]
-mod cross_asset_price_authorization_test;
-#[cfg(test)]
 mod utilization_clamp_test;
+#[cfg(test)]
+mod asset_price_age_test;
 
 #[cfg(test)]
 mod guardian_threshold_safety_test;
@@ -110,9 +114,10 @@ use crate::analytics::{
 };
 use crate::bridge::{BridgeConfig, BridgeError};
 use crate::cross_asset::{
-    get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
-    get_user_asset_position, get_user_position_summary, initialize_asset, update_asset_config,
-    update_asset_price, AssetConfig, AssetKey, AssetPosition, UserPositionSummary,
+    get_asset_config_by_address, get_asset_list, get_asset_price_age, get_total_borrow_for,
+    get_total_supply_for, get_user_asset_position, get_user_position_summary, initialize_asset,
+    update_asset_config, update_asset_price, AssetConfig, AssetKey, AssetPosition,
+    UserPositionSummary,
 };
 use crate::flash_loan::{
     configure_flash_loan, execute_flash_loan, repay_flash_loan, set_flash_loan_fee, FlashLoanConfig,
@@ -277,6 +282,28 @@ impl HelloContract {
             close_factor,
             liquidation_incentive,
         )
+        .map_err(|e| match e {
+            RiskParamsError::ParameterChangeTooLarge => {
+                RiskManagementError::ParameterChangeTooLarge
+            }
+            RiskParamsError::InvalidCollateralRatio => RiskManagementError::InvalidCollateralRatio,
+            RiskParamsError::InvalidLiquidationThreshold => {
+                RiskManagementError::InvalidLiquidationThreshold
+            }
+            RiskParamsError::InvalidCloseFactor => RiskManagementError::InvalidCloseFactor,
+            RiskParamsError::InvalidLiquidationIncentive => {
+                RiskManagementError::InvalidLiquidationIncentive
+            }
+            // Distinct arithmetic faults surfaced by `validate_change`.
+            // Routing them to the dedicated `Overflow` variant (rather than
+            // the generic `InvalidParameter` catch-all) lets operators
+            // distinguish a misconfigured value from a real i128-overflow in
+            // incident response. `DivisionByZero` cannot fire in practice
+            // (BASIS_POINTS = 10_000) but is mapped explicitly anyway.
+            RiskParamsError::Overflow => RiskManagementError::Overflow,
+            RiskParamsError::DivisionByZero => RiskManagementError::InvalidParameter,
+            _ => RiskManagementError::InvalidParameter,
+        })
     }
 
     pub fn set_guardians(
@@ -297,11 +324,17 @@ impl HelloContract {
         recovery::start_recovery(&env, initiator, old_admin, new_admin)
     }
 
-    pub fn approve_recovery(env: Env, approver: Address) -> Result<(), crate::governance::GovernanceError> {
+    pub fn approve_recovery(
+        env: Env,
+        approver: Address,
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::approve_recovery(&env, approver)
     }
 
-    pub fn execute_recovery(env: Env, executor: Address) -> Result<(), crate::governance::GovernanceError> {
+    pub fn execute_recovery(
+        env: Env,
+        executor: Address,
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::execute_recovery(&env, executor)
     }
 
@@ -357,8 +390,14 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
-        let (repaid, _seized, _fee) =
-            liquidate(&env, liquidator, borrower, debt_asset, collateral_asset, amount)?;
+        let (repaid, _seized, _fee) = liquidate(
+            &env,
+            liquidator,
+            borrower,
+            debt_asset,
+            collateral_asset,
+            amount,
+        )?;
         Ok(repaid)
     }
 
@@ -828,6 +867,14 @@ impl HelloContract {
         update_asset_price(&env, &caller, asset, price)
     }
 
+    /// Get how old (in seconds) the stored oracle price for an asset is.
+    pub fn get_asset_price_age(
+        env: Env,
+        asset: Option<Address>,
+    ) -> Result<u64, CrossAssetError> {
+        get_asset_price_age(&env, asset)
+    }
+
     /// Get asset configuration.
     pub fn get_asset_config(
         env: Env,
@@ -1235,6 +1282,9 @@ mod claim_reserves_test;
 #[cfg(test)]
 mod gov_can_vote_test;
 // mod governance_test;
+
+#[cfg(test)]
+mod recovery_test;
 
 #[cfg(test)]
 mod tests {

@@ -10,8 +10,8 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::cross_asset::{
     cross_asset_borrow, cross_asset_deposit, cross_asset_repay, get_user_position_summary,
-    initialize, initialize_asset, normalize_price, normalize_price_ceil, update_asset_price, AssetConfig,
-    CrossAssetError,
+    initialize, initialize_asset, normalize_price, normalize_price_ceil, update_asset_price,
+    AssetConfig, CrossAssetError,
 };
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,7 @@ fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -167,7 +168,7 @@ fn test_borrow_health_check_mixed_decimals() {
     let token_b = Address::generate(&env);
 
     with_contract(&env, || {
-        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor = 7500 (75 %)
+        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor_bps = 7500 (75 %)
         initialize_asset(
             &env,
             None,
@@ -180,6 +181,7 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: false,
                 price: 2_000_000, // $2.00 at 6 dp
                 price_decimals: 6,
+                last_update_ts: 0,
             },
         )
         .unwrap();
@@ -197,6 +199,7 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: true,
                 price: 1_000_000_000_000_000_000, // $1.00 at 18 dp
                 price_decimals: 18,
+                last_update_ts: 0,
             },
         )
         .unwrap();
