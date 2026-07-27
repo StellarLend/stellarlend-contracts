@@ -70,9 +70,9 @@ The protocol has a single super-admin whose address is stored under
 `DataKey::Admin`. The admin has clearance for all privileged operations listed
 above.
 
-`get_admin()` returns `Result<Address, LendingError>` — a `NotInitialized`
-error signals that `initialize` has not been called. Callers should use
-`try_get_admin()` if the contract may be uninitialized.
+`get_admin()` returns `Address` and panics if `initialize` has not been called.
+Callers should use `try_get_admin()` if the contract may be uninitialized,
+which returns `Option<Address>`.
 
 ---
 

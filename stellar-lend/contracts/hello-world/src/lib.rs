@@ -2,20 +2,6 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-mod cross_asset;
-mod deposit;
-mod risk_management;
-
-use cross_asset::CrossAssetError;
-use deposit::deposit_collateral;
-use risk_management::{
-    can_be_liquidated, get_close_factor, get_liquidation_incentive,
-    get_liquidation_incentive_amount, get_liquidation_threshold, get_max_liquidatable_amount,
-    get_min_collateral_ratio, initialize_risk_management, is_emergency_paused, is_operation_paused,
-    require_min_collateral_ratio, set_emergency_pause, set_pause_switch, set_pause_switches,
-    set_risk_params, RiskConfig, RiskManagementError,
-};
-
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HelloError {
@@ -28,7 +14,6 @@ pub mod amm_twap;
 pub mod analytics;
 pub mod borrow;
 pub mod bridge;
-pub mod config;
 pub mod config_snapshot;
 pub mod cross_asset;
 pub mod deposit;
@@ -41,11 +26,8 @@ pub mod liquidate;
 pub mod multisig;
 pub mod oracle;
 pub mod recovery;
-pub mod reentrancy;
 pub mod repay;
-pub mod reserve;
 pub mod risk_management;
-pub mod risk_params;
 pub mod storage;
 pub mod types;
 pub mod withdraw;
@@ -65,6 +47,8 @@ mod twap_eviction_test;
 mod twap_fallback_event_test;
 #[cfg(test)]
 mod twap_tests;
+#[cfg(test)]
+mod twap_view_test;
 
 #[cfg(test)]
 mod bridge_fee_test;
@@ -80,24 +64,27 @@ mod clamp_rate_test;
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
-mod normalize_price_test;
-
+mod cross_asset_config_bounds_test;
 #[cfg(test)]
 mod cross_asset_ltv_test;
 #[cfg(test)]
+mod cross_asset_storage_doc_test;
+#[cfg(test)]
+mod normalize_price_test;
+#[cfg(test)]
 mod rate_clamp_test;
+#[cfg(test)]
+mod risk_params_paced_change_test;
+#[cfg(test)]
+mod twap_coverage_test;
 #[cfg(test)]
 mod twap_maxbuffer_perf_test;
 #[cfg(test)]
 mod twap_read_bench_test;
 #[cfg(test)]
-mod twap_coverage_test;
-#[cfg(test)]
-mod cross_asset_storage_doc_test;
-#[cfg(test)]
-mod cross_asset_config_bounds_test;
-#[cfg(test)]
 mod utilization_clamp_test;
+#[cfg(test)]
+mod asset_price_age_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
@@ -105,19 +92,16 @@ mod utilization_clamp_test;
 
 use crate::oracle::FullOracleConfig;
 
-use borrow::borrow_asset;
 use deposit::deposit_collateral;
 use repay::repay_debt;
 
-use risk_management::{
-    check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
-};
-
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
 use crate::deposit::{DepositDataKey, ProtocolAnalytics};
-use risk_params::{
-    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
-    initialize_risk_params, require_min_collateral_ratio, RiskParamsError,
+use crate::risk_management::{
+    can_be_liquidated, check_emergency_pause, get_liquidation_incentive_amount,
+    get_max_liquidatable_amount, initialize_risk_management, is_emergency_paused,
+    is_operation_paused, require_min_collateral_ratio, set_pause_switch, set_pause_switches,
+    RiskConfig, RiskManagementError,
 };
 use withdraw::withdraw_collateral;
 
@@ -126,11 +110,11 @@ use crate::analytics::{
     AnalyticsError, ProtocolReport, UserReport,
 };
 use crate::bridge::{BridgeConfig, BridgeError};
-use crate::config::{config_backup, config_get, config_restore, config_set, ConfigError};
 use crate::cross_asset::{
-    get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
-    get_user_asset_position, get_user_position_summary, initialize_asset, update_asset_config,
-    update_asset_price, AssetConfig, AssetKey, AssetPosition, CrossAssetError, UserPositionSummary,
+    get_asset_config_by_address, get_asset_list, get_asset_price_age, get_total_borrow_for,
+    get_total_supply_for, get_user_asset_position, get_user_position_summary, initialize_asset,
+    update_asset_config, update_asset_price, AssetConfig, AssetKey, AssetPosition,
+    UserPositionSummary,
 };
 use crate::flash_loan::{
     configure_flash_loan, execute_flash_loan, repay_flash_loan, set_flash_loan_fee, FlashLoanConfig,
@@ -142,20 +126,13 @@ use bridge::{
     set_bridge_fee,
 };
 
+use crate::admin::require_admin;
 #[allow(unused_imports)]
 use crate::interest_rate::{
     initialize_interest_rate_config, update_interest_rate_config, InterestRateConfig,
     InterestRateError,
 };
 use crate::liquidate::liquidate;
-use crate::admin::require_admin;
-use crate::risk_management::{
-    set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
-};
-use crate::risk_params::{
-    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
-    initialize_risk_params, require_min_collateral_ratio,
-};
 use crate::storage::GuardianConfig;
 use crate::types::{
     GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalType, RecoveryRequest,
@@ -193,8 +170,7 @@ impl HelloContract {
         crate::admin::set_admin(&env, admin.clone(), None)
             .map_err(|_| RiskManagementError::Unauthorized)?;
         initialize_risk_management(&env, admin.clone())?;
-        initialize_risk_params(&env).map_err(|_| RiskManagementError::InvalidParameter)?;
-        initialize_interest_rate_config(&env, admin.clone()).map_err(|e| {
+        initialize_interest_rate_config(&env).map_err(|e| {
             if e == InterestRateError::AlreadyInitialized {
                 RiskManagementError::AlreadyInitialized
             } else {
@@ -295,8 +271,9 @@ impl HelloContract {
     ) -> Result<(), RiskManagementError> {
         require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
         check_emergency_pause(&env)?;
-        risk_params::set_risk_params(
+        risk_management::set_risk_params(
             &env,
+            caller.clone(),
             min_collateral_ratio,
             liquidation_threshold,
             close_factor,
@@ -314,6 +291,14 @@ impl HelloContract {
             RiskParamsError::InvalidLiquidationIncentive => {
                 RiskManagementError::InvalidLiquidationIncentive
             }
+            // Distinct arithmetic faults surfaced by `validate_change`.
+            // Routing them to the dedicated `Overflow` variant (rather than
+            // the generic `InvalidParameter` catch-all) lets operators
+            // distinguish a misconfigured value from a real i128-overflow in
+            // incident response. `DivisionByZero` cannot fire in practice
+            // (BASIS_POINTS = 10_000) but is mapped explicitly anyway.
+            RiskParamsError::Overflow => RiskManagementError::Overflow,
+            RiskParamsError::DivisionByZero => RiskManagementError::InvalidParameter,
             _ => RiskManagementError::InvalidParameter,
         })
     }
@@ -323,7 +308,7 @@ impl HelloContract {
         caller: Address,
         guardians: soroban_sdk::Vec<Address>,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::set_guardians(&env, caller, guardians, threshold)
     }
 
@@ -332,15 +317,21 @@ impl HelloContract {
         initiator: Address,
         old_admin: Address,
         new_admin: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::start_recovery(&env, initiator, old_admin, new_admin)
     }
 
-    pub fn approve_recovery(env: Env, approver: Address) -> Result<(), errors::GovernanceError> {
+    pub fn approve_recovery(
+        env: Env,
+        approver: Address,
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::approve_recovery(&env, approver)
     }
 
-    pub fn execute_recovery(env: Env, executor: Address) -> Result<(), errors::GovernanceError> {
+    pub fn execute_recovery(
+        env: Env,
+        executor: Address,
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::execute_recovery(&env, executor)
     }
 
@@ -349,7 +340,7 @@ impl HelloContract {
         caller: Address,
         admins: soroban_sdk::Vec<Address>,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         multisig::ms_set_admins(&env, caller, admins, threshold)
     }
 
@@ -357,7 +348,7 @@ impl HelloContract {
         env: Env,
         proposer: Address,
         new_ratio: i128,
-    ) -> Result<u64, errors::GovernanceError> {
+    ) -> Result<u64, crate::governance::GovernanceError> {
         multisig::ms_propose_set_min_cr(&env, proposer, new_ratio)
     }
 
@@ -365,7 +356,7 @@ impl HelloContract {
         env: Env,
         approver: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         multisig::ms_approve(&env, approver, proposal_id)
     }
 
@@ -373,18 +364,8 @@ impl HelloContract {
         env: Env,
         executor: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         multisig::ms_execute(&env, executor, proposal_id)
-    }
-
-    /// Borrow assets from the protocol.
-    pub fn borrow_asset(
-        env: Env,
-        user: Address,
-        asset: Option<Address>,
-        amount: i128,
-    ) -> Result<i128, crate::borrow::BorrowError> {
-        crate::borrow::borrow_asset(&env, user, asset, amount)
     }
 
     /// Repay borrowed assets.
@@ -406,8 +387,14 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
-        let (repaid, _seized, _fee) =
-            liquidate(&env, liquidator, borrower, debt_asset, collateral_asset, amount)?;
+        let (repaid, _seized, _fee) = liquidate(
+            &env,
+            liquidator,
+            borrower,
+            debt_asset,
+            collateral_asset,
+            amount,
+        )?;
         Ok(repaid)
     }
 
@@ -427,24 +414,24 @@ impl HelloContract {
 
     /// Get minimum collateral ratio in basis points.
     pub fn get_min_collateral_ratio(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_min_collateral_ratio(&env)
+        risk_management::get_min_collateral_ratio(&env)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
     /// Get liquidation threshold.
     pub fn get_liquidation_threshold(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_liquidation_threshold(&env)
+        risk_management::get_liquidation_threshold(&env)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
     /// Get close factor.
     pub fn get_close_factor(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_close_factor(&env).map_err(|_| RiskManagementError::InvalidParameter)
+        risk_management::get_close_factor(&env).map_err(|_| RiskManagementError::InvalidParameter)
     }
 
     /// Get liquidation incentive.
     pub fn get_liquidation_incentive(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_liquidation_incentive(&env)
+        risk_management::get_liquidation_incentive(&env)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
@@ -539,7 +526,7 @@ impl HelloContract {
         collateral_value: i128,
         debt_value: i128,
     ) -> Result<(), RiskManagementError> {
-        risk_params::require_min_collateral_ratio(&env, collateral_value, debt_value)
+        risk_management::require_min_collateral_ratio(&env, collateral_value, debt_value)
             .map_err(|_| RiskManagementError::InsufficientCollateralRatio)
     }
 
@@ -816,43 +803,6 @@ impl HelloContract {
     }
 
     // ============================================================================
-    // Config Methods
-    // ============================================================================
-
-    /// Set a configuration value (admin only).
-    pub fn config_set(
-        env: Env,
-        caller: Address,
-        key: soroban_sdk::Symbol,
-        value: soroban_sdk::Val,
-    ) -> Result<(), ConfigError> {
-        config_set(&env, caller, key, value)
-    }
-
-    /// Get a configuration value.
-    pub fn config_get(env: Env, key: soroban_sdk::Symbol) -> Option<soroban_sdk::Val> {
-        config_get(&env, key)
-    }
-
-    /// Backup configuration parameters (admin only).
-    pub fn config_backup(
-        env: Env,
-        caller: Address,
-        keys: soroban_sdk::Vec<soroban_sdk::Symbol>,
-    ) -> Result<soroban_sdk::Vec<(soroban_sdk::Symbol, soroban_sdk::Val)>, ConfigError> {
-        config_backup(&env, caller, keys)
-    }
-
-    /// Restore configuration parameters (admin only).
-    pub fn config_restore(
-        env: Env,
-        caller: Address,
-        backup: soroban_sdk::Vec<(soroban_sdk::Symbol, soroban_sdk::Val)>,
-    ) -> Result<(), ConfigError> {
-        config_restore(&env, caller, backup)
-    }
-
-    // ============================================================================
     // Cross-Asset Methods
     // ============================================================================
 
@@ -903,12 +853,23 @@ impl HelloContract {
     }
 
     /// Update asset price (admin/oracle only).
+    ///
+    /// `caller` must be the stored protocol admin.
     pub fn update_asset_price(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         price: i128,
     ) -> Result<(), CrossAssetError> {
-        update_asset_price(&env, asset, price)
+        update_asset_price(&env, &caller, asset, price)
+    }
+
+    /// Get how old (in seconds) the stored oracle price for an asset is.
+    pub fn get_asset_price_age(
+        env: Env,
+        asset: Option<Address>,
+    ) -> Result<u64, CrossAssetError> {
+        get_asset_price_age(&env, asset)
     }
 
     /// Get asset configuration.
@@ -1006,7 +967,7 @@ impl HelloContract {
         proposal_threshold: Option<i128>,
         timelock_duration: Option<u64>,
         default_voting_threshold: Option<i128>,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::initialize(
             &env,
             admin,
@@ -1027,7 +988,7 @@ impl HelloContract {
         proposal_type: ProposalType,
         description: soroban_sdk::String,
         voting_threshold: Option<i128>,
-    ) -> Result<u64, errors::GovernanceError> {
+    ) -> Result<u64, crate::governance::GovernanceError> {
         let soroban_desc = soroban_sdk::String::from_str(&env, &description.to_string());
         governance::create_proposal(
             &env,
@@ -1044,7 +1005,7 @@ impl HelloContract {
         voter: Address,
         proposal_id: u64,
         vote_type: VoteType,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::vote(&env, voter, proposal_id, vote_type)
     }
 
@@ -1053,7 +1014,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         proposal_id: u64,
-    ) -> Result<ProposalOutcome, errors::GovernanceError> {
+    ) -> Result<ProposalOutcome, crate::governance::GovernanceError> {
         governance::queue_proposal(&env, caller, proposal_id)
     }
 
@@ -1062,7 +1023,7 @@ impl HelloContract {
         env: Env,
         executor: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::execute_proposal(&env, executor, proposal_id)
     }
 
@@ -1071,7 +1032,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::cancel_proposal(&env, caller, proposal_id)
     }
 
@@ -1080,7 +1041,7 @@ impl HelloContract {
         env: Env,
         approver: Address,
         proposal_id: u64,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::approve_proposal(&env, approver, proposal_id)
     }
 
@@ -1090,7 +1051,7 @@ impl HelloContract {
         caller: Address,
         admins: Vec<Address>,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::set_multisig_config(&env, caller, admins, threshold)
     }
 
@@ -1099,7 +1060,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         guardian: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::add_guardian(&env, caller, guardian)
     }
 
@@ -1108,7 +1069,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         guardian: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::remove_guardian(&env, caller, guardian)
     }
 
@@ -1117,7 +1078,7 @@ impl HelloContract {
         env: Env,
         caller: Address,
         threshold: u32,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::set_guardian_threshold(&env, caller, threshold)
     }
 
@@ -1127,7 +1088,7 @@ impl HelloContract {
         initiator: Address,
         old_admin: Address,
         new_admin: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::start_recovery(&env, initiator, old_admin, new_admin)
     }
 
@@ -1135,7 +1096,7 @@ impl HelloContract {
     pub fn gov_approve_recovery(
         env: Env,
         approver: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::approve_recovery(&env, approver)
     }
 
@@ -1143,7 +1104,7 @@ impl HelloContract {
     pub fn gov_execute_recovery(
         env: Env,
         executor: Address,
-    ) -> Result<(), errors::GovernanceError> {
+    ) -> Result<(), crate::governance::GovernanceError> {
         governance::execute_recovery(&env, executor)
     }
 

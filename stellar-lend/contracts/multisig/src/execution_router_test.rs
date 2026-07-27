@@ -116,12 +116,7 @@ fn test_create_proposal_rejects_non_signer() {
 
     let outsider = Address::generate(&env);
     let hash = make_bytes(&env, b"hash");
-    client.create_proposal(
-        &outsider,
-        &ProposalAction::SetThreshold(1),
-        &hash,
-        &100u64,
-    );
+    client.create_proposal(&outsider, &ProposalAction::SetThreshold(1), &hash, &100u64);
 }
 
 // ---------------------------------------------------------------------------

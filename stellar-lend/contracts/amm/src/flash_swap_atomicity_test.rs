@@ -31,7 +31,7 @@
 #![cfg(test)]
 
 use crate::{inverse_swap_in, AmmContract, AmmContractClient};
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
 const FEE_BPS: i128 = 30;
 
@@ -43,8 +43,8 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, soroban_sdk::Address) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
-    let token_a = soroban_sdk::testutils::Address::generate(&env);
-    let token_b = soroban_sdk::testutils::Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
     AmmContractClient::new(&env, &id).init_pool(&ra, &rb, &token_a, &token_b);
     (env, id)
 }
