@@ -373,69 +373,7 @@ pub enum ProtocolAction {
     FlashLoan,
 }
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum LendingError {
-    InvalidAmount = 1001,
-    Overflow = 1002,
-    Unauthorized = 1003,
-    PendingAdminNotSet = 1004,
-    BelowMinimumBorrow = 1008,
-    NotInitialized = 1009,
-    AlreadyInitialized = 1010,
-    PositionHealthy = 1011,
-    SelfLiquidation = 2008,
-    DebtCeilingExceeded = 2001,
-    DepositCapExceeded = 2002,
-    /// A borrow would push total outstanding debt for the asset beyond the
-    /// configured per-asset `borrow_cap`.
-    BorrowCapExceeded = 2003,
-    InvalidFeeBps = 2005,
-    InvalidFlashUtilizationBps = 2006,
-    InsufficientCollateral = 2007,
-    IsolationCeilingExceeded = 2009,
-    InvalidLiquidationParams = 2011,
-    InvalidOracleSignature = 5001,
-    PriceOutOfBounds = 3004,
-    PriceUnavailable = 3005,
-    StaleOracleTimestamp = 5002,
-    OraclePubkeyNotSet = 5003,
-    MaxMoveBpsExceeded = 5004,
-    OracleReplay = 5005,
-    /// The asset has not been configured via set_asset_params.
-    AssetNotConfigured = 3001,
-    /// Oracle price record is missing for the requested asset.
-    PriceFeedNotFound = 3002,
-    /// Operation would result in an unsafe health factor.
-    HealthFactorTooLow = 3003,
-    UpgradeNotInitialized = 4001,
-    ProposalNotFound = 4002,
-    ProposalNotReady = 4003,
-    ProposalExpired = 4004,
-    ProposalAlreadyExecuted = 4005,
-    AlreadyApproved = 4006,
-    InsufficientUpgradeApprovals = 4007,
-    InvalidUpgradeVersion = 4008,
-    ApproverNotFound = 4009,
-    MaxApproversReached = 4010,
-    InvalidUpgradeConfig = 4011,
-    /// `write_off_bad_debt` called when there is no recorded bad debt.
-    NoBadDebt = 6001,
-    /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
-    WriteOffExceedsBadDebt = 6002,
-    /// `set_liquidation_threshold_bps` called with a value outside `[0, 10000]`.
-    InvalidLiquidationThresholdBps = 7000,
-    /// `set_close_factor_bps` called with a value outside `(0, 10000]`.
-    InvalidCloseFactorBps = 7001,
-    /// `set_liquidation_incentive_bps` called with a value outside
-    /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
-    InvalidLiquidationIncentiveBps = 7002,
-    /// `set_deposit_cap` called with a value <= 0.
-    InvalidDepositCap = 7005,
-    /// `set_rate_params` called with an internally inconsistent `RateParams`.
-    InvalidRateParams = 7006,
-}
+pub use stellar_lend_common::LendingError;
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
 ///
