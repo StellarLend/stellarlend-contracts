@@ -19,17 +19,17 @@ where
     env.as_contract(&contract_id, || f(Address::generate(&env)))
 }
 
-fn init(env: &Env, total_deposits: i128, total_borrows: i128) {
+fn init(env: &Env, admin: Address, total_deposits: i128, total_borrows: i128) {
     initialize_interest_rate_config(env).unwrap();
-    set_protocol_totals(env, total_deposits, total_borrows).unwrap();
+    set_protocol_totals(env, admin, total_deposits, total_borrows).unwrap();
 }
 
 #[test]
 fn zero_utilization_uses_base_rate() {
     let env = Env::default();
     env.mock_all_auths();
-    with_contract(&env, |_| {
-        init(&env, 1_000, 0);
+    with_contract(&env, |admin| {
+        init(&env, admin, 1_000, 0);
         let config = InterestRateConfig::default();
         assert_eq!(
             compute_borrow_rate(0, 0, &config).unwrap(),
@@ -42,8 +42,8 @@ fn zero_utilization_uses_base_rate() {
 fn at_first_kink_uses_first_segment_endpoint() {
     let env = Env::default();
     env.mock_all_auths();
-    with_contract(&env, |_| {
-        init(&env, 1_000, 800); // utilization = 8_000 bps (kink1)
+    with_contract(&env, |admin| {
+        init(&env, admin, 1_000, 800); // utilization = 8_000 bps (kink1)
         let config = InterestRateConfig::default();
         let expected = config
             .base_rate_bps
@@ -67,8 +67,8 @@ fn at_first_kink_uses_first_segment_endpoint() {
 fn mid_between_kinks_uses_second_segment() {
     let env = Env::default();
     env.mock_all_auths();
-    with_contract(&env, |_| {
-        init(&env, 1_000, 850); // utilization = 8_500 bps
+    with_contract(&env, |admin| {
+        init(&env, admin, 1_000, 850); // utilization = 8_500 bps
         let config = InterestRateConfig::default();
         let utilization = 8_500;
         let denominator = config.kink2_bps - config.kink_utilization_bps;
@@ -97,8 +97,8 @@ fn mid_between_kinks_uses_second_segment() {
 fn at_second_kink_uses_second_segment_endpoint() {
     let env = Env::default();
     env.mock_all_auths();
-    with_contract(&env, |_| {
-        init(&env, 1_000, 900); // utilization = 9_000 bps (kink2)
+    with_contract(&env, |admin| {
+        init(&env, admin, 1_000, 900); // utilization = 9_000 bps (kink2)
         let config = InterestRateConfig::default();
         let denominator = config.kink2_bps - config.kink_utilization_bps;
         let expected = config
@@ -127,8 +127,8 @@ fn at_second_kink_uses_second_segment_endpoint() {
 fn high_utilization_uses_third_segment() {
     let env = Env::default();
     env.mock_all_auths();
-    with_contract(&env, |_| {
-        init(&env, 1_000, 980); // utilization = 9_800 bps
+    with_contract(&env, |admin| {
+        init(&env, admin, 1_000, 980); // utilization = 9_800 bps
         let config = InterestRateConfig::default();
         let utilization = 9_800;
         let denominator = 10_000 - config.kink2_bps;
@@ -159,8 +159,8 @@ fn high_utilization_uses_third_segment() {
 fn monotonic_rate_non_decreasing() {
     let env = Env::default();
     env.mock_all_auths();
-    with_contract(&env, |_| {
-        init(&env, 1_000, 0);
+    with_contract(&env, |admin| {
+        init(&env, admin, 1_000, 0);
         let config = InterestRateConfig::default();
         let mut prev = compute_borrow_rate(0, 0, &config).unwrap();
         for u in (0..=10_000).step_by(250) {
