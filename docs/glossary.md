@@ -20,7 +20,7 @@ This glossary defines key protocol terms, numeric scales, and common pitfalls fo
 ### Close Factor
 - **Definition**: The maximum proportion of a distressed borrower's debt that a liquidator can repay in a single transaction.
 - **Scale**: Basis points (`5,000` = `50%`).
-- **Safety Limit**: Usually capped at `7,500` (75%) to prevent total wipeout in a single block.
+- **Safety Limit**: Accepts any value in `(0, 10000]` via `set_close_factor_bps`, allowing an admin to configure up to 100% (complete debt repayment in a single liquidation call).
 
 ### Reserve Factor
 - **Definition**: The percentage of interest paid by borrowers that is redirected to the protocol treasury rather than distributed to lenders.
