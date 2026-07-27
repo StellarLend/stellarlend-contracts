@@ -295,25 +295,37 @@ fn test_set_price_bounds_before_init_returns_not_initialized() {
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_set_guardian_before_init_panics_not_initialized() {
+fn test_set_guardian_before_init_returns_not_initialized() {
     let (env, client, _admin) = uninit_client();
     let guardian = Address::generate(&env);
-    client.set_guardian(&guardian);
+    let result = client.try_set_guardian(&guardian);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_set_emergency_state_before_init_panics_not_initialized() {
+fn test_set_emergency_state_before_init_returns_not_initialized() {
     let (_, client, _admin) = uninit_client();
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    let result = client.try_set_emergency_state(&EmergencyState::Shutdown);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_set_pause_before_init_panics_not_initialized() {
+fn test_set_pause_before_init_returns_not_initialized() {
     let (_, client, _admin) = uninit_client();
-    client.set_pause(&PauseType::Deposit, &true, &100);
+    let result = client.try_set_pause(&PauseType::Deposit, &true, &100);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -385,11 +397,15 @@ fn test_set_asset_isolation_before_init_returns_not_initialized() {
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_propose_admin_before_init_panics_not_initialized() {
+fn test_propose_admin_before_init_returns_not_initialized() {
     let (env, client, _admin) = uninit_client();
     let new_admin = Address::generate(&env);
-    client.propose_admin(&new_admin);
+    let result = client.try_propose_admin(&new_admin);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 #[test]

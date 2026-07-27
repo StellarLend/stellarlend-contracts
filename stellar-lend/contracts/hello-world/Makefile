@@ -19,10 +19,10 @@ build:
 	@echo "🔨 Building StellarLend contract..."
 	stellar contract build
 
-# Run tests (note: currently has std issues, but keeping for future)
+# Run tests
 test:
 	@echo "🧪 Running contract tests..."
-	cargo test --lib || echo "⚠️  Tests currently have std compatibility issues"
+	cargo test --lib
 
 # Run WASM audit
 audit:

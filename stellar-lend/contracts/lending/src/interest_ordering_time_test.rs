@@ -15,7 +15,7 @@
 
 #[cfg(test)]
 mod interest_ordering_time_tests {
-    use crate::debt::{borrow_amount, repay_amount, save_debt, DebtPosition, DEFAULT_APR_BPS};
+    use crate::debt::{borrow_amount, repay_amount, DebtPosition, DEFAULT_APR_BPS};
     use crate::rounding_strategy::SECONDS_PER_YEAR;
     use crate::{LendingContract, LendingContractClient};
     use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
@@ -261,12 +261,9 @@ mod interest_ordering_time_tests {
     // ────────────────────────────────────────────────────────────────────────
 
     /// `repay_amount` in the debt module accrues interest before subtracting
-    /// the repayment.
+    /// the repayment. Pure function — no storage access required.
     #[test]
     fn test_debt_module_repay_amount_accrues_first() {
-        let env = Env::default();
-        let user = Address::generate(&env);
-
         let initial = DebtPosition {
             borrow_index_snapshot: crate::debt::INDEX_SCALE,
             principal: 10_000,
@@ -286,9 +283,6 @@ mod interest_ordering_time_tests {
     /// `borrow_amount` followed by `repay_amount` with a six-month gap.
     #[test]
     fn test_debt_module_borrow_then_repay_with_time() {
-        let env = Env::default();
-        let user = Address::generate(&env);
-
         let initial = DebtPosition {
             borrow_index_snapshot: crate::debt::INDEX_SCALE,
             principal: 0,

@@ -2,6 +2,13 @@
 
 Closes #1121.
 
+This document describes the collateral-factor tiering behaviour implemented
+in the **hello-world** cross-asset module
+([`src/cross_asset.rs`](../src/cross_asset.rs)). The same `collateral_factor_bps`
+field also appears on the standalone `stellar-lend/cross_asset_test` crate;
+hello-world is the integration surface covered by
+`src/cross_asset_ltv_test.rs`.
+
 ## Problem
 
 Before this change, every registered asset contributed to a user's borrow
