@@ -91,7 +91,11 @@ mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
-mod missing_price_test;
+mod max_borrow_proptest;
+#[cfg(test)]
+mod compound_interest_proptest;
+#[cfg(test)]
+mod property_invariants_test;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
@@ -3873,3 +3877,7 @@ pub(crate) mod test {
         assert!(env.ledger().sequence() >= 0);
     }
 }
+#[cfg(test)]
+mod max_borrow_proptest;
+#[cfg(test)]
+mod compound_interest_proptest;
