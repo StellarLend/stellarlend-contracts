@@ -16,8 +16,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # This ensures a full history, preventing git index errors
+
         
         
         
@@ -28,7 +27,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          toolchain: "1.85.0"
           components: rustfmt, clippy
 
       - name: Cache cargo registry
@@ -46,38 +45,49 @@ jobs:
         run: |
           cd stellar-lend/contracts/lending
           cargo fmt -- --check
+          cd ../hello-world
+          cargo fmt -- --check
 
       - name: Run clippy
         run: |
           cd stellar-lend/contracts/lending
-          cargo clippy --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast
+          cargo clippy --all-targets --all-features -- -D warnings -A deprecated
+          cd ../hello-world
+          cargo clippy --all-targets --all-features -- -D warnings -A deprecated
 
       - name: Build project
         run: |
           cd stellar-lend/contracts/lending
           cargo build --verbose
+          cd ../hello-world
+          cargo build --verbose
 
       - name: Run tests
         run: |
           cd stellar-lend/contracts/lending
-          cargo test --lib --verbose
-
-      - name: Run integration tests
-        run: |
-          cd stellar-lend/contracts/lending
-          cargo test --tests --verbose
+          cargo test --verbose
+          cd ../hello-world
+          cargo test --verbose
 
       - name: Generate lending test report
         run: |
           cd stellar-lend/contracts/lending
-          cargo test --lib --verbose -- --nocapture > lending_test_report.txt
+          cargo test --verbose -- --nocapture > lending_test_report.txt
           cat lending_test_report.txt
+
+      - name: Generate hello-world test report
+        run: |
+          cd stellar-lend/contracts/hello-world
+          cargo test --verbose -- --nocapture > hello_world_test_report.txt
+          cat hello_world_test_report.txt
 
       - name: Upload test report
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: stellar-lend/contracts/lending/lending_test_report.txt
+          path: |
+            stellar-lend/contracts/lending/lending_test_report.txt
+            stellar-lend/contracts/hello-world/hello_world_test_report.txt
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked --version 0.31.0
@@ -85,10 +95,9 @@ jobs:
       - name: Generate code coverage
         run: |
           cd stellar-lend/contracts/lending
-          cargo tarpaulin --verbose --out Xml --packages stellarlend-lending --lib --exclude-files "**/indexing_system/**"
-
-      - name: Enforce lending crate coverage threshold
-        run: python3 scripts/enforce_coverage.py stellar-lend/contracts/lending/cobertura.xml --threshold 63.0 --overall-only
+          cargo tarpaulin --verbose --out Xml --packages stellarlend-lending --fail-under 88 --exclude-files "../../indexing_system/*" ../../indexing_system/*
+          cd ../hello-world
+          cargo tarpaulin --verbose --out Xml --fail-under 88
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
@@ -96,4 +105,4 @@ jobs:
       - name: Run security audit
         run: |
           cd stellar-lend
-          cargo audit --ignore RUSTSEC-2026-0049 --ignore RUSTSEC-2025-0009 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0363 --ignore RUSTSEC-2024-0344 --ignore RUSTSEC-2022-0093
+          cargo audit --ignore RUSTSEC-2026-0049 --ignore RUSTSEC-2025-0009 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0363

@@ -235,7 +235,11 @@ fn unfreeze_is_idempotent() {
     // Not frozen yet.
     assert!(!is_bridge_frozen(&f.env));
     let res = unfreeze_bridge(&f.env, f.guardian.clone());
-    assert!(res.is_ok(), "redundant unfreeze must succeed, got {:?}", res);
+    assert!(
+        res.is_ok(),
+        "redundant unfreeze must succeed, got {:?}",
+        res
+    );
     assert!(!is_bridge_frozen(&f.env));
 }
 
@@ -420,10 +424,10 @@ fn freeze_transition_emits_event_on_freeze_topic() {
             }
             let t1 = topics.get(1).unwrap();
             let t2 = topics.get(2).unwrap();
-            let s1: Symbol = Symbol::try_from_val(env, &t1)
-                .unwrap_or_else(|_| Symbol::new(env, ""));
-            let s2: Symbol = Symbol::try_from_val(env, &t2)
-                .unwrap_or_else(|_| Symbol::new(env, ""));
+            let s1: Symbol =
+                Symbol::try_from_val(env, &t1).unwrap_or_else(|_| Symbol::new(env, ""));
+            let s2: Symbol =
+                Symbol::try_from_val(env, &t2).unwrap_or_else(|_| Symbol::new(env, ""));
             if s1 == Symbol::new(env, "v1") && s2 == Symbol::new(env, "freeze") {
                 count += 1;
             }

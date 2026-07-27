@@ -30,6 +30,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     let client = AmmContractClient::new(&env, &id);
     client.init_pool(&ra, &rb);
     let admin = Address::generate(&env);
+    client.init_pool(&ra, &rb, &token_a, &token_b);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
@@ -75,7 +76,7 @@ fn test_fee_bps_zero() {
     assert_eq!(client.get_fee_bps(), 0);
 
     // A swap with zero fee should accrue nothing.
-    client.swap_a_for_b(&1_000);
+    client.swap_a_for_b(&1_000_i128);
     let (fee_a, _) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "zero stored fee must yield zero accrued fee");
 }
@@ -117,7 +118,7 @@ fn test_fee_bps_out_of_range() {
     );
 
     // Negative value.
-    let result_neg = client.try_set_fee_bps(&admin, &-1);
+    let result_neg = client.try_set_fee_bps(&admin, &(-1_i128));
     assert_eq!(
         result_neg,
         Err(Ok(AmmPoolError::FeeBpsOutOfRange)),

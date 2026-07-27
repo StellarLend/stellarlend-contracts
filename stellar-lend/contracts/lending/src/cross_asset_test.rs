@@ -1,7 +1,8 @@
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::events::Event;
+use soroban_sdk::testutils::{Address as _, Events};
 
-fn setup() -> (
+pub fn setup() -> (
     Env,
     LendingContractClient<'static>,
     Address,
@@ -29,6 +30,7 @@ fn setup() -> (
         &8000,                  // 80% liquidation threshold
         &1_000_000_000_000i128, // debt ceiling
         &0i128,                 // borrow_cap (0 = uncapped)
+        &0i128,                 // supply_cap (0 = uncapped)
     );
     client.set_asset_params(
         &admin,
@@ -37,6 +39,7 @@ fn setup() -> (
         &7000,                  // 70% liquidation threshold
         &1_000_000_000_000i128, // debt ceiling
         &0i128,                 // borrow_cap (0 = uncapped)
+        &0i128,                 // supply_cap (0 = uncapped)
     );
 
     // Set oracle prices: 10_000_000 = $1.00 (7-decimal precision)
@@ -69,6 +72,56 @@ fn test_set_asset_params_stores_and_reads() {
     assert_eq!(params.ltv_bps, 7500);
     assert_eq!(params.liquidation_threshold_bps, 8000);
     assert_eq!(params.debt_ceiling, 1_000_000_000_000i128);
+    assert_eq!(params.borrow_cap, 0);
+    assert_eq!(params.supply_cap, 0);
+}
+
+/// `AssetParamsSetEvent` must include `supply_cap` so off-chain indexers that
+/// consume events (without re-reading storage) observe the full asset config.
+///
+/// Regression guard for #1439.
+#[test]
+fn test_set_asset_params_emits_event_including_supply_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+    client.initialize(&admin);
+
+    let ltv_bps = 7500i128;
+    let liquidation_threshold_bps = 8000i128;
+    let debt_ceiling = 1_000_000_000_000i128;
+    let borrow_cap = 2_500_000i128;
+    let supply_cap = 5_000_000i128;
+
+    client.set_asset_params(
+        &admin,
+        &asset,
+        &ltv_bps,
+        &liquidation_threshold_bps,
+        &debt_ceiling,
+        &borrow_cap,
+        &supply_cap,
+    );
+
+    assert_eq!(
+        env.events().all(),
+        [AssetParamsSetEvent {
+            asset: asset.clone(),
+            ltv_bps,
+            liquidation_threshold_bps,
+            debt_ceiling,
+            borrow_cap,
+            supply_cap,
+        }
+        .to_xdr(&env, &cid)],
+        "AssetParamsSetEvent must carry supply_cap alongside all other params"
+    );
+
+    let stored = client.get_asset_params(&asset).unwrap();
+    assert_eq!(stored.supply_cap, supply_cap);
 }
 
 #[test]
@@ -81,8 +134,27 @@ fn test_set_asset_params_rejects_invalid_ltv() {
         &8000i128,
         &1_000_000i128,
         &0i128,
+        &0i128,
     );
     assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
+}
+
+#[test]
+fn test_set_asset_params_rejects_ltv_above_liquidation_threshold() {
+    let (_env, client, _id, admin, _user, asset_a, _asset_b) = setup();
+    let res = client.try_set_asset_params(
+        &admin,
+        &asset_a,
+        &9000i128, // LTV above liquidation threshold
+        &5000i128, // liquidation threshold
+        &1_000_000i128,
+        &0i128,
+        &0i128,
+    );
+    assert!(matches!(
+        res,
+        Err(Ok(LendingError::InvalidLiquidationParams))
+    ));
 }
 
 #[test]
@@ -317,6 +389,7 @@ fn test_zero_ltv_asset_cannot_borrow_against_it() {
         &0i128,
         &1_000_000_000_000i128,
         &0i128,
+        &0i128,
     );
     client.deposit_collateral_asset(&user, &asset_a, &1000i128);
     client.deposit_collateral_asset(&user, &asset_b, &1i128);
@@ -343,6 +416,7 @@ fn test_set_asset_params_rejects_unauthorized() {
         &5000i128,
         &6000i128,
         &1_000_000i128,
+        &0i128,
         &0i128,
     );
     assert!(res.is_err());
@@ -418,7 +492,9 @@ fn test_hf_below_10000_rejected() {
 #[test]
 fn test_debt_ceiling_rejects_excess() {
     let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
-    client.set_asset_params(&admin, &asset_a, &7500i128, &8000i128, &100i128, &0i128);
+    client.set_asset_params(
+        &admin, &asset_a, &7500i128, &8000i128, &100i128, &0i128, &0i128,
+    );
     client.deposit_collateral_asset(&user, &asset_b, &2i128);
     let res = client.try_borrow_asset(&user, &asset_a, &200i128);
     assert!(matches!(res, Err(Ok(LendingError::DebtCeilingExceeded))));
@@ -516,7 +592,10 @@ fn test_partial_withdraw_allowed_when_hf_stays_above_one() {
     client.borrow_asset(&user, &asset_a, &100i128);
     // Withdraw 100 — leaves 900 collateral vs 100 debt; HF ≫ 1
     let new_bal = client.withdraw_asset(&user, &asset_a, &100i128);
-    assert_eq!(new_bal, 900, "Partial withdrawal that keeps HF above 1 must succeed");
+    assert_eq!(
+        new_bal, 900,
+        "Partial withdrawal that keeps HF above 1 must succeed"
+    );
 }
 
 /// State is rolled back after a blocked withdrawal: collateral balance unchanged.
