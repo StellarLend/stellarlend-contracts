@@ -99,7 +99,14 @@ pub fn get_max_debt_assets_per_user(env: &Env) -> Option<u32> {
 }
 
 /// Require that `caller` is the stored admin; returns `Unauthorized` otherwise.
+///
+/// Calls `caller.require_auth()` so that Soroban enforces a cryptographic
+/// signature check, consistent with `admin::require_admin` and
+/// `bridge::require_guardian`.  A pure address-equality check without
+/// `require_auth` would allow any account to spoof the admin address as a
+/// plain argument with no proof of key ownership.
 fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
+    caller.require_auth();
     let admin = get_admin(env).ok_or(CrossAssetError::Unauthorized)?;
     if &admin != caller {
         return Err(CrossAssetError::Unauthorized);

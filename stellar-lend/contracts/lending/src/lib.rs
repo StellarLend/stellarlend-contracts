@@ -1846,6 +1846,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::DebtCeiling, &ceiling);
+        crate::events::emit_debt_ceiling_updated(&env, ceiling);
         Ok(())
     }
 
@@ -1859,6 +1860,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::FlashFeeBps, &fee_bps);
+        crate::events::emit_flash_fee_updated(&env, fee_bps);
         Ok(())
     }
 

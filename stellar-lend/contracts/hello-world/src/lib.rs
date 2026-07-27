@@ -12,6 +12,7 @@ pub mod admin;
 pub mod amm;
 pub mod amm_twap;
 pub mod analytics;
+pub mod borrow;
 pub mod bridge;
 pub mod config_snapshot;
 pub mod cross_asset;
@@ -46,6 +47,8 @@ mod twap_eviction_test;
 mod twap_fallback_event_test;
 #[cfg(test)]
 mod twap_tests;
+#[cfg(test)]
+mod twap_view_test;
 
 #[cfg(test)]
 mod bridge_fee_test;

@@ -10,9 +10,9 @@
 
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env};
 
-const SECONDS_PER_YEAR: u64 = 31_536_000;
-const DEFAULT_APR_BPS: i128 = 500;
-const BPS_DENOM: i128 = 10_000;
+pub const SECONDS_PER_YEAR: u64 = 31_536_000;
+pub const DEFAULT_APR_BPS: i128 = 500;
+pub const BPS_DENOM: i128 = 10_000;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -64,7 +64,7 @@ fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i12
         .ok_or(RepayError::Overflow)
 }
 
-fn load_position(env: &Env, user: &Address) -> Position {
+pub fn load_position(env: &Env, user: &Address) -> Position {
     env.storage()
         .persistent()
         .get::<RepayDataKey, Position>(&RepayDataKey::Position(user.clone()))
@@ -74,7 +74,7 @@ fn load_position(env: &Env, user: &Address) -> Position {
         })
 }
 
-fn save_position(env: &Env, user: &Address, position: &Position) {
+pub fn save_position(env: &Env, user: &Address, position: &Position) {
     env.storage()
         .persistent()
         .set::<RepayDataKey, Position>(&RepayDataKey::Position(user.clone()), position);
