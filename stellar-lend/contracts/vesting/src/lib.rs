@@ -28,6 +28,8 @@ pub enum VestingError {
     OverClaim = 10,
     /// Contract was already initialized
     AlreadyInitialized = 11,
+    /// Destination already holds a vesting grant
+    DestinationAlreadyHasGrant = 12,
 }
 
 /// Storage keys for the vesting contract
@@ -388,6 +390,70 @@ impl VestingContract {
         Ok((vested, clawback))
     }
 
+    /// Transfer a vesting grant from one grantee address to another.
+    ///
+    /// Admin only. Rejected while the contract is paused. Moves the source
+    /// grant's remaining schedule to `to`, preserving `start_ts`, `cliff_secs`,
+    /// `duration_secs`, and `claimed_amount`. Intended for custody-address
+    /// changes and recovery scenarios (see `GRANT_TRANSFER.md`).
+    ///
+    /// # Arguments
+    /// * `caller` - Must be the admin
+    /// * `from`   - Current grantee whose grant will be moved
+    /// * `to`     - New grantee that will receive the grant
+    ///
+    /// # Errors
+    /// * [`VestingError::Unauthorized`] — `caller` is not the admin
+    /// * [`VestingError::ContractPaused`] — contract is paused
+    /// * [`VestingError::GrantNotFound`] — no grant exists for `from`
+    /// * [`VestingError::AlreadyRevoked`] — source grant has been revoked
+    /// * [`VestingError::InvalidGrant`] — `from` and `to` are the same address
+    /// * [`VestingError::DestinationAlreadyHasGrant`] — `to` already has a grant
+    pub fn transfer_grant(
+        env: Env,
+        caller: Address,
+        from: Address,
+        to: Address,
+    ) -> Result<(), VestingError> {
+        Self::require_admin(&env, &caller)?;
+        Self::require_not_paused(&env)?;
+
+        if from == to {
+            return Err(VestingError::InvalidGrant);
+        }
+
+        let mut grant: Grant = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Grant(from.clone()))
+            .ok_or(VestingError::GrantNotFound)?;
+
+        if grant.revoked {
+            return Err(VestingError::AlreadyRevoked);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&VestingKey::Grant(to.clone()))
+        {
+            return Err(VestingError::DestinationAlreadyHasGrant);
+        }
+
+        // Preserve schedule + claimed_amount; only reassign the beneficiary.
+        grant.grantee = to.clone();
+
+        env.storage()
+            .persistent()
+            .remove(&VestingKey::Grant(from.clone()));
+        env.storage()
+            .persistent()
+            .set(&VestingKey::Grant(to.clone()), &grant);
+
+        Self::emit_event(&env, "grant_transferred", &to);
+        Ok(())
+    }
+
     /// Return grant details for a grantee.
     pub fn get_grant(env: Env, grantee: Address) -> Option<Grant> {
         env.storage()
@@ -465,3 +531,5 @@ mod initialize_test;
 mod pause_offset_test;
 #[cfg(test)]
 mod vested_at_overflow_test;
+#[cfg(test)]
+mod grant_transfer_test;
