@@ -352,7 +352,7 @@ fn test_operations_resume_after_blocked_reentry() {
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = contract_id.clone().to_xdr(&env);
+    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
 
     // Attempt reentrant borrow — fails.
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);

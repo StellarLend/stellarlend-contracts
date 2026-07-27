@@ -12,8 +12,8 @@ mod doctest_worked_example {
         // Setup environment and client using existing test fixtures
         let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
         // Configure assets to match worked example parameters
-        client.set_asset_params(admin, asset_a, 7500, 9000, 1_000_000_000_000i128, 0i128);
-        client.set_asset_params(admin, asset_b, 8000, 8000, 1_000_000_000_000i128, 0i128);
+        client.set_asset_params(&admin, &asset_a, 7500, 9000, 1_000_000_000_000i128, 0i128, &0i128);
+        client.set_asset_params(&admin, &asset_b, 8000, 8000, 1_000_000_000_000i128, 0i128, &0i128);
         // Deposit collateral: 100 units of asset_a (USDC), 1 unit of asset_b (ETH)
         client.deposit_collateral_asset(user, asset_a, 100i128);
         client.deposit_collateral_asset(user, asset_b, 1i128);

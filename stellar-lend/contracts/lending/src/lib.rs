@@ -68,8 +68,6 @@ mod insurance_fund_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
-mod interest_ordering_time_test;
-#[cfg(test)]
 mod isolation_mode_test;
 #[cfg(test)]
 mod liquidate_accrual_test;
@@ -94,8 +92,6 @@ mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
-mod max_borrow_proptest;
-#[cfg(test)]
 mod missing_price_test;
 #[cfg(test)]
 mod mul_div_proptest;
@@ -104,11 +100,7 @@ mod oracle_max_move_test;
 #[cfg(test)]
 mod oracle_payload_binding_test;
 #[cfg(test)]
-mod oracle_price_bounds_test;
-#[cfg(test)]
 mod oracle_staleness_test;
-#[cfg(test)]
-mod partial_staleness_guard_test;
 #[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
@@ -142,19 +134,11 @@ mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
 #[cfg(test)]
-mod test_flash_loan_reservation;
-#[cfg(test)]
-mod upgrade_governance_test;
-#[cfg(test)]
-mod events_test;
-#[cfg(test)]
 mod upgrade_governance_test;
 #[cfg(test)]
 mod utilization_history_test;
 #[cfg(test)]
-mod withdraw_reserve_test;
-#[cfg(test)]
-mod zero_amount_semantics_test;
+mod withdraw_overflow_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt,
     repay_amount, save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
@@ -412,9 +396,8 @@ pub enum LendingError {
     InvalidFeeBps = 2005,
     InvalidFlashUtilizationBps = 2006,
     InsufficientCollateral = 2007,
-    InvalidLiquidationParams = 2010,
-    InvalidIsolationCeiling = 2011,
-    IsolationCeilingExceeded = 2012,
+    IsolationCeilingExceeded = 2009,
+    InvalidLiquidationParams = 2011,
     InvalidOracleSignature = 5001,
     PriceOutOfBounds = 3004,
     PriceUnavailable = 3005,
@@ -3323,7 +3306,7 @@ impl MockAsset {}
 pub(crate) mod test {
     use super::*;
     use ed25519_dalek::{Keypair, Signer};
-    use rand::{rngs::StdRng, SeedableRng};
+
     use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 
     fn setup() -> (

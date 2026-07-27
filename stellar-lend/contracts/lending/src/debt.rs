@@ -59,6 +59,7 @@ const SECONDS_PER_YEAR: u64 = 365 * 24 * 60 * 60; // 31_536_000
 pub struct DebtPosition {
     /// Recorded principal at last touch (does not include un-accrued interest).
     pub principal: i128,
+    borrow_index_snapshot: 0,
     /// Snapshot of the global borrow index at the time this position was last
     /// modified.  Zero signals "pre-migration; treat as current index".
     pub borrow_index_snapshot: i128,
@@ -332,10 +333,53 @@ pub fn settle_position(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Legacy per-position elapsed-time helpers (kept for backward compatibility
-// with existing tests and the rounding_strategy module)
-// ---------------------------------------------------------------------------
+/// Computes utilization and borrow rate from a preloaded aggregate snapshot.
+///
+/// Panics on arithmetic overflow, matching the existing borrow-rate API shape
+/// while keeping the underlying arithmetic checked.
+pub(crate) fn compute_borrow_rate_from_snapshot(
+    env: &Env,
+    snapshot: &RateSnapshot,
+) -> BorrowRateComputation {
+    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
+}
+
+fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
+    let snapshot = load_rate_snapshot(env);
+    compute_borrow_rate_from_snapshot(env, &snapshot)
+}
+
+/// Returns the global borrow rate, computing it at most once per ledger.
+///
+/// The temporary-storage key includes `env.ledger().sequence()`, so advancing
+/// the ledger naturally misses the previous cache entry and recomputes from a
+/// fresh `RateSnapshot`. Each cache miss also writes one utilization sample for
+/// the current ledger into the bounded utilization-history ring buffer.
+pub fn cached_borrow_rate(env: &Env) -> i128 {
+    let ledger_sequence = env.ledger().sequence();
+    let key = DataKey::BorrowRateCache(ledger_sequence);
+
+    if let Some(cache) = env
+        .storage()
+        .temporary()
+        .get::<DataKey, BorrowRateCache>(&key)
+    {
+        if cache.ledger_sequence == ledger_sequence {
+            return cache.rate_bps;
+        }
+    }
+
+    let computation = uncached_borrow_rate_computation(env);
+    write_utilization_sample(env, computation.utilization_bps);
+    let cache = BorrowRateCache {
+        ledger_sequence,
+        rate_bps: computation.rate_bps,
+    };
+    env.storage().temporary().set(&key, &cache);
+    computation.rate_bps
+}
+
+// ─── Time helpers ─────────────────────────────────────────────────────────────
 
 /// Compute elapsed seconds between two timestamps (saturating).
 pub fn elapsed_seconds(now: u64, last_update: u64) -> u64 {
@@ -347,6 +391,7 @@ pub fn elapsed_seconds(now: u64, last_update: u64) -> u64 {
 /// Retained for backward compatibility with existing tests; new code should
 /// use `compute_debt` + `touch_borrow_index` instead.
 pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, DebtError> {
+borrow_index_snapshot: 0,
     if principal == 0 || elapsed == 0 {
         return Ok(0);
     }
@@ -389,6 +434,7 @@ pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<
 /// exceeds 10 000 bps.
 pub fn accrue_interest_split(
     principal: i128,
+    borrow_index_snapshot: 0,
     elapsed: u64,
     rate_bps: i128,
     reserve_factor_bps: u32,

@@ -23,6 +23,7 @@ fn repay_exact_amount_leaves_zero_debt() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
+        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -41,6 +42,7 @@ fn repay_overpay_by_one_unit_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
+        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -60,6 +62,7 @@ fn repay_overpay_by_2x_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
+        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -81,6 +84,7 @@ fn repay_overpay_after_interest_accrual_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
+        borrow_index_snapshot: 0,
         last_update: initial_timestamp,
     };
 
@@ -104,6 +108,7 @@ fn repay_partial_payment_leaves_remaining_debt() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
+        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -153,4 +158,40 @@ fn contract_repay_exact_debt_succeeds() {
     let remaining = client.repay(&user, &300);
     assert_eq!(remaining, 0, "Remaining debt should be 0 after exact repay");
     assert_eq!(client.get_position(&user).debt, 0);
+
+    // Second repay should fail or return 0 (no outstanding debt)
+    // Since there's no debt, repay should either error or cap at 0
+    let res = client.try_repay(&user, &100);
+    // Contract might error on zero debt or cap it - both are valid
+    // If it doesn't error, remaining should be 0
+    if let Ok(Ok(remaining)) = res {
+        assert_eq!(remaining, 0, "Cannot reduce debt below zero");
+    }
+}
+
+#[test]
+fn repay_exact_debt_after_interest_accrual_with_no_refund() {
+    let (env, _client, _admin, _user) = setup();
+
+    let initial_timestamp = 1000u64;
+    let position = DebtPosition {
+        principal: 1000,
+        borrow_index_snapshot: 0,
+        last_update: initial_timestamp,
+    };
+
+    // Advance time by 1 second
+    let repay_timestamp = initial_timestamp + 1u64;
+
+    // Calculate what debt would be after 1 second at 5% APR
+    // Interest per second = 1000 * 0.05 / 31536000 ≈ 0.00158...
+    // With Banker's rounding, 1 second might round to 0 interest
+    let updated = repay_amount(position, repay_timestamp, 1000, DEFAULT_APR_BPS)
+        .expect("repay_amount should succeed");
+
+    // If interest is minimal or rounds to 0, debt should be 0 or close
+    assert_eq!(
+        updated.principal, 0,
+        "Debt should be 0 or less after exact repay plus interest"
+    );
 }
