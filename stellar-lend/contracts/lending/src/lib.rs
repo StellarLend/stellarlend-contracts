@@ -119,7 +119,7 @@ use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
     DebtPosition, DEFAULT_APR_BPS,
 };
-use events::{emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw};
+use events::{emit_borrow, emit_deposit, emit_flash_loan, emit_flash_loan_repaid, emit_repay, emit_schema_version, emit_withdraw};
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
@@ -338,9 +338,7 @@ pub enum LendingError {
     InvalidFeeBps = 2005,
     InvalidFlashUtilizationBps = 2006,
     InsufficientCollateral = 2007,
-    SelfLiquidation = 2008,
     IsolationCeilingExceeded = 2009,
-    InvalidIsolationCeiling = 2010,
     InvalidLiquidationParams = 2011,
     InvalidOracleSignature = 5001,
     PriceOutOfBounds = 3004,
@@ -1741,6 +1739,9 @@ impl LendingContract {
             .checked_add(amount)
             .expect("repay_flash_loan: treasury balance overflow");
         env.storage().persistent().set(&tre_key, &new_tre_bal);
+
+        // Emit flash loan repaid event
+        emit_flash_loan_repaid(&env, &payer, &asset, amount);
     }
 
     /// Issue a callback-based flash loan.
@@ -1795,6 +1796,10 @@ impl LendingContract {
             .checked_add(amount)
             .expect("flash_loan: receiver balance overflow");
         env.storage().persistent().set(&rec_key, &new_rec_bal);
+
+        // Emit flash loan event before callback (rolled back atomically on panic).
+        // Placed here so FlashLoanEvent appears before FlashLoanRepaidEvent in logs.
+        emit_flash_loan(&env, &initiator, &receiver, &asset, amount, fee);
 
         env.storage().instance().set(&DataKey::FlashActive, &true);
 
@@ -2307,18 +2312,6 @@ impl LendingContract {
     /// Initialize timelocked multisig upgrade governance (admin-only, once).
     pub fn upgrade_init(
         env: Env,
-        initiator: Address,
-        receiver: Address,
-        asset: Address,
-        amount: i128,
-        params: Bytes,
-    ) {
-        check_emergency_status(&env, ProtocolAction::FlashLoan);
-        let tre_key = DataKey::Treasury(asset.clone());
-        let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-        if amount > tre_bal {
-            panic!("InsufficientLiquidity");
-        }
         caller: Address,
         current_wasm_hash: BytesN<32>,
         required_approvals: u32,

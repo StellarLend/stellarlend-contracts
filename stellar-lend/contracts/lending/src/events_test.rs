@@ -12,8 +12,8 @@
 use crate::{LendingContract, LendingContractClient};
 use crate::events::EVENT_SCHEMA_VERSION;
 use soroban_sdk::{
-    testutils::{Address as _, Events},
-    Address, Env, IntoVal, Symbol, Val, Vec as SdkVec,
+    contract, contractimpl, testutils::{Address as _, Events},
+    Address, Bytes, Env, IntoVal, Symbol, Val, Vec as SdkVec,
 };
 
 fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
@@ -451,4 +451,233 @@ fn test_repay_with_accrued_interest_emits_correct_principal() {
 
     assert_eq!(repay_events.len(), 1);
     // The new_debt in the event should reflect the updated principal
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flash loan event tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A minimal compliant flash-loan receiver that repays the full amount + fee.
+#[contract]
+pub struct FlashEventTestReceiver;
+
+#[contractimpl]
+impl FlashEventTestReceiver {
+    pub fn set_lending(env: Env, lending: Address) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "lending"), &lending);
+    }
+
+    pub fn on_flash_loan(
+        env: Env,
+        _initiator: Address,
+        asset: Address,
+        amount: i128,
+        fee: i128,
+        _params: Bytes,
+    ) {
+        let lending: Address = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "lending"))
+            .expect("FlashEventTestReceiver: lending not configured");
+
+        let total = amount
+            .checked_add(fee)
+            .expect("FlashEventTestReceiver: overflow computing repayment");
+
+        let client = LendingContractClient::new(&env, &lending);
+        client.repay_flash_loan(&env.current_contract_address(), &asset, &total);
+    }
+}
+
+fn seed_treasury(env: &Env, contract_id: &Address, asset: &Address, balance: i128) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Treasury(asset.clone()), &balance);
+    });
+}
+
+fn seed_balance(env: &Env, contract_id: &Address, asset: &Address, account: &Address, bal: i128) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Balance(asset.clone(), account.clone()), &bal);
+    });
+}
+
+#[test]
+fn test_flash_loan_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let lending_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &lending_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let asset = Address::generate(&env);
+    let initiator = Address::generate(&env);
+    let amount: i128 = 1_000;
+
+    seed_treasury(&env, &lending_id, &asset, 10_000);
+
+    let receiver_id = env.register(FlashEventTestReceiver, ());
+    let receiver_client = FlashEventTestReceiverClient::new(&env, &receiver_id);
+    receiver_client.set_lending(&lending_id);
+
+    client.flash_loan(
+        &initiator,
+        &receiver_id,
+        &asset,
+        &amount,
+        &Bytes::new(&env),
+    );
+
+    let events = env.events().all();
+    let flash_loan_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "FlashLoanEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(
+        flash_loan_events.len(),
+        1,
+        "Should emit exactly one FlashLoanEvent after a successful flash loan"
+    );
+}
+
+#[test]
+fn test_flash_loan_repaid_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let lending_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &lending_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let asset = Address::generate(&env);
+    let initiator = Address::generate(&env);
+    let amount: i128 = 1_000;
+
+    seed_treasury(&env, &lending_id, &asset, 10_000);
+
+    let receiver_id = env.register(FlashEventTestReceiver, ());
+    let receiver_client = FlashEventTestReceiverClient::new(&env, &receiver_id);
+    receiver_client.set_lending(&lending_id);
+
+    client.flash_loan(
+        &initiator,
+        &receiver_id,
+        &asset,
+        &amount,
+        &Bytes::new(&env),
+    );
+
+    let events = env.events().all();
+    let repay_events: SdkVec<_> = events
+        .iter()
+        .filter(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "FlashLoanRepaidEvent");
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    assert_eq!(
+        repay_events.len(),
+        1,
+        "Should emit exactly one FlashLoanRepaidEvent after a successful flash loan repayment"
+    );
+}
+
+#[test]
+fn test_flash_loan_event_contains_correct_data() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let lending_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &lending_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    client.set_flash_fee(&30);
+
+    let asset = Address::generate(&env);
+    let initiator = Address::generate(&env);
+    let amount: i128 = 1_000;
+
+    seed_treasury(&env, &lending_id, &asset, 10_000);
+
+    let receiver_id = env.register(FlashEventTestReceiver, ());
+    let receiver_client = FlashEventTestReceiverClient::new(&env, &receiver_id);
+    receiver_client.set_lending(&lending_id);
+
+    let expected_fee = amount * 30 / 10_000;
+    seed_balance(&env, &lending_id, &asset, &receiver_id, expected_fee);
+
+    client.flash_loan(
+        &initiator,
+        &receiver_id,
+        &asset,
+        &amount,
+        &Bytes::new(&env),
+    );
+
+    let events = env.events().all();
+    let flash_loan_event = events
+        .iter()
+        .find(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "FlashLoanEvent");
+                    }
+                }
+            }
+            false
+        })
+        .expect("FlashLoanEvent should exist");
+
+    assert!(
+        flash_loan_event.data.clone().into_val(&env).is_ok(),
+        "FlashLoanEvent data should be valid"
+    );
+
+    let repay_event = events
+        .iter()
+        .find(|e| {
+            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
+                let topics: SdkVec<Val> = topics;
+                if let Some(first) = topics.get(0) {
+                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
+                        return symbol == Symbol::new(&env, "FlashLoanRepaidEvent");
+                    }
+                }
+            }
+            false
+        })
+        .expect("FlashLoanRepaidEvent should exist");
+
+    assert!(
+        repay_event.data.clone().into_val(&env).is_ok(),
+        "FlashLoanRepaidEvent data should be valid"
+    );
 }
