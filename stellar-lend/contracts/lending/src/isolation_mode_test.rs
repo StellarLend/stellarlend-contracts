@@ -547,7 +547,9 @@ mod tests {
 
         let tok = asset(&env);
         env.as_contract(&contract_id, || {
-            env.storage().persistent().set(&DataKey::TotalDebt, &(i128::MAX - 1));
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDebt, &(i128::MAX - 1));
         });
 
         let res = client.try_borrow_against_collateral(&user, &2i128, &tok);

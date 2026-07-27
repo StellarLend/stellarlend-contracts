@@ -70,8 +70,7 @@ pub fn set_max_debt_assets_per_user(
     caller: &Address,
     max: Option<u32>,
 ) -> Result<(), CrossAssetError> {
-    crate::admin::require_admin(env, caller)
-        .map_err(|_| CrossAssetError::Unauthorized)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     if let Some(v) = max {
         if v < 1 {
@@ -100,7 +99,14 @@ pub fn get_max_debt_assets_per_user(env: &Env) -> Option<u32> {
 }
 
 /// Require that `caller` is the stored admin; returns `Unauthorized` otherwise.
+///
+/// Calls `caller.require_auth()` so that Soroban enforces a cryptographic
+/// signature check, consistent with `admin::require_admin` and
+/// `bridge::require_guardian`.  A pure address-equality check without
+/// `require_auth` would allow any account to spoof the admin address as a
+/// plain argument with no proof of key ownership.
 fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
+    caller.require_auth();
     let admin = get_admin(env).ok_or(CrossAssetError::Unauthorized)?;
     if &admin != caller {
         return Err(CrossAssetError::Unauthorized);
@@ -192,15 +198,20 @@ pub enum AssetKey {
     Token(Address),
 }
 
+/// Persistent storage keys for the hello-world cross-asset module.
+///
+/// Documented in [`docs/CROSS_ASSET_STORAGE_LAYOUT.md`](../docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+/// New variants must be appended to preserve upgrade compatibility.
 #[contracttype]
 #[derive(Clone, Debug)]
-enum CrossAssetDataKey {
+pub enum CrossAssetDataKey {
     Config(AssetKey),
     AssetList,
     UserSupply(AssetKey, Address),
     UserDebt(AssetKey, Address),
     TotalSupply(AssetKey),
     TotalDebt(AssetKey),
+    /// Optional cap on distinct debt assets per user (`None` / absent = unlimited).
     MaxDebtAssetsPerUser,
 }
 
@@ -414,8 +425,10 @@ impl NoOpContract {}
 // Public interface
 // ---------------------------------------------------------------------------
 
-/// Initialize the cross-asset module (reserved for future admin setup).
-pub fn initialize(_env: &Env, _admin: Address) -> Result<(), CrossAssetError> {
+/// Initialize the cross-asset module, setting the admin address for subsequent
+/// operations that require authorization.
+pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
+    set_admin(env, &admin);
     Ok(())
 }
 
@@ -559,9 +572,12 @@ pub fn update_asset_config(
 /// * [`CrossAssetError::AssetNotFound`] - If the specified asset is not registered
 pub fn update_asset_price(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     price: i128,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     if price <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }

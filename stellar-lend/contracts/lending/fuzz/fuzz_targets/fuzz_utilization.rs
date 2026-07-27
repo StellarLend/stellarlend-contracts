@@ -5,13 +5,9 @@
 
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
-use stellarlend_lending::math::{
-    compute_utilization,
-    MathError,
-    BPS_SCALE,
-};
 use arbitrary::Arbitrary;
+use libfuzzer_sys::fuzz_target;
+use stellarlend_lending::math::{compute_utilization, MathError, BPS_SCALE};
 
 #[derive(Debug, Arbitrary)]
 struct UtilizationInput {
@@ -25,8 +21,7 @@ fuzz_target!(|input: UtilizationInput| {
     match result {
         Ok(util) => {
             // Invariant: 0 <= utilization <= 100%
-            assert!(util <= BPS_SCALE,
-                "Utilization {} exceeds 100%", util);
+            assert!(util <= BPS_SCALE, "Utilization {} exceeds 100%", util);
 
             // Invariant: if deposits == 0, utilization == 0
             if input.total_deposits == 0 {
@@ -35,8 +30,10 @@ fuzz_target!(|input: UtilizationInput| {
 
             // Invariant: if borrows > deposits, utilization == 100% (capped)
             if input.total_borrows > input.total_deposits && input.total_deposits > 0 {
-                assert_eq!(util, BPS_SCALE,
-                    "Borrows > deposits must yield 100% utilization");
+                assert_eq!(
+                    util, BPS_SCALE,
+                    "Borrows > deposits must yield 100% utilization"
+                );
             }
 
             // Invariant: utilization should equal borrows/deposits * 10000

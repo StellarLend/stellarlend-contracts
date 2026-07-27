@@ -233,7 +233,16 @@ fn test_update_rejects_negative_factor() {
         initialize_asset(&env, None, default_config()).unwrap();
 
         let r = update_asset_config(
-            &env, &admin, None, Some(-1), None, None, None, None, None, None,
+            &env,
+            &admin,
+            None,
+            Some(-1),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert_eq!(r, Err(CrossAssetError::InvalidCollateralFactor));
     });
@@ -254,7 +263,16 @@ fn test_update_rejects_zero_decimals() {
         initialize_asset(&env, None, default_config()).unwrap();
 
         let r = update_asset_config(
-            &env, &admin, None, None, None, None, None, None, None, Some(0),
+            &env,
+            &admin,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(0),
         );
         assert_eq!(r, Err(CrossAssetError::ZeroDecimals));
     });
@@ -271,7 +289,16 @@ fn test_update_rejects_decimals_above_38() {
         initialize_asset(&env, None, default_config()).unwrap();
 
         let r = update_asset_config(
-            &env, &admin, None, None, None, None, None, None, None, Some(39),
+            &env,
+            &admin,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(39),
         );
         assert_eq!(r, Err(CrossAssetError::InvalidDecimals));
     });
@@ -326,10 +353,7 @@ fn test_update_all_none_is_noop() {
         set_admin(&env, &admin);
         initialize_asset(&env, None, default_config()).unwrap();
 
-        update_asset_config(
-            &env, &admin, None, None, None, None, None, None, None, None,
-        )
-        .unwrap();
+        update_asset_config(&env, &admin, None, None, None, None, None, None, None, None).unwrap();
 
         let cfg = get_asset_config_by_address(&env, None).unwrap();
         assert_eq!(cfg.collateral_factor_bps, 7_500);
