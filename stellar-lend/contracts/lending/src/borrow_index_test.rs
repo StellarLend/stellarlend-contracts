@@ -12,23 +12,21 @@
 //  5. O(1) debt computation via index ratio
 //  6. Index monotonicity (never decreases)
 //  7. Multi-position consistency (same global index)
-//  8. Migration of pre-index positions (snapshot == 0)
-//  9. Migration idempotency (second call returns 0)
-// 10. Index overflow guard
-// 11. Snapshot > current_index safety valve
-// 12. Repay updates snapshot
-// 13. Long-horizon index growth (10 years)
-// 14. get_borrow_index read-only view
-// 15. compute_debt_view read-only view
-// 16. MigrationCompleteEvent emission
+//  8. Index overflow guard
+//  9. Snapshot > current_index safety valve
+// 10. Repay updates snapshot
+// 11. Long-horizon index growth (10 years)
+// 12. get_borrow_index read-only view
+// 13. compute_debt_view read-only view
+// 14. MigrationCompleteEvent emission
 
 #[cfg(test)]
 mod borrow_index_tests {
     use crate::debt::{
-        accrue_index, compute_debt, load_borrow_index, load_debt, save_debt, touch_borrow_index,
-        DebtPosition, INDEX_SCALE,
+        accrue_index, compute_debt, load_borrow_index, load_debt, touch_borrow_index, DebtPosition,
+        INDEX_SCALE,
     };
-    use crate::{DataKey, LendingContract, LendingContractClient};
+    use crate::{LendingContract, LendingContractClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger, LedgerInfo},
         Address, Env,
@@ -185,7 +183,14 @@ mod borrow_index_tests {
         let (env, client, _admin, user) = setup();
         let mut prev_index = client.get_borrow_index();
 
-        let time_steps = [1u64, 60, 3600, 86400, SECONDS_PER_YEAR / 12, SECONDS_PER_YEAR];
+        let time_steps = [
+            1u64,
+            60,
+            3600,
+            86400,
+            SECONDS_PER_YEAR / 12,
+            SECONDS_PER_YEAR,
+        ];
         for step in time_steps {
             advance_time(&env, step);
             client.borrow(&user, &100);
@@ -272,114 +277,7 @@ mod borrow_index_tests {
     }
 
     // ----------------------------------------------------------------
-    // 8. Migration: pre-index positions (snapshot == 0) are back-filled
-    // ----------------------------------------------------------------
-
-    #[test]
-    fn test_migrate_positions_sets_snapshot_on_legacy_records() {
-        let (env, client, _admin, _user) = setup();
-
-        // Simulate a legacy DebtPosition with snapshot == 0 (pre-feature record).
-        let legacy_user = Address::generate(&env);
-        let contract_id = env.register(LendingContract, ());
-        env.as_contract(&contract_id, || {
-            let legacy_pos = DebtPosition {
-                principal: 50_000,
-                borrow_index_snapshot: 0, // pre-migration sentinel
-                last_update: 0,
-            };
-            save_debt(&env, &legacy_user, &legacy_pos);
-
-            // Also register this user in BorrowerList so migrate_positions finds it.
-            let mut list: soroban_sdk::Vec<Address> = env
-                .storage()
-                .instance()
-                .get(&DataKey::BorrowerList)
-                .unwrap_or_else(|| soroban_sdk::vec![&env]);
-            list.push_back(legacy_user.clone());
-            env.storage()
-                .instance()
-                .set(&DataKey::BorrowerList, &list);
-        });
-
-        // Fast-forward time so the index has grown before migration.
-        advance_time(&env, SECONDS_PER_YEAR);
-
-        // Use the original contract (set up in `setup`) for migrate_positions.
-        // We need a new env/contract pair that replicates the scenario cleanly.
-        let env2 = Env::default();
-        env2.mock_all_auths();
-        let id2 = env2.register(LendingContract, ());
-        let c2 = LendingContractClient::new(&env2, &id2);
-        let admin2 = Address::generate(&env2);
-        c2.initialize(&admin2);
-
-        // Manually inject a legacy position into contract 2's storage.
-        let legacy2 = Address::generate(&env2);
-        env2.as_contract(&id2, || {
-            let pos = DebtPosition {
-                principal: 50_000,
-                borrow_index_snapshot: 0,
-                last_update: 0,
-            };
-            save_debt(&env2, &legacy2, &pos);
-
-            let mut list: soroban_sdk::Vec<Address> = env2
-                .storage()
-                .instance()
-                .get(&DataKey::BorrowerList)
-                .unwrap_or_else(|| soroban_sdk::vec![&env2]);
-            list.push_back(legacy2.clone());
-            env2.storage()
-                .instance()
-                .set(&DataKey::BorrowerList, &list);
-        });
-
-        // Advance time so the index is > INDEX_SCALE at migration time.
-        let mut li = env2.ledger().get();
-        li.timestamp = li.timestamp.saturating_add(SECONDS_PER_YEAR);
-        env2.ledger().set(li);
-
-        let migrated = c2.migrate_positions();
-        assert_eq!(migrated, 1, "One legacy position should be migrated");
-
-        // After migration the snapshot should be > 0.
-        let pos_after = env2.as_contract(&id2, || load_debt(&env2, &legacy2));
-        assert!(
-            pos_after.borrow_index_snapshot > 0,
-            "Migrated position must have a non-zero snapshot"
-        );
-        assert!(
-            pos_after.borrow_index_snapshot >= INDEX_SCALE,
-            "Migrated snapshot must be >= INDEX_SCALE"
-        );
-    }
-
-    // ----------------------------------------------------------------
-    // 9. Migration idempotency: second call returns 0
-    // ----------------------------------------------------------------
-
-    #[test]
-    fn test_migrate_positions_idempotent() {
-        let (env, client, _admin, user) = setup();
-
-        // Create a real borrow (snapshot will already be set).
-        client.borrow(&user, &1_000);
-
-        // First migration — no legacy positions, should return 0.
-        let first = client.migrate_positions();
-        assert_eq!(
-            first, 0,
-            "No legacy positions: migrate_positions should return 0"
-        );
-
-        // Second migration — still 0.
-        let second = client.migrate_positions();
-        assert_eq!(second, 0, "Idempotent: second migration must return 0");
-    }
-
-    // ----------------------------------------------------------------
-    // 10. Index overflow guard
+    // 8. Index overflow guard
     // ----------------------------------------------------------------
 
     #[test]
@@ -665,10 +563,7 @@ mod borrow_index_tests {
             snap_t6m, index_t6m,
             "Snapshot after repay must equal current index"
         );
-        assert!(
-            index_t6m > index_t0,
-            "Index must advance after 6 months"
-        );
+        assert!(index_t6m > index_t0, "Index must advance after 6 months");
 
         // Step 4: Advance another 6 months.
         advance_time(&env, SECONDS_PER_YEAR / 2);

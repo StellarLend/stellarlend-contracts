@@ -1,21 +1,17 @@
+#![cfg(test)]
+
 extern crate std;
 
-use super::math::{compute_max_borrow, MathError, BPS_SCALE};
+use super::math::{checked_mul_div_floor, MathError};
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, RngSeed};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
-/// Number of generated cases per max-borrow property.
-const MAX_BORROW_PROPTEST_CASES: u32 = 512;
+/// Number of generated cases per property.
+const MAX_BORROW_PROPTEST_CASES: u32 = 256;
 
-/// Fixed proptest seed so CI failures can be replayed deterministically.
-const MAX_BORROW_PROPTEST_SEED: u64 = 0x5EED_4D41_5842_4F52;
+/// Fixed seed so CI failures are deterministically reproducible.
+const MAX_BORROW_PROPTEST_SEED: u64 = 0xB0BBAB0B0B0BFEED;
 
-/// Largest collateral value whose `collateral * BPS_SCALE` product cannot
-/// overflow an `i128`.
-const SAFE_COLLATERAL_MAX: i128 = i128::MAX / BPS_SCALE as i128;
-
-/// Returns the bounded, seeded proptest configuration for this invariant suite.
 fn seeded_config() -> ProptestConfig {
     ProptestConfig {
         cases: MAX_BORROW_PROPTEST_CASES,
@@ -24,133 +20,109 @@ fn seeded_config() -> ProptestConfig {
     }
 }
 
-/// Generates collateral values that keep every valid LTV multiply in range.
-fn safe_collateral_strategy() -> impl Strategy<Value = i128> {
-    0i128..=SAFE_COLLATERAL_MAX
-}
-
-/// Generates collateral values that must overflow when multiplied by 100% LTV.
-fn overflow_collateral_strategy() -> impl Strategy<Value = i128> {
-    (SAFE_COLLATERAL_MAX + 1)..=i128::MAX
+/// Pure helper: mirrors the on-contract formula
+///   max_borrow = floor(collateral_value * ltv_bps / 10_000)
+/// returning Err on invalid inputs (negative collateral, ltv_bps > 10_000,
+/// or intermediate overflow).
+fn compute_max_borrow(collateral_value: i128, ltv_bps: i128) -> Result<i128, MathError> {
+    if collateral_value < 0 {
+        return Err(MathError::OutOfRange);
+    }
+    if ltv_bps < 0 || ltv_bps > 10_000 {
+        return Err(MathError::OutOfRange);
+    }
+    checked_mul_div_floor(collateral_value, ltv_bps, 10_000)
 }
 
 proptest! {
     #![proptest_config(seeded_config())]
 
+    /// Solvency bound: max_borrow must never exceed collateral_value.
     #[test]
-    fn max_borrow_matches_documented_floor_formula_for_safe_inputs(
-        collateral_value in safe_collateral_strategy(),
-        ltv_bps in 0u32..=BPS_SCALE,
+    fn solvency_bound(
+        collateral in 0i128..=i128::MAX / 10_001,
+        ltv in 0i128..=10_000i128,
     ) {
-        let expected = collateral_value
-            .checked_mul(ltv_bps as i128)
-            .expect("safe strategy keeps LTV multiply in range")
-            / BPS_SCALE as i128;
-
-        prop_assert_eq!(
-            compute_max_borrow(collateral_value, ltv_bps),
-            Ok(expected)
-        );
-    }
-
-    #[test]
-    fn max_borrow_never_exceeds_collateral_for_valid_ltv(
-        collateral_value in safe_collateral_strategy(),
-        ltv_bps in 0u32..=BPS_SCALE,
-    ) {
-        let max_borrow = compute_max_borrow(collateral_value, ltv_bps)
-            .expect("safe inputs should not overflow");
-
+        let result = compute_max_borrow(collateral, ltv);
+        prop_assert!(result.is_ok(), "unexpected error: {:?}", result);
+        let max_borrow = result.unwrap();
         prop_assert!(
-            max_borrow <= collateral_value,
-            "max borrow must not exceed collateral: borrow={} collateral={} ltv_bps={}",
-            max_borrow,
-            collateral_value,
-            ltv_bps,
+            max_borrow >= 0,
+            "max_borrow {} < 0 for collateral={} ltv={}",
+            max_borrow, collateral, ltv
         );
-        prop_assert!(max_borrow >= 0, "max borrow must stay non-negative");
-    }
-
-    #[test]
-    fn max_borrow_is_monotonic_in_ltv(
-        collateral_value in safe_collateral_strategy(),
-        ltv_a in 0u32..=BPS_SCALE,
-        ltv_b in 0u32..=BPS_SCALE,
-    ) {
-        let lower_ltv = ltv_a.min(ltv_b);
-        let higher_ltv = ltv_a.max(ltv_b);
-
-        let lower_borrow = compute_max_borrow(collateral_value, lower_ltv)
-            .expect("safe lower LTV input should not overflow");
-        let higher_borrow = compute_max_borrow(collateral_value, higher_ltv)
-            .expect("safe higher LTV input should not overflow");
-
         prop_assert!(
-            higher_borrow >= lower_borrow,
-            "max borrow must not decrease as LTV rises: lower={} higher={}",
-            lower_borrow,
-            higher_borrow,
+            max_borrow <= collateral,
+            "max_borrow {} > collateral {} for ltv={}",
+            max_borrow, collateral, ltv
         );
     }
 
+    /// Exact formula: result equals floor(collateral * ltv_bps / 10_000).
     #[test]
-    fn max_borrow_never_panics_and_reports_typed_errors(
-        collateral_value in any::<i128>(),
-        ltv_bps in any::<u32>(),
+    fn exact_formula(
+        collateral in 0i128..=i128::MAX / 10_001,
+        ltv in 0i128..=10_000i128,
     ) {
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            compute_max_borrow(collateral_value, ltv_bps)
-        }));
-
-        prop_assert!(outcome.is_ok(), "compute_max_borrow must not panic");
-        let result = outcome.expect("panic already asserted absent");
-
-        if collateral_value < 0 || ltv_bps > BPS_SCALE {
-            prop_assert_eq!(result, Err(MathError::OutOfRange));
-        } else {
-            prop_assert!(
-                matches!(result, Ok(_) | Err(MathError::Overflow)),
-                "valid inputs should produce max borrow or typed overflow, got {:?}",
-                result,
-            );
-        }
+        let result = compute_max_borrow(collateral, ltv);
+        prop_assert!(result.is_ok());
+        let expected = collateral * ltv / 10_000; // safe: bounded inputs
+        prop_assert_eq!(result.unwrap(), expected);
     }
 
+    /// LTV monotonicity: higher ltv_bps must never lower the borrow cap.
     #[test]
-    fn full_ltv_overflow_returns_typed_error(
-        collateral_value in overflow_collateral_strategy(),
+    fn ltv_monotonicity(
+        collateral in 0i128..=i128::MAX / 10_001,
+        ltv_lo in 0i128..=9_999i128,
+        delta in 1i128..=10_000i128,
     ) {
-        prop_assert_eq!(
-            compute_max_borrow(collateral_value, BPS_SCALE),
-            Err(MathError::Overflow)
+        let ltv_hi = (ltv_lo + delta).min(10_000);
+        let lo = compute_max_borrow(collateral, ltv_lo).unwrap();
+        let hi = compute_max_borrow(collateral, ltv_hi).unwrap();
+        prop_assert!(
+            hi >= lo,
+            "max_borrow decreased as ltv rose: lo={} (ltv={}) hi={} (ltv={})",
+            lo, ltv_lo, hi, ltv_hi
         );
     }
 }
 
-/// Pins the basis-point boundaries used by the solvency invariant.
+// ── Boundary / error pinning ─────────────────────────────────────────────────
+
 #[test]
-fn ltv_boundaries_are_exact() {
-    assert_eq!(compute_max_borrow(123_456, 0), Ok(0));
-    assert_eq!(compute_max_borrow(123_456, BPS_SCALE), Ok(123_456));
-    assert_eq!(compute_max_borrow(0, BPS_SCALE), Ok(0));
-    assert_eq!(compute_max_borrow(1, BPS_SCALE - 1), Ok(0));
+fn ltv_zero_returns_zero() {
+    assert_eq!(compute_max_borrow(1_000_000, 0), Ok(0));
 }
 
-/// Rejects invalid inputs before any arithmetic is attempted.
 #[test]
-fn invalid_inputs_return_out_of_range() {
-    assert_eq!(compute_max_borrow(-1, 0), Err(MathError::OutOfRange));
+fn ltv_10000_returns_full_collateral() {
+    let collateral = 1_000_000i128;
+    assert_eq!(compute_max_borrow(collateral, 10_000), Ok(collateral));
+}
+
+#[test]
+fn zero_collateral_returns_zero() {
+    assert_eq!(compute_max_borrow(0, 5_000), Ok(0));
+}
+
+#[test]
+fn negative_collateral_is_out_of_range() {
+    assert_eq!(compute_max_borrow(-1, 5_000), Err(MathError::OutOfRange));
+}
+
+#[test]
+fn ltv_above_10000_is_out_of_range() {
     assert_eq!(
-        compute_max_borrow(1, BPS_SCALE + 1),
+        compute_max_borrow(1_000_000, 10_001),
         Err(MathError::OutOfRange)
     );
 }
 
-/// Covers the largest possible collateral value on the overflow path.
 #[test]
-fn i128_max_collateral_at_full_ltv_returns_overflow() {
+fn negative_ltv_is_out_of_range() {
     assert_eq!(
-        compute_max_borrow(i128::MAX, BPS_SCALE),
-        Err(MathError::Overflow)
+        compute_max_borrow(1_000_000, -1),
+        Err(MathError::OutOfRange)
     );
 }

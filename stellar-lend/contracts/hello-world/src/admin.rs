@@ -64,6 +64,21 @@ pub fn get_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&AdminDataKey::Admin)
 }
 
+/// Require `caller` to be the stored protocol admin.
+///
+/// This is the shared authorization check for admin-gated modules. Keeping
+/// the lookup here ensures every module uses the same admin storage and
+/// initialization semantics.
+pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
+    caller.require_auth();
+
+    match get_admin(env) {
+        Some(admin) if admin == *caller => Ok(()),
+        Some(_) => Err(AdminError::Unauthorized),
+        None => Err(AdminError::NotInitialized),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Mutator
 // ---------------------------------------------------------------------------
@@ -104,11 +119,7 @@ pub fn get_admin(env: &Env) -> Option<Address> {
 /// validation checks added here (`CannotTransferToSelf`, `AlreadyAdmin`)
 /// prevent fat-finger lockout scenarios that have historically caused
 /// irrecoverable protocol halts.
-pub fn set_admin(
-    env: &Env,
-    new_admin: Address,
-    caller: Option<Address>,
-) -> Result<(), AdminError> {
+pub fn set_admin(env: &Env, new_admin: Address, caller: Option<Address>) -> Result<(), AdminError> {
     // When caller is provided, validate authorisation and check for unsafe
     // target addresses.
     if let Some(caller) = caller {
@@ -391,5 +402,4 @@ mod tests {
         assert_eq!(AdminError::Unauthorized as u32, 3);
         assert_eq!(AdminError::NotInitialized as u32, 4);
     }
-
 }
