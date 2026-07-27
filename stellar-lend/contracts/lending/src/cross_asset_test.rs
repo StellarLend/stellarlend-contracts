@@ -1,7 +1,8 @@
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::events::Event;
+use soroban_sdk::testutils::{Address as _, Events};
 
-fn setup() -> (
+pub fn setup() -> (
     Env,
     LendingContractClient<'static>,
     Address,
@@ -28,6 +29,8 @@ fn setup() -> (
         &7500,                  // 75% LTV
         &8000,                  // 80% liquidation threshold
         &1_000_000_000_000i128, // debt ceiling
+        &0i128,                 // borrow_cap (0 = uncapped)
+        &0i128,                 // supply_cap (0 = uncapped)
     );
     client.set_asset_params(
         &admin,
@@ -35,6 +38,8 @@ fn setup() -> (
         &6000,                  // 60% LTV
         &7000,                  // 70% liquidation threshold
         &1_000_000_000_000i128, // debt ceiling
+        &0i128,                 // borrow_cap (0 = uncapped)
+        &0i128,                 // supply_cap (0 = uncapped)
     );
 
     // Set oracle prices: 10_000_000 = $1.00 (7-decimal precision)
@@ -67,13 +72,89 @@ fn test_set_asset_params_stores_and_reads() {
     assert_eq!(params.ltv_bps, 7500);
     assert_eq!(params.liquidation_threshold_bps, 8000);
     assert_eq!(params.debt_ceiling, 1_000_000_000_000i128);
+    assert_eq!(params.borrow_cap, 0);
+    assert_eq!(params.supply_cap, 0);
+}
+
+/// `AssetParamsSetEvent` must include `supply_cap` so off-chain indexers that
+/// consume events (without re-reading storage) observe the full asset config.
+///
+/// Regression guard for #1439.
+#[test]
+fn test_set_asset_params_emits_event_including_supply_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+    client.initialize(&admin);
+
+    let ltv_bps = 7500i128;
+    let liquidation_threshold_bps = 8000i128;
+    let debt_ceiling = 1_000_000_000_000i128;
+    let borrow_cap = 2_500_000i128;
+    let supply_cap = 5_000_000i128;
+
+    client.set_asset_params(
+        &admin,
+        &asset,
+        &ltv_bps,
+        &liquidation_threshold_bps,
+        &debt_ceiling,
+        &borrow_cap,
+        &supply_cap,
+    );
+
+    assert_eq!(
+        env.events().all(),
+        [AssetParamsSetEvent {
+            asset: asset.clone(),
+            ltv_bps,
+            liquidation_threshold_bps,
+            debt_ceiling,
+            borrow_cap,
+            supply_cap,
+        }
+        .to_xdr(&env, &cid)],
+        "AssetParamsSetEvent must carry supply_cap alongside all other params"
+    );
+
+    let stored = client.get_asset_params(&asset).unwrap();
+    assert_eq!(stored.supply_cap, supply_cap);
 }
 
 #[test]
 fn test_set_asset_params_rejects_invalid_ltv() {
     let (_env, client, _id, admin, _user, asset_a, _asset_b) = setup();
-    let res = client.try_set_asset_params(&admin, &asset_a, &15000i128, &8000i128, &1_000_000i128);
+    let res = client.try_set_asset_params(
+        &admin,
+        &asset_a,
+        &15000i128,
+        &8000i128,
+        &1_000_000i128,
+        &0i128,
+        &0i128,
+    );
     assert!(matches!(res, Err(Ok(LendingError::InvalidAmount))));
+}
+
+#[test]
+fn test_set_asset_params_rejects_ltv_above_liquidation_threshold() {
+    let (_env, client, _id, admin, _user, asset_a, _asset_b) = setup();
+    let res = client.try_set_asset_params(
+        &admin,
+        &asset_a,
+        &9000i128, // LTV above liquidation threshold
+        &5000i128, // liquidation threshold
+        &1_000_000i128,
+        &0i128,
+        &0i128,
+    );
+    assert!(matches!(
+        res,
+        Err(Ok(LendingError::InvalidLiquidationParams))
+    ));
 }
 
 #[test]
@@ -301,7 +382,15 @@ fn test_missing_price_feed_rejects_withdraw() {
 #[test]
 fn test_zero_ltv_asset_cannot_borrow_against_it() {
     let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
-    client.set_asset_params(&admin, &asset_a, &0i128, &0i128, &1_000_000_000_000i128);
+    client.set_asset_params(
+        &admin,
+        &asset_a,
+        &0i128,
+        &0i128,
+        &1_000_000_000_000i128,
+        &0i128,
+        &0i128,
+    );
     client.deposit_collateral_asset(&user, &asset_a, &1000i128);
     client.deposit_collateral_asset(&user, &asset_b, &1i128);
     // weighted collateral = asset_b only: 1*2000*0.7 = 1400
@@ -321,7 +410,15 @@ fn test_set_asset_params_rejects_unauthorized() {
     let asset = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin);
-    let res = client.try_set_asset_params(&attacker, &asset, &5000i128, &6000i128, &1_000_000i128);
+    let res = client.try_set_asset_params(
+        &attacker,
+        &asset,
+        &5000i128,
+        &6000i128,
+        &1_000_000i128,
+        &0i128,
+        &0i128,
+    );
     assert!(res.is_err());
 }
 
@@ -331,7 +428,7 @@ fn test_set_asset_params_rejects_unauthorized() {
 #[should_panic(expected = "OperationPaused")]
 fn test_deposit_collateral_asset_paused() {
     let (_env, client, _id, admin, user, asset_a, _asset_b) = setup();
-    client.set_pause(&admin, &PauseType::Deposit, &true, &u32::MAX);
+    client.set_pause(&PauseType::Deposit, &true, &u32::MAX);
     client.deposit_collateral_asset(&user, &asset_a, &100i128);
 }
 
@@ -340,7 +437,7 @@ fn test_deposit_collateral_asset_paused() {
 fn test_borrow_asset_paused() {
     let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
     client.deposit_collateral_asset(&user, &asset_b, &2i128);
-    client.set_pause(&admin, &PauseType::Borrow, &true, &u32::MAX);
+    client.set_pause(&PauseType::Borrow, &true, &u32::MAX);
     client.borrow_asset(&user, &asset_a, &100i128);
 }
 
@@ -350,7 +447,7 @@ fn test_repay_asset_paused() {
     let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
     client.deposit_collateral_asset(&user, &asset_b, &2i128);
     client.borrow_asset(&user, &asset_a, &100i128);
-    client.set_pause(&admin, &PauseType::Repay, &true, &u32::MAX);
+    client.set_pause(&PauseType::Repay, &true, &u32::MAX);
     client.repay_asset(&user, &asset_a, &50i128);
 }
 
@@ -359,7 +456,7 @@ fn test_repay_asset_paused() {
 fn test_withdraw_asset_paused() {
     let (_env, client, _id, admin, user, asset_a, _asset_b) = setup();
     client.deposit_collateral_asset(&user, &asset_a, &100i128);
-    client.set_pause(&admin, &PauseType::Withdraw, &true, &u32::MAX);
+    client.set_pause(&PauseType::Withdraw, &true, &u32::MAX);
     client.withdraw_asset(&user, &asset_a, &10i128);
 }
 
@@ -367,7 +464,7 @@ fn test_withdraw_asset_paused() {
 #[should_panic(expected = "OperationPaused")]
 fn test_all_pause_blocks_deposit() {
     let (_env, client, _id, admin, user, asset_a, _asset_b) = setup();
-    client.set_pause(&admin, &PauseType::All, &true, &u32::MAX);
+    client.set_pause(&PauseType::All, &true, &u32::MAX);
     client.deposit_collateral_asset(&user, &asset_a, &100i128);
 }
 
@@ -395,7 +492,7 @@ fn test_hf_below_10000_rejected() {
 #[test]
 fn test_debt_ceiling_rejects_excess() {
     let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
-    client.set_asset_params(&admin, &asset_a, &7500i128, &8000i128, &100i128);
+    client.set_asset_params(&admin, &asset_a, &7500i128, &8000i128, &100i128, &0i128, &0i128);
     client.deposit_collateral_asset(&user, &asset_b, &2i128);
     let res = client.try_borrow_asset(&user, &asset_a, &200i128);
     assert!(matches!(res, Err(Ok(LendingError::DebtCeilingExceeded))));
@@ -441,4 +538,75 @@ fn test_get_cross_position_summary_returns_non_zero() {
     assert!(summary.total_collateral_usd > 0);
     assert!(summary.total_debt_usd > 0);
     assert!(summary.health_factor > 10000);
+}
+
+// ── withdraw_asset_internal — aggregate HF blocking ──────────────────────────
+//
+// These tests verify that withdraw_asset_internal correctly blocks a
+// withdrawal when removing collateral would push the aggregate health factor
+// below HEALTH_FACTOR_SCALE (1.0), even across a multi-asset position.
+
+/// Withdraw of primary collateral blocked when user has cross-asset borrow.
+///
+/// Setup: user deposits 1000 asset_a (value $1 each = $1000), borrows 800
+/// asset_a (75% LTV means $750 max, but we set up so withdrawing all of
+/// asset_a leaves the borrow under-collateralised).
+#[test]
+fn test_withdraw_blocked_by_aggregate_hf_single_collateral_with_debt() {
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
+    client.deposit_collateral_asset(&user, &asset_a, &1000i128);
+    client.borrow_asset(&user, &asset_a, &700i128);
+    // Withdrawing 500 would leave 500 collateral against 700 debt → HF < 1
+    let res = client.try_withdraw_asset(&user, &asset_a, &500i128);
+    assert!(
+        matches!(res, Err(Ok(LendingError::HealthFactorTooLow))),
+        "Withdrawal reducing aggregate HF below 1.0 must be blocked"
+    );
+}
+
+/// Cross-asset scenario: user uses asset_b as collateral for asset_a borrow.
+/// Withdrawing asset_b collapses the only collateral → aggregate HF drops below 1.
+#[test]
+fn test_withdraw_blocked_when_cross_collateral_removed_with_active_debt() {
+    let (_env, client, _id, _admin, user, asset_a, asset_b) = setup();
+    // Deposit asset_b as collateral (price = $2000 per unit, so 1 unit = $2000)
+    client.deposit_collateral_asset(&user, &asset_b, &1i128);
+    // Borrow asset_a against the asset_b collateral (price $1/unit)
+    client.borrow_asset(&user, &asset_a, &1000i128);
+    // Withdrawing asset_b collapses collateral; aggregate HF → 0 → blocked
+    let res = client.try_withdraw_asset(&user, &asset_b, &1i128);
+    assert!(
+        matches!(res, Err(Ok(LendingError::HealthFactorTooLow))),
+        "Removing cross-collateral with open borrow must fail with HealthFactorTooLow"
+    );
+}
+
+/// Partial withdrawal that still leaves HF ≥ 1 must succeed.
+#[test]
+fn test_partial_withdraw_allowed_when_hf_stays_above_one() {
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
+    // Deposit 1000 asset_a, borrow 100 (well within LTV)
+    client.deposit_collateral_asset(&user, &asset_a, &1000i128);
+    client.borrow_asset(&user, &asset_a, &100i128);
+    // Withdraw 100 — leaves 900 collateral vs 100 debt; HF ≫ 1
+    let new_bal = client.withdraw_asset(&user, &asset_a, &100i128);
+    assert_eq!(
+        new_bal, 900,
+        "Partial withdrawal that keeps HF above 1 must succeed"
+    );
+}
+
+/// State is rolled back after a blocked withdrawal: collateral balance unchanged.
+#[test]
+fn test_blocked_withdraw_does_not_mutate_collateral_state() {
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
+    client.deposit_collateral_asset(&user, &asset_a, &1000i128);
+    client.borrow_asset(&user, &asset_a, &700i128);
+    let balance_before = client.get_collateral_asset_balance(&user, &asset_a);
+    let _ = client.try_withdraw_asset(&user, &asset_a, &500i128);
+    let balance_after = client.get_collateral_asset_balance(&user, &asset_a);
+    assert_eq!(
+        balance_before, balance_after,
+        "Blocked withdrawal must not mutate on-chain collateral balance"
+    );
 }

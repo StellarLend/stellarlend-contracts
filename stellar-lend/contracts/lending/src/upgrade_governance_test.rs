@@ -114,7 +114,10 @@ fn execute_without_enough_approvals_is_rejected() {
 fn expired_proposal_cannot_be_approved_or_executed() {
     let (env, client, admin, _, _) = setup_upgrade(1);
     let proposal_id = client.upgrade_propose(&admin, &wasm_hash(&env, 5), &1);
-    let expires = client.upgrade_status(&proposal_id).proposal.expires_at_ledger;
+    let expires = client
+        .upgrade_status(&proposal_id)
+        .proposal
+        .expires_at_ledger;
     env.ledger().set_sequence_number(expires.saturating_add(1));
 
     let approve = client.try_upgrade_approve(&admin, &proposal_id);
@@ -138,7 +141,10 @@ fn double_execute_is_rejected() {
     let (env, client, admin, _, _) = setup_upgrade(1);
     let proposal_id = client.upgrade_propose(&admin, &wasm_hash(&env, 3), &1);
     client.upgrade_approve(&admin, &proposal_id);
-    advance_to_eta(&env, client.upgrade_status(&proposal_id).proposal.eta_ledger);
+    advance_to_eta(
+        &env,
+        client.upgrade_status(&proposal_id).proposal.eta_ledger,
+    );
     client.upgrade_execute(&admin, &proposal_id);
 
     let res = client.try_upgrade_execute(&admin, &proposal_id);
@@ -157,7 +163,10 @@ fn unauthorized_caller_cannot_approve_or_execute() {
     assert!(matches!(approve, Err(Ok(LendingError::Unauthorized))));
 
     client.upgrade_approve(&admin, &proposal_id);
-    advance_to_eta(&env, client.upgrade_status(&proposal_id).proposal.eta_ledger);
+    advance_to_eta(
+        &env,
+        client.upgrade_status(&proposal_id).proposal.eta_ledger,
+    );
 
     let execute = client.try_upgrade_execute(&stranger, &proposal_id);
     assert!(matches!(execute, Err(Ok(LendingError::Unauthorized))));
@@ -169,7 +178,10 @@ fn threshold_snapshot_is_fixed_at_propose_time() {
     let new_hash = wasm_hash(&env, 8);
     let proposal_id = client.upgrade_propose(&admin, &new_hash, &1);
     assert_eq!(
-        client.upgrade_status(&proposal_id).proposal.required_approvals,
+        client
+            .upgrade_status(&proposal_id)
+            .proposal
+            .required_approvals,
         1
     );
 
@@ -177,7 +189,10 @@ fn threshold_snapshot_is_fixed_at_propose_time() {
     client.upgrade_set_required_approvals(&admin, &2);
 
     client.upgrade_approve(&admin, &proposal_id);
-    advance_to_eta(&env, client.upgrade_status(&proposal_id).proposal.eta_ledger);
+    advance_to_eta(
+        &env,
+        client.upgrade_status(&proposal_id).proposal.eta_ledger,
+    );
     client.upgrade_execute(&admin, &proposal_id);
     assert_eq!(client.current_version(), 1);
 }

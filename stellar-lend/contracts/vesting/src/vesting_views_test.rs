@@ -3,8 +3,12 @@ use super::{Grant, VestingContract};
 #[test]
 fn get_grants_lists_multiple_schedules_for_one_grantee() {
     let mut contract = VestingContract::new("admin", "treasury");
-    contract.add_grant("alice", 1000, 100, 1000, 100);
-    contract.add_grant("alice", 500, 200, 500, 0);
+    contract
+        .add_grant("admin", "alice", 1000, 100, 1000, 100)
+        .unwrap();
+    contract
+        .add_grant("admin", "alice", 500, 200, 500, 0)
+        .unwrap();
 
     let grants = contract.get_grants("alice");
     assert_eq!(grants.len(), 2);
@@ -46,13 +50,21 @@ fn get_grants_for_empty_grantee_returns_empty_list() {
 #[test]
 fn total_locked_tracks_multiple_grants_after_claim() {
     let mut contract = VestingContract::new("admin", "treasury");
-    contract.add_grant("alice", 1000, 1000, 1000, 0);
-    contract.add_grant("alice", 500, 1000, 500, 0);
-    contract.add_grant("bob", 800, 1000, 800, 0);
+    contract
+        .add_grant("admin", "alice", 1000, 1000, 1000, 0)
+        .unwrap();
+    contract
+        .add_grant("admin", "alice", 500, 1000, 500, 0)
+        .unwrap();
+    contract
+        .add_grant("admin", "bob", 800, 1000, 800, 0)
+        .unwrap();
 
     assert_eq!(contract.total_locked(), 2300);
 
-    let claimed = contract.claim("alice", 1500);
+    let claimed = contract
+        .claim("alice", 1500)
+        .expect("claim should not error");
     assert_eq!(claimed, 1000);
     assert_eq!(contract.balance_of("alice"), 1000);
     assert_eq!(contract.total_locked(), 1300);
@@ -67,9 +79,15 @@ fn total_locked_tracks_multiple_grants_after_claim() {
 #[test]
 fn total_locked_tracks_revoke_without_scanning_other_grantees() {
     let mut contract = VestingContract::new("admin", "treasury");
-    contract.add_grant("alice", 1000, 1000, 1000, 0);
-    contract.add_grant("alice", 500, 1000, 500, 0);
-    contract.add_grant("bob", 800, 1000, 800, 0);
+    contract
+        .add_grant("admin", "alice", 1000, 1000, 1000, 0)
+        .unwrap();
+    contract
+        .add_grant("admin", "alice", 500, 1000, 500, 0)
+        .unwrap();
+    contract
+        .add_grant("admin", "bob", 800, 1000, 800, 0)
+        .unwrap();
 
     let transferred = contract
         .revoke("admin", "alice", 1250)

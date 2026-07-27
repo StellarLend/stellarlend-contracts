@@ -10,7 +10,7 @@ This contract exposes the core API for StellarLend, including lending/borrowing,
 - Oracle & Pricing: `set_asset_price`, `oracle_*`, `set_price_cache_ttl`
 - Governance: `gov_*`
 - AMM: `set_amm_pool`, `amm_swap`, `amm_add_liquidity`, `amm_remove_liquidity`
-- Flash Loans: `flash_loan`, `set_flash_loan_fee_bps`
+- Flash Loans: `flash_loan`, `set_flash_fee`
 - Bridge: `register_bridge`, `set_bridge_fee`, `bridge_deposit`, `bridge_withdraw`, `list_bridges`, `get_bridge_config`
 - Analytics: metrics updated on core actions; getters via storage (see code)
 - Monitoring: `monitor_report_health`, `monitor_report_performance`, `monitor_report_security`, `monitor_get`

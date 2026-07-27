@@ -39,7 +39,10 @@ fn setup() -> (Env, LendingContractClient<'static>, Keypair) {
 /// Sign `(asset, price, timestamp)` and return a 64-byte signature.
 fn sign(env: &Env, keypair: &Keypair, asset: &Address, price: i128, timestamp: u64) -> BytesN<64> {
     let payload = LendingContract::oracle_price_signature_payload(env, asset, price, timestamp);
-    let sig = keypair.sign(payload.to_alloc_vec().as_slice());
+    let mut payload_bytes = [0u8; 1024];
+    let len = payload.len() as usize;
+    payload.copy_into_slice(&mut payload_bytes[..len]);
+    let sig = keypair.sign(&payload_bytes[..len]);
     BytesN::from_array(env, &sig.to_bytes())
 }
 
