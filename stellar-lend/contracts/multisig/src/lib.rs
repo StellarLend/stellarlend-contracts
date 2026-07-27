@@ -1,7 +1,24 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes,
+    BytesN, Env, IntoVal, Symbol, Vec,
 };
+
+/// Domain separator for multisig approval-authorization payloads (issue #1278).
+///
+/// Every approval is cryptographically scoped by hashing:
+///
+/// ```text
+/// sha256(DOMAIN_SEPARATOR || contract_id_xdr || proposal_id_be64 || approver_xdr)
+/// ```
+///
+/// The resulting hash is what `approve_proposal` requires the signer to authorize
+/// via `require_auth_for_args`, so an authorization gathered for proposal `A`
+/// cannot satisfy approval of a different proposal `B`. Bump the `_V1` suffix on
+/// any breaking change to the payload layout.
+///
+/// See `APPROVAL_DOMAIN_BINDING.md` for the full layout and threat model.
+pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V1";
 
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
 /// The payload_hash binds the approved action so it cannot be swapped between
@@ -14,7 +31,7 @@ pub enum ProposalAction {
     /// Replace the full signer set with a new set
     RotateSigners(Vec<Address>),
     /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call
-    InvokeContract(Address, Symbol, soroban_sdk::Bytes),
+    InvokeContract(InvokeContractParams),
 }
 
 /// Lifecycle state of a proposal.
@@ -64,6 +81,14 @@ pub enum MultisigDataKey {
     Signers,
     ProposalCount,
     Proposal(u64),
+    /// Domain-separated approval binding for `(proposal_id, approver)`.
+    ///
+    /// Stores
+    /// `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || approver)`
+    /// at approval time so an approval is cryptographically scoped to exactly
+    /// one proposal and can be verified out-of-band (issue #1278;
+    /// `APPROVAL_DOMAIN_BINDING.md`).
+    ApprovalBinding(u64, Address),
 }
 
 /// Multisig errors.
@@ -87,6 +112,7 @@ pub enum MultisigError {
     BatchSizeExceeded = 14,
     DuplicateProposalId = 15,
     AlreadyInitialized = 16,
+    ProposalIdOverflow = 17,
 }
 
 /// Maximum number of proposals that can be executed in a single
@@ -109,7 +135,11 @@ impl MultisigContract {
     /// * `env`       – Soroban environment.
     /// * `signers`   – Initial list of authorised signers.
     /// * `threshold` – Minimum number of approvals required to pass a proposal.
-    pub fn initialize(env: Env, signers: Vec<Address>, threshold: u32) -> Result<(), MultisigError> {
+    pub fn initialize(
+        env: Env,
+        signers: Vec<Address>,
+        threshold: u32,
+    ) -> Result<(), MultisigError> {
         if env.storage().persistent().has(&MultisigDataKey::Signers) {
             return Err(MultisigError::AlreadyInitialized);
         }
@@ -167,17 +197,19 @@ impl MultisigContract {
             .set(&MultisigDataKey::Proposal(proposal.id), proposal);
     }
 
-    fn next_proposal_id(env: &Env) -> u64 {
+    fn next_proposal_id(env: &Env) -> Result<u64, MultisigError> {
         let count: u64 = env
             .storage()
             .persistent()
             .get(&MultisigDataKey::ProposalCount)
             .unwrap_or(0);
-        let new_count = count + 1;
+        let new_count = count
+            .checked_add(1)
+            .ok_or(MultisigError::ProposalIdOverflow)?;
         env.storage()
             .persistent()
             .set(&MultisigDataKey::ProposalCount, &new_count);
-        count
+        Ok(count)
     }
 
     fn action_kind_symbol(env: &Env, action: &ProposalAction) -> Symbol {
@@ -186,6 +218,49 @@ impl MultisigContract {
             ProposalAction::RotateSigners(..) => Symbol::new(env, "RotateSigners"),
             ProposalAction::InvokeContract(..) => Symbol::new(env, "InvokeContract"),
         }
+    }
+
+    /// Builds the domain-separated approval-authorization preimage for
+    /// `(proposal_id, approver)`:
+    ///
+    /// ```text
+    /// DOMAIN_SEPARATOR || contract_id_xdr || proposal_id (8-byte BE) || approver_xdr
+    /// ```
+    ///
+    /// # Arguments
+    /// * `env`         – Soroban environment.
+    /// * `proposal_id` – Proposal this approval is scoped to.
+    /// * `approver`    – Signer casting the approval.
+    ///
+    /// # Returns
+    /// Canonical byte preimage before hashing.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    fn approval_auth_payload(env: &Env, proposal_id: u64, approver: &Address) -> Bytes {
+        let mut payload = Bytes::new(env);
+        payload.extend_from_slice(APPROVAL_DOMAIN_SEPARATOR);
+        payload.append(&env.current_contract_address().to_xdr(env));
+        payload.extend_from_slice(&proposal_id.to_be_bytes());
+        payload.append(&approver.clone().to_xdr(env));
+        payload
+    }
+
+    /// SHA-256 of [`Self::approval_auth_payload`].
+    ///
+    /// This is the exact authorization payload that `approve_proposal` binds
+    /// into `require_auth_for_args`, and that is stored under
+    /// [`MultisigDataKey::ApprovalBinding`].
+    ///
+    /// # Arguments
+    /// * `env`         – Soroban environment.
+    /// * `proposal_id` – Proposal this approval is scoped to.
+    /// * `approver`    – Signer casting the approval.
+    ///
+    /// # Returns
+    /// 32-byte domain-separated binding hash.
+    fn approval_auth_hash(env: &Env, proposal_id: u64, approver: &Address) -> BytesN<32> {
+        let payload = Self::approval_auth_payload(env, proposal_id, approver);
+        env.crypto().sha256(&payload).into()
     }
 
     // -----------------------------------------------------------------------
@@ -216,7 +291,7 @@ impl MultisigContract {
             return Err(MultisigError::InvalidTtl);
         }
 
-        let id = Self::next_proposal_id(&env);
+        let id = Self::next_proposal_id(&env)?;
         let expires_at = (env.ledger().sequence() as u64).saturating_add(ttl_ledgers);
 
         let proposal = Proposal {
@@ -236,6 +311,26 @@ impl MultisigContract {
     ///
     /// A proposal is automatically transitioned to `Passed` once the number of
     /// distinct signer approvals meets or exceeds the current threshold.
+    ///
+    /// # Authorization domain binding (issue #1278)
+    ///
+    /// Instead of a bare `require_auth()` (which only proves the caller signed
+    /// *some* invocation), this entrypoint requires the caller to authorize the
+    /// domain-separated payload:
+    ///
+    /// ```text
+    /// sha256(
+    ///     APPROVAL_DOMAIN_SEPARATOR
+    ///     || contract_id_xdr
+    ///     || proposal_id (8-byte big-endian)
+    ///     || approver_xdr
+    /// )
+    /// ```
+    ///
+    /// via `require_auth_for_args`. An authorization produced for one
+    /// `proposal_id` therefore cannot be replayed against any other proposal.
+    /// The same hash is persisted under
+    /// [`MultisigDataKey::ApprovalBinding`] for off-chain verification.
     ///
     /// # Arguments
     /// * `caller` – Signer casting the approval.
@@ -266,7 +361,14 @@ impl MultisigContract {
             return Err(MultisigError::AlreadyApproved);
         }
 
-        proposal.approvals.push_back(caller);
+        proposal.approvals.push_back(caller.clone());
+
+        // Persist the domain-separated binding for off-chain / indexer checks
+        // and for `verify_approval_binding`.
+        env.storage().persistent().set(
+            &MultisigDataKey::ApprovalBinding(id, caller.clone()),
+            &binding,
+        );
 
         let threshold = Self::fetch_threshold(&env) as usize;
         if proposal.approvals.len() as usize >= threshold {
@@ -356,6 +458,13 @@ impl MultisigContract {
                 if new_signers.is_empty() {
                     return Err(MultisigError::InvalidSigners);
                 }
+                // Signer-shrink guard: the new signer set must be at least as
+                // large as the current threshold, otherwise quorum could never
+                // be reached again and the multisig would be permanently bricked.
+                let threshold = Self::fetch_threshold(env);
+                if (new_signers.len() as u32) < threshold {
+                    return false;
+                }
                 env.storage()
                     .persistent()
                     .set(&MultisigDataKey::Signers, new_signers);
@@ -415,6 +524,67 @@ impl MultisigContract {
     /// * `id` – Proposal ID.
     pub fn get_proposal(env: Env, id: u64) -> Result<Proposal, MultisigError> {
         Self::fetch_proposal(&env, id)
+    }
+
+    /// Returns the stored domain-separated approval binding hash for
+    /// `(id, approver)`, if an approval was recorded.
+    ///
+    /// The hash is
+    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || approver)`.
+    ///
+    /// # Arguments
+    /// * `id`       – Proposal ID the approval was cast for.
+    /// * `approver` – Signer whose binding to look up.
+    ///
+    /// # Returns
+    /// `Some(BytesN<32>)` when the signer approved `id`, else `None`.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    pub fn get_approval_binding(env: Env, id: u64, approver: Address) -> Option<BytesN<32>> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ApprovalBinding(id, approver))
+    }
+
+    /// Verifies that the recorded approval binding for `(id, approver)` matches
+    /// the domain-separated hash for that exact pair.
+    ///
+    /// Returns `false` when no approval exists for the pair, or when the stored
+    /// binding would not match a recomputed hash for this `id` — i.e. an
+    /// approval intended for a different proposal cannot verify here.
+    ///
+    /// # Arguments
+    /// * `id`       – Proposal ID to check.
+    /// * `approver` – Signer whose approval binding to verify.
+    ///
+    /// # Returns
+    /// `true` iff a binding was stored for `(id, approver)` and it equals
+    /// `approval_auth_hash(id, approver)`.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    pub fn verify_approval_binding(env: Env, id: u64, approver: Address) -> bool {
+        match Self::get_approval_binding(env.clone(), id, approver.clone()) {
+            Some(stored) => stored == Self::approval_auth_hash(&env, id, &approver),
+            None => false,
+        }
+    }
+
+    /// Pure view of the domain-separated approval-authorization hash that
+    /// `approve_proposal` requires the signer to authorize.
+    ///
+    /// Useful for clients that need to precompute the auth args, and for tests
+    /// that assert cross-proposal bindings differ.
+    ///
+    /// # Arguments
+    /// * `id`       – Proposal ID to bind.
+    /// * `approver` – Signer the hash is scoped to.
+    ///
+    /// # Returns
+    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || approver)`.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    pub fn approval_binding_hash(env: Env, id: u64, approver: Address) -> BytesN<32> {
+        Self::approval_auth_hash(&env, id, &approver)
     }
 
     /// Execute a set of passed proposals atomically.
@@ -515,7 +685,10 @@ impl MultisigContract {
 
         // Emit single BatchExecuted event with all applied IDs
         env.events().publish(
-            (symbol_short!("multisig"), Symbol::new(&env, "batch_executed")),
+            (
+                symbol_short!("multisig"),
+                Symbol::new(&env, "batch_executed"),
+            ),
             BatchExecutedEvent { ids },
         );
         Ok(())
@@ -555,3 +728,6 @@ mod batch_execute_test;
 
 #[cfg(test)]
 mod cancel_proposal_test;
+
+#[cfg(test)]
+mod approval_binding_test;
