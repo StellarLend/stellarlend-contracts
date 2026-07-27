@@ -284,28 +284,6 @@ impl HelloContract {
             close_factor,
             liquidation_incentive,
         )
-        .map_err(|e| match e {
-            RiskParamsError::ParameterChangeTooLarge => {
-                RiskManagementError::ParameterChangeTooLarge
-            }
-            RiskParamsError::InvalidCollateralRatio => RiskManagementError::InvalidCollateralRatio,
-            RiskParamsError::InvalidLiquidationThreshold => {
-                RiskManagementError::InvalidLiquidationThreshold
-            }
-            RiskParamsError::InvalidCloseFactor => RiskManagementError::InvalidCloseFactor,
-            RiskParamsError::InvalidLiquidationIncentive => {
-                RiskManagementError::InvalidLiquidationIncentive
-            }
-            // Distinct arithmetic faults surfaced by `validate_change`.
-            // Routing them to the dedicated `Overflow` variant (rather than
-            // the generic `InvalidParameter` catch-all) lets operators
-            // distinguish a misconfigured value from a real i128-overflow in
-            // incident response. `DivisionByZero` cannot fire in practice
-            // (BASIS_POINTS = 10_000) but is mapped explicitly anyway.
-            RiskParamsError::Overflow => RiskManagementError::Overflow,
-            RiskParamsError::DivisionByZero => RiskManagementError::InvalidParameter,
-            _ => RiskManagementError::InvalidParameter,
-        })
     }
 
     pub fn set_guardians(
