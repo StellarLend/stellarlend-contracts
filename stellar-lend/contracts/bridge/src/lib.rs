@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Bytes, BytesN, Env, Map, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Bytes, BytesN, Env, Map, Vec,
+};
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
 const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
