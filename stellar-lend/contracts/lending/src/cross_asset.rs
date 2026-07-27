@@ -519,16 +519,34 @@ pub fn withdraw_asset_internal(
 /// Borrow `amount` of `asset` for `user`.
 ///
 /// Checks pause state, validates params, enforces the minimum-borrow floor,
-/// accrues interest on any existing debt position, creates or updates the debt
-/// entry, verifies the health factor post-borrow, enforces the per-asset and
-/// protocol debt ceilings, and extends the debt entry's TTL.
+/// **fail-closes on partial oracle staleness** (every collateral and debt leg
+/// already on the position, plus the asset being borrowed, must have a fresh
+/// price — see [`ensure_position_prices_fresh`]), accrues interest on any
+/// existing debt position, creates or updates the debt entry, verifies the
+/// health factor post-borrow, enforces the per-asset and protocol debt
+/// ceilings, and extends the debt entry's TTL.
+///
+/// # Partial-staleness policy
+///
+/// A multi-asset position is valued by aggregating every collateral and debt
+/// leg. If *any* of those legs carries a stale oracle price while others are
+/// fresh, the true health of the position is unknown. This function therefore
+/// **fails closed** with [`LendingError::StaleOracleTimestamp`] whenever any
+/// relevant leg is stale — not only when the borrowed asset itself is stale.
+///
+/// Repay is intentionally *not* gated by this check (see
+/// `PARTIAL_STALENESS_POLICY.md`): reducing risk must remain allowed.
 ///
 /// # Errors
 /// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
 /// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
 /// - [`LendingError::BelowMinimumBorrow`] if `amount < min_borrow`.
+/// - [`LendingError::StaleOracleTimestamp`] if any collateral, existing debt,
+///   or the borrowed asset has a price older than `DEFAULT_ORACLE_MAX_AGE_SECS`.
+/// - [`LendingError::PriceFeedNotFound`] if a required oracle price is missing.
 /// - [`LendingError::HealthFactorTooLow`] if borrow would under-collateralise the position.
 /// - [`LendingError::DebtCeilingExceeded`] if borrow would exceed the per-asset ceiling.
+/// - [`LendingError::BorrowCapExceeded`] if borrow would exceed the per-asset borrow cap.
 /// - [`LendingError::Overflow`] on arithmetic overflow.
 pub fn borrow_asset_internal(
     env: &Env,
@@ -551,6 +569,15 @@ pub fn borrow_asset_internal(
     }
 
     user.require_auth();
+
+    // Fail closed on partial oracle staleness: reject the borrow if *any*
+    // collateral or debt asset already on the user's cross-asset position has
+    // a stale price, or if the asset being borrowed itself has a stale price.
+    // This hardens the borrow path so a single stale leg cannot enable an
+    // under-collateralised borrow, independent of the health-factor computation.
+    // Repay is intentionally not gated here (reducing risk must always
+    // succeed). See PARTIAL_STALENESS_POLICY.md.
+    ensure_position_prices_fresh(env, user, asset)?;
 
     let now = env.ledger().timestamp();
 
@@ -647,6 +674,52 @@ pub fn borrow_asset_internal(
     extend_debt_asset_ttl(env, user, asset);
 
     Ok(updated.principal)
+}
+
+/// Reject (fail closed) a borrow when *any* collateral or debt asset on the
+/// user's cross-asset position — or the asset being borrowed — carries a stale
+/// oracle price.
+///
+/// # Rationale
+///
+/// Multi-asset health is an aggregate of every leg. A single stale collateral
+/// or debt price makes the true health unknown; allowing the borrow would let
+/// a partial-staleness gap enable under-collateralised debt. This helper scans
+/// every existing position leg plus `borrow_asset` (which may not yet be on
+/// the debt list on first borrow of that asset) via [`get_price_for_asset`],
+/// which returns [`LendingError::StaleOracleTimestamp`] for an aged price
+/// (`now > record.timestamp + DEFAULT_ORACLE_MAX_AGE_SECS`).
+///
+/// # Fail-open counterpart
+///
+/// Repay is intentionally *not* gated by this helper — reducing a position's
+/// risk must always be permitted. See `PARTIAL_STALENESS_POLICY.md`.
+///
+/// # Errors
+/// - [`LendingError::StaleOracleTimestamp`] if any scanned asset's price is stale.
+/// - [`LendingError::PriceFeedNotFound`] if any scanned asset has no price record.
+fn ensure_position_prices_fresh(
+    env: &Env,
+    user: &Address,
+    borrow_asset: &Address,
+) -> Result<(), LendingError> {
+    let collateral_assets = get_user_collateral_assets(env, user);
+    for i in 0..collateral_assets.len() {
+        let asset = collateral_assets.get(i).unwrap();
+        get_price_for_asset(env, &asset)?;
+    }
+
+    let debt_assets = get_user_debt_assets(env, user);
+    for i in 0..debt_assets.len() {
+        let asset = debt_assets.get(i).unwrap();
+        get_price_for_asset(env, &asset)?;
+    }
+
+    // First borrow of this asset: it is not yet on the debt list, but it
+    // contributes to post-borrow health and must be fresh.
+    get_price_for_asset(env, borrow_asset)?;
+
+    Ok(())
 }
 
 /// Repay `amount` of debt `asset` for `user`.

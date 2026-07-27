@@ -168,7 +168,7 @@ fn test_borrow_health_check_mixed_decimals() {
     let token_b = Address::generate(&env);
 
     with_contract(&env, || {
-        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor = 7500 (75 %)
+        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor_bps = 7500 (75 %)
         initialize_asset(
             &env,
             None,

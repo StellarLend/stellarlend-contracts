@@ -339,7 +339,7 @@ impl AmmContract {
     }
 
     /// Verify that `admin` matches the stored pool admin.
-    fn require_admin(env: &Env, admin: &Address) -> Result<(), AmmPoolError> {
+    fn require_admin(_env: &Env, admin: &Address) -> Result<(), AmmPoolError> {
         admin.require_auth();
         Ok(())
     }
@@ -360,38 +360,6 @@ impl AmmContract {
         env.storage()
             .persistent()
             .get(&KEY_LP_TOTAL_SUPPLY)
-            .unwrap_or(0)
-    }
-
-    // -----------------------------------------------------------------------
-    // Minimum-liquidity floor
-    //
-    // See: [MIN_LIQUIDITY.md](../MIN_LIQUIDITY.md)
-    // -----------------------------------------------------------------------
-
-    /// Set the minimum-liquidity floor. Admin-only.
-    ///
-    /// A positive `floor` rejects any `remove_liquidity` or `swap_*`
-    /// operation that would push a reserve below the floor. A floor of
-    /// `0` (the default) disables the check entirely — i.e. is fully
-    /// backward compatible with pools that do not opt in.
-    ///
-    /// Negative values are not accepted.
-    pub fn set_min_liquidity(env: Env, admin: Address, floor: i128) -> Result<(), AmmPoolError> {
-        Self::require_admin(&env, &admin)?;
-        if floor < 0 {
-            return Err(AmmPoolError::NonPositiveAmount);
-        }
-        env.storage().persistent().set(&KEY_MIN_LIQUIDITY, &floor);
-        Ok(())
-    }
-
-    /// Return the current minimum-liquidity floor. Returns `0` if no
-    /// admin has ever called [`set_min_liquidity`](AmmContract::set_min_liquidity).
-    pub fn get_min_liquidity(env: Env) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&KEY_MIN_LIQUIDITY)
             .unwrap_or(0)
     }
 
@@ -541,8 +509,8 @@ impl AmmContract {
             .persistent()
             .get(&KEY_TOKEN_B)
             .ok_or(AmmPoolError::EmptyPool)?;
-        TokenClient::new(&env, &token_a).transfer(&caller, &env.current_contract_address(), &add_a);
-        TokenClient::new(&env, &token_b).transfer(&caller, &env.current_contract_address(), &add_b);
+        TokenClient::new(&env, &token_a).transfer(&caller, env.current_contract_address(), &add_a);
+        TokenClient::new(&env, &token_b).transfer(&caller, env.current_contract_address(), &add_b);
 
         // Update reserves.
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
@@ -622,14 +590,6 @@ impl AmmContract {
         let new_rb = rb
             .checked_sub(amount_b)
             .ok_or(AmmPoolError::InsufficientReserves)?;
-
-        // Minimum-liquidity floor guard. Both reserves decrease on removal,
-        // so both must remain at or above the floor after the burn.
-        let floor = Self::get_min_liquidity(&env);
-        if floor > 0 && (new_ra < floor || new_rb < floor) {
-            return Err(AmmPoolError::BelowMinLiquidity);
-        }
-
         assert_k_monotonic(ra, rb, new_ra, new_rb, false)?;
 
         // Update reserves and LP supply before transferring out to follow

@@ -10,7 +10,7 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::{Address as _, Events as _},
+    testutils::{Address as _, Events},
     Address, Env,
 };
 
@@ -399,6 +399,7 @@ fn test_update_emits_config_updated_event() {
         .unwrap();
 
         // The SDK test harness collects published events; assert one was emitted.
+        // Soroban SDK 25: Events::all() returns ContractEvents (use .events().len()).
         assert_eq!(env.events().all().events().len(), 1);
     });
 }

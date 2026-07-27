@@ -5,7 +5,7 @@ pub mod cross_asset;
 mod debt;
 mod events;
 pub mod math;
-pub mod rate_model;
+mod rate_model;
 pub mod rounding_strategy;
 pub mod upgrade;
 
@@ -107,6 +107,8 @@ mod oracle_payload_binding_test;
 mod oracle_price_bounds_test;
 #[cfg(test)]
 mod oracle_staleness_test;
+#[cfg(test)]
+mod partial_staleness_guard_test;
 #[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
@@ -638,9 +640,16 @@ impl LendingContract {
         Ok(())
     }
 
-    /// Returns the protocol admin address, or `None` if the contract has not
-    /// yet been initialized.  Safe to call at any time — never panics.
-    pub fn get_admin(env: Env) -> Option<Address> {
+    pub fn get_admin(env: Env) -> Address {
+        env.storage().instance().get(&DataKey::Admin).unwrap()
+    }
+
+    /// Panic-free admin lookup for callers that may run before `initialize`.
+    ///
+    /// Named `get_admin_optional` (not `try_get_admin`) so it does not collide
+    /// with the Soroban client-generated `try_get_admin` wrapper around
+    /// [`Self::get_admin`].
+    pub fn get_admin_optional(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
 

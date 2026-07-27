@@ -160,7 +160,6 @@ impl VestingContract {
         env.storage()
             .persistent()
             .set(&VestingKey::TotalPausedSecs, &0u64);
-        Ok(())
     }
 
     /// Create a new vesting grant for `grantee`.
@@ -270,9 +269,9 @@ impl VestingContract {
             .get(&VestingKey::TotalPausedSecs)
             .unwrap_or(0u64);
 
-        // Accumulate paused interval with checked arithmetic; saturate on overflow.
+        // Accumulate paused interval with saturating arithmetic on overflow.
         let interval = now.saturating_sub(paused_at);
-        let new_total = total_paused.checked_add(interval).unwrap_or(u64::MAX);
+        let new_total = total_paused.saturating_add(interval);
 
         env.storage()
             .persistent()
