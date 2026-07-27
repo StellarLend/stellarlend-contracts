@@ -53,7 +53,7 @@ stellarlend-contracts/
 └── stellar-lend/
     ├── Cargo.toml         # Workspace root
     └── contracts/
-        ├── hello-world/   # Main lending contract  (crate: hello-world)
+        ├── lending/       # Main lending contract  (crate: stellarlend-lending)
         └── amm/           # AMM integration contract (crate: stellarlend-amm)
 ```
 
@@ -61,10 +61,10 @@ Compiled WASM artefacts land in:
 
 ```
 stellar-lend/target/wasm32-unknown-unknown/release/
-  hello_world.wasm
-  hello_world.optimized.wasm        ← deployed to chain
+  stellarlend_lending.wasm
+  stellarlend_lending.optimized.wasm    ← deployed to chain
   stellarlend_amm.wasm
-  stellarlend_amm.optimized.wasm    ← deployed to chain
+  stellarlend_amm.optimized.wasm       ← deployed to chain
 ```
 
 ---
@@ -96,12 +96,12 @@ stellar contract build --verbose
 
 # Optimise
 WASM_DIR=target/wasm32-unknown-unknown/release
-stellar contract optimize --wasm "$WASM_DIR/hello_world.wasm"
+stellar contract optimize --wasm "$WASM_DIR/stellarlend_lending.wasm"
 stellar contract optimize --wasm "$WASM_DIR/stellarlend_amm.wasm"
 
 # Inspect interface
 stellar contract inspect \
-  --wasm "$WASM_DIR/hello_world.optimized.wasm" \
+  --wasm "$WASM_DIR/stellarlend_lending.optimized.wasm" \
   --output json
 
 # Run unit tests
@@ -177,7 +177,7 @@ WASM_DIR=stellar-lend/target/wasm32-unknown-unknown/release
 
 # Lending contract
 stellar contract deploy \
-  --wasm "$WASM_DIR/hello_world.optimized.wasm" \
+  --wasm "$WASM_DIR/stellarlend_lending.optimized.wasm" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet
 
@@ -542,6 +542,6 @@ Run targeted tests for faster iteration:
 
 ```bash
 cd stellar-lend
-cargo test -p hello-world deploy_test   # deployment tests only
-cargo test -p hello-world -- --nocapture 2>&1 | head -50
+cargo test -p stellarlend-lending deploy_test   # deployment tests only
+cargo test -p stellarlend-lending -- --nocapture 2>&1 | head -50
 ```
