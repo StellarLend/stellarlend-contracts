@@ -44,6 +44,7 @@ mod borrow_index_tests {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         client.initialize(&admin);
+        client.deposit(&user, &100_000_000);
         (env, client, admin, user)
     }
 
@@ -152,6 +153,7 @@ mod borrow_index_tests {
         // Actually touch the index by borrowing for a second user then checking
         // the first user's view.
         let user2 = Address::generate(&env);
+        client.deposit(&user2, &100_000_000);
         client.borrow(&user2, &1);
 
         let current_index = client.get_borrow_index();
@@ -234,6 +236,7 @@ mod borrow_index_tests {
         let user_b = Address::generate(&env);
 
         // Both borrow at t=0
+        client.deposit(&user_b, &100_000_000);
         client.borrow(&user_a, &5_000);
         client.borrow(&user_b, &10_000);
 
@@ -453,6 +456,7 @@ mod borrow_index_tests {
                 let user2 = Address::generate(&env2);
                 c2.initialize(&admin2);
 
+                c2.deposit(&user2, &(p * 1_000_000));
                 c2.borrow(&user2, &p);
 
                 let mut li = env2.ledger().get();
@@ -596,6 +600,7 @@ mod borrow_index_tests {
         let user_b = Address::generate(&env);
 
         // Both borrow in the same block (identical snapshot).
+        client.deposit(&user_b, &100_000_000);
         client.borrow(&user_a, &1_000);
         client.borrow(&user_b, &4_000);
 
@@ -603,6 +608,7 @@ mod borrow_index_tests {
 
         // Touch the index.
         let user_c = Address::generate(&env);
+        client.deposit(&user_c, &100_000_000);
         client.borrow(&user_c, &1);
 
         let debt_a = client.compute_debt_view(&user_a);

@@ -1,8 +1,8 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
-pub mod cross_asset;
-mod debt;
+mod cross_asset;
+pub mod debt;
 mod events;
 pub mod math;
 mod rate_model;
@@ -156,8 +156,8 @@ mod withdraw_reserve_test;
 #[cfg(test)]
 mod zero_amount_semantics_test;
 use debt::{
-    borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
-    DebtPosition, DEFAULT_APR_BPS,
+    borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt,
+    repay_amount, save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
 };
 use events::{
     emit_borrow, emit_deposit, emit_liquidate, emit_repay, emit_schema_version, emit_withdraw,
@@ -635,6 +635,8 @@ impl LendingContract {
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         set_emergency_state_internal(&env, EmergencyState::Normal);
+        debt::save_borrow_index(&env, debt::INDEX_SCALE);
+        debt::save_last_index_update(&env, env.ledger().timestamp());
         // Emit schema version event for indexers
         emit_schema_version(&env);
         Ok(())
@@ -642,15 +644,6 @@ impl LendingContract {
 
     pub fn get_admin(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Admin).unwrap()
-    }
-
-    /// Panic-free admin lookup for callers that may run before `initialize`.
-    ///
-    /// Named `get_admin_optional` (not `try_get_admin`) so it does not collide
-    /// with the Soroban client-generated `try_get_admin` wrapper around
-    /// [`Self::get_admin`].
-    pub fn get_admin_optional(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::Admin)
     }
 
     /// Returns the accumulated protocol bad debt.
@@ -1825,7 +1818,6 @@ impl LendingContract {
         env: Env,
         threshold_bps: i128,
     ) -> Result<(), LendingError> {
-        require_initialized(&env)?;
         assert_admin(&env);
         if threshold_bps <= 0 || threshold_bps > 10000 {
             return Err(LendingError::InvalidLiquidationThresholdBps);
@@ -1922,6 +1914,18 @@ impl LendingContract {
             extend_debt_ttl(&env, &user);
         }
         position
+    }
+
+    /// Read-only view of current global borrow index.
+    pub fn get_borrow_index(env: Env) -> i128 {
+        load_borrow_index(&env)
+    }
+
+    /// Read-only view of a user's accrued debt.
+    pub fn compute_debt_view(env: Env, user: Address) -> i128 {
+        let position = load_debt(&env, &user);
+        let current_index = load_borrow_index(&env);
+        debt::compute_debt(&position, current_index)
     }
 
     /// Set the protocol-level debt ceiling (admin-only).
@@ -2708,9 +2712,22 @@ pub(crate) fn settle_and_accrue_insurance(
     now: u64,
     rate_bps: i128,
 ) -> Result<DebtPosition, LendingError> {
-    let elapsed = debt::elapsed_seconds(now, position.last_update);
-    let interest = debt::accrue_interest(position.principal, elapsed, rate_bps)
-        .map_err(|_| LendingError::Overflow)?;
+    let current_index = touch_borrow_index(env, now, rate_bps);
+
+    let (interest, settled) = if position.borrow_index_snapshot > 0 {
+        let settled = debt::settle_position(position, current_index, now)
+            .map_err(|_| LendingError::Overflow)?;
+        let interest = settled.principal.saturating_sub(position.principal);
+        (interest, settled)
+    } else {
+        let elapsed = debt::elapsed_seconds(now, position.last_update);
+        let interest = debt::accrue_interest(position.principal, elapsed, rate_bps)
+            .map_err(|_| LendingError::Overflow)?;
+        let mut settled =
+            debt::settle_accrual(position, now, rate_bps).map_err(|_| LendingError::Overflow)?;
+        settled.borrow_index_snapshot = current_index;
+        (interest, settled)
+    };
 
     if interest > 0 {
         let share_bps: i128 = env
@@ -2740,8 +2757,6 @@ pub(crate) fn settle_and_accrue_insurance(
         }
     }
 
-    let settled =
-        debt::settle_accrual(position, now, rate_bps).map_err(|_| LendingError::Overflow)?;
     Ok(settled)
 }
 

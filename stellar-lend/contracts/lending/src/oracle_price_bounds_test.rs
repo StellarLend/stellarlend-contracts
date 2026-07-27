@@ -1,6 +1,9 @@
-use crate::test::{chrono_keypair, sign_oracle_update};
-use crate::{LendingContract, LendingContractClient, LendingError, MockAsset};
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
+// Tests for oracle price bounds
+#![cfg(test)]
+mod test {
+    use super::*;
+    use crate::{LendingContract, LendingError};
+    use soroban_sdk::{Env, BytesN, Address, testutils::Address as TestAddress};
 
 fn setup() -> (Env, LendingContractClient<'static>, Address) {
     let env = Env::default();

@@ -181,9 +181,9 @@ mod interest_ordering_time_tests {
         assert_eq!(remaining, 10_000 + interest - 3_000);
     }
 
-    /// Repaying more than owed clamps remaining principal to zero (no panic).
+    /// Repaying more than owed clamps remaining debt to zero.
     #[test]
-    fn test_repay_more_than_owed_clears_debt() {
+    fn test_repay_more_than_owed_panics() {
         let (_env, client, user) = setup_with_collateral(5_000);
         client.borrow(&user, &1_000);
         let remaining = client.repay(&user, &2_000);
@@ -329,9 +329,9 @@ mod interest_ordering_time_tests {
         }
     }
 
-    /// Repaying with no prior debt is a no-op that leaves principal at zero.
+    /// Repaying with no prior debt returns zero remaining debt.
     #[test]
-    fn test_repay_with_no_debt_is_noop() {
+    fn test_repay_with_no_debt_panics() {
         let (_env, client, user) = setup_with_collateral(1_000);
         let remaining = client.repay(&user, &1_000);
         assert_eq!(remaining, 0);

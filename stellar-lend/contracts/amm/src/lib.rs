@@ -570,8 +570,8 @@ impl AmmContract {
             .persistent()
             .get(&KEY_TOKEN_B)
             .ok_or(AmmPoolError::EmptyPool)?;
-        TokenClient::new(&env, &token_a).transfer(&caller, env.current_contract_address(), &add_a);
-        TokenClient::new(&env, &token_b).transfer(&caller, env.current_contract_address(), &add_b);
+        TokenClient::new(&env, &token_a).transfer(&caller, &env.current_contract_address(), &add_a);
+        TokenClient::new(&env, &token_b).transfer(&caller, &env.current_contract_address(), &add_b);
 
         // Update reserves.
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
