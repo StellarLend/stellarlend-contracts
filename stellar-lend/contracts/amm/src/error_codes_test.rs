@@ -17,6 +17,8 @@ fn test_error_codes_stability() {
     assert_eq!(AmmPoolError::InvalidBurnAmount as u32, 12);
     assert_eq!(AmmPoolError::ZeroReserve as u32, 13);
     assert_eq!(AmmPoolError::InsufficientLpBalance as u32, 14);
+    assert_eq!(AmmPoolError::ZeroOutput as u32, 15);
+    assert_eq!(AmmPoolError::AmountBelowMinSwapIn as u32, 16);
 }
 
 #[test]

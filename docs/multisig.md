@@ -158,14 +158,16 @@ Cancels an active proposal before it is executed.
 ### `ProposalAction`
 
 ```rust
+pub struct InvokeContractParams {
+    pub contract: Address,
+    pub fn_symbol: Symbol,
+    pub args_hash: Bytes,
+}
+
 pub enum ProposalAction {
-    SetThreshold { new_threshold: u32 },
-    RotateSigners { new_signers: Vec<Address> },
-    InvokeContract {
-        contract:   Address,
-        fn_symbol:  Symbol,
-        args_hash:  Bytes,  // SHA-256/Keccak of the encoded call arguments
-    },
+    SetThreshold(u32),
+    RotateSigners(Vec<Address>),
+    InvokeContract(InvokeContractParams),
 }
 ```
 
