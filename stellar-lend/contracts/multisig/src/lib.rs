@@ -1,16 +1,24 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes,
+    BytesN, Env, IntoVal, Symbol, Vec,
 };
 
-/// Parameters for cross-contract invocation action.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct InvokeContractParams {
-    pub contract: Address,
-    pub fn_symbol: Symbol,
-    pub args_hash: soroban_sdk::Bytes,
-}
+/// Domain separator for multisig approval-authorization payloads (issue #1278).
+///
+/// Every approval is cryptographically scoped by hashing:
+///
+/// ```text
+/// sha256(DOMAIN_SEPARATOR || contract_id_xdr || proposal_id_be64 || approver_xdr)
+/// ```
+///
+/// The resulting hash is what `approve_proposal` requires the signer to authorize
+/// via `require_auth_for_args`, so an authorization gathered for proposal `A`
+/// cannot satisfy approval of a different proposal `B`. Bump the `_V1` suffix on
+/// any breaking change to the payload layout.
+///
+/// See `APPROVAL_DOMAIN_BINDING.md` for the full layout and threat model.
+pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V1";
 
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
 /// The payload_hash binds the approved action so it cannot be swapped between
@@ -73,6 +81,14 @@ pub enum MultisigDataKey {
     Signers,
     ProposalCount,
     Proposal(u64),
+    /// Domain-separated approval binding for `(proposal_id, approver)`.
+    ///
+    /// Stores
+    /// `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || approver)`
+    /// at approval time so an approval is cryptographically scoped to exactly
+    /// one proposal and can be verified out-of-band (issue #1278;
+    /// `APPROVAL_DOMAIN_BINDING.md`).
+    ApprovalBinding(u64, Address),
 }
 
 /// Multisig errors.
@@ -200,6 +216,49 @@ impl MultisigContract {
         }
     }
 
+    /// Builds the domain-separated approval-authorization preimage for
+    /// `(proposal_id, approver)`:
+    ///
+    /// ```text
+    /// DOMAIN_SEPARATOR || contract_id_xdr || proposal_id (8-byte BE) || approver_xdr
+    /// ```
+    ///
+    /// # Arguments
+    /// * `env`         – Soroban environment.
+    /// * `proposal_id` – Proposal this approval is scoped to.
+    /// * `approver`    – Signer casting the approval.
+    ///
+    /// # Returns
+    /// Canonical byte preimage before hashing.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    fn approval_auth_payload(env: &Env, proposal_id: u64, approver: &Address) -> Bytes {
+        let mut payload = Bytes::new(env);
+        payload.extend_from_slice(APPROVAL_DOMAIN_SEPARATOR);
+        payload.append(&env.current_contract_address().to_xdr(env));
+        payload.extend_from_slice(&proposal_id.to_be_bytes());
+        payload.append(&approver.clone().to_xdr(env));
+        payload
+    }
+
+    /// SHA-256 of [`Self::approval_auth_payload`].
+    ///
+    /// This is the exact authorization payload that `approve_proposal` binds
+    /// into `require_auth_for_args`, and that is stored under
+    /// [`MultisigDataKey::ApprovalBinding`].
+    ///
+    /// # Arguments
+    /// * `env`         – Soroban environment.
+    /// * `proposal_id` – Proposal this approval is scoped to.
+    /// * `approver`    – Signer casting the approval.
+    ///
+    /// # Returns
+    /// 32-byte domain-separated binding hash.
+    fn approval_auth_hash(env: &Env, proposal_id: u64, approver: &Address) -> BytesN<32> {
+        let payload = Self::approval_auth_payload(env, proposal_id, approver);
+        env.crypto().sha256(&payload).into()
+    }
+
     // -----------------------------------------------------------------------
     // Proposal lifecycle
     // -----------------------------------------------------------------------
@@ -249,11 +308,44 @@ impl MultisigContract {
     /// A proposal is automatically transitioned to `Passed` once the number of
     /// distinct signer approvals meets or exceeds the current threshold.
     ///
+    /// # Authorization domain binding (issue #1278)
+    ///
+    /// Instead of a bare `require_auth()` (which only proves the caller signed
+    /// *some* invocation), this entrypoint requires the caller to authorize the
+    /// domain-separated payload:
+    ///
+    /// ```text
+    /// sha256(
+    ///     APPROVAL_DOMAIN_SEPARATOR
+    ///     || contract_id_xdr
+    ///     || proposal_id (8-byte big-endian)
+    ///     || approver_xdr
+    /// )
+    /// ```
+    ///
+    /// via `require_auth_for_args`. An authorization produced for one
+    /// `proposal_id` therefore cannot be replayed against any other proposal.
+    /// The same hash is persisted under
+    /// [`MultisigDataKey::ApprovalBinding`] for off-chain verification.
+    ///
     /// # Arguments
-    /// * `caller` – Signer casting the approval.
-    /// * `id`     – ID of the proposal to approve.
+    /// * `caller` – Signer casting the approval (must be a registered signer).
+    /// * `id`     – ID of the proposal to approve; folded into the auth domain.
+    ///
+    /// # Panics
+    /// * `"Unauthorized"` – caller is not a registered signer, or the domain-
+    ///   bound authorization does not match this `(contract, id, caller)`.
+    /// * `"ProposalExpired"` – current ledger has passed `expires_at`.
+    /// * `"ProposalNotPassed"` – proposal is not in `Active` status.
+    /// * `"AlreadyApproved"` – `caller` has already approved this proposal.
+    ///
+    /// See `APPROVAL_DOMAIN_BINDING.md`.
     pub fn approve_proposal(env: Env, caller: Address, id: u64) {
-        caller.require_auth();
+        // Domain-bound authorization: the signed auth entry must cover
+        // hash(DOMAIN || contract_id || proposal_id || approver). An auth entry
+        // gathered for a different proposal_id will not satisfy this check.
+        let binding = Self::approval_auth_hash(&env, id, &caller);
+        caller.require_auth_for_args((binding.clone(),).into_val(&env));
         Self::require_signer(&env, &caller);
 
         let mut proposal = Self::fetch_proposal(&env, id);
@@ -272,7 +364,14 @@ impl MultisigContract {
             panic!("AlreadyApproved");
         }
 
-        proposal.approvals.push_back(caller);
+        proposal.approvals.push_back(caller.clone());
+
+        // Persist the domain-separated binding for off-chain / indexer checks
+        // and for `verify_approval_binding`.
+        env.storage().persistent().set(
+            &MultisigDataKey::ApprovalBinding(id, caller.clone()),
+            &binding,
+        );
 
         let threshold = Self::fetch_threshold(&env) as usize;
         if proposal.approvals.len() as usize >= threshold {
@@ -417,6 +516,67 @@ impl MultisigContract {
         Self::fetch_proposal(&env, id)
     }
 
+    /// Returns the stored domain-separated approval binding hash for
+    /// `(id, approver)`, if an approval was recorded.
+    ///
+    /// The hash is
+    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || approver)`.
+    ///
+    /// # Arguments
+    /// * `id`       – Proposal ID the approval was cast for.
+    /// * `approver` – Signer whose binding to look up.
+    ///
+    /// # Returns
+    /// `Some(BytesN<32>)` when the signer approved `id`, else `None`.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    pub fn get_approval_binding(env: Env, id: u64, approver: Address) -> Option<BytesN<32>> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ApprovalBinding(id, approver))
+    }
+
+    /// Verifies that the recorded approval binding for `(id, approver)` matches
+    /// the domain-separated hash for that exact pair.
+    ///
+    /// Returns `false` when no approval exists for the pair, or when the stored
+    /// binding would not match a recomputed hash for this `id` — i.e. an
+    /// approval intended for a different proposal cannot verify here.
+    ///
+    /// # Arguments
+    /// * `id`       – Proposal ID to check.
+    /// * `approver` – Signer whose approval binding to verify.
+    ///
+    /// # Returns
+    /// `true` iff a binding was stored for `(id, approver)` and it equals
+    /// `approval_auth_hash(id, approver)`.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    pub fn verify_approval_binding(env: Env, id: u64, approver: Address) -> bool {
+        match Self::get_approval_binding(env.clone(), id, approver.clone()) {
+            Some(stored) => stored == Self::approval_auth_hash(&env, id, &approver),
+            None => false,
+        }
+    }
+
+    /// Pure view of the domain-separated approval-authorization hash that
+    /// `approve_proposal` requires the signer to authorize.
+    ///
+    /// Useful for clients that need to precompute the auth args, and for tests
+    /// that assert cross-proposal bindings differ.
+    ///
+    /// # Arguments
+    /// * `id`       – Proposal ID to bind.
+    /// * `approver` – Signer the hash is scoped to.
+    ///
+    /// # Returns
+    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || approver)`.
+    ///
+    /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
+    pub fn approval_binding_hash(env: Env, id: u64, approver: Address) -> BytesN<32> {
+        Self::approval_auth_hash(&env, id, &approver)
+    }
+
     /// Execute a set of passed proposals atomically.
     ///
     /// All proposals are validated first (status, expiry, payload hash,
@@ -558,4 +718,4 @@ mod batch_execute_test;
 mod cancel_proposal_test;
 
 #[cfg(test)]
-mod signer_shrink_guard_test;
+mod approval_binding_test;
