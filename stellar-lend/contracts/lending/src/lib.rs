@@ -450,15 +450,10 @@ pub enum LendingError {
     /// `set_liquidation_incentive_bps` called with a value outside
     /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
     InvalidLiquidationIncentiveBps = 7002,
-    /// `set_asset_isolation` called with a non-positive ceiling while
-    /// `isolated = true`.
-    InvalidIsolationCeiling = 2012,
-    /// Borrower attempted to liquidate their own position.
-    SelfLiquidation = 2008,
-    /// Liquidation attempted when the borrower has no outstanding debt.
-    NoDebtToLiquidate = 2011,
-    /// Borrow would breach the per-asset isolation-mode debt ceiling.
-    IsolationCeilingExceeded = 2009,
+    /// `set_deposit_cap` called with a value <= 0.
+    InvalidDepositCap = 7005,
+    /// `set_rate_params` called with an internally inconsistent `RateParams`.
+    InvalidRateParams = 7006,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -1941,6 +1936,57 @@ impl LendingContract {
         crate::events::emit_debt_ceiling_updated(&env, ceiling);
         Ok(())
     }
+    /// Set the maximum total deposits allowed across the protocol (admin-only).
+    pub fn set_deposit_cap(env: Env, cap: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env);
+        if cap <= 0 {
+            return Err(LendingError::InvalidDepositCap);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::DepositCap, &cap);
+        Ok(())
+    }
+
+    /// Get the current deposit cap, falling back to the protocol default.
+    pub fn get_deposit_cap(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DepositCap)
+            .unwrap_or(DEFAULT_DEPOSIT_CAP)
+    }
+
+    /// Set the interest-rate curve parameters (admin-only).
+    pub fn set_rate_params(env: Env, params: rate_model::RateParams) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env);
+
+        if params.base_rate_bps < 0
+            || params.kink_utilization_bps < 0
+            || params.kink_utilization_bps > 10_000
+            || params.multiplier_bps < 0
+            || params.jump_multiplier_bps < 0
+            || params.rate_floor_bps < 0
+            || params.rate_ceiling_bps < params.rate_floor_bps
+            || params.hysteresis_bps < 0
+        {
+            return Err(LendingError::InvalidRateParams);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::RateParams, &params);
+        Ok(())
+    }
+
+    /// Get the current rate model parameters, falling back to the default curve.
+    pub fn get_rate_params(env: Env) -> rate_model::RateParams {
+        env.storage()
+            .instance()
+            .get(&DataKey::RateParams)
+            .unwrap_or_default()
+    }
 
     /// Set the flash loan fee in basis points (admin-only). Must be in [0, 1000].
     pub fn set_flash_fee(env: Env, fee_bps: i128) -> Result<(), LendingError> {
@@ -3410,7 +3456,55 @@ pub(crate) mod test {
             res
         );
     }
+#[test]
+    fn test_set_deposit_cap_admin_only() {
+        let (_env, client, _admin, _user) = setup();
+        assert_eq!(client.get_deposit_cap(), DEFAULT_DEPOSIT_CAP);
+        client.set_deposit_cap(&5_000_000);
+        assert_eq!(client.get_deposit_cap(), 5_000_000);
+    }
 
+    #[test]
+    fn test_set_deposit_cap_rejects_non_positive() {
+        let (_env, client, _admin, _user) = setup();
+        let res = client.try_set_deposit_cap(&0);
+        assert!(
+            matches!(res, Err(Ok(LendingError::InvalidDepositCap))),
+            "expected InvalidDepositCap, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_rate_params_valid() {
+        let (_env, client, _admin, _user) = setup();
+        let params = rate_model::RateParams {
+            base_rate_bps: 200,
+            kink_utilization_bps: 7_000,
+            multiplier_bps: 1_500,
+            jump_multiplier_bps: 8_000,
+            rate_floor_bps: 100,
+            rate_ceiling_bps: 9_000,
+            max_rate_change_per_ledger_bps: i128::MAX,
+            hysteresis_bps: 0,
+        };
+        client.set_rate_params(&params);
+        assert_eq!(client.get_rate_params(), params);
+    }
+
+    #[test]
+    fn test_set_rate_params_rejects_ceiling_below_floor() {
+        let (_env, client, _admin, _user) = setup();
+        let mut params = rate_model::RateParams::default();
+        params.rate_ceiling_bps = 40;
+        params.rate_floor_bps = 50;
+        let res = client.try_set_rate_params(&params);
+        assert!(
+            matches!(res, Err(Ok(LendingError::InvalidRateParams))),
+            "expected InvalidRateParams, got {:?}",
+            res
+        );
+    }
     #[test]
     #[ignore = "ed25519 verification is unstable in this local CI toolchain"]
     fn test_set_price_with_valid_signature_succeeds() {
