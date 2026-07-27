@@ -1,5 +1,13 @@
 # Storage Key Audit - hello-world
 
+> **⚠️ Document Drift Alert:** The data key layout and enum renames described in
+> this audit (e.g. `LegacyDepositDataKey`, 4-variant `DepositDataKey`) were
+> drafted for a proposed refactoring of storage key types. The current
+> `hello-world` contract does **not** use these structures; its storage keys
+> are defined in `src/deposit.rs` and `src/storage.rs` with different layouts.
+> Use this document as a design reference, not as a specification of the
+> current on-chain key encoding.
+
 ## Summary
 
 - Found duplicate enum name `DepositDataKey` in `src/storage.rs` and `src/deposit.rs`.
