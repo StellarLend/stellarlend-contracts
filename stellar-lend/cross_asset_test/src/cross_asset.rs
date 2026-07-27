@@ -926,6 +926,8 @@ pub fn cross_asset_deposit(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -965,6 +967,8 @@ pub fn cross_asset_withdraw(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -1115,6 +1119,7 @@ mod total_underflow_regression_test {
     #[test]
     fn withdraw_returns_overflow_when_total_supply_desynced_below_amount() {
         let env = Env::default();
+        env.mock_all_auths();
         with_contract(&env, || {
             let user = Address::generate(&env);
             let key = AssetKey::Native;
@@ -1159,6 +1164,7 @@ mod total_underflow_regression_test {
     #[test]
     fn withdraw_normal_path_unaffected() {
         let env = Env::default();
+        env.mock_all_auths();
         with_contract(&env, || {
             let user = Address::generate(&env);
             let key = AssetKey::Native;
@@ -1189,6 +1195,91 @@ mod total_underflow_regression_test {
             let pos = cross_asset_repay(&env, user.clone(), None, 80).unwrap();
             assert_eq!(pos.borrowed, 20);
             assert_eq!(load_total_debt(&env, &key), 0);
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: issue #1684 — missing require_auth on deposit/withdraw
+// ---------------------------------------------------------------------------
+//
+// `cross_asset_deposit`/`cross_asset_withdraw` used to mutate a `user`'s
+// supply balance without ever calling `user.require_auth()`, so any caller
+// could act on behalf of any other address simply by passing it as the
+// `user` argument. These tests assert both functions now demand the user's
+// authorization before touching state.
+#[cfg(test)]
+mod require_auth_regression_test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn with_contract<F, T>(env: &Env, f: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        let contract_id = env.register(NoOpContract {}, ());
+        env.as_contract(&contract_id, f)
+    }
+
+    /// An attacker who has not obtained the victim's authorization cannot
+    /// deposit on the victim's behalf.
+    #[test]
+    #[should_panic]
+    fn deposit_rejects_caller_without_user_auth() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let victim = Address::generate(&env);
+            let _ = cross_asset_deposit(&env, victim, None, 100);
+        });
+    }
+
+    /// An attacker who has not obtained the victim's authorization cannot
+    /// withdraw the victim's collateral.
+    #[test]
+    #[should_panic]
+    fn withdraw_rejects_caller_without_user_auth() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let victim = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            // Victim has a real balance to steal, established via direct
+            // storage writes (bypassing the public API's own auth check).
+            save_user_supply(&env, &key, &victim, 100);
+            save_total_supply(&env, &key, 100);
+
+            let _ = cross_asset_withdraw(&env, victim, None, 100);
+        });
+    }
+
+    /// Once the user's authorization is present (e.g. the user themself is
+    /// the transaction signer), deposit still succeeds as before.
+    #[test]
+    fn deposit_succeeds_with_user_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            let pos = cross_asset_deposit(&env, user.clone(), None, 100).unwrap();
+            assert_eq!(pos.supplied, 100);
+        });
+    }
+
+    /// Once the user's authorization is present, withdraw still succeeds as
+    /// before.
+    #[test]
+    fn withdraw_succeeds_with_user_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            save_user_supply(&env, &key, &user, 100);
+            save_total_supply(&env, &key, 100);
+
+            let pos = cross_asset_withdraw(&env, user.clone(), None, 40).unwrap();
+            assert_eq!(pos.supplied, 60);
         });
     }
 }
