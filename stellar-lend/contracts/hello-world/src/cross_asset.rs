@@ -397,15 +397,23 @@ pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
 
 /// Register a new asset with its initial configuration.
 ///
+/// # Access control
+/// `caller` must equal the stored admin address, else
+/// [`CrossAssetError::Unauthorized`] is returned before any state is touched.
+///
 /// # Errors
+/// - [`CrossAssetError::Unauthorized`] — caller is not the protocol admin.
 /// - [`CrossAssetError::AssetAlreadyExists`] — asset key already registered.
 /// - [`CrossAssetError::InvalidDecimals`] — `config.price_decimals > 38`.
 /// - [`CrossAssetError::InvalidCollateralFactor`] — factor outside `[0, 10_000]`.
 pub fn initialize_asset(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     config: AssetConfig,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     if config.price_decimals > 38 {
         return Err(CrossAssetError::InvalidDecimals);
     }
