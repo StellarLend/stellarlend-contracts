@@ -143,6 +143,166 @@ pub fn emit_config_updated(env: &Env, event: ConfigUpdatedEvent) {
         .publish((symbol_short!("crossAsst"), symbol_short!("cfgUpd")), event);
 }
 
+/// Emitted by [`initialize_asset`] when a new asset is successfully registered.
+///
+/// All fields reflect the **initial** configuration of the asset.
+///
+/// Topics: `("cross_asset", "asset_init")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AssetInitializedEvent {
+    /// Asset key identifying the newly registered asset.
+    pub asset_key: AssetKey,
+    /// Initial collateral factor in basis points.
+    pub collateral_factor_bps: i128,
+    /// Initial liquidation threshold in basis points.
+    pub liquidation_threshold: i128,
+    /// Whether the asset can be used as collateral.
+    pub can_collateralize: bool,
+    /// Whether the asset can be borrowed.
+    pub can_borrow: bool,
+    /// Initial oracle price (raw units, scaled by `price_decimals`).
+    pub price: i128,
+    /// Number of decimal places used by the oracle price feed.
+    pub price_decimals: u32,
+    /// Ledger timestamp at registration time.
+    pub timestamp: u64,
+}
+
+/// Emit an [`AssetInitializedEvent`].
+///
+/// Topics: `("cross_asset", "asset_init")`
+pub fn emit_asset_initialized(env: &Env, event: AssetInitializedEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("assetInit")), event);
+}
+
+/// Emitted by [`update_asset_price`] on every successful price update.
+///
+/// Topics: `("cross_asset", "price_upd")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PriceUpdatedEvent {
+    /// Asset key identifying the asset whose price was updated.
+    pub asset_key: AssetKey,
+    /// New oracle price (raw units, scaled by the asset's `price_decimals`).
+    pub price: i128,
+    /// Ledger timestamp at the time of the price update.
+    pub timestamp: u64,
+}
+
+/// Emit a [`PriceUpdatedEvent`].
+///
+/// Topics: `("cross_asset", "price_upd")`
+pub fn emit_price_updated(env: &Env, event: PriceUpdatedEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("priceUpd")), event);
+}
+
+/// Emitted by [`cross_asset_deposit`] on every successful deposit.
+///
+/// Topics: `("cross_asset", "deposit")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossDepositEvent {
+    /// Asset key identifying the deposited asset.
+    pub asset_key: AssetKey,
+    /// User who deposited.
+    pub user: Address,
+    /// Amount deposited (raw token units).
+    pub amount: i128,
+    /// User's total supplied balance after the deposit (raw token units).
+    pub new_supply: i128,
+    /// Ledger timestamp at the time of the deposit.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossDepositEvent`].
+///
+/// Topics: `("cross_asset", "deposit")`
+pub fn emit_cross_deposit(env: &Env, event: CrossDepositEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("deposit")), event);
+}
+
+/// Emitted by [`cross_asset_withdraw`] on every successful withdrawal.
+///
+/// Topics: `("cross_asset", "withdraw")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossWithdrawEvent {
+    /// Asset key identifying the withdrawn asset.
+    pub asset_key: AssetKey,
+    /// User who withdrew.
+    pub user: Address,
+    /// Amount withdrawn (raw token units).
+    pub amount: i128,
+    /// User's total supplied balance after the withdrawal (raw token units).
+    pub new_supply: i128,
+    /// Ledger timestamp at the time of the withdrawal.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossWithdrawEvent`].
+///
+/// Topics: `("cross_asset", "withdraw")`
+pub fn emit_cross_withdraw(env: &Env, event: CrossWithdrawEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("withdraw")), event);
+}
+
+/// Emitted by [`cross_asset_borrow`] on every successful borrow.
+///
+/// Topics: `("cross_asset", "borrow")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossBorrowEvent {
+    /// Asset key identifying the borrowed asset.
+    pub asset_key: AssetKey,
+    /// User who borrowed.
+    pub user: Address,
+    /// Amount borrowed (raw token units).
+    pub amount: i128,
+    /// User's total borrowed balance after the borrow (raw token units).
+    pub new_borrowed: i128,
+    /// Ledger timestamp at the time of the borrow.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossBorrowEvent`].
+///
+/// Topics: `("cross_asset", "borrow")`
+pub fn emit_cross_borrow(env: &Env, event: CrossBorrowEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("borrow")), event);
+}
+
+/// Emitted by [`cross_asset_repay`] on every successful repayment.
+///
+/// Topics: `("cross_asset", "repay")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossRepayEvent {
+    /// Asset key identifying the repaid asset.
+    pub asset_key: AssetKey,
+    /// User whose debt was repaid.
+    pub user: Address,
+    /// Amount actually repaid (capped at the outstanding balance; raw token units).
+    pub amount_repaid: i128,
+    /// User's total borrowed balance after the repayment (raw token units).
+    pub new_borrowed: i128,
+    /// Ledger timestamp at the time of the repayment.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossRepayEvent`].
+///
+/// Topics: `("cross_asset", "repay")`
+pub fn emit_cross_repay(env: &Env, event: CrossRepayEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("repay")), event);
+}
+
 // ---------------------------------------------------------------------------
 // Storage key
 // ---------------------------------------------------------------------------
@@ -487,8 +647,23 @@ pub fn initialize_asset(
     }
     save_config(env, &key, &cfg);
     let mut list = load_asset_list(env);
-    list.push_back(key);
+    list.push_back(key.clone());
     save_asset_list(env, &list);
+
+    emit_asset_initialized(
+        env,
+        AssetInitializedEvent {
+            asset_key: key,
+            collateral_factor_bps: cfg.collateral_factor_bps,
+            liquidation_threshold: cfg.liquidation_threshold,
+            can_collateralize: cfg.can_collateralize,
+            can_borrow: cfg.can_borrow,
+            price: cfg.price,
+            price_decimals: cfg.price_decimals,
+            timestamp: cfg.last_update_ts,
+        },
+    );
+
     Ok(())
 }
 
@@ -610,6 +785,16 @@ pub fn update_asset_price(
     cfg.price = price;
     cfg.last_update_ts = env.ledger().timestamp();
     save_config(env, &key, &cfg);
+
+    emit_price_updated(
+        env,
+        PriceUpdatedEvent {
+            asset_key: key,
+            price: cfg.price,
+            timestamp: cfg.last_update_ts,
+        },
+    );
+
     Ok(())
 }
 
@@ -812,6 +997,17 @@ pub fn cross_asset_deposit(
         .ok_or(CrossAssetError::Overflow)?;
     save_total_supply(env, &key, total);
 
+    emit_cross_deposit(
+        env,
+        CrossDepositEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount,
+            new_supply: pos.supplied,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+
     Ok(pos)
 }
 
@@ -835,6 +1031,17 @@ pub fn cross_asset_withdraw(
 
     let total = checked_sub_total(load_total_supply(env, &key), amount)?;
     save_total_supply(env, &key, total);
+
+    emit_cross_withdraw(
+        env,
+        CrossWithdrawEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount,
+            new_supply: pos.supplied,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
 
     Ok(pos)
 }
@@ -880,6 +1087,17 @@ pub fn cross_asset_borrow(
         return Err(CrossAssetError::InsufficientCollateral);
     }
 
+    emit_cross_borrow(
+        env,
+        CrossBorrowEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount,
+            new_borrowed: pos.borrowed,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+
     Ok(pos)
 }
 
@@ -901,6 +1119,17 @@ pub fn cross_asset_repay(
 
     let total = checked_sub_total(load_total_debt(env, &key), repay)?;
     save_total_debt(env, &key, total);
+
+    emit_cross_repay(
+        env,
+        CrossRepayEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount_repaid: repay,
+            new_borrowed: pos.borrowed,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
 
     Ok(pos)
 }
