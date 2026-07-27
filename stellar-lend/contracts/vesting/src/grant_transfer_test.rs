@@ -1,131 +1,149 @@
 #![cfg(test)]
 
-use crate::{VestingContract, VestingError};
-use soroban_sdk::{Address, Env, testutils::Address as _, token};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env};
 
-fn setup_with_grant() -> VestingContract {
-    let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 0, 1000, 0);
-    c
+use crate::{Grant, VestingContract, VestingContractClient, VestingError};
+
+fn setup() -> (Env, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let id = env.register(VestingContract, ());
+    VestingContractClient::new(&env, &id).initialize(&admin);
+    (env, admin, id)
+}
+
+fn advance(env: &Env, secs: u64) {
+    env.ledger().with_mut(|li| li.timestamp += secs);
+}
+
+fn create_alice_grant(env: &Env, client: &VestingContractClient, admin: &Address) -> Address {
+    let alice = Address::generate(env);
+    let start = env.ledger().timestamp();
+    client.create_grant(admin, &alice, &1_000, &start, &0, &1_000);
+    alice
 }
 
 #[test]
 fn non_admin_cannot_transfer_grant() {
-    let mut c = setup_with_grant();
-    let from = "alice";
-    let to = "bob";
-    let res = c.transfer_grant("attacker", from, to, 500);
-    assert_eq!(res, Err(VestingError::Unauthorized));
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+    let bob = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    let res = client.try_transfer_grant(&attacker, &alice, &bob);
+    assert_eq!(res, Err(Ok(VestingError::Unauthorized)));
 }
 
 #[test]
 fn transfer_grant_while_paused_fails() {
-    let mut c = setup_with_grant();
-    c.pause("admin").expect("admin should be able to pause");
-    let res = c.transfer_grant("admin", "alice", "bob", 500);
-    assert_eq!(res, Err(VestingError::ContractPaused));
-    assert_eq!(c.grants.contains_key("alice"), true);
-    assert_eq!(c.grants.contains_key("bob"), false);
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+    let bob = Address::generate(&env);
+
+    client.pause(&admin);
+    let res = client.try_transfer_grant(&admin, &alice, &bob);
+    assert_eq!(res, Err(Ok(VestingError::ContractPaused)));
+    assert!(client.get_grant(&alice).is_some());
+    assert!(client.get_grant(&bob).is_none());
 }
 
 #[test]
 fn transfer_grant_from_non_existent_grant_fails() {
-    let mut c = setup_with_grant();
-    let res = c.transfer_grant("admin", "nonexistent", "bob", 500);
-    assert_eq!(res, Err(VestingError::NoSuchGrant));
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let missing = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let res = client.try_transfer_grant(&admin, &missing, &bob);
+    assert_eq!(res, Err(Ok(VestingError::GrantNotFound)));
 }
 
 #[test]
 fn transfer_grant_to_destination_with_existing_grant_fails() {
-    let mut c = setup_with_grant();
-    c.add_grant("bob", 500, 0, 1000, 0);
-    let res = c.transfer_grant("admin", "alice", "bob", 500);
-    assert_eq!(res, Err(VestingError::DestinationAlreadyHasGrant));
-    assert_eq!(c.grants.contains_key("alice"), true);
-    assert_eq!(c.grants.contains_key("bob"), true);
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+    let bob = Address::generate(&env);
+    let start = env.ledger().timestamp();
+    client.create_grant(&admin, &bob, &500, &start, &0, &1_000);
+
+    let res = client.try_transfer_grant(&admin, &alice, &bob);
+    assert_eq!(res, Err(Ok(VestingError::DestinationAlreadyHasGrant)));
+    assert!(client.get_grant(&alice).is_some());
+    assert!(client.get_grant(&bob).is_some());
+}
+
+#[test]
+fn transfer_grant_same_address_rejected() {
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+
+    let res = client.try_transfer_grant(&admin, &alice, &alice);
+    assert_eq!(res, Err(Ok(VestingError::InvalidGrant)));
 }
 
 #[test]
 fn transfer_grant_preserves_schedule() {
-    let mut c = setup_with_grant();
-    let from = "alice";
-    let to = "bob";
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+    let bob = Address::generate(&env);
+    let before = client.get_grant(&alice).unwrap();
 
-    c.transfer_grant("admin", from, to, 500).expect("transfer should succeed");
+    client.transfer_grant(&admin, &alice, &bob);
 
-    assert_eq!(c.grants.contains_key("alice"), false);
-    assert_eq!(c.grants.contains_key("bob"), true);
-
-    let grants = c.get_grants("bob");
-    assert_eq!(grants.len(), 1);
-    let grant = &grants[0];
-    assert_eq!(grant.grantee.to_string(), "bob");
-    assert_eq!(grant.total, 1000);
-    assert_eq!(grant.claimed, 0);
-    assert_eq!(grant.released, 0);
-    assert_eq!(grant.start_seconds, 0);
-    assert_eq!(grant.duration_seconds, 1000);
-    assert_eq!(grant.cliff_seconds, 0);
-    assert_eq!(grant.revoked, false);
+    assert!(client.get_grant(&alice).is_none());
+    let after: Grant = client.get_grant(&bob).unwrap();
+    assert_eq!(after.grantee, bob);
+    assert_eq!(after.total_amount, before.total_amount);
+    assert_eq!(after.claimed_amount, before.claimed_amount);
+    assert_eq!(after.start_ts, before.start_ts);
+    assert_eq!(after.cliff_secs, before.cliff_secs);
+    assert_eq!(after.duration_secs, before.duration_secs);
+    assert_eq!(after.revoked, false);
 }
 
 #[test]
-fn transfer_grant_maintains_total_locked() {
-    let mut c = setup_with_grant();
-    let initial_locked = c.total_locked();
+fn transfer_grant_preserves_claimed_amount() {
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let start = env.ledger().timestamp();
+    // 1000 tokens over 1000s, no cliff
+    client.create_grant(&admin, &alice, &1_000, &start, &0, &1_000);
 
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
+    advance(&env, 500);
+    let claimed = client.claim(&alice);
+    assert_eq!(claimed, 500);
 
-    let new_locked = c.total_locked();
-    assert_eq!(new_locked, initial_locked);
+    client.transfer_grant(&admin, &alice, &bob);
+
+    let bob_grant = client.get_grant(&bob).unwrap();
+    assert_eq!(bob_grant.claimed_amount, 500);
+    assert_eq!(bob_grant.total_amount, 1_000);
+    assert_eq!(bob_grant.start_ts, start);
+    assert_eq!(bob_grant.cliff_secs, 0);
+    assert_eq!(bob_grant.duration_secs, 1_000);
+
+    // Bob can claim the remaining vested amount after further accrual
+    advance(&env, 500);
+    let claimed_by_bob = client.claim(&bob);
+    assert_eq!(claimed_by_bob, 500);
 }
 
 #[test]
-fn transfer_grant_with_partial_vesting_syncs() {
-    let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 1000, 1000, 100);
+fn transfer_grant_revoked_source_rejected() {
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+    let bob = Address::generate(&env);
 
-    let claimed = c.claim("alice", 1200).expect("claim should succeed");
-    assert_eq!(claimed, 200);
-
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
-
-    let bob_grants = c.get_grants("bob");
-    assert_eq!(bob_grants.len(), 1);
-    assert_eq!(bob_grants[0].claimed, 0);
-    assert_eq!(bob_grants[0].released, 1200);
-}
-
-#[test]
-fn transfer_grant_with_different_grant_types_preserves_all() {
-    let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 0, 1000, 0);
-    c.add_grant("alice", 500, 500, 500, 0);
-
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
-
-    let bob_grants = c.get_grants("bob");
-    assert_eq!(bob_grants.len(), 2);
-    assert_eq!(bob_grants.iter().map(|g| g.total).sum::<u128>(), 1500);
-}
-
-#[test]
-fn transfer_grant_preserves_grants_across_multiple_transfers() {
-    let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 0, 1000, 0);
-
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
-
-    c.add_grant("alice", 500, 0, 1000, 0);
-
-    c.transfer_grant("admin", "alice", "carol", 500).expect("transfer should succeed");
-
-    assert_eq!(c.grants.contains_key("alice"), false);
-    assert_eq!(c.grants.contains_key("bob"), true);
-    assert_eq!(c.grants.contains_key("carol"), true);
-
-    let bob_total: u128 = c.get_grants("bob").iter().map(|g| g.total).sum();
-    let carol_total: u128 = c.get_grants("carol").iter().map(|g| g.total).sum();
-    assert_eq!(bob_total, 1000);
-    assert_eq!(carol_total, 500);
+    client.revoke(&admin, &alice);
+    let res = client.try_transfer_grant(&admin, &alice, &bob);
+    assert_eq!(res, Err(Ok(VestingError::AlreadyRevoked)));
 }

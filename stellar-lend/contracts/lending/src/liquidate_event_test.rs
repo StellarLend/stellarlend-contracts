@@ -59,7 +59,7 @@ fn liquidate_emits_event_with_correct_fields() {
             &DataKey::Debt(user.clone()),
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -103,7 +103,7 @@ fn liquidate_event_close_factor_limits_repay() {
             &DataKey::Debt(user.clone()),
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -149,7 +149,7 @@ fn liquidate_event_zero_shortfall() {
             &DataKey::Debt(user.clone()),
             &DebtPosition {
                 principal: 130,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

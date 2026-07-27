@@ -72,8 +72,8 @@ above.
 
 `get_admin()` returns `Address` and panics if `initialize` has not been called.
 Callers should use `get_admin_optional()` if the contract may be uninitialized,
-which returns `Option<Address>` (named to avoid clashing with the Soroban
-client's auto-generated `try_get_admin` wrapper around `get_admin`).
+which returns `Option<Address>`. (Named to avoid colliding with the Soroban
+client-generated `try_get_admin` wrapper around `get_admin`.)
 
 ---
 

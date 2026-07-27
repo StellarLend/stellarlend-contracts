@@ -30,7 +30,7 @@ fn setup_multisig(env: &Env) -> (Address, Vec<Address>) {
     signers.push_back(s2.clone());
     signers.push_back(s3.clone());
 
-    client.initialize(&signers, &2u32);
+    client.initialize(&signers, &2u32).unwrap();
     (contract_id, signers)
 }
 
@@ -42,9 +42,9 @@ fn create_passed_proposal(
     action: &ProposalAction,
     payload_hash: &Bytes,
 ) -> u64 {
-    let id = client.create_proposal(&signers.get(0).unwrap(), action, payload_hash, &500u64);
-    client.approve_proposal(&signers.get(0).unwrap(), &id);
-    client.approve_proposal(&signers.get(1).unwrap(), &id);
+    let id = client.create_proposal(&signers.get(0).unwrap(), action, payload_hash, &500u64).unwrap();
+    client.approve_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    client.approve_proposal(&signers.get(1).unwrap(), &id).unwrap();
     id
 }
 
@@ -84,12 +84,12 @@ fn test_batch_execute_all_eligible_success() {
     hashes.push_back(hash_a.clone());
     hashes.push_back(hash_b.clone());
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes).unwrap();
 
-    let p_a = client.get_proposal(&id_a);
+    let p_a = client.get_proposal(&id_a).unwrap();
     assert_eq!(p_a.status, ProposalStatus::Executed);
 
-    let p_b = client.get_proposal(&id_b);
+    let p_b = client.get_proposal(&id_b).unwrap();
     assert_eq!(p_b.status, ProposalStatus::Executed);
 
     assert_eq!(client.get_threshold(), 4);
@@ -134,7 +134,7 @@ fn test_batch_execute_mixed_actions_success() {
     hashes.push_back(hash_a);
     hashes.push_back(hash_b);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes).unwrap();
 
     assert_eq!(client.get_threshold(), 3);
 
@@ -149,7 +149,6 @@ fn test_batch_execute_mixed_actions_success() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "ProposalNotPassed")]
 fn test_batch_execute_one_not_passed_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -171,7 +170,7 @@ fn test_batch_execute_one_not_passed_rejected() {
         &ProposalAction::SetThreshold(4),
         &hash_b,
         &500u64,
-    );
+    ).unwrap();
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -181,11 +180,13 @@ fn test_batch_execute_one_not_passed_rejected() {
     hashes.push_back(hash_a);
     hashes.push_back(hash_b);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::ProposalNotPassed))
+    );
 }
 
 #[test]
-#[should_panic(expected = "ProposalExpired")]
 fn test_batch_execute_one_expired_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -207,9 +208,9 @@ fn test_batch_execute_one_expired_rejected() {
         &ProposalAction::SetThreshold(4),
         &hash_b,
         &1u64,
-    );
-    client.approve_proposal(&signers.get(0).unwrap(), &id_b);
-    client.approve_proposal(&signers.get(1).unwrap(), &id_b);
+    ).unwrap();
+    client.approve_proposal(&signers.get(0).unwrap(), &id_b).unwrap();
+    client.approve_proposal(&signers.get(1).unwrap(), &id_b).unwrap();
 
     let current = env.ledger().sequence();
     env.ledger().set_sequence_number(current + 2);
@@ -222,11 +223,13 @@ fn test_batch_execute_one_expired_rejected() {
     hashes.push_back(hash_a);
     hashes.push_back(hash_b);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::ProposalExpired))
+    );
 }
 
 #[test]
-#[should_panic(expected = "AlreadyExecuted")]
 fn test_batch_execute_one_already_executed_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -250,7 +253,7 @@ fn test_batch_execute_one_already_executed_rejected() {
         &hash_b,
     );
 
-    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b);
+    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b).unwrap();
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -260,7 +263,10 @@ fn test_batch_execute_one_already_executed_rejected() {
     hashes.push_back(hash_a);
     hashes.push_back(hash_b);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::AlreadyExecuted))
+    );
 }
 
 // The Cancelled-proposal guard in batch_execute is covered by the dedicated
@@ -272,7 +278,6 @@ fn test_batch_execute_one_already_executed_rejected() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "DuplicateProposalId")]
 fn test_batch_execute_duplicate_id_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -295,7 +300,10 @@ fn test_batch_execute_duplicate_id_rejected() {
     hashes.push_back(hash.clone());
     hashes.push_back(hash);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::DuplicateProposalId))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -319,7 +327,6 @@ fn test_batch_execute_empty_batch_succeeds() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "BatchSizeExceeded")]
 fn test_batch_execute_size_exceeded_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -334,7 +341,10 @@ fn test_batch_execute_size_exceeded_rejected() {
         hashes.push_back(hash.clone());
     }
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::BatchSizeExceeded))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +352,6 @@ fn test_batch_execute_size_exceeded_rejected() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "PayloadHashMismatch")]
 fn test_batch_execute_payload_hash_mismatch_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -375,7 +384,10 @@ fn test_batch_execute_payload_hash_mismatch_rejected() {
     hashes.push_back(hash_a);
     hashes.push_back(wrong_hash);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::PayloadHashMismatch))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +395,6 @@ fn test_batch_execute_payload_hash_mismatch_rejected() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "PayloadHashMismatch")]
 fn test_batch_execute_hash_count_mismatch_rejected() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -403,7 +414,10 @@ fn test_batch_execute_hash_count_mismatch_rejected() {
 
     let hashes: Vec<Bytes> = Vec::new(&env);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::PayloadHashMismatch))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +425,6 @@ fn test_batch_execute_hash_count_mismatch_rejected() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "InvalidAction")]
 fn test_batch_execute_dispatch_failure_rolls_back() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
@@ -443,7 +456,10 @@ fn test_batch_execute_dispatch_failure_rolls_back() {
     hashes.push_back(hash_a);
     hashes.push_back(hash_b);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
+        Err(Ok(MultisigError::InvalidThreshold))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +467,6 @@ fn test_batch_execute_dispatch_failure_rolls_back() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "Unauthorized")]
 fn test_batch_execute_non_signer_rejected() {
     let env = make_env();
     let (contract_id, _signers) = setup_multisig(&env);
@@ -461,7 +476,10 @@ fn test_batch_execute_non_signer_rejected() {
     let ids: Vec<u64> = Vec::new(&env);
     let hashes: Vec<Bytes> = Vec::new(&env);
 
-    client.batch_execute(&outsider, &ids, &hashes);
+    assert_eq!(
+        client.try_batch_execute(&outsider, &ids, &hashes),
+        Err(Ok(MultisigError::Unauthorized))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -539,7 +557,7 @@ fn test_batch_execute_atomicity_on_validation_failure() {
         &hash_b,
     );
 
-    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b);
+    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b).unwrap();
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -552,14 +570,14 @@ fn test_batch_execute_atomicity_on_validation_failure() {
     let result = client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
     assert!(result.is_err());
 
-    let p_a = client.get_proposal(&id_a);
+    let p_a = client.get_proposal(&id_a).unwrap();
     assert_eq!(
         p_a.status,
         ProposalStatus::Passed,
         "id_a must remain Passed after failed batch"
     );
 
-    let p_b = client.get_proposal(&id_b);
+    let p_b = client.get_proposal(&id_b).unwrap();
     assert_eq!(
         p_b.status,
         ProposalStatus::Executed,

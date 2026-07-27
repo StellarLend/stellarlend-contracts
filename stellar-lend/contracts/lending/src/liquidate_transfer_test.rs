@@ -121,7 +121,7 @@ fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -167,7 +167,7 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -205,7 +205,7 @@ fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
