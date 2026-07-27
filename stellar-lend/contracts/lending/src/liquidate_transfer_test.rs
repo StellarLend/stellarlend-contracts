@@ -73,6 +73,7 @@ impl MockToken {
     }
 }
 
+#[cfg(test)]
 fn setup() -> (
     Env,
     LendingContractClient<'static>,
@@ -109,6 +110,7 @@ fn setup() -> (
     )
 }
 
+#[cfg(test)]
 #[test]
 fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
     let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
@@ -153,6 +155,7 @@ fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
     assert_eq!(client.get_position(&borrower).collateral, 0);
 }
 
+#[cfg(test)]
 #[test]
 fn liquidation_reverts_when_collateral_payout_transfer_fails() {
     let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
@@ -190,6 +193,7 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
     assert_eq!(client.get_position(&borrower).collateral, 50);
 }
 
+#[cfg(test)]
 #[test]
 fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
     let (env, client, _lending_id, borrower, _liquidator, debt_asset, collateral_asset) = setup();
