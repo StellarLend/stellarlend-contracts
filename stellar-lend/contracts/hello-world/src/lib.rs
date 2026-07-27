@@ -28,7 +28,6 @@ pub mod oracle;
 pub mod recovery;
 pub mod repay;
 pub mod risk_management;
-pub mod risk_params;
 pub mod storage;
 pub mod types;
 pub mod withdraw;
@@ -48,6 +47,8 @@ mod twap_eviction_test;
 mod twap_fallback_event_test;
 #[cfg(test)]
 mod twap_tests;
+#[cfg(test)]
+mod twap_view_test;
 
 #[cfg(test)]
 mod bridge_fee_test;
@@ -89,19 +90,16 @@ mod utilization_clamp_test;
 
 use crate::oracle::FullOracleConfig;
 
-use borrow::borrow_asset;
 use deposit::deposit_collateral;
 use repay::repay_debt;
 
-use risk_management::{
-    check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
-};
-
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
 use crate::deposit::{DepositDataKey, ProtocolAnalytics};
-use risk_params::{
-    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
-    initialize_risk_params, require_min_collateral_ratio, RiskParamsError,
+use crate::risk_management::{
+    can_be_liquidated, check_emergency_pause, get_liquidation_incentive_amount,
+    get_max_liquidatable_amount, initialize_risk_management, is_emergency_paused,
+    is_operation_paused, require_min_collateral_ratio, set_pause_switch, set_pause_switches,
+    RiskConfig, RiskManagementError,
 };
 use withdraw::withdraw_collateral;
 
@@ -132,13 +130,6 @@ use crate::interest_rate::{
     InterestRateError,
 };
 use crate::liquidate::liquidate;
-use crate::risk_management::{
-    set_pause_switch, set_pause_switches, RiskConfig, RiskManagementError,
-};
-use crate::risk_params::{
-    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
-    initialize_risk_params, require_min_collateral_ratio,
-};
 use crate::storage::GuardianConfig;
 use crate::types::{
     GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalType, RecoveryRequest,
@@ -176,7 +167,6 @@ impl HelloContract {
         crate::admin::set_admin(&env, admin.clone(), None)
             .map_err(|_| RiskManagementError::Unauthorized)?;
         initialize_risk_management(&env, admin.clone())?;
-        initialize_risk_params(&env).map_err(|_| RiskManagementError::InvalidParameter)?;
         initialize_interest_rate_config(&env).map_err(|e| {
             if e == InterestRateError::AlreadyInitialized {
                 RiskManagementError::AlreadyInitialized
@@ -278,8 +268,9 @@ impl HelloContract {
     ) -> Result<(), RiskManagementError> {
         require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
         check_emergency_pause(&env)?;
-        risk_params::set_risk_params(
+        risk_management::set_risk_params(
             &env,
+            caller.clone(),
             min_collateral_ratio,
             liquidation_threshold,
             close_factor,
@@ -374,16 +365,6 @@ impl HelloContract {
         multisig::ms_execute(&env, executor, proposal_id)
     }
 
-    /// Borrow assets from the protocol.
-    pub fn borrow_asset(
-        env: Env,
-        user: Address,
-        asset: Option<Address>,
-        amount: i128,
-    ) -> Result<i128, crate::borrow::BorrowError> {
-        crate::borrow::borrow_asset(&env, user, asset, amount)
-    }
-
     /// Repay borrowed assets.
     pub fn repay_debt(
         env: Env,
@@ -430,24 +411,24 @@ impl HelloContract {
 
     /// Get minimum collateral ratio in basis points.
     pub fn get_min_collateral_ratio(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_min_collateral_ratio(&env)
+        risk_management::get_min_collateral_ratio(&env)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
     /// Get liquidation threshold.
     pub fn get_liquidation_threshold(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_liquidation_threshold(&env)
+        risk_management::get_liquidation_threshold(&env)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
     /// Get close factor.
     pub fn get_close_factor(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_close_factor(&env).map_err(|_| RiskManagementError::InvalidParameter)
+        risk_management::get_close_factor(&env).map_err(|_| RiskManagementError::InvalidParameter)
     }
 
     /// Get liquidation incentive.
     pub fn get_liquidation_incentive(env: Env) -> Result<i128, RiskManagementError> {
-        risk_params::get_liquidation_incentive(&env)
+        risk_management::get_liquidation_incentive(&env)
             .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
@@ -542,7 +523,7 @@ impl HelloContract {
         collateral_value: i128,
         debt_value: i128,
     ) -> Result<(), RiskManagementError> {
-        risk_params::require_min_collateral_ratio(&env, collateral_value, debt_value)
+        risk_management::require_min_collateral_ratio(&env, collateral_value, debt_value)
             .map_err(|_| RiskManagementError::InsufficientCollateralRatio)
     }
 
@@ -869,12 +850,15 @@ impl HelloContract {
     }
 
     /// Update asset price (admin/oracle only).
+    ///
+    /// `caller` must be the stored protocol admin.
     pub fn update_asset_price(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         price: i128,
     ) -> Result<(), CrossAssetError> {
-        update_asset_price(&env, asset, price)
+        update_asset_price(&env, &caller, asset, price)
     }
 
     /// Get asset configuration.

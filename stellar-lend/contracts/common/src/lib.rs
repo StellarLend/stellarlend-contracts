@@ -44,7 +44,8 @@ pub enum LendingError {
 
 /// Multiply `value` by `rate_bps` and divide by [`BPS_DENOM`].
 ///
-/// Returns `None` on overflow.
+/// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
+/// Negative rates and rates above `100%` return `None`, as do overflow cases.
 ///
 /// # Examples
 /// ```
@@ -56,12 +57,16 @@ pub enum LendingError {
 /// ```
 #[inline]
 pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
+    if rate_bps < 0 || rate_bps > BPS_DENOM {
+        return None;
+    }
     value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
 }
 
 /// Divide `value` by `rate_bps` and multiply by [`BPS_DENOM`] (inverse of `scale_bps`).
 ///
-/// Returns `None` if `rate_bps` is zero or on overflow.
+/// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
+/// Zero, negative, and rates above `100%` return `None`, as do overflow cases.
 ///
 /// # Examples
 /// ```
@@ -73,7 +78,7 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 /// ```
 #[inline]
 pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
-    if rate_bps == 0 {
+    if rate_bps <= 0 || rate_bps > BPS_DENOM {
         return None;
     }
     value.checked_mul(BPS_DENOM)?.checked_div(rate_bps)
@@ -81,6 +86,9 @@ pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 
 #[cfg(test)]
 mod bps_roundtrip_test;
+
+#[cfg(test)]
+mod bps_inverse_proptest;
 
 #[cfg(test)]
 mod tests {
@@ -126,6 +134,12 @@ mod tests {
         assert_eq!(scale_bps(10_000, 1), Some(1));
     }
 
+    #[test]
+    fn scale_bps_out_of_range_rate_returns_none() {
+        assert_eq!(scale_bps(1_000_000, -500), None);
+        assert_eq!(scale_bps(1_000_000, BPS_DENOM + 1), None);
+    }
+
     // ── unscale_bps ──────────────────────────────────────────────────────────
 
     #[test]
@@ -157,6 +171,12 @@ mod tests {
     #[test]
     fn unscale_bps_negative_value() {
         assert_eq!(unscale_bps(-50_000, 500), Some(-1_000_000));
+    }
+
+    #[test]
+    fn unscale_bps_out_of_range_rate_returns_none() {
+        assert_eq!(unscale_bps(1_000_000, -500), None);
+        assert_eq!(unscale_bps(1_000_000, BPS_DENOM + 1), None);
     }
 
     // ── LendingError discriminants ────────────────────────────────────────────

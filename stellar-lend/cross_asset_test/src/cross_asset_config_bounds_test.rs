@@ -9,7 +9,10 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Events as _},
+    Address, Env,
+};
 
 use crate::cross_asset::{
     get_asset_config_by_address, initialize_asset, set_admin, update_asset_config, AssetConfig,
@@ -395,7 +398,7 @@ fn test_update_emits_config_updated_event() {
         .unwrap();
 
         // The SDK test harness collects published events; assert one was emitted.
-        assert_eq!(env.events().all().len(), 1);
+        assert_eq!(env.events().all().events().len(), 1);
     });
 }
 
@@ -423,7 +426,7 @@ fn test_failed_update_emits_no_event() {
             None,
         );
 
-        assert_eq!(env.events().all().len(), 0);
+        assert_eq!(env.events().all().events().len(), 0);
     });
 }
 

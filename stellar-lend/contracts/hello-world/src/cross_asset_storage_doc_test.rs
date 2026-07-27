@@ -210,4 +210,27 @@ mod tests {
             .unwrap();
         assert_eq!(read_total, amount);
     }
+
+    #[test]
+    fn test_max_debt_assets_per_user_round_trip_and_default() {
+        let env = Env::default();
+
+        // Absent key means unlimited (None)
+        let initial = env
+            .storage()
+            .persistent()
+            .get::<CrossAssetDataKey, u32>(&CrossAssetDataKey::MaxDebtAssetsPerUser);
+        assert!(initial.is_none());
+
+        env.storage()
+            .persistent()
+            .set(&CrossAssetDataKey::MaxDebtAssetsPerUser, &3u32);
+
+        let read = env
+            .storage()
+            .persistent()
+            .get::<CrossAssetDataKey, u32>(&CrossAssetDataKey::MaxDebtAssetsPerUser)
+            .unwrap();
+        assert_eq!(read, 3);
+    }
 }

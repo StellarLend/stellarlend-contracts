@@ -1,8 +1,10 @@
 //! Risk management module for the StellarLend lending protocol.
 //!
 //! Manages the top-level risk configuration (`RiskConfig`), emergency pause
-//! state, and per-operation pause switches.  All rates are expressed in basis
-//! points (bps) where `10_000` equals 100%.
+//! state, per-operation pause switches, and core risk parameter storage.
+//! All rates are expressed in basis points (bps) where `10_000` equals 100%.
+//!
+//! This module is the single source of truth for all risk-related state.
 
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Symbol};
 
@@ -12,6 +14,8 @@ use crate::admin;
 // Constants
 // ---------------------------------------------------------------------------
 
+const BASIS_POINTS: i128 = 10_000;
+
 /// Default minimum collateral ratio: 150% (15 000 bps).
 pub const DEFAULT_MIN_COLLATERAL_RATIO_BPS: i128 = 15_000;
 /// Default liquidation threshold: 120% (12 000 bps).
@@ -20,6 +24,19 @@ pub const DEFAULT_LIQUIDATION_THRESHOLD_BPS: i128 = 12_000;
 pub const DEFAULT_CLOSE_FACTOR_BPS: i128 = 5_000;
 /// Default liquidation incentive: 5% (500 bps).
 pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 500;
+
+/// Minimum allowed collateral ratio: 100% (a ratio below this is always unsafe).
+const MIN_COLLATERAL_RATIO_FLOOR: i128 = BASIS_POINTS;
+/// Maximum allowed collateral ratio: 1000%.
+const MAX_COLLATERAL_RATIO: i128 = 100_000;
+/// Maximum allowed liquidation threshold.
+const MAX_LIQUIDATION_THRESHOLD: i128 = 100_000;
+/// Close factor must be in (0, 100%].
+const MAX_CLOSE_FACTOR: i128 = BASIS_POINTS;
+/// Liquidation incentive is bounded to 0–50%.
+const MAX_LIQUIDATION_INCENTIVE: i128 = 5_000;
+/// Maximum parameter change per update: 50% (5 000 bps).
+const MAX_CHANGE_BPS: i128 = 5_000;
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -73,7 +90,7 @@ impl Default for RiskConfig {
 // Errors
 // ---------------------------------------------------------------------------
 
-/// Errors returned by risk-management operations.
+/// Errors returned by risk management operations.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -112,7 +129,7 @@ pub enum RiskManagementError {
 
 /// Initialize risk management with default parameters.
 ///
-/// Must be called once during contract initialization.  Subsequent calls
+/// Must be called once during contract initialization. Subsequent calls
 /// return [`RiskManagementError::AlreadyInitialized`].
 pub fn initialize_risk_management(env: &Env, _admin: Address) -> Result<(), RiskManagementError> {
     if env.storage().persistent().has(&RiskDataKey::RiskConfig) {
@@ -129,7 +146,7 @@ pub fn initialize_risk_management(env: &Env, _admin: Address) -> Result<(), Risk
 }
 
 // ---------------------------------------------------------------------------
-// Accessors
+// RiskConfig accessors
 // ---------------------------------------------------------------------------
 
 /// Return the current [`RiskConfig`], or `None` if not yet initialized.
@@ -178,7 +195,7 @@ pub fn is_operation_paused(env: &Env, operation: Symbol) -> bool {
 }
 
 /// Check that neither the emergency pause nor the named operation pause is
-/// active.  Returns [`RiskManagementError::EmergencyPaused`] or
+/// active. Returns [`RiskManagementError::EmergencyPaused`] or
 /// [`RiskManagementError::OperationPaused`] if either is set.
 pub fn check_emergency_pause(env: &Env) -> Result<(), RiskManagementError> {
     if is_emergency_paused(env) {
@@ -237,11 +254,14 @@ pub fn set_pause_switches(
 }
 
 // ---------------------------------------------------------------------------
-// Parameter updates (thin wrapper — delegates to risk_params)
+// Parameter updates
 // ---------------------------------------------------------------------------
 
-/// Update risk parameters (admin only).  Delegates bounds validation to
-/// [`crate::risk_params::set_risk_params`].
+/// Validate and store updated risk parameters (admin only).
+///
+/// Any `None` field is left unchanged. Each provided value is validated
+/// independently; an out-of-range value returns the corresponding error before
+/// any storage is modified.
 pub fn set_risk_params(
     env: &Env,
     admin: Address,
@@ -251,75 +271,153 @@ pub fn set_risk_params(
     liquidation_incentive: Option<i128>,
 ) -> Result<(), RiskManagementError> {
     admin::require_admin(env, &admin).map_err(|_| RiskManagementError::Unauthorized)?;
-    crate::risk_params::set_risk_params(
-        env,
-        min_collateral_ratio,
-        liquidation_threshold,
-        close_factor,
-        liquidation_incentive,
-    )
-    .map_err(|e| match e {
-        crate::risk_params::RiskParamsError::ParameterChangeTooLarge => {
-            RiskManagementError::ParameterChangeTooLarge
+
+    let config = get_risk_config(env).ok_or(RiskManagementError::NotInitialized)?;
+
+    let new_min_cr = min_collateral_ratio.unwrap_or(config.min_collateral_ratio_bps);
+    let new_liq_thresh = liquidation_threshold.unwrap_or(config.liquidation_threshold_bps);
+    let new_close = close_factor.unwrap_or(config.close_factor_bps);
+    let new_incentive = liquidation_incentive.unwrap_or(config.liquidation_incentive_bps);
+
+    // Validate min_collateral_ratio
+    if let Some(v) = min_collateral_ratio {
+        validate_bounded(v, MIN_COLLATERAL_RATIO_FLOOR, MAX_COLLATERAL_RATIO)
+            .map_err(|_| RiskManagementError::InvalidCollateralRatio)?;
+        validate_change(v, config.min_collateral_ratio_bps)
+            .map_err(|_| RiskManagementError::ParameterChangeTooLarge)?;
+    }
+
+    // Validate liquidation_threshold
+    if let Some(v) = liquidation_threshold {
+        validate_bounded(v, 1, MAX_LIQUIDATION_THRESHOLD)
+            .map_err(|_| RiskManagementError::InvalidLiquidationThreshold)?;
+        validate_change(v, config.liquidation_threshold_bps)
+            .map_err(|_| RiskManagementError::ParameterChangeTooLarge)?;
+    }
+
+    // Validate close_factor
+    if let Some(v) = close_factor {
+        if v <= 0 || v > MAX_CLOSE_FACTOR {
+            return Err(RiskManagementError::InvalidCloseFactor);
         }
-        crate::risk_params::RiskParamsError::InvalidCollateralRatio => {
-            RiskManagementError::InvalidCollateralRatio
+    }
+
+    // Validate liquidation_incentive
+    if let Some(v) = liquidation_incentive {
+        if v < 0 || v > MAX_LIQUIDATION_INCENTIVE {
+            return Err(RiskManagementError::InvalidLiquidationIncentive);
         }
-        crate::risk_params::RiskParamsError::InvalidLiquidationThreshold => {
-            RiskManagementError::InvalidLiquidationThreshold
-        }
-        crate::risk_params::RiskParamsError::InvalidCloseFactor => {
-            RiskManagementError::InvalidCloseFactor
-        }
-        crate::risk_params::RiskParamsError::InvalidLiquidationIncentive => {
-            RiskManagementError::InvalidLiquidationIncentive
-        }
-        _ => RiskManagementError::InvalidParameter,
-    })
+    }
+
+    // Store the updated config
+    let updated = RiskConfig {
+        min_collateral_ratio_bps: new_min_cr,
+        liquidation_threshold_bps: new_liq_thresh,
+        close_factor_bps: new_close,
+        liquidation_incentive_bps: new_incentive,
+    };
+    env.storage()
+        .persistent()
+        .set(&RiskDataKey::RiskConfig, &updated);
+
+    Ok(())
+}
+
+/// Validate `value` is within `[min, max]`.
+fn validate_bounded(value: i128, min: i128, max: i128) -> Result<(), RiskManagementError> {
+    if value < min || value > max {
+        return Err(RiskManagementError::InvalidParameter);
+    }
+    Ok(())
+}
+
+/// Validate that the change from `current` to `new_value` does not exceed
+/// `MAX_CHANGE_BPS` (50%).
+fn validate_change(new_value: i128, current: i128) -> Result<(), RiskManagementError> {
+    let delta = (new_value - current).abs();
+    let limit = current
+        .checked_mul(MAX_CHANGE_BPS)
+        .ok_or(RiskManagementError::Overflow)?
+        .checked_div(BASIS_POINTS)
+        .ok_or(RiskManagementError::InvalidParameter)?;
+    if delta > limit {
+        return Err(RiskManagementError::ParameterChangeTooLarge);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Liquidation helpers (convenience re-exports matching lib.rs imports)
+// Liquidation logic
 // ---------------------------------------------------------------------------
 
-/// Check whether a position can be liquidated.
-///
-/// A position is liquidatable when `collateral_value * 10_000 <
-/// debt_value * liquidation_threshold_bps`.
+/// Return `true` if `collateral_value * 10_000 < debt_value *
+/// liquidation_threshold_bps` (position is undercollateralized).
 pub fn can_be_liquidated(
     env: &Env,
     collateral_value: i128,
     debt_value: i128,
 ) -> Result<bool, RiskManagementError> {
-    crate::risk_params::can_be_liquidated(env, collateral_value, debt_value)
-        .map_err(|_| RiskManagementError::InvalidParameter)
+    if debt_value <= 0 {
+        return Ok(false);
+    }
+    let threshold = get_liquidation_threshold(env).ok_or(RiskManagementError::NotInitialized)?;
+    let lhs = collateral_value
+        .checked_mul(BASIS_POINTS)
+        .ok_or(RiskManagementError::Overflow)?;
+    let rhs = debt_value
+        .checked_mul(threshold)
+        .ok_or(RiskManagementError::Overflow)?;
+    Ok(lhs < rhs)
 }
 
-/// Return the maximum amount that can be liquidated in a single call
-/// (close_factor × debt_value).
+/// Return the maximum amount that may be repaid in a single liquidation call:
+/// `debt_value * close_factor_bps / 10_000`.
 pub fn get_max_liquidatable_amount(
     env: &Env,
     debt_value: i128,
 ) -> Result<i128, RiskManagementError> {
-    crate::risk_params::get_max_liquidatable_amount(env, debt_value)
-        .map_err(|_| RiskManagementError::Overflow)
+    let close_factor = get_close_factor(env).ok_or(RiskManagementError::NotInitialized)?;
+    debt_value
+        .checked_mul(close_factor)
+        .ok_or(RiskManagementError::Overflow)?
+        .checked_div(BASIS_POINTS)
+        .ok_or(RiskManagementError::InvalidParameter)
 }
 
-/// Return the collateral bonus awarded to the liquidator.
+/// Return the collateral bonus paid to the liquidator:
+/// `liquidated_amount * liquidation_incentive_bps / 10_000`.
 pub fn get_liquidation_incentive_amount(
     env: &Env,
     liquidated_amount: i128,
 ) -> Result<i128, RiskManagementError> {
-    crate::risk_params::get_liquidation_incentive_amount(env, liquidated_amount)
-        .map_err(|_| RiskManagementError::Overflow)
+    let incentive = get_liquidation_incentive(env).ok_or(RiskManagementError::NotInitialized)?;
+    liquidated_amount
+        .checked_mul(incentive)
+        .ok_or(RiskManagementError::Overflow)?
+        .checked_div(BASIS_POINTS)
+        .ok_or(RiskManagementError::InvalidParameter)
 }
 
-/// Require `collateral_value / debt_value >= min_collateral_ratio`.
+/// Require that `collateral_value / debt_value >= min_collateral_ratio`.
+///
+/// Expressed as: `collateral_value * 10_000 >= debt_value * min_ratio_bps`.
 pub fn require_min_collateral_ratio(
     env: &Env,
     collateral_value: i128,
     debt_value: i128,
 ) -> Result<(), RiskManagementError> {
-    crate::risk_params::require_min_collateral_ratio(env, collateral_value, debt_value)
-        .map_err(|_| RiskManagementError::InsufficientCollateralRatio)
+    if debt_value <= 0 {
+        return Ok(());
+    }
+    let min_ratio = get_min_collateral_ratio(env).ok_or(RiskManagementError::NotInitialized)?;
+    let lhs = collateral_value
+        .checked_mul(BASIS_POINTS)
+        .ok_or(RiskManagementError::Overflow)?;
+    let rhs = debt_value
+        .checked_mul(min_ratio)
+        .ok_or(RiskManagementError::Overflow)?;
+    if lhs < rhs {
+        return Err(RiskManagementError::InsufficientCollateralRatio);
+    }
+    Ok(())
 }

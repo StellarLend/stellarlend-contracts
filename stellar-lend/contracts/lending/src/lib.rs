@@ -282,6 +282,30 @@ pub struct PriceBoundsSetEvent {
 
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinBorrowSetEvent {
+    pub min_borrow: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaxMoveBpsSetEvent {
+    pub max_move_bps: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaxFlashBpsSetEvent {
+    pub max_flash_bps: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollateralAssetSetEvent {
+    pub asset: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidationEventV1 {
     pub schema_version: u32,
     pub liquidator: Address,
@@ -359,6 +383,10 @@ pub enum LendingError {
     NotInitialized = 1009,
     AlreadyInitialized = 1010,
     PositionHealthy = 1011,
+    /// Repay amount exceeds the outstanding debt (principal + accrued interest).
+    /// Callers must query `get_debt_position()` first to obtain the exact balance
+    /// before submitting a repay to the single-asset borrow system.
+    RepayAmountTooHigh = 1012,
     DebtCeilingExceeded = 2001,
     DepositCapExceeded = 2002,
     /// A borrow would push total outstanding debt for the asset beyond the
@@ -813,6 +841,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::MaxMoveBps, &max_move_bps);
+        MaxMoveBpsSetEvent { max_move_bps }.publish(&env);
         Ok(())
     }
 
@@ -831,6 +860,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::MaxFlashUtilizationBps, &max_flash_bps);
+        MaxFlashBpsSetEvent { max_flash_bps }.publish(&env);
         Ok(())
     }
 
@@ -992,6 +1022,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::BorrowMinAmount, &min_borrow);
+        MinBorrowSetEvent { min_borrow }.publish(&env);
         Ok(())
     }
 
@@ -1172,6 +1203,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::ValuationCollateralAsset, &asset);
+        CollateralAssetSetEvent { asset }.publish(&env);
         Ok(())
     }
 
@@ -1238,6 +1270,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1315,6 +1348,7 @@ impl LendingContract {
         let rate = current_borrow_rate(&env);
         let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1376,6 +1410,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1767,6 +1802,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1810,6 +1846,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::DebtCeiling, &ceiling);
+        crate::events::emit_debt_ceiling_updated(&env, ceiling);
         Ok(())
     }
 
@@ -1823,6 +1860,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::FlashFeeBps, &fee_bps);
+        crate::events::emit_flash_fee_updated(&env, fee_bps);
         Ok(())
     }
 

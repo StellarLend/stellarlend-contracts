@@ -30,6 +30,8 @@ pub enum VestingError {
     OverClaim = 10,
     /// Contract was already initialized
     AlreadyInitialized = 11,
+    /// Destination already holds a vesting grant
+    DestinationAlreadyHasGrant = 12,
 }
 
 /// Storage keys for the vesting contract
@@ -465,6 +467,8 @@ impl VestingContract {
     }
 }
 
+#[cfg(test)]
+mod grant_transfer_test;
 #[cfg(test)]
 mod initialize_test;
 #[cfg(test)]
