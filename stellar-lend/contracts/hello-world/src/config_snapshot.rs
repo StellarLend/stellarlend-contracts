@@ -15,7 +15,7 @@ use soroban_sdk::{contracttype, Env};
 
 use crate::interest_rate::get_interest_rate_config;
 use crate::risk_management::is_emergency_paused;
-use crate::risk_params::{
+use crate::risk_management::{
     get_close_factor, get_liquidation_incentive, get_liquidation_threshold,
     get_min_collateral_ratio,
 };
