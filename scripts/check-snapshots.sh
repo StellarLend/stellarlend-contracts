@@ -13,7 +13,7 @@ set -euo pipefail
 #   SNAPSHOT_CHECK=0  Warning only, do not fail
 
 SNAPSHOT_CHECK="${SNAPSHOT_CHECK:-1}"
-CRATES=("hello-world" "lending")
+CRATES=("bridge" "lending")
 DRIFT_FOUND=0
 DIFF_FILES=()
 
