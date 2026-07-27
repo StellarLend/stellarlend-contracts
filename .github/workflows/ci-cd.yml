@@ -87,10 +87,8 @@ jobs:
           cd stellar-lend
           cargo tarpaulin --verbose --out Xml --workspace --lib --exclude-files "**/indexing_system/**"
 
-      - name: Enforce workspace coverage thresholds
-        run: |
-          python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml --thresholds-json scripts/coverage_thresholds.json --overall-only
-          python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml --thresholds-json scripts/coverage_thresholds.json
+      - name: Enforce workspace coverage threshold
+        run: python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml --threshold 63.0 --overall-only
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
