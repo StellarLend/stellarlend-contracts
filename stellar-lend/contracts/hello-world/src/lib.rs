@@ -187,13 +187,29 @@ impl HelloContract {
         Ok(())
     }
 
-    /// Transfer super admin rights.
-    pub fn transfer_admin(
+    /// Propose a new admin — step 1 of the two-step admin handover.
+    ///
+    /// The current admin nominates `new_admin` as a pending candidate. The
+    /// active admin does **not** change until `new_admin` calls
+    /// [`accept_admin`].
+    pub fn propose_admin(
         env: Env,
         caller: Address,
         new_admin: Address,
     ) -> Result<(), crate::admin::AdminError> {
-        crate::admin::set_admin(&env, new_admin, Some(caller))
+        crate::admin::propose_admin(&env, new_admin, caller)
+    }
+
+    /// Accept the pending admin proposal — step 2 of the two-step admin handover.
+    ///
+    /// `caller` must be the address previously nominated via [`propose_admin`].
+    /// On success the caller becomes the active admin and the pending slot is
+    /// cleared.
+    pub fn accept_admin(
+        env: Env,
+        caller: Address,
+    ) -> Result<(), crate::admin::AdminError> {
+        crate::admin::accept_admin(&env, caller)
     }
 
     /// Increment the user's deposit balance.
