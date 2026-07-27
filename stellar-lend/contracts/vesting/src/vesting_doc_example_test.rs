@@ -1,4 +1,5 @@
-use super::{Grant, VestingContract};
+#[cfg(test)]
+use crate::test_harness::{Grant, VestingContract};
 
 /// Mirrors the worked example in VESTING_MATH.md.
 ///

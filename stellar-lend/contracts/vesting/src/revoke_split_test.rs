@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{VestingContract, VestingError};
+    use crate::test_harness::{VestingContract, VestingError};
 
     /// Revoking mid-vest must correctly split tokens:
     /// 1. Already-vested amount remains accessible to the grantee via claim.

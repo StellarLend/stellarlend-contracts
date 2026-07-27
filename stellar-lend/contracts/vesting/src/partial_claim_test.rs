@@ -11,7 +11,7 @@
 //! | while paused                           | `ContractPaused` error    |
 //! | repeated partials sum correctly        | Success, total matches claimable |
 
-use super::{VestingContract, VestingError};
+use crate::test_harness::{VestingContract, VestingError};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ use super::{VestingContract, VestingError};
 /// duration = 1000 s, cliff = 100 s.
 fn setup_with_grant() -> VestingContract {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 100);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 100).unwrap();
     c
 }
 
@@ -66,8 +66,9 @@ fn claim_partial_less_than_claimable_succeeds() {
 #[test]
 fn claim_partial_exceeds_claimable_fails() {
     let mut c = setup_with_grant();
-    // At t=500, only 400 tokens are claimable, but we try to claim 500.
-    let result = c.claim_partial("alice", 500, 500);
+    // At t=500, only 500 tokens are claimable (elapsed=500, duration=1000, total=1000).
+    // Trying to claim 501 exceeds the claimable amount.
+    let result = c.claim_partial("alice", 501, 500);
     assert_eq!(result, Err(VestingError::OverClaim));
 
     // Balance should not have changed.
@@ -149,9 +150,8 @@ fn repeated_partial_claims_sum_correctly() {
 fn partial_claim_distributes_across_multiple_grants() {
     let mut c = VestingContract::new("admin", "treasury");
     // Grant 1: 1000 total, vests from t=0 over 1000s, cliff=0.
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
-    // Grant 2: 1000 total, vests from t=0 over 1000s, cliff=0.
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
 
     // At t=500, each grant has 500 claimable, total 1000.
     // Claim 300 - should come from grant 1 first (500 available), leaving 200 from grant 1
