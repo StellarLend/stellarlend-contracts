@@ -178,8 +178,9 @@ fn interest_rate_admin_follows_protocol_admin_transfer() {
         );
         assert!(r.is_ok(), "current admin should be able to update config");
 
-        // Transfer protocol admin: admin_a -> admin_b.
-        crate::admin::set_admin(&env, admin_b.clone(), Some(admin_a.clone())).unwrap();
+        // Transfer protocol admin: admin_a -> admin_b (two-step flow).
+        crate::admin::propose_admin(&env, admin_b.clone(), admin_a.clone()).unwrap();
+        crate::admin::accept_admin(&env, admin_b.clone()).unwrap();
 
         // The OLD admin (admin_a) must now be rejected for interest-rate
         // operations -- this is the exact bug #1479 describes: without this
