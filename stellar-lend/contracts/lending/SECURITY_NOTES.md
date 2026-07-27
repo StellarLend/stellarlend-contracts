@@ -16,10 +16,10 @@ In Soroban, contract logic guarantees atomicity. However, as an added measure ag
 - High-risk operations are guarded by global pause mappings which an Admin or Guardian can engage via the pause module if anomalous behavior occurs.
 
 ## Cross-Asset Module Hardening
-- **Token Transfer Enforcement:** All position operations (`deposit`, `borrow`, `repay`, `withdraw`) now explicitly enforce token transfers via the Soroban `token::Client`.
+- **Token Transfer Enforcement:** The base `deposit`, `borrow`, `repay`, and `withdraw` entrypoints update internal `Collateral`/`Debt` counters rather than performing real Soroban `token::Client` transfers. Only `liquidate` performs actual token transfers; cross-asset variants (`deposit_collateral_asset`, `borrow_asset`, `repay_asset`, `withdraw_asset`) may also use `token::Client` for cross-contract asset movement.
 - **Granular Pause Support:** Cross-asset operations now respect specific `PauseType` settings (e.g. `PauseType::Borrow`), allowing for targeted emergency interventions.
 - **Event-Driven Transparency:** Each significant operation emits a unique contract event (`CrossDepositEvent`, etc.), facilitating robust off-chain monitoring and audit trails.
-- **Initialization Safety:** The `initialize_admin` function now returns a `Result` and prevents re-initialization if an admin is already set.
+- **Initialization Safety:** The `initialize_admin` function guards against re-initialization by checking whether an admin is already set before proceeding.
 
 ## Arithmetic Bounds
 Protocol parameters strictly utilize `checked_add`, `checked_sub`, `checked_mul`, and `checked_div` to prevent overflow and underflow paths. Zero-amount and uninitialized parameter paths intentionally return structured `ContractError` values rather than panicking where possible.
