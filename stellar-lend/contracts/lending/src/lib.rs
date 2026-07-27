@@ -359,6 +359,10 @@ pub enum LendingError {
     NotInitialized = 1009,
     AlreadyInitialized = 1010,
     PositionHealthy = 1011,
+    /// Repay amount exceeds the outstanding debt (principal + accrued interest).
+    /// Callers must query `get_debt_position()` first to obtain the exact balance
+    /// before submitting a repay to the single-asset borrow system.
+    RepayAmountTooHigh = 1012,
     DebtCeilingExceeded = 2001,
     DepositCapExceeded = 2002,
     /// A borrow would push total outstanding debt for the asset beyond the
@@ -1376,6 +1380,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1764,6 +1769,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;

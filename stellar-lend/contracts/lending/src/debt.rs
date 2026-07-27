@@ -96,6 +96,10 @@ pub enum DebtError {
     Overflow,
     InvalidAmount,
     IndexInvariantViolated,
+    /// Repay amount exceeds the outstanding debt (principal + accrued interest).
+    /// Callers must not overpay the single-asset borrow system; query
+    /// `get_debt_position()` first to obtain the exact current balance.
+    RepayAmountTooHigh,
 }
 
 impl From<&'static str> for DebtError {
@@ -467,6 +471,13 @@ pub fn borrow_amount(
 /// Record a repayment against `position`, settling accrued interest first.
 ///
 /// The position's snapshot is refreshed to `current_index` after settlement.
+///
+/// # Errors
+///
+/// - [`DebtError::InvalidAmount`] if `amount <= 0`.
+/// - [`DebtError::RepayAmountTooHigh`] if `amount` exceeds the settled debt
+///   (principal + accrued interest). Callers must not overpay; query the
+///   current balance via `get_debt_position()` / `effective_debt()` first.
 pub fn repay_amount(
     position: DebtPosition,
     now: u64,
@@ -477,11 +488,10 @@ pub fn repay_amount(
         return Err(DebtError::InvalidAmount);
     }
     let mut settled = settle_accrual(&position, now, rate_bps)?;
-    settled.principal = if amount >= settled.principal {
-        0
-    } else {
-        settled.principal - amount
-    };
+    if amount > settled.principal {
+        return Err(DebtError::RepayAmountTooHigh);
+    }
+    settled.principal -= amount;
     settled.last_update = now;
     Ok(settled)
 }
@@ -509,6 +519,11 @@ pub fn borrow_amount_indexed(
 /// Index-aware repay: settle via index ratio, then subtract `amount`.
 ///
 /// Preferred over `repay_amount` once the global index is active.
+///
+/// # Errors
+///
+/// - [`DebtError::InvalidAmount`] if `amount <= 0`.
+/// - [`DebtError::RepayAmountTooHigh`] if `amount` exceeds the settled debt.
 pub fn repay_amount_indexed(
     position: &DebtPosition,
     current_index: i128,
@@ -519,11 +534,10 @@ pub fn repay_amount_indexed(
         return Err(DebtError::InvalidAmount);
     }
     let mut settled = settle_position(position, current_index, now)?;
-    settled.principal = if amount >= settled.principal {
-        0
-    } else {
-        settled.principal - amount
-    };
+    if amount > settled.principal {
+        return Err(DebtError::RepayAmountTooHigh);
+    }
+    settled.principal -= amount;
     Ok(settled)
 }
 
