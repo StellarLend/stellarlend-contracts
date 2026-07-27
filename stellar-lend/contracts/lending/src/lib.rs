@@ -638,8 +638,10 @@ impl LendingContract {
         Ok(())
     }
 
-    pub fn get_admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).unwrap()
+    /// Returns the protocol admin address, or `None` if the contract has not
+    /// yet been initialized.  Safe to call at any time — never panics.
+    pub fn get_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Admin)
     }
 
     /// Returns the accumulated protocol bad debt.
@@ -701,7 +703,7 @@ impl LendingContract {
         signature: BytesN<64>,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        let admin = Self::get_admin(env.clone());
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         caller.require_auth();
         if caller != admin {
             return Err(LendingError::Unauthorized);
@@ -929,9 +931,9 @@ impl LendingContract {
     /// Propose a new admin (current admin only).
     ///
     /// Replaces any existing pending admin proposal.
-    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), LendingError> {
-        require_initialized(&env)?;
-        let current_admin = Self::get_admin(env.clone());
+    pub fn propose_admin(env: Env, new_admin: Address) {
+        require_initialized(&env).expect("NotInitialized");
+        let current_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         current_admin.require_auth();
         env.storage()
             .instance()
@@ -2172,7 +2174,7 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
         admin.require_auth();
-        if admin != Self::get_admin(env.clone()) {
+        if admin != env.storage().instance().get::<DataKey, Address>(&DataKey::Admin).unwrap() {
             return Err(LendingError::Unauthorized);
         }
         if !(0..=10000).contains(&ltv_bps) {
@@ -3325,7 +3327,7 @@ pub(crate) mod test {
     #[test]
     fn test_initialize_and_get_admin() {
         let (_env, client, admin, _user) = setup();
-        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_admin(), Some(admin));
     }
 
     // -----------------------------------------------------------------------
