@@ -15,6 +15,7 @@ mod rounding_drift_tests {
     }
 
     fn exact_micro_numerator(principal: i128, elapsed_seconds: u64, rate_bps: i128) -> i128 {
+    borrow_index_snapshot: 0,
         principal * (elapsed_seconds as i128) * rate_bps * INTEREST_PRECISION
     }
 

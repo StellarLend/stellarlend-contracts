@@ -54,6 +54,7 @@ mod interest_ordering_time_tests {
     /// Simple-interest formula matching the debt module:
     ///   interest = principal * elapsed * rate_bps / (SECONDS_PER_YEAR * 10_000)
     fn expected_interest(principal: i128, elapsed: u64, rate_bps: i128) -> i128 {
+    borrow_index_snapshot: 0,
         principal
             .checked_mul(elapsed as i128)
             .and_then(|v| v.checked_mul(rate_bps))
@@ -181,9 +182,9 @@ mod interest_ordering_time_tests {
         assert_eq!(remaining, 10_000 + interest - 3_000);
     }
 
-    /// Repaying more than owed clamps remaining principal to zero (no panic).
+    /// Repaying more than owed clamps remaining debt to zero.
     #[test]
-    fn test_repay_more_than_owed_clears_debt() {
+    fn test_repay_more_than_owed_panics() {
         let (_env, client, user) = setup_with_collateral(5_000);
         client.borrow(&user, &1_000);
         let remaining = client.repay(&user, &2_000);
@@ -264,11 +265,12 @@ mod interest_ordering_time_tests {
     /// the repayment. Pure function — no storage access required.
     #[test]
     fn test_debt_module_repay_amount_accrues_first() {
-        let initial = DebtPosition {
-            borrow_index_snapshot: crate::debt::INDEX_SCALE,
-            principal: 10_000,
-            last_update: 1_000,
-        };
+        let env = Env::default();
+        let user = Address::generate(&env);
+
+        let initial = DebtPosition { principal: 10_000, last_update: 1_000 };
+        borrow_index_snapshot: 0,
+        save_debt(&env, &user, &initial);
 
         let now = 1_000 + SECONDS_PER_YEAR;
         let updated =
@@ -289,8 +291,12 @@ mod interest_ordering_time_tests {
             last_update: 1_000,
         };
 
-        let after_borrow =
-            borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS).expect("borrow should succeed");
+        let initial = DebtPosition { principal: 0, last_update: 1_000 };
+        borrow_index_snapshot: 0,
+        save_debt(&env, &user, &initial);
+
+        let after_borrow = borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS)
+            .expect("borrow should succeed");
         assert_eq!(after_borrow.principal, 5_000);
 
         let six_months = SECONDS_PER_YEAR / 2;
@@ -329,9 +335,9 @@ mod interest_ordering_time_tests {
         }
     }
 
-    /// Repaying with no prior debt is a no-op that leaves principal at zero.
+    /// Repaying with no prior debt returns zero remaining debt.
     #[test]
-    fn test_repay_with_no_debt_is_noop() {
+    fn test_repay_with_no_debt_panics() {
         let (_env, client, user) = setup_with_collateral(1_000);
         let remaining = client.repay(&user, &1_000);
         assert_eq!(remaining, 0);

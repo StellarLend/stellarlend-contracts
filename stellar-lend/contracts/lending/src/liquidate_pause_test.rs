@@ -29,7 +29,7 @@ mod liquidate_pause_test {
         MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
         // configure a simple asset
         let asset = Address::generate(&env);
-        client.set_asset_params(&admin, &asset, &7500, &8000, &1_000_000_000_000i128, &0i128);
+        client.set_asset_params(&admin, &asset, &7500, &8000, &1_000_000_000_000i128, &0i128, &0i128);
         // make borrower unhealthy: deposit 100, borrow 200
         client.deposit(&borrower, &100);
         client.borrow(&borrower, &200);

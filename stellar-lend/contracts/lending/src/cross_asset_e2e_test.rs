@@ -267,7 +267,7 @@ fn e2e_post_liquidation_invariants_no_value_created() {
             &DataKey::DebtAsset(borrower.clone(), asset_dbt.clone()),
             &DebtPosition {
                 principal: debt_before - repaid_amount,
-                borrow_index_snapshot: INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -409,7 +409,7 @@ fn e2e_deep_underwater_seizure_capped_at_available_collateral() {
             &DataKey::DebtAsset(borrower.clone(), asset_dbt.clone()),
             &DebtPosition {
                 principal: debt_before - repaid,
-                borrow_index_snapshot: INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -462,7 +462,7 @@ fn e2e_partial_liquidation_then_full_repay_and_withdraw() {
             &DataKey::DebtAsset(borrower.clone(), asset_dbt.clone()),
             &DebtPosition {
                 principal: debt_before - repaid,
-                borrow_index_snapshot: INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

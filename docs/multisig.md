@@ -75,7 +75,12 @@ Adds a signer's approval to an active proposal. When the number of distinct
 approvals meets or exceeds the current threshold the proposal status is
 automatically advanced to `Passed`.
 
-> **Auth:** `caller` must be a registered signer.
+> **Auth:** `caller` must be a registered signer **and** must authorize the
+> domain-separated approval payload
+> `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || approver)` via
+> `require_auth_for_args`. This binds the approval to exactly one proposal so
+> it cannot be replayed across ids. See
+> [`stellar-lend/contracts/multisig/APPROVAL_DOMAIN_BINDING.md`](../stellar-lend/contracts/multisig/APPROVAL_DOMAIN_BINDING.md).
 
 | Parameter | Type      | Description                     |
 |-----------|-----------|---------------------------------|
@@ -83,6 +88,7 @@ automatically advanced to `Passed`.
 | `id`      | `u64`     | ID of the proposal to approve   |
 
 **Panics:**
+- `"Unauthorized"` — caller is not a registered signer, or the domain-bound auth does not match this proposal
 - `"ProposalExpired"` — current ledger has passed `expires_at`
 - `"ProposalNotPassed"` — proposal is not in `Active` status
 - `"AlreadyApproved"` — `caller` has already approved this proposal
@@ -152,14 +158,16 @@ Cancels an active proposal before it is executed.
 ### `ProposalAction`
 
 ```rust
+pub struct InvokeContractParams {
+    pub contract: Address,
+    pub fn_symbol: Symbol,
+    pub args_hash: Bytes,
+}
+
 pub enum ProposalAction {
-    SetThreshold { new_threshold: u32 },
-    RotateSigners { new_signers: Vec<Address> },
-    InvokeContract {
-        contract:   Address,
-        fn_symbol:  Symbol,
-        args_hash:  Bytes,  // SHA-256/Keccak of the encoded call arguments
-    },
+    SetThreshold(u32),
+    RotateSigners(Vec<Address>),
+    InvokeContract(InvokeContractParams),
 }
 ```
 
