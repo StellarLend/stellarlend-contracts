@@ -54,7 +54,7 @@ pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPositi
         .get(&key)
         .unwrap_or(DebtPosition {
             principal: 0,
-            borrow_index_snapshot: crate::debt::INDEX_SCALE,
+            borrow_index_snapshot: 0,
             last_update: env.ledger().timestamp(),
         })
 }
@@ -573,7 +573,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: prev_snapshot,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -602,7 +602,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: prev_snapshot,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -619,7 +619,7 @@ pub fn borrow_asset_internal(
             asset,
             &DebtPosition {
                 principal: prev_principal,
-                borrow_index_snapshot: prev_snapshot,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );

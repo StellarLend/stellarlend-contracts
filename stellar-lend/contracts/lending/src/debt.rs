@@ -7,6 +7,9 @@ use stellar_lend_common::BPS_DENOM;
 
 pub const DEFAULT_APR_BPS: i128 = 500;
 
+/// Base scale factor for the global borrow index (10_000_000 = 1.0).
+pub const INDEX_SCALE: i128 = 10_000_000;
+
 /// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
 pub const DEFAULT_RESERVE_FACTOR_BPS: u32 = 0;
 
@@ -792,4 +795,124 @@ pub fn get_accrual_split_log(env: &Env) -> Vec<AccrualSplitEntry> {
         .persistent()
         .get(&Symbol::new(env, KEY_ACCRUAL_LOG))
         .unwrap_or_else(|| Vec::new(env))
+}
+
+// ─── Borrow / repay mutations ─────────────────────────────────────────────────
+
+pub fn borrow_amount(
+    position: DebtPosition,
+    now: u64,
+    amount: i128,
+    rate_bps: i128,
+) -> Result<DebtPosition, DebtError> {
+    if amount <= 0 {
+        return Err(DebtError::InvalidAmount);
+    }
+    // Fall back to elapsed-time accrual for legacy positions with snapshot == 0.
+    let mut settled = settle_accrual(&position, now, rate_bps)?;
+    settled.principal = settled
+        .principal
+        .checked_add(amount)
+        .ok_or(DebtError::Overflow)?;
+    settled.last_update = now;
+    Ok(settled)
+}
+
+/// Record a repayment against `position`, settling accrued interest first.
+///
+/// The position's snapshot is refreshed to `current_index` after settlement.
+pub fn repay_amount(
+    position: DebtPosition,
+    now: u64,
+    amount: i128,
+    rate_bps: i128,
+) -> Result<DebtPosition, DebtError> {
+    if amount <= 0 {
+        return Err(DebtError::InvalidAmount);
+    }
+    let mut settled = settle_accrual(&position, now, rate_bps)?;
+    settled.principal = if amount >= settled.principal {
+        0
+    } else {
+        settled.principal - amount
+    };
+    settled.last_update = now;
+    Ok(settled)
+}
+
+/// Index-aware settlement: scale principal by the borrow-index ratio.
+///
+/// When `borrow_index_snapshot == 0` (pre-migration position) or equal to
+/// `current_index`, the principal is unchanged.  Otherwise:
+///
+/// ```text
+/// new_principal = principal * current_index / borrow_index_snapshot
+/// ```
+///
+/// The returned position has `borrow_index_snapshot = current_index` and
+/// `last_update = now`.
+pub fn settle_position(
+    position: &DebtPosition,
+    current_index: i128,
+    now: u64,
+) -> Result<DebtPosition, DebtError> {
+    if position.borrow_index_snapshot == 0 || position.borrow_index_snapshot == current_index {
+        return Ok(DebtPosition {
+            principal: position.principal,
+            borrow_index_snapshot: current_index,
+            last_update: now,
+        });
+    }
+    let principal = position
+        .principal
+        .checked_mul(current_index)
+        .ok_or(DebtError::Overflow)?
+        .checked_div(position.borrow_index_snapshot)
+        .ok_or(DebtError::Overflow)?;
+    Ok(DebtPosition {
+        principal,
+        borrow_index_snapshot: current_index,
+        last_update: now,
+    })
+}
+
+/// Index-aware borrow: settle via index ratio, then add `amount`.
+///
+/// Preferred over `borrow_amount` once the global index is active.
+pub fn borrow_amount_indexed(
+    position: &DebtPosition,
+    current_index: i128,
+    now: u64,
+    amount: i128,
+) -> Result<DebtPosition, DebtError> {
+    if amount <= 0 {
+        return Err(DebtError::InvalidAmount);
+    }
+    let mut settled = settle_position(position, current_index, now)?;
+    settled.principal = settled
+        .principal
+        .checked_add(amount)
+        .ok_or(DebtError::Overflow)?;
+    Ok(settled)
+}
+
+/// Index-aware repay: settle via index ratio, then subtract `amount`.
+///
+/// Preferred over `repay_amount` once the global index is active.
+pub fn repay_amount_indexed(
+    position: &DebtPosition,
+    current_index: i128,
+    now: u64,
+    amount: i128,
+) -> Result<DebtPosition, DebtError> {
+    if amount <= 0 {
+        return Err(DebtError::InvalidAmount);
+    }
+    let mut settled = settle_position(position, current_index, now)?;
+    settled.principal = if amount >= settled.principal {
+        0
+    } else {
+        settled.principal - amount
+    };
+    Ok(settled)
 }
