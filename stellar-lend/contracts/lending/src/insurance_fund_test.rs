@@ -104,6 +104,9 @@ fn test_accrual_interest_split() {
     // Configure 30% insurance share
     client.set_insurance_share(&3000);
 
+    // Deposit collateral so borrow passes InsufficientCollateral check.
+    client.deposit(&user, &50_000i128);
+
     // Borrow 10,000 units
     let borrow_amount = 10_000i128;
     client.borrow(&user, &borrow_amount);
