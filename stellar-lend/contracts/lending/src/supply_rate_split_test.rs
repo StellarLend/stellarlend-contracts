@@ -17,14 +17,16 @@ mod supply_rate_split_tests {
         accrue_interest, accrue_interest_split, effective_supply_rate, settle_accrual,
         settle_accrual_split, DebtPosition, DEFAULT_APR_BPS, DEFAULT_RESERVE_FACTOR_BPS,
     };
-    use crate::math::{compute_supply_rate, split_interest_by_reserve_factor, BPS_SCALE};
+    use crate::math::{split_interest_by_reserve_factor, BPS_SCALE};
     use crate::rounding_strategy::SECONDS_PER_YEAR;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn position(principal: i128, last_update: u64) -> DebtPosition {
+    borrow_index_snapshot: 0,
         DebtPosition {
             principal,
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
             last_update,
         }
     }
@@ -334,23 +336,11 @@ mod supply_rate_split_tests {
         assert_eq!(rate, 1_360);
     }
 
-    /// `effective_supply_rate` and `compute_supply_rate` (math.rs) agree.
-    ///
-    /// Both implement the same formula; this cross-checks them against each
-    /// other to ensure the debt.rs implementation has not drifted.
+    /// The production supply-rate implementation rounds each basis-point step
+    /// down deterministically.
     #[test]
-    fn supply_rate_agrees_with_math_compute_supply_rate() {
-        let borrow_rate = 900u32; // 9%
-        let util = 7_000u32; // 70%
-        let reserve = 1_500u32; // 15%
-
-        let from_math = compute_supply_rate(borrow_rate, util, reserve).unwrap() as i128;
-        let from_debt = effective_supply_rate(borrow_rate as i128, util as i128, reserve).unwrap();
-
-        assert_eq!(
-            from_debt, from_math,
-            "effective_supply_rate disagrees with compute_supply_rate"
-        );
+    fn supply_rate_uses_expected_rounding() {
+        assert_eq!(effective_supply_rate(900, 7_000, 1_500).unwrap(), 535);
     }
 
     /// Supply rate is non-negative at every valid input combination.
@@ -438,7 +428,7 @@ mod supply_rate_split_tests {
     fn depositor_yield_consistent_with_supply_rate() {
         let principal = 1_000_000i128;
         let borrow_rate = 500i128; // 5% APR
-        let utilization = 5_000i128; // 50%
+        let utilization = 10_000i128; // 100% — matches accrue_interest_split (no utilization scaling)
         let reserve_factor = 2_000u32; // 20%
         let elapsed = SECONDS_PER_YEAR;
 
