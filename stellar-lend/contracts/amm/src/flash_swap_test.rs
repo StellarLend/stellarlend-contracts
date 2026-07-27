@@ -46,9 +46,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     env.mock_all_auths();
     let amm_id = env.register(AmmContract, ());
     let amm_client = AmmContractClient::new(&env, &amm_id);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
-    amm_client.init_pool(&ra, &rb, &token_a, &token_b);
+    amm_client.init_pool(&ra, &rb);
     (env, amm_id)
 }
 
