@@ -88,6 +88,9 @@ pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 mod bps_roundtrip_test;
 
 #[cfg(test)]
+mod bps_inverse_proptest;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
