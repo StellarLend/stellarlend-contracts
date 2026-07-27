@@ -2,6 +2,8 @@
 
 use soroban_sdk::contracterror;
 
+use crate::rounding_strategy::SECONDS_PER_YEAR;
+
 /// Basis points scale (100% = 10,000 bps).
 pub const BPS_SCALE: u32 = 10_000;
 
@@ -20,6 +22,30 @@ pub enum MathError {
 ///
 /// The reserve share is rounded down and the depositor receives the remainder,
 /// which guarantees that the two results always sum to `total_interest`.
+pub fn compute_compound_interest(
+    principal: i128,
+    rate_bps: i128,
+    elapsed_seconds: u64,
+) -> Result<i128, MathError> {
+    if principal < 0 || rate_bps < 0 {
+        return Err(MathError::OutOfRange);
+    }
+    if principal == 0 || elapsed_seconds == 0 || rate_bps == 0 {
+        return Ok(0);
+    }
+
+    let elapsed_i128 = i128::try_from(elapsed_seconds).map_err(|_| MathError::Overflow)?;
+    let interest = principal
+        .checked_mul(rate_bps)
+        .ok_or(MathError::Overflow)?
+        .checked_mul(elapsed_i128)
+        .ok_or(MathError::Overflow)?
+        .checked_div((SECONDS_PER_YEAR as i128) * BPS_SCALE as i128)
+        .ok_or(MathError::DivisionByZero)?;
+
+    Ok(interest)
+}
+
 pub fn split_interest_by_reserve_factor(
     total_interest: i128,
     reserve_factor_bps: u32,
@@ -76,6 +102,12 @@ pub fn checked_mul_div_ceil(a: i128, b: i128, c: i128) -> Result<i128, MathError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compute_compound_interest_uses_shared_year_length() {
+        let interest = compute_compound_interest(100, 500, SECONDS_PER_YEAR).unwrap();
+        assert_eq!(interest, 5);
+    }
 
     #[test]
     fn split_preserves_all_accrued_interest() {

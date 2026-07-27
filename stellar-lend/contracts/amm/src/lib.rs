@@ -200,6 +200,18 @@ const KEY_ADMIN: (&str, &str) = ("pool", "admin");
 // LP share tracking — total supply and per-user balances.
 const KEY_LP_TOTAL_SUPPLY: (&str, &str) = ("pool", "lp_total_supply");
 
+// Minimum-liquidity floor.
+//
+// `KEY_MIN_LIQUIDITY` stores the admin-configured minimum that every
+// remaining reserve must satisfy after `remove_liquidity` or `swap_*`.
+// A floor of `0` (the default) is fully backward-compatible — neither
+// withdrawal nor swap is restricted.  Setting a positive value rejects
+// any operation that would push a reserve below the floor with
+// [`AmmPoolError::BelowMinLiquidity`].
+//
+// See: [MIN_LIQUIDITY.md §Default Behaviour](../MIN_LIQUIDITY.md)
+const KEY_MIN_LIQUIDITY: (&str, &str) = ("pool", "min_liquidity");
+
 /// Per-user LP share balance storage key.
 #[contracttype]
 #[derive(Clone)]
@@ -244,6 +256,10 @@ pub enum AmmPoolError {
     ZeroReserve = 13,
     /// Caller has insufficient LP balance for requested burn
     InsufficientLpBalance = 14,
+    /// A `remove_liquidity` or `swap_*` would leave a reserve below the
+    /// admin-configured minimum-liquidity floor.
+    /// See: [MIN_LIQUIDITY.md](../MIN_LIQUIDITY.md)
+    BelowMinLiquidity = 15,
 }
 
 /// Return value of [`AmmContract::get_swap_quote`].
@@ -672,6 +688,16 @@ impl AmmContract {
 
         let new_ra = ra.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?;
         let new_rb = rb.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?;
+
+        // Minimum-liquidity floor guard. For A→B, only reserve B decreases;
+        // reserve A grows. Only the outgoing reserve is checked (matches the
+        // documented policy in MIN_LIQUIDITY.md §"Floor only protects the
+        // outgoing reserve on swaps").
+        let floor = Self::get_min_liquidity(&env);
+        if floor > 0 && new_rb < floor {
+            return Err(AmmPoolError::BelowMinLiquidity);
+        }
+
         assert_k_monotonic(ra, rb, new_ra, new_rb, true)?;
 
         let accrued_fee_a: i128 = env.storage().persistent().get(&KEY_FEE_A).unwrap_or(0);
@@ -781,6 +807,13 @@ impl AmmContract {
 
         let new_rb = rb.checked_add(amount_in).ok_or(AmmPoolError::Overflow)?;
         let new_ra = ra.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?;
+
+        // Minimum-liquidity floor guard. For B→A, only reserve A decreases.
+        let floor = Self::get_min_liquidity(&env);
+        if floor > 0 && new_ra < floor {
+            return Err(AmmPoolError::BelowMinLiquidity);
+        }
+
         assert_k_monotonic(ra, rb, new_ra, new_rb, true)?;
 
         let accrued_fee_b: i128 = env.storage().persistent().get(&KEY_FEE_B).unwrap_or(0);
@@ -918,6 +951,14 @@ impl AmmContract {
     ///
     /// # Arguments
     /// * `amount_in` — units of asset A being repaid.  Must be `> 0`.
+    ///
+    /// # Errors
+    /// - [`AmmPoolError::NonPositiveAmount`] — `amount_in ≤ 0`.
+    /// - [`AmmPoolError::InvariantViolation`] — called outside an active flash swap, the
+    ///   initiator address is missing from storage, or k decreased (under-repayment);
+    ///   Soroban rolls back all storage changes including the Op-1 debit.
+    /// - [`AmmPoolError::UnauthorizedCaller`] — caller is not the flash-swap initiator.
+    /// - [`AmmPoolError::Overflow`] — arithmetic overflow computing `new_ra` or `k_after`.
     ///
     /// # Panics
     /// - `"repay_flash_swap: amount_in must be positive"` — `amount_in ≤ 0`.
@@ -1245,8 +1286,21 @@ mod swap_bounds_proptest;
 #[cfg(test)]
 mod price_impact_test;
 
+// ---------------------------------------------------------------------------
+// Tests: min-liquidity floor (regression coverage for issue #1559).
+// Lives in a separate file (linked below by `mod test;`) to keep the
+// fuzz / swap-bounds tests in this file focused on the swap-math invariants
+// rather than admin settings.  The orphan 478-line file at
+// `src/test.rs` was rewritten against the actual public API of this crate
+// (`init_pool`, `add_liquidity(caller, a, b)`, `remove_liquidity(caller, shares)`,
+// `swap_a_for_b`, `swap_b_for_a`, `get_reserves` returning a tuple, …)
+// rather than the fictional API it originally assumed.
+// ---------------------------------------------------------------------------
 #[cfg(test)]
-mod test {
+mod test;
+
+#[cfg(test)]
+mod inline_test {
     use super::*;
 
     fn generate_address(env: &Env) -> Address {
