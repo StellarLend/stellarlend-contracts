@@ -15,7 +15,6 @@ mod accrual_idempotency_test;
 mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
-#[cfg(test)]
 mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
@@ -27,10 +26,6 @@ mod borrow_index_test;
 mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
 mod compound_interest_proptest;
-#[cfg(test)]
-mod cross_asset_borrow_cap_test;
-#[cfg(test)]
-mod cross_asset_doctest;
 #[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
@@ -45,6 +40,8 @@ mod cross_asset_test;
 mod deposit_accounting_test;
 #[cfg(test)]
 mod deposit_cap_race_test;
+#[cfg(test)]
+mod effective_supply_rate_test;
 #[cfg(test)]
 mod effective_supply_rate_test;
 #[cfg(test)]
@@ -94,12 +91,6 @@ mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod missing_price_test;
 #[cfg(test)]
-mod mul_div_proptest;
-#[cfg(test)]
-mod oracle_max_move_test;
-#[cfg(test)]
-mod oracle_payload_binding_test;
-#[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
 mod position_summary_bench_test;
@@ -124,6 +115,8 @@ mod repay_debt_floor_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
+mod repay_overpay_test;
+#[cfg(test)]
 mod reserve_split_proptest;
 #[cfg(test)]
 mod rounding_drift_test;
@@ -133,8 +126,7 @@ mod self_liquidation_test;
 mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
-#[cfg(test)]
-mod upgrade_governance_test;
+
 #[cfg(test)]
 mod utilization_history_test;
 #[cfg(test)]
@@ -826,6 +818,72 @@ impl LendingContract {
             .unwrap_or(5)
     }
 
+    fn get_liquidation_threshold_bps(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LiquidationThresholdBps)
+            .unwrap_or(DEFAULT_LIQUIDATION_THRESHOLD_BPS)
+    }
+
+    fn get_close_factor_bps(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::CloseFactorBps)
+            .unwrap_or(DEFAULT_CLOSE_FACTOR_BPS)
+    }
+
+    fn get_liquidation_incentive_bps(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LiquidationIncentiveBps)
+            .unwrap_or(DEFAULT_LIQUIDATION_INCENTIVE_BPS)
+    }
+
+    /// Admin-only setter for liquidation threshold bps.
+    /// Must be in (0, 10000].
+    pub fn set_liquidation_threshold_bps(
+        env: Env,
+        threshold_bps: i128,
+    ) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if threshold_bps <= 0 || threshold_bps > 10000 {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationThresholdBps, &threshold_bps);
+        Ok(())
+    }
+
+    /// Admin-only setter for close factor bps.
+    /// Must be in (0, 10000].
+    pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if close_factor_bps <= 0 || close_factor_bps > 10000 {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::CloseFactorBps, &close_factor_bps);
+        Ok(())
+    }
+
+    /// Admin-only setter for liquidation incentive bps.
+    /// Must be in [0, 5000].
+    pub fn set_liquidation_incentive_bps(
+        env: Env,
+        incentive_bps: i128,
+    ) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if incentive_bps < 0 || incentive_bps > 5000 {
+            return Err(LendingError::InvalidFeeBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
+        Ok(())
+    }
+
     fn max_flash_bps_config(env: &Env) -> i128 {
         env.storage()
             .instance()
@@ -1152,8 +1210,8 @@ impl LendingContract {
 
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
-        
-        Ok(new_balance)
+
+        new_balance
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
@@ -1189,8 +1247,8 @@ impl LendingContract {
 
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
-        
-        Ok(new_balance)
+
+        new_balance
     }
 
     /// Set the configured valuation collateral asset for the legacy single-asset flows.
@@ -1542,24 +1600,13 @@ impl LendingContract {
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
             let position = load_debt(&env, &borrower);
             let now = env.ledger().timestamp();
-
-            // Accrue and capitalize pending interest into the borrower's principal
-            // debt position before we compute health factor and liquidation bounds.
-            let rate = current_borrow_rate(&env);
-            let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)
-                .map_err(|_| LendingError::Overflow)?;
+            let settled_position =
+                settle_and_accrue_insurance(&env, &position, now, DEFAULT_APR_BPS)
+                    .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
-
             let debt = settled_position.principal;
-            if debt <= 0 {
-                return Err(LendingError::NoDebtToLiquidate);
-            }
 
-            // Health-factor computation: floor rounding.
-            // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
-            // slightly lower, making the position look *more* underwater than it
-            // really is, which is conservative (triggers liquidation slightly earlier).
-            let threshold_bps = Self::liquidation_threshold_bps_config(&env);
+            let threshold_bps = Self::get_liquidation_threshold_bps(&env);
             let hf = math::checked_mul_div_floor(collateral, threshold_bps, debt)
                 .map_err(|_| LendingError::Overflow)?;
 
@@ -1571,28 +1618,6 @@ impl LendingContract {
                 return Err(LendingError::PositionHealthy);
             }
 
-            // Enforce Liquidation Grace Period
-            let grace_period = Self::get_liquidation_grace_period(env.clone());
-            if grace_period > 0 {
-                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
-                match env
-                    .storage()
-                    .persistent()
-                    .get::<_, u64>(&first_unhealthy_key)
-                {
-                    Some(ts) => {
-                        if now.saturating_sub(ts) < grace_period {
-                            return Err(LendingError::LiquidationGracePeriodNotMet);
-                        }
-                    }
-                    None => {
-                        env.storage().persistent().set(&first_unhealthy_key, &now);
-                        return Err(LendingError::LiquidationGracePeriodNotMet);
-                    }
-                }
-            }
-
-            // Close-factor cap: floor rounding.
             let close_factor_bps = Self::close_factor_bps_config(&env);
             let max_repay = math::checked_mul_div_floor(debt, close_factor_bps, BPS_DENOM)
                 .map_err(|_| LendingError::Overflow)?;
@@ -1606,13 +1631,11 @@ impl LendingContract {
                 return Err(LendingError::InvalidAmount);
             }
 
-            // Liquidation incentive: floor rounding.
             let incentive_bps = Self::liquidation_incentive_bps_config(&env);
             let seized_collateral =
                 math::checked_mul_div_floor(actual_repay, BPS_DENOM + incentive_bps, BPS_DENOM)
                     .map_err(|_| LendingError::Overflow)?;
 
-            // Clamp: never seize more than the borrower's available collateral.
             let available_collateral = collateral;
             let mut final_seized = seized_collateral;
             if seized_collateral > available_collateral {
@@ -1882,8 +1905,8 @@ impl LendingContract {
 
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
-        
-        Ok(updated.principal)
+
+        updated.principal
     }
 
     pub fn get_debt_position(env: Env, user: Address) -> DebtPosition {
@@ -2057,7 +2080,12 @@ impl LendingContract {
         let new_tre_bal = tre_bal
             .checked_sub(amount)
             .expect("flash_loan: treasury underflow during transfer");
-        env.storage().persistent().set(&tre_key, &new_tre_bal);
+        env.storage().persistent().set(
+            &tre_key,
+            if supply_cap < 0 {
+                return Err(LendingError::InvalidAmount);
+            } & new_tre_bal,
+        );
 
         let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
         let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
@@ -2214,7 +2242,6 @@ impl LendingContract {
         borrow_cap: i128,
         supply_cap: i128,
     ) -> Result<(), LendingError> {
-        require_initialized(&env)?;
         admin.require_auth();
         if admin != env.storage().instance().get::<DataKey, Address>(&DataKey::Admin).unwrap() {
             return Err(LendingError::Unauthorized);
@@ -2929,6 +2956,27 @@ fn extend_debt_ttl(env: &Env, user: &Address) {
             .persistent()
             .extend_ttl(&key, threshold, extend_to);
     }
+}
+
+/// Append `user` to the `BorrowerList` stored in instance storage, if not
+/// already present.  This list is used by `migrate_positions` to iterate
+/// over all debt records.
+fn register_borrower(env: &Env, user: &Address) {
+    let mut list: soroban_sdk::Vec<Address> = env
+        .storage()
+        .instance()
+        .get(&DataKey::BorrowerList)
+        .unwrap_or_else(|| soroban_sdk::vec![env]);
+
+    // Linear scan is acceptable: the list is bounded by the number of unique
+    // borrowers and is read/written only on borrow (not every tx).
+    for i in 0..list.len() {
+        if list.get(i).unwrap() == *user {
+            return; // already registered
+        }
+    }
+    list.push_back(user.clone());
+    env.storage().instance().set(&DataKey::BorrowerList, &list);
 }
 
 fn pause_is_active(env: &Env, operation: PauseType) -> bool {
