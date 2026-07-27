@@ -104,6 +104,9 @@ fn test_accrual_interest_split() {
     // Configure 30% insurance share
     client.set_insurance_share(&3000);
 
+    // Deposit collateral so borrow passes InsufficientCollateral check.
+    client.deposit(&user, &50_000i128);
+
     // Borrow 10,000 units
     let borrow_amount = 10_000i128;
     client.borrow(&user, &borrow_amount);
@@ -147,6 +150,7 @@ fn test_liquidation_empty_insurance_fund() {
             &DebtPosition {
                 borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -187,6 +191,7 @@ fn test_liquidation_partial_insurance_coverage() {
             &DebtPosition {
                 borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -223,6 +228,7 @@ fn test_liquidation_full_insurance_coverage() {
             &DebtPosition {
                 borrow_index_snapshot: crate::debt::INDEX_SCALE,
                 principal: 200,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

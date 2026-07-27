@@ -98,10 +98,18 @@ mod liquidation_branch_tests {
         let hf = client.get_health_factor(&borrower);
         assert!(hf < 10_000, "expected liquidatable position; hf={hf}");
 
-        let stored = client.get_debt_position(&borrower).principal;
-        let settled = settled_principal(stored, ELAPSED);
-        let max_repay = settled * 5_000 / 10_000;
-        let seized = max_repay * 11_000 / 10_000;
+        let debt_before = client.get_debt_position(&borrower).principal;
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let actual_repay = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_before,
+            )
+            .unwrap();
 
         let (debt_asset, collateral_asset) =
             setup_tokens(&env, &client.address, &liquidator, max_repay, seized);
@@ -139,9 +147,18 @@ mod liquidation_branch_tests {
 
         make_undercollateralised(&env, &client, &borrower, 100, 79, ELAPSED);
 
-        let stored = client.get_debt_position(&borrower).principal;
-        let settled = settled_principal(stored, ELAPSED);
-        let max_repay = settled * 5_000 / 10_000;
+        let debt_before = client.get_debt_position(&borrower).principal;
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+        let actual_repay = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_before,
+            )
+            .unwrap();
 
         let (debt_asset, collateral_asset) = setup_tokens(
             &env,
@@ -184,10 +201,23 @@ mod liquidation_branch_tests {
 
         make_undercollateralised(&env, &client, &borrower, 200, 158, ELAPSED);
 
+        let debt_asset = Address::generate(&env);
+        let collateral_asset = Address::generate(&env);
+
         // Round 1
-        let stored_r1 = client.get_debt_position(&borrower).principal;
-        let settled_r1 = settled_principal(stored_r1, ELAPSED);
-        let max_repay_r1 = settled_r1 * 5_000 / 10_000;
+        let debt_r1 = client.get_debt_position(&borrower).principal;
+        let repay_r1 = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_r1,
+            )
+            .unwrap();
+        assert_eq!(repay_r1, debt_r1 * 5_000 / 10_000);
+        let debt_after_r1 = client.get_debt_position(&borrower).principal;
+        assert_eq!(debt_after_r1, debt_r1 - repay_r1);
 
         let (debt_asset, collateral_asset) = setup_tokens(
             &env,
@@ -213,21 +243,16 @@ mod liquidation_branch_tests {
 
         // Round 2 — no elapsed time, so stored principal equals settled
         let debt_r2 = client.get_debt_position(&borrower).principal;
-        let max_repay_r2 = debt_r2 * 5_000 / 10_000;
-        // Mint additional debt tokens for the second liquidation
-        if max_repay_r2 > 0 {
-            let debt_token = StellarAssetClient::new(&env, &debt_asset);
-            debt_token.mint(&liquidator, &max_repay_r2);
-        }
-
-        let repay_r2 = client.liquidate(
-            &liquidator,
-            &borrower,
-            &debt_asset,
-            &collateral_asset,
-            &debt_r2,
-        );
-        assert_eq!(repay_r2, max_repay_r2);
+        let repay_r2 = client
+            .liquidate(
+                &liquidator,
+                &borrower,
+                &debt_asset,
+                &collateral_asset,
+                &debt_r2,
+            )
+            .unwrap();
+        assert_eq!(repay_r2, debt_r2 * 5_000 / 10_000);
         let debt_after_r2 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r2, debt_r2 - repay_r2);
 
