@@ -83,6 +83,8 @@ mod twap_maxbuffer_perf_test;
 mod twap_read_bench_test;
 #[cfg(test)]
 mod utilization_clamp_test;
+#[cfg(test)]
+mod asset_price_age_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
@@ -109,9 +111,10 @@ use crate::analytics::{
 };
 use crate::bridge::{BridgeConfig, BridgeError};
 use crate::cross_asset::{
-    get_asset_config_by_address, get_asset_list, get_total_borrow_for, get_total_supply_for,
-    get_user_asset_position, get_user_position_summary, initialize_asset, update_asset_config,
-    update_asset_price, AssetConfig, AssetKey, AssetPosition, UserPositionSummary,
+    get_asset_config_by_address, get_asset_list, get_asset_price_age, get_total_borrow_for,
+    get_total_supply_for, get_user_asset_position, get_user_position_summary, initialize_asset,
+    update_asset_config, update_asset_price, AssetConfig, AssetKey, AssetPosition,
+    UserPositionSummary,
 };
 use crate::flash_loan::{
     configure_flash_loan, execute_flash_loan, repay_flash_loan, set_flash_loan_fee, FlashLoanConfig,
@@ -859,6 +862,14 @@ impl HelloContract {
         price: i128,
     ) -> Result<(), CrossAssetError> {
         update_asset_price(&env, &caller, asset, price)
+    }
+
+    /// Get how old (in seconds) the stored oracle price for an asset is.
+    pub fn get_asset_price_age(
+        env: Env,
+        asset: Option<Address>,
+    ) -> Result<u64, CrossAssetError> {
+        get_asset_price_age(&env, asset)
     }
 
     /// Get asset configuration.

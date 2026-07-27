@@ -42,6 +42,7 @@ fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -180,6 +181,7 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: false,
                 price: 2_000_000, // $2.00 at 6 dp
                 price_decimals: 6,
+                last_update_ts: 0,
             },
         )
         .unwrap();
@@ -197,6 +199,7 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: true,
                 price: 1_000_000_000_000_000_000, // $1.00 at 18 dp
                 price_decimals: 18,
+                last_update_ts: 0,
             },
         )
         .unwrap();
