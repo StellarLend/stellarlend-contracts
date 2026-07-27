@@ -61,6 +61,8 @@ mod amm_integration_test;
 #[cfg(test)]
 mod clamp_rate_test;
 #[cfg(test)]
+mod dual_kink_test;
+#[cfg(test)]
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
