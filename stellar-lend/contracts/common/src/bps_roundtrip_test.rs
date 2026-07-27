@@ -95,18 +95,20 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_one_fifty_percent() {
-        assert_round_trip_loss_one(1_000_000, BPS_DENOM + 5_000);
+    fn round_trip_fifty_percent() {
+        assert_round_trip_loss_one(1_000_000, BPS_DENOM / 2);
     }
 
     #[test]
-    fn round_trip_two_hundred_percent() {
-        assert_round_trip_loss_one(1_000_000, BPS_DENOM * 2);
+    fn round_trip_above_hundred_percent_rejected() {
+        assert!(scale_bps(1_000_000, BPS_DENOM * 2).is_none());
+        assert!(unscale_bps(1_000_000, BPS_DENOM * 2).is_none());
     }
 
     #[test]
-    fn round_trip_ten_thousand_percent() {
-        assert_round_trip_loss_one(1_000_000, BPS_DENOM * 100);
+    fn round_trip_ten_thousand_percent_rejected() {
+        assert!(scale_bps(1_000_000, BPS_DENOM * 100).is_none());
+        assert!(unscale_bps(1_000_000, BPS_DENOM * 100).is_none());
     }
 
     #[test]
@@ -128,7 +130,7 @@ mod tests {
     fn round_trip_small_value_at_hundred_percent() {
         assert_round_trip_loss_one(1, BPS_DENOM);
         assert_round_trip_loss_one(7, BPS_DENOM);
-        assert_round_trip_loss_one(99, BPS_DENOM + 1);
+        assert_round_trip_loss_one(99, BPS_DENOM - 1);
     }
 
     #[test]
@@ -185,9 +187,12 @@ mod tests {
 
     #[test]
     fn round_trip_negative_rate_with_positive_value() {
-        assert_round_trip_loss_one(100, -BPS_DENOM);
-        assert_round_trip_loss_one(1_000_000, -500);
-        assert_round_trip_loss_one(42, -1);
+        assert!(scale_bps(100, -BPS_DENOM).is_none());
+        assert!(unscale_bps(100, -BPS_DENOM).is_none());
+        assert!(scale_bps(1_000_000, -500).is_none());
+        assert!(unscale_bps(1_000_000, -500).is_none());
+        assert!(scale_bps(42, -1).is_none());
+        assert!(unscale_bps(42, -1).is_none());
     }
 
     // ── Overflow → None (never wrap) ───────────────────────────────
@@ -239,12 +244,12 @@ mod tests {
     }
 
     #[test]
-    fn composition_small_loss_at_full_rate() {
-        // 5 * 10_000 / 10_000 = 5
-        // 5 * 10_000 / 10_001 = 4  (truncation loss of 1)
-        let scaled = scale_bps(5, BPS_DENOM + 1).unwrap();
-        assert_eq!(scaled, 5);
-        let round_trip = unscale_bps(scaled, BPS_DENOM + 1).unwrap();
+    fn composition_small_loss_at_near_full_rate() {
+        // 5 * 9_999 / 10_000 = 4
+        // 4 * 10_000 / 9_999 = 4 (truncation loss of 1 from the original value)
+        let scaled = scale_bps(5, BPS_DENOM - 1).unwrap();
+        assert_eq!(scaled, 4);
+        let round_trip = unscale_bps(scaled, BPS_DENOM - 1).unwrap();
         assert_eq!(round_trip, 4);
         let diff = round_trip.abs_diff(5);
         assert_eq!(diff, 1);
@@ -276,7 +281,7 @@ mod tests {
     fn composition_is_deterministic() {
         for _ in 0..10 {
             assert_round_trip_loss_one(99_999, BPS_DENOM);
-            assert_round_trip_loss_one(99_999, BPS_DENOM + 1);
+            assert_round_trip_loss_one(99_999, BPS_DENOM - 1);
         }
     }
 }

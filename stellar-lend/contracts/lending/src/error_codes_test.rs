@@ -12,6 +12,7 @@ fn test_error_code_stability_and_uniqueness() {
         (LendingError::NotInitialized, 1009),
         (LendingError::AlreadyInitialized, 1010),
         (LendingError::PositionHealthy, 1011),
+        (LendingError::RepayAmountTooHigh, 1012),
         (LendingError::DebtCeilingExceeded, 2001),
         (LendingError::DepositCapExceeded, 2002),
         (LendingError::InvalidFeeBps, 2005),

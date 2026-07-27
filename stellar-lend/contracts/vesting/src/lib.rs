@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, Vec, IntoVal, Val};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Val, Vec,
+};
 
 /// Errors for the vesting contract
 #[contracterror]
@@ -26,6 +28,10 @@ pub enum VestingError {
     InvalidAmount = 9,
     /// Requested amount exceeds claimable amount
     OverClaim = 10,
+    /// Contract was already initialized
+    AlreadyInitialized = 11,
+    /// Destination already holds a vesting grant
+    DestinationAlreadyHasGrant = 12,
 }
 
 /// Storage keys for the vesting contract
@@ -96,6 +102,9 @@ impl Grant {
         // into quotient and remainder:
         // total_amount = q * duration_secs + r
         // elapsed * total_amount / duration_secs = elapsed * q + (elapsed * r) / duration_secs
+        //
+        // Note (#1569): this partitioned form never performs an unchecked total_amount * elapsed
+        // multiplication, so there is no overflow fallback path that could fabricate 100% vesting.
         let principal = self.total_amount as u128;
         let elapsed_u128 = elapsed as u128;
         let duration_u128 = self.duration_secs as u128;
@@ -134,15 +143,24 @@ pub struct VestingContract;
 impl VestingContract {
     /// Initialize the vesting contract with an admin address.
     ///
-    /// Must be called before any other operation.
+    /// Must be called exactly once before any other operation.
     ///
     /// # Arguments
     /// * `admin` - The admin address that controls pause/resume and grant management
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), VestingError> {
+        if env.storage().persistent().has(&VestingKey::Admin) {
+            return Err(VestingError::AlreadyInitialized);
+        }
+
+        admin.require_auth();
+
         env.storage().persistent().set(&VestingKey::Admin, &admin);
         env.storage().persistent().set(&VestingKey::Paused, &false);
         env.storage().persistent().set(&VestingKey::PausedAt, &0u64);
-        env.storage().persistent().set(&VestingKey::TotalPausedSecs, &0u64);
+        env.storage()
+            .persistent()
+            .set(&VestingKey::TotalPausedSecs, &0u64);
+        Ok(())
     }
 
     /// Create a new vesting grant for `grantee`.
@@ -169,10 +187,22 @@ impl VestingContract {
         if total_amount <= 0 || duration_secs == 0 {
             return Err(VestingError::InvalidGrant);
         }
+
+        let claimed_amount = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Grant(grantee.clone()))
+            .map(|g: Grant| if !g.revoked { g.claimed_amount } else { 0 })
+            .unwrap_or(0);
+
+        if total_amount < claimed_amount {
+            return Err(VestingError::InvalidGrant);
+        }
+
         let grant = Grant {
             grantee: grantee.clone(),
             total_amount,
-            claimed_amount: 0,
+            claimed_amount,
             start_ts,
             cliff_secs,
             duration_secs,
@@ -340,7 +370,11 @@ impl VestingContract {
     ///
     /// # Returns
     /// `(vested_amount, clawback_amount)` — tokens kept by grantee and returned to treasury
-    pub fn revoke(env: Env, caller: Address, grantee: Address) -> Result<(i128, i128), VestingError> {
+    pub fn revoke(
+        env: Env,
+        caller: Address,
+        grantee: Address,
+    ) -> Result<(i128, i128), VestingError> {
         Self::require_admin(&env, &caller)?;
         Self::require_not_paused(&env)?;
         let mut grant: Grant = env
@@ -364,11 +398,73 @@ impl VestingContract {
         Ok((vested, clawback))
     }
 
-    /// Return grant details for a grantee.
-    pub fn get_grant(env: Env, grantee: Address) -> Option<Grant> {
+    /// Transfer a vesting grant from one grantee address to another.
+    ///
+    /// Admin only. Rejected while the contract is paused. Moves the source
+    /// grant's remaining schedule to `to`, preserving `start_ts`, `cliff_secs`,
+    /// `duration_secs`, and `claimed_amount`. Intended for custody-address
+    /// changes and recovery scenarios (see `GRANT_TRANSFER.md`).
+    ///
+    /// # Arguments
+    /// * `caller` - Must be the admin
+    /// * `from`   - Current grantee whose grant will be moved
+    /// * `to`     - New grantee that will receive the grant
+    ///
+    /// # Errors
+    /// * [`VestingError::Unauthorized`] — `caller` is not the admin
+    /// * [`VestingError::ContractPaused`] — contract is paused
+    /// * [`VestingError::GrantNotFound`] — no grant exists for `from`
+    /// * [`VestingError::AlreadyRevoked`] — source grant has been revoked
+    /// * [`VestingError::InvalidGrant`] — `from` and `to` are the same address
+    /// * [`VestingError::DestinationAlreadyHasGrant`] — `to` already has a grant
+    pub fn transfer_grant(
+        env: Env,
+        caller: Address,
+        from: Address,
+        to: Address,
+    ) -> Result<(), VestingError> {
+        Self::require_admin(&env, &caller)?;
+        Self::require_not_paused(&env)?;
+
+        if from == to {
+            return Err(VestingError::InvalidGrant);
+        }
+
+        let mut grant: Grant = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Grant(from.clone()))
+            .ok_or(VestingError::GrantNotFound)?;
+
+        if grant.revoked {
+            return Err(VestingError::AlreadyRevoked);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&VestingKey::Grant(to.clone()))
+        {
+            return Err(VestingError::DestinationAlreadyHasGrant);
+        }
+
+        // Preserve schedule + claimed_amount; only reassign the beneficiary.
+        grant.grantee = to.clone();
+
         env.storage()
             .persistent()
-            .get(&VestingKey::Grant(grantee))
+            .remove(&VestingKey::Grant(from.clone()));
+        env.storage()
+            .persistent()
+            .set(&VestingKey::Grant(to.clone()), &grant);
+
+        Self::emit_event(&env, "grant_transferred", &to);
+        Ok(())
+    }
+
+    /// Return grant details for a grantee.
+    pub fn get_grant(env: Env, grantee: Address) -> Option<Grant> {
+        env.storage().persistent().get(&VestingKey::Grant(grantee))
     }
 
     /// Return the total accumulated paused seconds.
@@ -435,6 +531,10 @@ impl VestingContract {
     }
 }
 
+#[cfg(test)]
+mod grant_transfer_test;
+#[cfg(test)]
+mod initialize_test;
 #[cfg(test)]
 mod pause_offset_test;
 #[cfg(test)]
