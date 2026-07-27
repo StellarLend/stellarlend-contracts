@@ -86,6 +86,9 @@ mod utilization_clamp_test;
 #[cfg(test)]
 mod asset_price_age_test;
 
+#[cfg(test)]
+mod guardian_threshold_safety_test;
+
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
 // mod tests;
