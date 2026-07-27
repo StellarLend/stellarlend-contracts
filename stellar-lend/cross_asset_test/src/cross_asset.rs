@@ -849,6 +849,7 @@ pub fn cross_asset_borrow(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -890,6 +891,7 @@ pub fn cross_asset_repay(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
