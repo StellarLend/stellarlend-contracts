@@ -1,6 +1,6 @@
 use soroban_sdk::{Address, Env, Map, Vec};
 
-use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
+use crate::debt::{DebtPosition, DEFAULT_APR_BPS, INDEX_SCALE};
 use crate::{
     check_emergency_status, check_pause_status, AssetParams, DataKey, LendingError, PriceRecord,
     ProtocolAction, DEFAULT_ORACLE_MAX_AGE_SECS,
@@ -557,6 +557,7 @@ pub fn borrow_asset_internal(
     let rate = crate::current_borrow_rate(env);
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
+    let prev_snapshot = position.borrow_index_snapshot;
     let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
     let updated = crate::debt::borrow_amount(settled_position, now, amount, rate)
         .map_err(|_| LendingError::Overflow)?;
@@ -681,7 +682,14 @@ pub fn repay_asset_internal(
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
     let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
-    let updated = crate::debt::repay_amount(settled_position, now, amount, rate)
+    // Cross-asset repay silently clamps to the outstanding balance so callers
+    // can safely pass an amount larger than the debt (see REPAY_SEMANTICS.md).
+    // When the position is already zero, return early — nothing to repay.
+    let clamped_amount = amount.min(settled_position.principal);
+    if clamped_amount <= 0 {
+        return Ok(settled_position.principal);
+    }
+    let updated = crate::debt::repay_amount(settled_position, now, clamped_amount, rate)
         .map_err(|_| LendingError::Overflow)?;
     save_debt_asset(env, user, asset, &updated);
     if updated.principal == 0 {

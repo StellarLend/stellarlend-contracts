@@ -15,9 +15,7 @@
 
 #[cfg(test)]
 mod interest_ordering_time_tests {
-    use crate::debt::{
-        borrow_amount, repay_amount, save_debt, DebtPosition, DEFAULT_APR_BPS,
-    };
+    use crate::debt::{borrow_amount, repay_amount, save_debt, DebtPosition, DEFAULT_APR_BPS};
     use crate::rounding_strategy::SECONDS_PER_YEAR;
     use crate::{LendingContract, LendingContractClient};
     use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
@@ -30,9 +28,7 @@ mod interest_ordering_time_tests {
     /// Set up the contract and seed `user` with enough collateral to borrow
     /// up to `collateral` units.  The caller decides the exact collateral
     /// amount; pass something large enough for the borrow being tested.
-    fn setup_with_collateral(
-        collateral: i128,
-    ) -> (Env, LendingContractClient<'static>, Address) {
+    fn setup_with_collateral(collateral: i128) -> (Env, LendingContractClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -79,7 +75,10 @@ mod interest_ordering_time_tests {
         client.borrow(&user, &1_000);
         let remaining = client.repay(&user, &300);
 
-        assert_eq!(remaining, 700, "immediate repay: no interest, principal -= repay");
+        assert_eq!(
+            remaining, 700,
+            "immediate repay: no interest, principal -= repay"
+        );
     }
 
     /// After one full year the debt module accrues interest before applying
@@ -268,12 +267,16 @@ mod interest_ordering_time_tests {
         let env = Env::default();
         let user = Address::generate(&env);
 
-        let initial = DebtPosition { principal: 10_000, last_update: 1_000 };
+        let initial = DebtPosition {
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
+            principal: 10_000,
+            last_update: 1_000,
+        };
         save_debt(&env, &user, &initial);
 
         let now = 1_000 + SECONDS_PER_YEAR;
-        let updated = repay_amount(initial, now, 1_000, DEFAULT_APR_BPS)
-            .expect("repay should succeed");
+        let updated =
+            repay_amount(initial, now, 1_000, DEFAULT_APR_BPS).expect("repay should succeed");
 
         let interest = expected_interest(10_000, SECONDS_PER_YEAR, DEFAULT_APR_BPS);
         assert_eq!(interest, 500);
@@ -287,11 +290,15 @@ mod interest_ordering_time_tests {
         let env = Env::default();
         let user = Address::generate(&env);
 
-        let initial = DebtPosition { principal: 0, last_update: 1_000 };
+        let initial = DebtPosition {
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
+            principal: 0,
+            last_update: 1_000,
+        };
         save_debt(&env, &user, &initial);
 
-        let after_borrow = borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS)
-            .expect("borrow should succeed");
+        let after_borrow =
+            borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS).expect("borrow should succeed");
         assert_eq!(after_borrow.principal, 5_000);
 
         let six_months = SECONDS_PER_YEAR / 2;
@@ -313,12 +320,12 @@ mod interest_ordering_time_tests {
     #[test]
     fn test_documented_expected_values() {
         let cases: &[(i128, u64, i128)] = &[
-            (1_000,   SECONDS_PER_YEAR,      50),
-            (10_000,  SECONDS_PER_YEAR,     500),
-            (100_000, SECONDS_PER_YEAR,   5_000),
-            (10_000,  SECONDS_PER_YEAR / 2,  250),
-            (10_000,  SECONDS_PER_YEAR / 4,  125),
-            (10_000,  SECONDS_PER_YEAR / 12,  41),
+            (1_000, SECONDS_PER_YEAR, 50),
+            (10_000, SECONDS_PER_YEAR, 500),
+            (100_000, SECONDS_PER_YEAR, 5_000),
+            (10_000, SECONDS_PER_YEAR / 2, 250),
+            (10_000, SECONDS_PER_YEAR / 4, 125),
+            (10_000, SECONDS_PER_YEAR / 12, 41),
             (1_000_000, SECONDS_PER_YEAR, 50_000),
         ];
         for &(principal, time, exp) in cases {

@@ -26,7 +26,9 @@ fn make_pool(ra: i128, rb: i128) -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
-    AmmContractClient::new(&env, &id).init_pool(&ra, &rb);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    AmmContractClient::new(&env, &id).init_pool(&ra, &rb, &token_a, &token_b);
     (env, id)
 }
 
@@ -177,7 +179,8 @@ fn doc_test_reentrancy_guard() {
         let (env, amm_id) = make_pool(1_000, 1_000);
         let client = AmmContractClient::new(&env, &amm_id);
         client.flash_swap_a_for_b(&100, &Bytes::new(&env));
-        let result = client.try_add_liquidity(&1, &1);
+        let caller = Address::generate(&env);
+        let result = client.try_add_liquidity(&caller, &1, &1);
         assert!(
             result.is_err(),
             "add_liquidity must be blocked while FlashActive"
@@ -189,7 +192,8 @@ fn doc_test_reentrancy_guard() {
         let (env, amm_id) = make_pool(1_000, 1_000);
         let client = AmmContractClient::new(&env, &amm_id);
         client.flash_swap_a_for_b(&100, &Bytes::new(&env));
-        let result = client.try_remove_liquidity(&1, &1);
+        let caller = Address::generate(&env);
+        let result = client.try_remove_liquidity(&caller, &1_i128);
         assert!(
             result.is_err(),
             "remove_liquidity must be blocked while FlashActive"
@@ -202,7 +206,10 @@ fn doc_test_reentrancy_guard() {
         let client = AmmContractClient::new(&env, &amm_id);
         client.flash_swap_a_for_b(&100, &Bytes::new(&env));
         let result = client.try_swap_a_for_b(&1);
-        assert!(result.is_err(), "swap_a_for_b must be blocked while FlashActive");
+        assert!(
+            result.is_err(),
+            "swap_a_for_b must be blocked while FlashActive"
+        );
     }
 
     // nested flash_swap_a_for_b blocked
@@ -211,7 +218,10 @@ fn doc_test_reentrancy_guard() {
         let client = AmmContractClient::new(&env, &amm_id);
         client.flash_swap_a_for_b(&100, &Bytes::new(&env));
         let result = client.try_flash_swap_a_for_b(&1, &Bytes::new(&env));
-        assert!(result.is_err(), "nested flash_swap_a_for_b must be blocked while FlashActive");
+        assert!(
+            result.is_err(),
+            "nested flash_swap_a_for_b must be blocked while FlashActive"
+        );
     }
 }
 

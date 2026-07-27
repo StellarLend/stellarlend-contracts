@@ -110,10 +110,8 @@ pub fn emit_schema_version(env: &Env) {
         schema_version: EVENT_SCHEMA_VERSION,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "SchemaVersionEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "SchemaVersionEvent"),), event);
 }
 
 /// Emit a deposit event.
@@ -125,10 +123,8 @@ pub fn emit_deposit(env: &Env, user: &Address, amount: i128, new_balance: i128) 
         new_balance,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "DepositEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "DepositEvent"),), event);
 }
 
 /// Emit a withdraw event.
@@ -140,10 +136,8 @@ pub fn emit_withdraw(env: &Env, user: &Address, amount: i128, new_balance: i128)
         new_balance,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "WithdrawEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "WithdrawEvent"),), event);
 }
 
 /// Emit a borrow event.
@@ -155,10 +149,8 @@ pub fn emit_borrow(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         new_debt,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "BorrowEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "BorrowEvent"),), event);
 }
 
 /// Emit a repay event.
@@ -170,10 +162,8 @@ pub fn emit_repay(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         new_debt,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "RepayEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "RepayEvent"),), event);
 }
 
 /// Emit a liquidate event.
@@ -196,8 +186,58 @@ pub fn emit_liquidate(
         borrower_remaining_collateral,
         timestamp: env.ledger().timestamp(),
     };
-    env.events().publish(
-        (Symbol::new(env, "LiquidateEvent"),),
-        event,
-    );
+    env.events()
+        .publish((Symbol::new(env, "LiquidateEvent"),), event);
+}
+
+/// Emitted when the admin updates the protocol-level debt ceiling.
+///
+/// Indexers and risk dashboards should subscribe to `"DebtCeilingUpdatedEvent"`
+/// to react to ceiling changes in real time.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebtCeilingUpdatedEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// New debt ceiling value (strictly positive).
+    pub new_ceiling: i128,
+    /// Timestamp of the update (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emitted when the admin updates the flash loan fee in basis points.
+///
+/// Indexers and integrators should subscribe to `"FlashFeeUpdatedEvent"`
+/// to react to fee changes before issuing flash loans.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashFeeUpdatedEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// New flash loan fee in basis points (0–1000).
+    pub new_fee_bps: i128,
+    /// Timestamp of the update (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emit a debt-ceiling updated event.
+pub fn emit_debt_ceiling_updated(env: &Env, new_ceiling: i128) {
+    let event = DebtCeilingUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        new_ceiling,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "DebtCeilingUpdatedEvent"),), event);
+}
+
+/// Emit a flash-fee updated event.
+pub fn emit_flash_fee_updated(env: &Env, new_fee_bps: i128) {
+    let event = FlashFeeUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        new_fee_bps,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashFeeUpdatedEvent"),), event);
 }
