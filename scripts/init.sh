@@ -40,20 +40,13 @@
 #            All privileged operations (pause, config updates, etc.) require
 #            this address's signature.
 #
-# Default risk parameters written on initialization (all in basis points):
-#   min_collateral_ratio   = 11000  (110%)
-#   liquidation_threshold  = 10500  (105%)
-#   close_factor           = 5000   (50%)
-#   liquidation_incentive  = 1000   (10%)
-#
-# Default interest rate parameters:
-#   base_rate_bps          = 100    (1% annual)
-#   kink_utilization_bps   = 8000   (80%)
-#   multiplier_bps         = 2000   (20%)
-#   jump_multiplier_bps    = 10000  (100%)
-#   rate_floor_bps         = 50     (0.5%)
-#   rate_ceiling_bps       = 10000  (100%)
-#   spread_bps             = 200    (2%)
+# Note: `initialize` stores the admin address, seeds the emergency state to
+# Normal, and sets the initial borrow index. It does NOT write custom risk or
+# interest rate parameters to storage. Instead, the contract relies on built-in
+# default risk parameters until updated via admin setters:
+#   liquidation_threshold_bps = 8000   (80%)
+#   close_factor_bps          = 5000   (50%)
+#   liquidation_incentive_bps = 1000   (10%)
 #
 # Security notes:
 #   - This script is idempotent: it checks if the contract is already initialized
@@ -259,30 +252,30 @@ fi
 echo ""
 echo ">>> Verifying post-initialization state ..."
 
-MIN_RATIO="$(stellar contract invoke \
-  --id "$LENDING_CONTRACT_ID" \
-  --source "$ADMIN_SECRET_KEY" \
-  --network "$NETWORK" \
-  "${RPC_ARGS[@]+"${RPC_ARGS[@]}"}" \
-  -- get_min_collateral_ratio 2>/dev/null | tr -d '"' || echo "N/A")"
-
 LIQ_THRESHOLD="$(stellar contract invoke \
   --id "$LENDING_CONTRACT_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network "$NETWORK" \
   "${RPC_ARGS[@]+"${RPC_ARGS[@]}"}" \
-  -- get_liquidation_threshold 2>/dev/null | tr -d '"' || echo "N/A")"
+  -- get_liquidation_threshold_bps 2>/dev/null | tr -d '"' || echo "N/A")"
 
-EMERGENCY_PAUSED="$(stellar contract invoke \
+CLOSE_FACTOR="$(stellar contract invoke \
   --id "$LENDING_CONTRACT_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network "$NETWORK" \
   "${RPC_ARGS[@]+"${RPC_ARGS[@]}"}" \
-  -- is_emergency_paused 2>/dev/null | tr -d '"' || echo "N/A")"
+  -- get_close_factor_bps 2>/dev/null | tr -d '"' || echo "N/A")"
 
-echo "    min_collateral_ratio  : $MIN_RATIO bps  (expected 11000 = 110%)"
-echo "    liquidation_threshold : $LIQ_THRESHOLD bps  (expected 10500 = 105%)"
-echo "    is_emergency_paused   : $EMERGENCY_PAUSED  (expected false)"
+PAUSE_STATE="$(stellar contract invoke \
+  --id "$LENDING_CONTRACT_ID" \
+  --source "$ADMIN_SECRET_KEY" \
+  --network "$NETWORK" \
+  "${RPC_ARGS[@]+"${RPC_ARGS[@]}"}" \
+  -- get_pause_state --pause_type All 2>/dev/null | tr -d '"' || echo "N/A")"
+
+echo "    liquidation_threshold_bps : $LIQ_THRESHOLD bps  (expected 8000 = 80%)"
+echo "    close_factor_bps          : $CLOSE_FACTOR bps  (expected 5000 = 50%)"
+echo "    get_pause_state (All)     : $PAUSE_STATE  (expected false)"
 
 # ---------------------------------------------------------------------------
 # Summary
@@ -294,6 +287,6 @@ echo ""
 echo " IMPORTANT – next steps for mainnet:"
 echo "   1. Verify on-chain state via Stellar Explorer."
 echo "   2. Transfer admin to a multisig address before opening to users."
-echo "   3. Configure oracle price feeds via update_price_feed."
+echo "   3. Configure oracle price feeds via set_price."
 echo "   4. Set up the off-chain oracle service (see oracle/ directory)."
 echo "======================================================================"

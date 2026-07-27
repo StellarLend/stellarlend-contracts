@@ -289,15 +289,15 @@ stellar contract invoke \
 ### Verifying initialization
 
 ```bash
-# Should return 11000 (110%)
+# Should return 8000 (80%)
 stellar contract invoke \
   --id "$LENDING_CONTRACT_ID" --source "$ADMIN_SECRET_KEY" --network testnet \
-  -- get_min_collateral_ratio
+  -- get_liquidation_threshold_bps
 
 # Should return false
 stellar contract invoke \
   --id "$LENDING_CONTRACT_ID" --source "$ADMIN_SECRET_KEY" --network testnet \
-  -- is_emergency_paused
+  -- get_pause_state --pause_type All
 ```
 
 ---
@@ -310,16 +310,15 @@ stellar contract invoke \
 |-----------|------|-------------|
 | `admin` | `Address` | Stellar account that controls the protocol. Must sign all privileged calls. |
 
-### Default risk parameters (set automatically on `initialize`)
+### Built-in default risk parameters (unconfigured storage fallback)
 
 All values are in **basis points** (bps): 10 000 bps = 100%.
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
-| `min_collateral_ratio` | 11 000 | 110% – minimum ratio to borrow |
-| `liquidation_threshold` | 10 500 | 105% – below this, position is liquidatable |
-| `close_factor` | 5 000 | 50% – max debt liquidated per transaction |
-| `liquidation_incentive` | 1 000 | 10% – bonus paid to liquidators |
+| `liquidation_threshold_bps` | 8 000 | 80% – below this, position is liquidatable |
+| `close_factor_bps` | 5 000 | 50% – max debt liquidated per transaction |
+| `liquidation_incentive_bps` | 1 000 | 10% – bonus paid to liquidators |
 
 ### Default interest rate parameters (set automatically on `initialize`)
 
@@ -394,7 +393,7 @@ Before deploying to mainnet:
 - [ ] Contract IDs recorded in an internal infrastructure registry
 - [ ] `initialize` called once; second call confirmed to fail with `AlreadyInitialized`
 - [ ] Admin transferred to multisig after initialization
-- [ ] Oracle price feeds configured via `update_price_feed`
+- [ ] Oracle price feeds configured via `set_price`
 - [ ] Emergency pause tested: `set_emergency_pause(admin, true)` → confirmed paused
 - [ ] Emergency pause disabled before launch: `set_emergency_pause(admin, false)`
 - [ ] `MAINNET_CONFIRM=YES_I_AM_SURE` environment variable provided to bypass the safety guard preventing accidental mainnet deployments
