@@ -1,5 +1,14 @@
 # Soroban Smart Contracts CI/CD
 
+> **⚠️ Document Drift Alert:** This document describes an aspirational multi-job CI
+> pipeline. The currently implemented CI workflow lives in
+> [`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and consists of a
+> **single `ci` job** ("Lending Contract CI") running on `ubuntu-latest` that
+> focuses exclusively on the lending crate. Sections below that reference
+> `macos-latest`, wasm32 builds, and multi-job orchestration describe planned
+> future work, not the live pipeline. For the authoritative CI configuration,
+> see the workflow file directly.
+
 This document describes our continuous integration setup and how to reproduce CI checks locally.
 
 ## CI Pipeline Overview
@@ -47,7 +56,7 @@ Our CI pipeline consists of several jobs that run in parallel and series:
 - **Runs on**: `ubuntu-latest`
 - **Condition**: Part of the main CI job
 - **Output**: Generates `cobertura.xml`
-- **Enforcement**: Fails the build if test coverage for the `stellar-lend` lending crate drops below 95%.
+- **Enforcement**: Fails the build if test coverage for the `stellar-lend` lending crate drops below 63%.
 
 ## Caching Strategy
 
@@ -161,10 +170,10 @@ cargo doc --no-deps
 cd stellar-lend/contracts/lending
 cargo tarpaulin --out Xml
 
-# Check coverage against the 95% threshold requirement
-python3 ../../../scripts/enforce_coverage.py cobertura.xml --threshold 95.0
+# Check coverage against the 63% threshold requirement
+python3 ../../../scripts/enforce_coverage.py cobertura.xml --threshold 63.0
 ```
-> Note: The CI pipeline enforces a minimum of 95% test coverage for the lending crate. If coverage drops below this threshold, the build will fail.
+> Note: The CI pipeline enforces a minimum of 63% test coverage for the lending crate. If coverage drops below this threshold, the build will fail.
 
 #### 6. Security Audit
 
