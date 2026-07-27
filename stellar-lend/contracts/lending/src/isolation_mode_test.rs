@@ -20,9 +20,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        IsolationConfig, LendingContract, LendingContractClient, LendingError,
-    };
+    use crate::{DataKey, IsolationConfig, LendingContract, LendingContractClient, LendingError};
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     // -----------------------------------------------------------------------
@@ -461,6 +459,9 @@ mod tests {
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
 
+        // Deposit collateral so borrow succeeds.
+        client.deposit(&user, &10_000i128);
+
         // Plain borrow bypasses isolation tracking.
         client.borrow(&user, &5_000i128);
         assert_eq!(client.get_isolation_debt(&tok), 0);
@@ -481,7 +482,11 @@ mod tests {
         client.repay_against_collateral(&user, &999_999i128, &tok);
 
         let debt = client.get_isolation_debt(&tok);
-        assert!(debt >= 0, "isolation debt must not be negative; got {}", debt);
+        assert!(
+            debt >= 0,
+            "isolation debt must not be negative; got {}",
+            debt
+        );
         assert_eq!(debt, 0);
     }
 
@@ -528,6 +533,27 @@ mod tests {
         let result = client.borrow_against_collateral(&user, &big_amount, &tok);
         assert_eq!(result, big_amount);
         assert_eq!(client.get_isolation_debt(&tok), big_amount);
+    }
+
+    #[test]
+    fn test_borrow_against_collateral_returns_overflow_on_total_debt_overflow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(LendingContract, ());
+        let client = LendingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        client.initialize(&admin);
+
+        let tok = asset(&env);
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDebt, &(i128::MAX - 1));
+        });
+
+        let res = client.try_borrow_against_collateral(&user, &2i128, &tok);
+        assert!(matches!(res, Err(Ok(LendingError::Overflow))));
     }
 
     // -----------------------------------------------------------------------

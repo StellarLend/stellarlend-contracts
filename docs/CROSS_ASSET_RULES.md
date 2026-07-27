@@ -4,6 +4,8 @@
 
 The StellarLend protocol supports cross-asset borrowing and repaying, allowing users to deposit multiple types of collateral and borrow different assets. This document outlines the rules, invariants, and edge cases for these operations.
 
+For cross‑asset module storage details, see [Cross‑Asset Storage Layout](../stellar-lend/contracts/hello-world/docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+
 ## Core Concepts
 
 ### Asset Configuration
@@ -485,3 +487,116 @@ Step 6 — User C borrows 50_000:
 ## Conclusion
 
 The cross-asset system provides flexibility for users to manage positions across multiple assets while maintaining protocol solvency through health factor enforcement. Isolation mode adds a risk-containment layer for volatile or thinly-traded assets, capping their systemic exposure without removing them from the protocol entirely. Understanding these rules and invariants is crucial for safe protocol usage and integration.
+
+## E2E Lifecycle: Worked Scenario (Issue #1143)
+
+This section walks through the complete cross-asset lifecycle tested by
+`cross_asset_e2e_test.rs`: deposit collateral in Asset A, borrow Asset B,
+trigger a price shock, and verify the position is liquidatable with correct
+post-liquidation accounting.
+
+### Setup
+
+| Parameter | Asset A (collateral) | Asset B (debt) |
+|-----------|---------------------|----------------|
+| Initial price | $1.00 (10\_000\_000) | $1.00 (10\_000\_000) |
+| LTV (bps) | 7 500 | 6 000 |
+| Liquidation threshold (bps) | 8 000 | 7 000 |
+| Debt ceiling | 1 000 000 000 000 | 1 000 000 000 000 |
+
+```
+PRICE_DIVISOR      = 10_000_000   ($1.00 = 10_000_000 raw)
+HEALTH_FACTOR_SCALE = 10_000       (HF = 1.0 → 10_000)
+HEALTH_FACTOR_NO_DEBT = 100_000_000 (sentinel, no debt)
+```
+
+### Step 1 — Deposit Collateral
+
+```
+cross_asset_deposit(user, asset_A, 10_000)
+→ collateral_balance[A] = 10_000
+→ HF = HEALTH_FACTOR_NO_DEBT  (no debt yet)
+```
+
+### Step 2 — Borrow Asset B
+
+```
+cross_asset_borrow(user, asset_B, 7_000)
+
+weighted_collateral = 10_000 × 10_000_000 × 8_000 / 10_000
+                    = 10_000 × 8_000  (price terms cancel at 1:1)
+                    = 80_000_000
+
+total_debt_value    = 7_000 × 10_000_000
+                    = 70_000_000
+
+HF = weighted_collateral / total_debt_value
+   = 80_000_000 / 70_000_000
+   = 11_428  (> 10_000 → healthy ✓)
+```
+
+### Step 3 — Price Shock
+
+Collateral asset price drops 40 %: $1.00 → $0.60 (6\_000\_000 raw).
+
+```
+weighted_collateral = 10_000 × 6_000_000 × 8_000 / 10_000
+                    = 48_000_000
+
+total_debt_value    = 7_000 × 10_000_000
+                    = 70_000_000
+
+HF = 48_000_000 / 70_000_000 = 6_857  (< 10_000 → liquidatable ✗)
+```
+
+### Step 4 — Liquidation (close-factor 50 %, incentive 10 %)
+
+```
+repaid_amount  = 7_000 × 5_000 / 10_000 = 3_500   (50 % close factor)
+seized_amount  = 3_500 × 11_000 / 10_000 = 3_850   (10 % bonus)
+                 min(3_850, 10_000) = 3_850          (within balance)
+
+collateral_after = 10_000 − 3_850 = 6_150
+debt_after       =  7_000 − 3_500 = 3_500
+```
+
+### Post-Liquidation Invariants
+
+| Invariant | Expression | Result |
+|-----------|-----------|--------|
+| No value created | seized ≤ collateral\_before | 3 850 ≤ 10 000 ✓ |
+| Debt reduced by repaid | debt\_after = debt\_before − repaid | 3 500 = 7 000 − 3 500 ✓ |
+| Collateral reduced by seized | col\_after = col\_before − seized | 6 150 = 10 000 − 3 850 ✓ |
+| Position improved | HF\_after ≥ HF\_before\_liq | (verified in test) ✓ |
+
+### Step 5 — Borrower Repays Remaining Debt
+
+```
+cross_asset_repay(user, asset_B, 3_500)
+→ debt_balance[B] = 0
+→ HF = HEALTH_FACTOR_NO_DEBT  (no debt)
+```
+
+### Step 6 — Withdraw Remaining Collateral
+
+```
+cross_asset_withdraw(user, asset_A, 6_150)
+→ collateral_balance[A] = 0
+→ Position fully closed ✓
+```
+
+### Test Coverage (cross_asset_e2e_test.rs)
+
+| Test | Scenario |
+|------|---------|
+| `e2e_deposit_borrow_repay_withdraw_full_lifecycle` | Happy path |
+| `e2e_price_shock_collateral_crash_makes_position_liquidatable` | Col price halved |
+| `e2e_price_shock_debt_spike_makes_position_liquidatable` | Debt price doubled |
+| `e2e_post_liquidation_invariants_no_value_created` | Invariant assertions |
+| `e2e_exactly_at_liquidation_threshold` | HF = 10\_000 boundary |
+| `e2e_deep_underwater_seizure_capped_at_available_collateral` | Full seizure clamp |
+| `e2e_partial_liquidation_then_full_repay_and_withdraw` | Full lifecycle incl. liq |
+| `e2e_two_collateral_one_debt_shock` | Multi-collateral aggregate HF |
+| `e2e_user_isolation_shock_does_not_bleed_to_other_user` | G-7 isolation |
+| `e2e_withdraw_blocked_when_hf_below_threshold_after_shock` | Withdraw blocked |
+| `e2e_borrow_blocked_when_hf_below_threshold_after_shock` | Borrow blocked |

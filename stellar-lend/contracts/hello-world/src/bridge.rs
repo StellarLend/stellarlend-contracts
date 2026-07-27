@@ -227,10 +227,9 @@ fn add_to_index(env: &Env, network_id: u32) {
 /// operation will succeed.
 ///
 /// # Caller
-/// The `admin` address must authorize this call. Can only be called once;
-/// after the admin is set, only the admin can update it.
+/// Any address may call this once; after the admin is set, only the admin
+/// can update it.
 pub fn initialize(env: &Env, admin: Address) {
-    admin.require_auth();
     if crate::admin::has_admin(env) {
         return;
     }

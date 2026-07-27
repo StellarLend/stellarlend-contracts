@@ -1,9 +1,7 @@
 #![cfg(test)]
 
 use crate::{DataKey, LendingContract, LendingContractClient, LendingError};
-use soroban_sdk::{
-    contract, contractimpl, testutils::Address as _, Address, Bytes, Env, Symbol,
-};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env, Symbol};
 
 #[contract]
 pub struct FlashLoanReceiver;
@@ -11,7 +9,9 @@ pub struct FlashLoanReceiver;
 #[contractimpl]
 impl FlashLoanReceiver {
     pub fn set_lending_contract(env: Env, lending_contract: Address) {
-        env.storage().instance().set(&Symbol::new(&env, "lending"), &lending_contract);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "lending"), &lending_contract);
     }
 
     pub fn get_callback_count(env: Env) -> u32 {
@@ -76,7 +76,15 @@ fn setup() -> (
     lending_client.initialize(&admin);
     receiver_client.set_lending_contract(&lending_id);
 
-    (env, lending_client, receiver_client, admin, asset, lending_id, receiver_id)
+    (
+        env,
+        lending_client,
+        receiver_client,
+        admin,
+        asset,
+        lending_id,
+        receiver_id,
+    )
 }
 
 #[test]
@@ -86,13 +94,22 @@ fn test_flash_loan_allows_amount_at_utilization_cap() {
     client.set_flash_fee(&0);
     client.set_max_flash_bps(&5_000);
     env.as_contract(&lending_id, || {
-        env.storage().persistent().set(&DataKey::Treasury(asset.clone()), &1_000i128);
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(asset.clone(), receiver.address.clone()), &500i128);
+            .set(&DataKey::Treasury(asset.clone()), &1_000i128);
+        env.storage().persistent().set(
+            &DataKey::Balance(asset.clone(), receiver.address.clone()),
+            &500i128,
+        );
     });
 
-    client.flash_loan(&Address::generate(&env), &receiver.address, &asset, &500i128, &Bytes::new(&env));
+    client.flash_loan(
+        &Address::generate(&env),
+        &receiver.address,
+        &asset,
+        &500i128,
+        &Bytes::new(&env),
+    );
 
     let callback_count = receiver.get_callback_count();
     assert_eq!(callback_count, 1u32);
@@ -105,7 +122,9 @@ fn test_flash_loan_rejects_amount_above_utilization_cap() {
     client.set_flash_fee(&0);
     client.set_max_flash_bps(&5_000);
     env.as_contract(&lending_id, || {
-        env.storage().persistent().set(&DataKey::Treasury(asset.clone()), &1_000i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Treasury(asset.clone()), &1_000i128);
     });
 
     let res = client.try_flash_loan(
@@ -125,7 +144,10 @@ fn test_set_max_flash_bps_rejects_out_of_range() {
     let (_env, client, _receiver, _admin, _asset, _lending_id, _receiver_id) = setup();
 
     let res = client.try_set_max_flash_bps(&10_001);
-    assert!(matches!(res, Err(Ok(LendingError::InvalidFlashUtilizationBps))));
+    assert!(matches!(
+        res,
+        Err(Ok(LendingError::InvalidFlashUtilizationBps))
+    ));
 }
 
 #[test]

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -58,6 +59,16 @@ class TestLoadThresholds(unittest.TestCase):
     def test_none_path_returns_defaults(self):
         result = load_thresholds(None)
         self.assertEqual(result["flat_threshold"], 95.0)
+
+
+class TestThresholdConfig(unittest.TestCase):
+    def test_config_includes_vesting_and_matches_flat_threshold(self):
+        config_path = Path(__file__).resolve().parents[1] / "coverage_thresholds.json"
+        with config_path.open() as handle:
+            thresholds = json.load(handle)
+
+        self.assertEqual(thresholds["flat_threshold"], 95.0)
+        self.assertEqual(thresholds["per_crate"]["contracts/vesting/src"], 95.0)
 
 
 class TestGetThreshold(unittest.TestCase):

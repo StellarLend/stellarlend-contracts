@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{
-    LendingContract, LendingContractClient, LendingError, DataKey, HEALTH_FACTOR_SCALE,
+    DataKey, LendingContract, LendingContractClient, LendingError, HEALTH_FACTOR_SCALE,
     LIQUIDATION_THRESHOLD_BPS,
 };
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
@@ -35,10 +35,7 @@ fn advance_time(env: &Env, seconds: u64) {
 fn borrow_zero_collateral_rejected() {
     let (_env, client, _admin, user) = setup();
     let res = client.try_borrow(&user, &100);
-    assert!(matches!(
-        res,
-        Err(Ok(LendingError::InsufficientCollateral))
-    ));
+    assert!(matches!(res, Err(Ok(LendingError::InsufficientCollateral))));
     assert_eq!(client.get_position(&user).debt, 0);
 }
 
@@ -57,10 +54,7 @@ fn borrow_one_unit_past_health_factor_threshold_rejected() {
     let (_env, client, _admin, user) = setup();
     client.deposit(&user, &100);
     let res = client.try_borrow(&user, &81);
-    assert!(matches!(
-        res,
-        Err(Ok(LendingError::InsufficientCollateral))
-    ));
+    assert!(matches!(res, Err(Ok(LendingError::InsufficientCollateral))));
     assert_eq!(client.get_position(&user).debt, 0);
 }
 
@@ -115,10 +109,7 @@ fn second_borrow_with_accrued_interest_requires_extra_collateral() {
     assert!(position.debt > 100, "interest should have accrued");
 
     let res = client.try_borrow(&user, &1);
-    assert!(matches!(
-        res,
-        Err(Ok(LendingError::InsufficientCollateral))
-    ));
+    assert!(matches!(res, Err(Ok(LendingError::InsufficientCollateral))));
 
     client.deposit(&user, &25);
     let res = client.try_borrow(&user, &1);

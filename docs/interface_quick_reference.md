@@ -55,6 +55,7 @@
 | `get_position` | `(user: Address)` | `PositionSummary { collateral: i128, debt: i128, health_factor: i128 }` |
 | `get_debt_position` | `(user: Address)` | `DebtPosition { principal: i128, last_update: u64 }` |
 | `get_min_borrow` | `()` | `i128` |
+| `get_rate_smoothing_state` | `()` | `RateSmoothingState { schema_version: u32, current_rate_bps: i128, last_target_rate_bps: i128, last_update_ledger: u32 }` |
 | `get_health_factor` | `(user: Address)` | `i128` |
 | `get_protocol_metrics` | `()` | `ProtocolMetrics { total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` |
 
@@ -75,8 +76,13 @@
 | `set_debt_ceiling` | `(ceiling: i128)` | admin | `Result<(), LendingError>` |
 | `set_flash_fee` | `(fee_bps: i128)` | admin | `Result<(), LendingError>` |
 | `set_emergency_state` | `(new_state: EmergencyState)` | admin; guardian may set `Shutdown` | `()` |
-| `set_asset_params` | `(admin: Address, asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128)` | admin | `Result<(), LendingError>` |
+| `set_asset_params` | `(admin: Address, asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128, borrow_cap: i128, supply_cap: i128)` | admin | `Result<(), LendingError>` |
 | `get_asset_params` | `(asset: Address)` | — | `Option<AssetParams>` |
+| `set_close_factor_bps` | `(close_factor_bps: i128)` | admin | `Result<(), LendingError>` |
+| `get_close_factor_bps` | `()` | — | `i128` |
+| `set_liquidation_incentive_bps` | `(incentive_bps: i128)` | admin | `Result<(), LendingError>` |
+| `get_liquidation_incentive_bps` | `()` | — | `i128` |
+| `set_liquidation_threshold_bps` | `(threshold_bps: i128)` | admin | `Result<(), LendingError>` |
 
 ### Cross-Asset User Operations
 
@@ -159,6 +165,17 @@ pub struct ProtocolMetrics {
 }
 ```
 
+### `RateSmoothingState`
+
+```rust
+pub struct RateSmoothingState {
+    pub schema_version: u32,
+    pub current_rate_bps: i128,
+    pub last_target_rate_bps: i128,
+    pub last_update_ledger: u32,
+}
+```
+
 ### `EmergencyState`
 
 ```rust
@@ -229,12 +246,8 @@ The following functions are **not** present in `src/lib.rs` and should not be ca
 |---|---|
 | `get_emergency_state()` | Planned public view (state visible via events today) |
 | `set_oracle(admin, oracle)` | Planned external oracle contract adapter |
-| `set_liquidation_threshold_bps(admin, bps)` | Planned — currently hardcoded 8000 BPS |
-| `set_close_factor_bps(admin, bps)` | Planned — currently hardcoded 5000 BPS |
 | `get_max_liquidatable_amount(user)` | Planned convenience helper |
-| `upgrade_*` functions | Planned multisig upgrade governance |
 | `data_*` functions | Planned persistent data-store management |
-| `BorrowEvent`, `RepayEvent`, `LiquidationEvent` | Planned contract events |
 
 ---
 

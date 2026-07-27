@@ -16,7 +16,8 @@
 //! not gated by emergency state. See the dedicated test below.
 
 use crate::{
-    EmergencyState, EmergencyStateChangedEvent, LendingContract, LendingContractClient,
+    debt::DebtPosition, DataKey, EmergencyState, EmergencyStateChangedEvent, LendingContract,
+    LendingContractClient,
 };
 use soroban_sdk::{
     events::Event,
@@ -250,12 +251,24 @@ fn shutdown_does_not_block_liquidation() {
     let debt_asset = env.register(crate::liquidate_transfer_test::MockToken, ());
     let collateral_asset = env.register(crate::liquidate_transfer_test::MockToken, ());
     let debt_token = crate::liquidate_transfer_test::MockTokenClient::new(&env, &debt_asset);
-    let collateral_token = crate::liquidate_transfer_test::MockTokenClient::new(&env, &collateral_asset);
+    let collateral_token =
+        crate::liquidate_transfer_test::MockTokenClient::new(&env, &collateral_asset);
     let liquidator = Address::generate(&env);
     debt_token.mint(&liquidator, &1000);
     collateral_token.mint(&cid, &1000);
-    client.deposit(&user, &100);
-    client.borrow(&user, &200);
+    env.as_contract(&cid, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &100i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(user.clone()),
+            &DebtPosition {
+                principal: 200,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
     client.set_emergency_state(&EmergencyState::Shutdown);
     let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &100);
     assert!(

@@ -16,7 +16,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0 # This ensures a full history, preventing git index errors
         
         
         
@@ -60,6 +61,11 @@ jobs:
         run: |
           cd stellar-lend/contracts/lending
           cargo test --lib --verbose
+
+      - name: Run integration tests
+        run: |
+          cd stellar-lend/contracts/lending
+          cargo test --tests --verbose
 
       - name: Generate lending test report
         run: |
