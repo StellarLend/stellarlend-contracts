@@ -432,7 +432,6 @@ pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<
 /// exceeds 10 000 bps.
 pub fn accrue_interest_split(
     principal: i128,
-    borrow_index_snapshot: 0,
     elapsed: u64,
     rate_bps: i128,
     reserve_factor_bps: u32,
