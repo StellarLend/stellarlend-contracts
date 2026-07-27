@@ -1281,6 +1281,9 @@ mod gov_can_vote_test;
 // mod governance_test;
 
 #[cfg(test)]
+mod recovery_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
