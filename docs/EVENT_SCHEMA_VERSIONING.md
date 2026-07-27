@@ -7,8 +7,10 @@ integrators can decode events safely across contract upgrades.
 
 The versioning strategy is minimal by design:
 
-- A single `EVENT_SCHEMA_VERSION: u32` constant in
-  `contracts/hello-world/src/events.rs` is the single source of truth.
+- Each contract crate (lending and hello-world) defines its own independent
+  `EVENT_SCHEMA_VERSION: u32` constant in its respective `events.rs`. Both
+  copies MUST be kept in sync manually so that indexers see a consistent
+  schema version regardless of which contract emitted the event.
 - Versioned event structs carry a `schema_version: u32` field populated with
   that constant at emit time.
 - A `SchemaVersionEvent` is emitted once during `initialize`, giving indexers
@@ -117,7 +119,7 @@ you are indexing.
 
 **Procedure for a breaking change:**
 
-1. Increment `EVENT_SCHEMA_VERSION` in `events.rs`.
+1. Increment `EVENT_SCHEMA_VERSION` in both `events.rs` files (lending and hello-world).
 2. Introduce a new struct (e.g. `FooEventV2`) with the updated schema.
 3. Emit **both** the old and new struct for one upgrade cycle so indexers can
    migrate without downtime.
@@ -142,8 +144,8 @@ pub struct LiquidationEventV2 {
 }
 ```
 
-Bump `EVENT_SCHEMA_VERSION` to `2` and emit both `LiquidationEventV1` and
-`LiquidationEventV2` during the transition cycle.
+Bump `EVENT_SCHEMA_VERSION` in both crates to `2` and emit both
+`LiquidationEventV1` and `LiquidationEventV2` during the transition cycle.
 
 ---
 
