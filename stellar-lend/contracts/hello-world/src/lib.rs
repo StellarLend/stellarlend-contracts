@@ -13,6 +13,7 @@ pub mod admin;
 pub mod amm;
 pub mod amm_twap;
 pub mod analytics;
+pub mod borrow;
 pub mod bridge;
 pub mod config_snapshot;
 pub mod cross_asset;
