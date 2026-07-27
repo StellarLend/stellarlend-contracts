@@ -59,7 +59,6 @@ const SECONDS_PER_YEAR: u64 = 365 * 24 * 60 * 60; // 31_536_000
 pub struct DebtPosition {
     /// Recorded principal at last touch (does not include un-accrued interest).
     pub principal: i128,
-    borrow_index_snapshot: 0,
     /// Snapshot of the global borrow index at the time this position was last
     /// modified.  Zero signals "pre-migration; treat as current index".
     pub borrow_index_snapshot: i128,
@@ -391,7 +390,6 @@ pub fn elapsed_seconds(now: u64, last_update: u64) -> u64 {
 /// Retained for backward compatibility with existing tests; new code should
 /// use `compute_debt` + `touch_borrow_index` instead.
 pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, DebtError> {
-borrow_index_snapshot: 0,
     if principal == 0 || elapsed == 0 {
         return Ok(0);
     }
