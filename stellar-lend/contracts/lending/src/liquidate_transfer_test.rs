@@ -1,5 +1,8 @@
+#[cfg(test)]
 use crate::{debt::DebtPosition, DataKey, LendingContract, LendingContractClient};
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Symbol};
+#[cfg(test)]
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
 #[contract]
 pub struct MockToken;
