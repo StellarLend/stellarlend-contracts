@@ -1,18 +1,30 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, Env};
 
 use crate::{VestingContract, VestingContractClient, VestingError};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn setup() -> (Env, Address, Address) {
+fn setup() -> (
+    Env,
+    Address,
+    Address,
+    token::StellarAssetClient<'static>,
+) {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let id = env.register(VestingContract, ());
-    VestingContractClient::new(&env, &id).initialize(&admin);
-    (env, admin, id)
+
+    // Register a token contract.
+    let token_admin = Address::generate(&env);
+    let token_address = env.register_stellar_asset_contract(token_admin);
+    let token_asset_client = token::StellarAssetClient::new(&env, &token_address);
+    let treasury = Address::generate(&env);
+
+    VestingContractClient::new(&env, &id).initialize(&admin, &treasury, &token_address);
+    (env, admin, id, token_asset_client)
 }
 
 fn advance(env: &Env, secs: u64) {
@@ -23,7 +35,7 @@ fn advance(env: &Env, secs: u64) {
 
 #[test]
 fn test_pause_accumulates_total_paused_secs() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, _token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
 
     advance(&env, 1_000);
@@ -36,7 +48,7 @@ fn test_pause_accumulates_total_paused_secs() {
 
 #[test]
 fn test_multiple_pause_resume_cycles_accumulate() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, _token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
 
     advance(&env, 100);
@@ -54,7 +66,7 @@ fn test_multiple_pause_resume_cycles_accumulate() {
 
 #[test]
 fn test_zero_length_pause_adds_nothing() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, _token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
 
     client.pause(&admin);
@@ -68,13 +80,14 @@ fn test_zero_length_pause_adds_nothing() {
 
 #[test]
 fn test_claim_rejected_while_paused() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     // Grant: 1_000 tokens, no cliff, 1_000 s duration, starts now
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
 
     advance(&env, 500);
     client.pause(&admin);
@@ -87,13 +100,14 @@ fn test_claim_rejected_while_paused() {
 
 #[test]
 fn test_paused_interval_does_not_count_toward_vesting() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     // 1_000 tokens, no cliff, 1_000 s duration
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
 
     // Advance 200 s, then pause for 300 s, then resume and advance another 200 s.
     // effective_now = (200 + 300 + 200) - 300 = 400 s  → 400 tokens vested.
@@ -109,12 +123,13 @@ fn test_paused_interval_does_not_count_toward_vesting() {
 
 #[test]
 fn test_without_pause_normal_vesting() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
 
     advance(&env, 400);
 
@@ -126,13 +141,14 @@ fn test_without_pause_normal_vesting() {
 
 #[test]
 fn test_pause_spanning_cliff() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     // cliff_secs = 100, duration = 1_000
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &100, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &100);
 
     // Pause before cliff, pause for 200 s, resume, then advance 100 s past cliff.
     advance(&env, 50); // 50 s elapsed, before cliff
@@ -152,12 +168,13 @@ fn test_pause_spanning_cliff() {
 
 #[test]
 fn test_revoke_uses_effective_now() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
 
     advance(&env, 300);
     client.pause(&admin);
@@ -172,12 +189,13 @@ fn test_revoke_uses_effective_now() {
 
 #[test]
 fn test_revoke_rejected_while_paused() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
 
     advance(&env, 300);
     client.pause(&admin);
@@ -190,12 +208,13 @@ fn test_revoke_rejected_while_paused() {
 
 #[test]
 fn test_full_vesting_after_pause_capped_at_total() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
 
     // Pause 500 s halfway through, then resume and advance past duration.
     advance(&env, 500);
@@ -212,12 +231,13 @@ fn test_full_vesting_after_pause_capped_at_total() {
 
 #[test]
 fn test_nothing_claimable_before_cliff() {
-    let (env, admin, id) = setup();
+    let (env, admin, id, token_asset) = setup();
     let client = VestingContractClient::new(&env, &id);
     let grantee = Address::generate(&env);
 
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &grantee, &1_000, &start, &200, &1_000);
+    token_asset.mint(&admin, &1_000);
+    client.add_grant(&grantee, &1_000, &start, &1_000, &200);
 
     advance(&env, 100); // before cliff
 

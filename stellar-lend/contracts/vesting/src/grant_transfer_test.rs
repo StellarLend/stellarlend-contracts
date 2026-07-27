@@ -1,11 +1,10 @@
 #![cfg(test)]
 
-use crate::{VestingContract, VestingError};
-use soroban_sdk::{Address, Env, testutils::Address as _, token};
+use crate::test_harness::{VestingContract, VestingError};
 
 fn setup_with_grant() -> VestingContract {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 0, 1000, 0);
+    c.add_grant("admin", "alice", 1000, 0, 1000, 0).unwrap();
     c
 }
 
@@ -38,7 +37,7 @@ fn transfer_grant_from_non_existent_grant_fails() {
 #[test]
 fn transfer_grant_to_destination_with_existing_grant_fails() {
     let mut c = setup_with_grant();
-    c.add_grant("bob", 500, 0, 1000, 0);
+    c.add_grant("admin", "bob", 500, 0, 1000, 0).unwrap();
     let res = c.transfer_grant("admin", "alice", "bob", 500);
     assert_eq!(res, Err(VestingError::DestinationAlreadyHasGrant));
     assert_eq!(c.grants.contains_key("alice"), true);
@@ -51,7 +50,8 @@ fn transfer_grant_preserves_schedule() {
     let from = "alice";
     let to = "bob";
 
-    c.transfer_grant("admin", from, to, 500).expect("transfer should succeed");
+    c.transfer_grant("admin", from, to, 0)
+        .expect("transfer should succeed");
 
     assert_eq!(c.grants.contains_key("alice"), false);
     assert_eq!(c.grants.contains_key("bob"), true);
@@ -74,7 +74,8 @@ fn transfer_grant_maintains_total_locked() {
     let mut c = setup_with_grant();
     let initial_locked = c.total_locked();
 
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
+    c.transfer_grant("admin", "alice", "bob", 0)
+        .expect("transfer should succeed");
 
     let new_locked = c.total_locked();
     assert_eq!(new_locked, initial_locked);
@@ -83,26 +84,32 @@ fn transfer_grant_maintains_total_locked() {
 #[test]
 fn transfer_grant_with_partial_vesting_syncs() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 1000, 1000, 100);
+    // 1000 tokens, starts at t=1000, duration=1000, cliff=100
+    c.add_grant("admin", "alice", 1000, 1000, 1000, 100)
+        .unwrap();
 
+    // At t=1200 (200 s after start, past cliff of 100s): vested = 1000*200/1000 = 200
     let claimed = c.claim("alice", 1200).expect("claim should succeed");
     assert_eq!(claimed, 200);
 
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
+    // Transfer at t=1200: released should be synced to 200 (vested_at(1200))
+    c.transfer_grant("admin", "alice", "bob", 1200)
+        .expect("transfer should succeed");
 
     let bob_grants = c.get_grants("bob");
     assert_eq!(bob_grants.len(), 1);
-    assert_eq!(bob_grants[0].claimed, 0);
-    assert_eq!(bob_grants[0].released, 1200);
+    assert_eq!(bob_grants[0].claimed, 200);
+    assert_eq!(bob_grants[0].released, 200);
 }
 
 #[test]
 fn transfer_grant_with_different_grant_types_preserves_all() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 0, 1000, 0);
-    c.add_grant("alice", 500, 500, 500, 0);
+    c.add_grant("admin", "alice", 1000, 0, 1000, 0).unwrap();
+    c.add_grant("admin", "alice", 500, 500, 500, 0).unwrap();
 
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
+    c.transfer_grant("admin", "alice", "bob", 0)
+        .expect("transfer should succeed");
 
     let bob_grants = c.get_grants("bob");
     assert_eq!(bob_grants.len(), 2);
@@ -112,13 +119,15 @@ fn transfer_grant_with_different_grant_types_preserves_all() {
 #[test]
 fn transfer_grant_preserves_grants_across_multiple_transfers() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1000, 0, 1000, 0);
+    c.add_grant("admin", "alice", 1000, 0, 1000, 0).unwrap();
 
-    c.transfer_grant("admin", "alice", "bob", 500).expect("transfer should succeed");
+    c.transfer_grant("admin", "alice", "bob", 0)
+        .expect("transfer should succeed");
 
-    c.add_grant("alice", 500, 0, 1000, 0);
+    c.add_grant("admin", "alice", 500, 0, 1000, 0).unwrap();
 
-    c.transfer_grant("admin", "alice", "carol", 500).expect("transfer should succeed");
+    c.transfer_grant("admin", "alice", "carol", 0)
+        .expect("transfer should succeed");
 
     assert_eq!(c.grants.contains_key("alice"), false);
     assert_eq!(c.grants.contains_key("bob"), true);
