@@ -30,8 +30,8 @@ pub enum ProposalAction {
     SetThreshold(u32),
     /// Replace the full signer set with a new set
     RotateSigners(Vec<Address>),
-    /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call
-    InvokeContract(InvokeContractParams),
+    /// Invoke an arbitrary contract entrypoint via cross-contract call
+    InvokeContract(Address, Symbol, Vec<soroban_sdk::Val>),
 }
 
 /// Lifecycle state of a proposal.
@@ -470,10 +470,12 @@ impl MultisigContract {
                     .set(&MultisigDataKey::Signers, new_signers);
                 Ok(())
             }
-            ProposalAction::InvokeContract(contract, fn_symbol, _args_hash) => {
-                let args: soroban_sdk::Vec<soroban_sdk::Val> = soroban_sdk::Vec::new(env);
-                let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args);
-                Ok(())
+            ProposalAction::InvokeContract(contract, fn_symbol, args) => {
+                // Dispatch to the target contract entrypoint with the concrete
+                // arguments carried on the proposal action. The payload hash
+                // still binds the approved action so it cannot be swapped.
+                let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args.clone());
+                true
             }
         }
     }

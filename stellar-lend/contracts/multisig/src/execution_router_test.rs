@@ -1,5 +1,27 @@
 use super::*;
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, testutils::Address as _, Address, Bytes, Env, IntoVal, Symbol, Vec};
+
+#[contract]
+pub struct EchoContract;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EchoDataKey {
+    Sum,
+}
+
+#[contractimpl]
+impl EchoContract {
+    pub fn add_and_store(env: Env, left: i128, right: i128) -> i128 {
+        let total = left + right;
+        env.storage().persistent().set(&EchoDataKey::Sum, &total);
+        total
+    }
+
+    pub fn get_sum(env: Env) -> i128 {
+        env.storage().persistent().get(&EchoDataKey::Sum).unwrap_or(0)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -231,6 +253,32 @@ fn test_execute_rotate_signers_replaces_signer_set() {
     assert!(stored.contains(&new_s1));
     assert!(stored.contains(&new_s2));
     assert!(!stored.contains(&signers.get(0).unwrap()));
+}
+
+#[test]
+fn test_execute_invoke_contract_with_args() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let target_id = env.register(EchoContract, ());
+    let mut args = Vec::new(&env);
+    args.push_back(7i128.into_val(&env));
+    args.push_back(5i128.into_val(&env));
+
+    let action = ProposalAction::InvokeContract(
+        target_id.clone(),
+        Symbol::new(&env, "add_and_store"),
+        args.clone(),
+    );
+    let payload_hash = make_bytes(&env, b"invoke_hash");
+    let id = client.create_proposal(&signers.get(0).unwrap(), &action, &payload_hash, &500u64);
+    approve_n(&client, &signers, id, 2);
+
+    client.execute_proposal(&signers.get(0).unwrap(), &id, &payload_hash);
+
+    let sum: i128 = env.invoke_contract(&target_id, &Symbol::new(&env, "get_sum"), Vec::new(&env));
+    assert_eq!(sum, 12);
 }
 
 // ---------------------------------------------------------------------------
