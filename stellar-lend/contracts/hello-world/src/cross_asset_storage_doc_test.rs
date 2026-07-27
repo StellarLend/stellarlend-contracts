@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::cross_asset::{AssetConfig, AssetKey, CrossAssetDataKey};
-    use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
+    use super::*;
+    use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
     #[test]
     fn test_config_round_trip() {
