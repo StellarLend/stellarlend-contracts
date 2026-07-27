@@ -1,8 +1,6 @@
 #!/bin/bash
 # local-ci.sh - Reproduce CI checks locally
 
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,6 +23,9 @@ fi
 
 cd "$PROJECT_DIR"
 
+# Track overall status to report at end
+OVERALL_PASSED=true
+
 # Function to run a command and report status
 run_check() {
     local name=$1
@@ -35,6 +36,7 @@ run_check() {
         echo -e "${GREEN}✅ $name passed${NC}"
     else
         echo -e "${RED}❌ $name failed${NC}"
+        OVERALL_PASSED=false
         return 1
     fi
 }
@@ -91,7 +93,7 @@ if [ -d "target/wasm32-unknown-unknown/release" ]; then
     for wasm in target/wasm32-unknown-unknown/release/*.wasm; do
         if [ -f "$wasm" ]; then
             run_check "Contract Optimization" "stellar contract optimize --wasm $wasm"
-            
+
             # Inspect optimized contract
             optimized_wasm="${wasm%.wasm}-optimized.wasm"
             if [ -f "$optimized_wasm" ]; then
@@ -131,6 +133,11 @@ echo -e "\n${GREEN}🎉 All CI checks completed!${NC}"
 echo "=============================="
 echo -e "${GREEN}If all checks passed, your code should pass CI pipeline.${NC}"
 echo -e "${YELLOW}Note: Some checks might behave slightly differently in CI environment.${NC}"
+
+if [ "$OVERALL_PASSED" = false ]; then
+    echo -e "\n${RED}❌ Some checks failed. See output above for details.${NC}"
+    exit 1
+fi
 
 # Summary of what to fix if any checks failed
 echo -e "\n${BLUE}💡 Quick fixes for common issues:${NC}"
