@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, Vec, IntoVal, Val};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Val, Vec,
+};
 
 /// Errors for the vesting contract
 #[contracterror]
@@ -155,7 +157,9 @@ impl VestingContract {
         env.storage().persistent().set(&VestingKey::Admin, &admin);
         env.storage().persistent().set(&VestingKey::Paused, &false);
         env.storage().persistent().set(&VestingKey::PausedAt, &0u64);
-        env.storage().persistent().set(&VestingKey::TotalPausedSecs, &0u64);
+        env.storage()
+            .persistent()
+            .set(&VestingKey::TotalPausedSecs, &0u64);
         Ok(())
     }
 
@@ -366,7 +370,11 @@ impl VestingContract {
     ///
     /// # Returns
     /// `(vested_amount, clawback_amount)` — tokens kept by grantee and returned to treasury
-    pub fn revoke(env: Env, caller: Address, grantee: Address) -> Result<(i128, i128), VestingError> {
+    pub fn revoke(
+        env: Env,
+        caller: Address,
+        grantee: Address,
+    ) -> Result<(i128, i128), VestingError> {
         Self::require_admin(&env, &caller)?;
         Self::require_not_paused(&env)?;
         let mut grant: Grant = env
@@ -456,9 +464,7 @@ impl VestingContract {
 
     /// Return grant details for a grantee.
     pub fn get_grant(env: Env, grantee: Address) -> Option<Grant> {
-        env.storage()
-            .persistent()
-            .get(&VestingKey::Grant(grantee))
+        env.storage().persistent().get(&VestingKey::Grant(grantee))
     }
 
     /// Return the total accumulated paused seconds.
@@ -526,10 +532,10 @@ impl VestingContract {
 }
 
 #[cfg(test)]
+mod grant_transfer_test;
+#[cfg(test)]
 mod initialize_test;
 #[cfg(test)]
 mod pause_offset_test;
 #[cfg(test)]
 mod vested_at_overflow_test;
-#[cfg(test)]
-mod grant_transfer_test;

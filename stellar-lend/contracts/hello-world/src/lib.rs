@@ -2,7 +2,6 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HelloError {
@@ -62,23 +61,23 @@ mod clamp_rate_test;
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
-mod normalize_price_test;
+mod cross_asset_config_bounds_test;
 #[cfg(test)]
 mod cross_asset_ltv_test;
 #[cfg(test)]
+mod cross_asset_price_authorization_test;
+#[cfg(test)]
+mod cross_asset_storage_doc_test;
+#[cfg(test)]
+mod normalize_price_test;
+#[cfg(test)]
 mod rate_clamp_test;
+#[cfg(test)]
+mod twap_coverage_test;
 #[cfg(test)]
 mod twap_maxbuffer_perf_test;
 #[cfg(test)]
 mod twap_read_bench_test;
-#[cfg(test)]
-mod twap_coverage_test;
-#[cfg(test)]
-mod cross_asset_storage_doc_test;
-#[cfg(test)]
-mod cross_asset_config_bounds_test;
-#[cfg(test)]
-mod cross_asset_price_authorization_test;
 #[cfg(test)]
 mod utilization_clamp_test;
 
@@ -294,11 +293,17 @@ impl HelloContract {
         recovery::start_recovery(&env, initiator, old_admin, new_admin)
     }
 
-    pub fn approve_recovery(env: Env, approver: Address) -> Result<(), crate::governance::GovernanceError> {
+    pub fn approve_recovery(
+        env: Env,
+        approver: Address,
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::approve_recovery(&env, approver)
     }
 
-    pub fn execute_recovery(env: Env, executor: Address) -> Result<(), crate::governance::GovernanceError> {
+    pub fn execute_recovery(
+        env: Env,
+        executor: Address,
+    ) -> Result<(), crate::governance::GovernanceError> {
         recovery::execute_recovery(&env, executor)
     }
 
@@ -354,8 +359,14 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
-        let (repaid, _seized, _fee) =
-            liquidate(&env, liquidator, borrower, debt_asset, collateral_asset, amount)?;
+        let (repaid, _seized, _fee) = liquidate(
+            &env,
+            liquidator,
+            borrower,
+            debt_asset,
+            collateral_asset,
+            amount,
+        )?;
         Ok(repaid)
     }
 

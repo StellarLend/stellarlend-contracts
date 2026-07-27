@@ -4,8 +4,8 @@
 #[cfg(test)]
 mod doctest_worked_example {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
     use crate::cross_asset_test::setup;
+    use soroban_sdk::testutils::Address as _;
 
     #[test]
     fn test_worked_example_health_factor() {

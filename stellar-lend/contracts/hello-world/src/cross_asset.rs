@@ -70,8 +70,7 @@ pub fn set_max_debt_assets_per_user(
     caller: &Address,
     max: Option<u32>,
 ) -> Result<(), CrossAssetError> {
-    crate::admin::require_admin(env, caller)
-        .map_err(|_| CrossAssetError::Unauthorized)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     if let Some(v) = max {
         if v < 1 {
@@ -560,7 +559,7 @@ pub fn update_asset_price(
     price: i128,
 ) -> Result<(), CrossAssetError> {
     require_admin(env, caller)?;
-    
+
     if price <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
