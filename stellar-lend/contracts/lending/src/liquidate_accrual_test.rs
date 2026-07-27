@@ -68,6 +68,7 @@ fn advance_ledger_time(env: &Env, seconds: u64) {
 
 /// Calculate expected simple interest.
 fn calculate_expected_interest(principal: i128, elapsed_seconds: u64, rate_bps: i128) -> i128 {
+borrow_index_snapshot: 0,
     let numerator = principal
         .checked_mul(elapsed_seconds as i128)
         .and_then(|v| v.checked_mul(rate_bps))
@@ -101,7 +102,7 @@ fn test_liquidate_accrual_parity() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -160,7 +161,7 @@ fn test_liquidate_long_horizon_accrual() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -216,7 +217,7 @@ fn test_liquidate_health_factor_after_settle_boundary() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );

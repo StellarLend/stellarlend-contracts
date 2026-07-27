@@ -23,6 +23,7 @@ mod supply_rate_split_tests {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn position(principal: i128, last_update: u64) -> DebtPosition {
+    borrow_index_snapshot: 0,
         DebtPosition {
             principal,
             borrow_index_snapshot: crate::debt::INDEX_SCALE,

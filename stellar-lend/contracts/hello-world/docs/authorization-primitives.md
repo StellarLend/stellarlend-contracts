@@ -1,243 +1,160 @@
-# Authorization Primitives for Admin Operations
+# Authorization Primitives — `hello-world` Contract
+
+> **Scope**: This document describes the **real** authorization surface of
+> `stellar-lend/contracts/hello-world/`. Always consult the source files listed
+> below rather than this document when there is any doubt.
+
+---
 
 ## Overview
 
-This document describes the authorization primitives and authentication patterns used throughout the StellarLend protocol for privileged administrative operations. The codebase primarily uses Soroban's built-in `require_auth()` mechanism combined with role-based access control.
+The `hello-world` contract uses a **single-admin plus guardian** model. There is
+no general-purpose RBAC system, no `grant_role` / `revoke_role` / `require_role_or_admin`
+primitive, and no `gov_can_vote` function exported as a public authorization
+helper. Each module that needs privileged access either calls `admin::require_admin`
+or performs its own inline guardian check.
 
-## Authentication Mechanisms
+---
 
-### 1. Soroban `require_auth()`
+## Primary Primitives
 
-The primary authentication primitive used is Soroban's built-in `require_auth()` method:
+### `admin::require_admin(env, caller)` — `src/admin.rs`
 
-```rust
-// Basic authentication - caller must sign the transaction
-caller.require_auth();
-
-// Example from governance.rs
-pub fn add_guardian(env: &Env, caller: Address, guardian: Address) -> Result<(), GovernanceError> {
-    caller.require_auth();  // Ensures caller signed the transaction
-    // ... rest of function
-}
-```
-
-**Security Properties:**
-- **Cryptographic Verification**: Uses the underlying Stellar network's signature verification
-- **Non-repudiation**: Caller cannot deny having authorized the operation
-- **Atomic**: Authentication is verified before any state changes occur
-- **Protocol Agnostic**: Works with both Ed25519 and secp256k1 keys supported by Stellar
-
-### 2. Role-Based Access Control (RBAC)
-
-The protocol implements a custom RBAC system in `admin.rs`:
+The canonical, shared admin check. **Every module that needs admin authorization
+should call this function** rather than re-implementing the admin-lookup logic.
 
 ```rust
-// Super admin verification
+/// Require `caller` to be the stored protocol admin.
 pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
-    let admin = get_admin(env).ok_or(AdminError::Unauthorized)?;
-    if admin != *caller {
-        return Err(AdminError::Unauthorized);
+    caller.require_auth();                    // Soroban cryptographic check
+    match get_admin(env) {
+        Some(admin) if admin == *caller => Ok(()),
+        Some(_)                         => Err(AdminError::Unauthorized),
+        None                            => Err(AdminError::NotInitialized),
     }
-    Ok(())
-}
-
-// Role-based verification
-pub fn require_role_or_admin(
-    env: &Env,
-    caller: &Address,
-    required_role: Symbol,
-) -> Result<(), AdminError> {
-    if get_admin(env).map(|a| a == *caller).unwrap_or(false) {
-        return Ok(());  // Super admin bypass
-    }
-
-    if has_role(env, required_role, caller.clone()) {
-        return Ok(());  // Has required role
-    }
-
-    Err(AdminError::Unauthorized)
 }
 ```
 
-**Role Types:**
-- **Super Admin**: Ultimate authority over the entire protocol
-- **Role-based**: Optional specific roles (e.g., "oracle_admin", "pause_admin")
+**Properties**:
+- Calls `require_auth()` first (cryptographic, non-repudiable).
+- Compares against the address stored under `AdminDataKey::Admin` in instance
+  storage — the single source of truth for who the admin is.
+- Returns `AdminError::NotInitialized` if no admin has been set, enabling clean
+  error surfaces instead of panics.
 
-### 3. Multisig Authorization
+### `caller.require_auth()` — Soroban built-in
 
-Critical operations require multisig approval:
+All privileged entry points call `caller.require_auth()` (directly or via
+`require_admin`). This is Stellar's cryptographic signature verification — it
+verifies that the transaction was signed by the private key corresponding to
+`caller`.
 
-```rust
-// Multisig admin verification
-pub fn ms_approve(env: &Env, approver: Address, proposal_id: u64) -> Result<(), GovernanceError> {
-    approve_proposal(env, approver, proposal_id)  // Includes auth check
-}
+---
 
-// Internal auth check in governance.rs
-let multisig_config: MultisigConfig = env
-    .storage()
-    .instance()
-    .get(&GovernanceDataKey::MultisigConfig)
-    .ok_or(GovernanceError::NotInitialized)?;
+## Admin Lifecycle
 
-if !multisig_config.admins.contains(&approver) {
-    return Err(GovernanceError::Unauthorized);
-}
+```
+set_admin(env, new_admin)           ← bootstrap only (no existing admin)
+propose_admin(env, caller, new)     ← two-step handover proposal
+accept_admin(env, caller)           ← new admin accepts
 ```
 
-**Multisig Properties:**
-- **Threshold-based**: Requires N-of-M approvals
-- **Proposal System**: Changes must be proposed and approved
-- **Time-delay**: Optional timelock for critical operations
-- **Audit Trail**: All approvals are recorded and emit events
+`propose_admin` / `accept_admin` implement a two-step handover to prevent
+accidental lockout. Neither step accepts the contract's own address as a target
+(`AdminError::CannotTransferToSelf`).
+
+Source: `src/admin.rs`
+
+---
+
+## Guardian Model
+
+Guardians are stored as a list of `Address` values plus a threshold integer in
+`GuardianConfig` (instance storage key `GovernanceDataKey::GuardianConfig`).
+They are managed by the protocol admin via `governance.rs`:
+
+| Function | Who can call | Effect |
+|---|---|---|
+| `add_guardian(caller, guardian)` | Admin | Appends guardian to list (idempotent) |
+| `remove_guardian(caller, guardian)` | Admin | Removes guardian from list |
+| `set_guardian_threshold(caller, threshold)` | Admin | Sets required approval count |
+
+Guardian checks (e.g., `start_recovery`, `approve_recovery`) load `GuardianConfig`
+from instance storage and verify membership inline — there is no exported
+`require_guardian` helper function.
+
+Source: `src/governance.rs`
+
+---
+
+## Governance Voting (`gov_can_vote`)
+
+`gov_can_vote(env, voter, proposal_id) -> bool` is implemented in
+`src/governance.rs`. It is a **query function on the governance module**, not a
+reusable authorization primitive. Modules should not call it to gate
+state-mutating operations; they should perform their own membership check against
+`GovernanceConfig.voters` or `GuardianConfig.guardians` instead.
+
+`gov_can_vote` returns `true` when all of:
+1. Governance is initialized (`GovernanceDataKey::Config` exists).
+2. The proposal exists and is active (not executed, cancelled, or expired).
+3. The voter is the admin, a configured voter, or a guardian.
+
+Source: `src/governance.rs`, tested in `src/gov_can_vote_test.rs`.
+
+---
 
 ## Authorization Patterns by Module
 
-### Governance Module (`governance.rs`)
+| Module | Admin gating | Guardian gating | Notes |
+|--------|-------------|-----------------|-------|
+| `admin.rs` | `require_admin` | — | Canonical admin check lives here |
+| `governance.rs` | inline `caller != config.admin` check | inline guardian list membership | Does not call `admin::require_admin` — uses its own `GovernanceConfig.admin` |
+| `governance.rs` — guardian mgmt | `caller != config.admin` | — | `add_guardian`, `remove_guardian`, `set_guardian_threshold` |
+| `withdraw.rs` | `require_admin` (for admin paths) | — | User withdrawals use `caller.require_auth()` only |
+| `repay.rs` | `require_admin` (for admin paths) | — | User repays use `caller.require_auth()` only |
+| `risk_management.rs` | `require_admin` | — | |
+| `oracle.rs` | `require_admin` | — | |
+| `bridge.rs` | `require_admin` + guardian freeze | Guardian freeze check | |
+| `flash_loan.rs` | `require_admin` (fee config) | — | Flash loan execution uses `caller.require_auth()` |
 
-| Function | Auth Pattern | Description |
-|-----------|-------------|-------------|
-| `initialize()` | `caller.require_auth()` | Admin initialization |
-| `add_guardian()` | Admin check + `require_auth()` | Only super admin can add guardians |
-| `remove_guardian()` | Admin check + `require_auth()` | Only super admin can remove guardians |
-| `set_guardian_threshold()` | Admin check + `require_auth()` | Only super admin can set threshold |
-| `start_recovery()` | Guardian check + `require_auth()` | Only guardians can initiate recovery |
-| `approve_recovery()` | Guardian check + `require_auth()` | Only guardians can approve recovery |
-| `execute_recovery()` | `caller.require_auth()` | Anyone can execute approved recovery |
+> **Known inconsistency**: Several modules re-implement their own inline admin
+> check (`if caller != stored_admin { return Err(Unauthorized) }`) instead of
+> calling `admin::require_admin`. This is a tracked maintenance issue — new
+> modules should always delegate to `admin::require_admin`.
 
-### Admin Module (`admin.rs`)
+---
 
-| Function | Auth Pattern | Description |
-|-----------|-------------|-------------|
-| `set_admin()` | Optional admin check | Bootstrap or admin transfer |
-| `require_admin()` | Address comparison | Super admin verification |
-| `grant_role()` | `require_admin()` | Only admin can grant roles |
-| `revoke_role()` | `require_admin()` | Only admin can revoke roles |
-| `require_role_or_admin()` | Role or admin check | Flexible authorization |
+## What Does NOT Exist
 
-### Multisig Module (`multisig.rs`)
+The following names are **not present** anywhere in `stellar-lend/contracts/hello-world/src/`:
 
-| Function | Auth Pattern | Description |
-|-----------|-------------|-------------|
-| `ms_set_admins()` | Bootstrap or admin check | Initialize or update admin set |
-| `ms_propose_set_min_cr()` | Admin check + `require_auth()` | Only admins can propose |
-| `ms_approve()` | Admin check + `require_auth()` | Only admins can approve |
-| `ms_execute()` | Admin check + `require_auth()` | Only admins can execute |
-| `set_ms_threshold()` | Admin check + `require_auth()` | Only admins can set threshold |
+- `require_role_or_admin` — no RBAC helper exists
+- `grant_role` / `revoke_role` — no role table exists
+- `has_role` — no role table exists
+- Any generic "role" concept beyond admin and guardian
 
-### Recovery Module (`recovery.rs`)
+If you are writing a new module and are tempted to add role-based logic, discuss
+the design in an issue first. For now, use `admin::require_admin` for admin
+operations and the inline guardian membership pattern for guardian operations.
 
-| Function | Auth Pattern | Description |
-|-----------|-------------|-------------|
-| `set_guardians()` | Multisig admin check | Only multisig admins can set guardians |
-| `add_guardian()` | Multisig admin check | Only multisig admins can add |
-| `remove_guardian()` | Multisig admin check | Only multisig admins can remove |
-| `set_guardian_threshold()` | Multisig admin check | Only multisig admins can set threshold |
-| `start_recovery()` | Guardian check + `require_auth()` | Only guardians can initiate |
-| `approve_recovery()` | Guardian check + `require_auth()` | Only guardians can approve |
-| `execute_recovery()` | `caller.require_auth()` | Anyone can execute approved |
+---
 
-### `gov_can_vote` eligibility rules
+## Threat Model Notes
 
-`gov_can_vote(voter, proposal_id)` returns `true` when **all** of the following hold:
+| Threat | Mitigation |
+|--------|-----------|
+| Unauthorized admin call | `require_auth()` + address comparison in `require_admin` |
+| Accidental admin lockout | Two-step `propose_admin` / `accept_admin` handover |
+| Compromised admin key | Guardian-based recovery via `start_recovery` / `approve_recovery` / `execute_recovery` (requires threshold guardians) |
+| Rogue guardian | Admin can remove guardians; threshold > 1 limits single-guardian power |
+| Threshold set to 0 or above guardian count | **Currently unguarded** — tracked in issue #1756; `set_guardian_threshold` accepts any `u32` without validation |
 
-1. Governance has been initialised (config is stored).
-2. The proposal exists and is **active** — not executed, cancelled, or expired.
-3. The voter is one of:
-   - The protocol **admin** (assigned at initialisation),
-   - A **configured voter** (stored in `GovernanceConfig.voters`),
-   - A **guardian** (stored in `GuardianConfig.guardians`).
+---
 
-**Role matrix**
+## Source Files
 
-| Role | Open proposal | Executed proposal | Nonexistent / expired proposal | No config |
-|---|---|---|---|---|
-| Admin | ✅ true | ❌ false | ❌ false | ❌ false |
-| Configured voter | ✅ true | ❌ false | ❌ false | ❌ false |
-| Guardian | ✅ true | ❌ false | ❌ false | ❌ false |
-| Stranger | ❌ false | ❌ false | ❌ false | ❌ false |
-| Removed voter | ❌ false | ❌ false | ❌ false | ❌ false |
-
-The matrix is enforced by an exhaustive test suite in `src/gov_can_vote_test.rs`.
-
-## Key Security Assumptions
-
-### Cryptographic Assumptions
-1. **Stellar Network Security**: Assumes Stellar's signature verification is secure
-2. **Key Management**: Assumes private keys are properly secured by administrators
-3. **Network Consensus**: Assumes transaction finality and ordering guarantees
-
-### Protocol Assumptions
-1. **Admin Trust Model**: Super admin has ultimate authority and is trusted
-2. **Multisig Distribution**: Multisig admins are independent and non-colluding
-3. **Guardian Distribution**: Social recovery guardians are independent and trustworthy
-4. **Role Separation**: Different roles are held by different entities
-
-### Operational Assumptions
-1. **Timely Response**: Guardians and multisig admins respond in reasonable time
-2. **Key Backup**: Administrators maintain secure backups of keys
-3. **Access Control**: Physical and operational access to admin keys is controlled
-
-## Threat Mitigation
-
-### 1. Unauthorized Access
-- **Mitigation**: `require_auth()` ensures cryptographic proof of identity
-- **Coverage**: All privileged operations require authentication
-
-### 2. Key Compromise
-- **Mitigation**: Multisig requires multiple compromised keys
-- **Recovery**: Social recovery mechanism for admin key rotation
-
-### 3. Rogue Admin
-- **Mitigation**: Guardian-based recovery can remove compromised admins
-- **Checks**: Critical operations may require multiple approvals
-
-### 4. Replay Attacks
-- **Mitigation**: Stellar network prevents transaction replay
-- **Additional**: Nonce and sequence numbers in transactions
-
-## Best Practices
-
-### For Administrators
-1. **Use Hardware Wallets**: Store admin keys in secure hardware
-2. **Multisig Distribution**: Distribute multisig keys across different entities
-3. **Regular Rotation**: Periodically rotate admin and guardian keys
-4. **Access Logging**: Monitor all administrative operations
-
-### For Developers
-1. **Consistent Auth**: Always use `require_auth()` for privileged operations
-2. **Principle of Least Privilege**: Grant minimum necessary permissions
-3. **Event Emission**: Emit events for all administrative actions
-4. **Input Validation**: Validate all parameters after authentication
-
-### For Protocol Operations
-1. **Threshold Planning**: Set appropriate multisig and guardian thresholds
-2. **Recovery Testing**: Regularly test social recovery mechanisms
-3. **Key Backup**: Maintain secure, distributed key backups
-4. **Incident Response**: Have procedures for key compromise scenarios
-
-## Cryptographic Primitive Support
-
-The StellarLend protocol supports both cryptographic primitives used by Stellar:
-
-### Ed25519
-- **Default**: Most common key type on Stellar
-- **Performance**: Fast signature verification
-- **Compatibility**: Widely supported by wallets and tools
-
-### secp256k1
-- **Compatibility**: Ethereum and Bitcoin ecosystem compatibility
-- **Hardware Support**: Broad hardware wallet support
-- **Interoperability**: Easier integration with existing infrastructure
-
-Both key types provide equivalent security guarantees for the protocol's authorization needs. The choice between them should be based on operational considerations rather than security differences.
-
-## Conclusion
-
-The StellarLend protocol uses a defense-in-depth approach to authorization:
-1. **Cryptographic Authentication** via Soroban's `require_auth()`
-2. **Role-Based Access Control** for operational flexibility
-3. **Multisig Protection** for critical operations
-4. **Social Recovery** for key compromise scenarios
-
-This combination provides strong security guarantees while maintaining operational flexibility and recoverability.
+- `src/admin.rs` — `require_admin`, admin handover, `AdminError`
+- `src/governance.rs` — `GovernanceError`, proposals, voting, guardian management,
+  `gov_can_vote`
+- `src/storage.rs` — `GuardianConfig` type definition

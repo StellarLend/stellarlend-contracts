@@ -140,13 +140,8 @@ pub struct ConfigUpdatedEvent {
 ///
 /// Topics: `("cross_asset", "config_updated")`
 pub fn emit_config_updated(env: &Env, event: ConfigUpdatedEvent) {
-    env.events().publish(
-        (
-            symbol_short!("crossAsst"),
-            symbol_short!("cfgUpd"),
-        ),
-        event,
-    );
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("cfgUpd")), event);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +221,8 @@ pub struct AssetConfig {
     /// Must be in 0..=38. Typical values: 6 (USD stablecoins), 8 (BTC/ETH
     /// feeds), 18 (18-decimal ERC-20-style tokens).
     pub price_decimals: u32,
+    /// Ledger timestamp when the asset price was last updated.
+    pub last_update_ts: u64,
 }
 
 /// A user's supply/debt balances for a single asset.
@@ -340,6 +337,24 @@ fn save_total_debt(env: &Env, key: &AssetKey, v: i128) {
         .set(&CrossAssetDataKey::TotalDebt(key.clone()), &v);
 }
 
+/// Subtract `amount` from a protocol-wide aggregate total, guarding against
+/// both true `i128` overflow and the result going negative.
+///
+/// Note: `i128::checked_sub` only returns `None` when the mathematical
+/// result would fall outside `i128`'s representable range (i.e. below
+/// `i128::MIN`) — a negative result like `50 - 80 = -30` is a perfectly
+/// valid `i128` value and would *not* be caught by `checked_sub` alone. A
+/// negative aggregate total is a protocol-invariant violation (it means the
+/// total drifted out of sync with per-user balances), so it must be treated
+/// as an error here rather than silently stored or panicking downstream.
+fn checked_sub_total(total: i128, amount: i128) -> Result<i128, CrossAssetError> {
+    let result = total.checked_sub(amount).ok_or(CrossAssetError::Overflow)?;
+    if result < 0 {
+        return Err(CrossAssetError::Overflow);
+    }
+    Ok(result)
+}
+
 fn load_asset_list(env: &Env) -> Vec<AssetKey> {
     env.storage()
         .persistent()
@@ -374,8 +389,10 @@ impl NoOpContract {}
 // Module initialization
 // ---------------------------------------------------------------------------
 
-/// Initialize the cross-asset module (no-op; reserved for future admin setup).
-pub fn initialize(_env: &Env, _admin: Address) -> Result<(), CrossAssetError> {
+/// Initialize the cross-asset module, setting the admin address for subsequent
+/// operations that require authorization.
+pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
+    set_admin(env, &admin);
     Ok(())
 }
 
@@ -411,7 +428,11 @@ pub fn initialize_asset(
     {
         return Err(CrossAssetError::AssetAlreadyExists);
     }
-    save_config(env, &key, &config);
+    let mut cfg = config;
+    if cfg.last_update_ts == 0 {
+        cfg.last_update_ts = env.ledger().timestamp();
+    }
+    save_config(env, &key, &cfg);
     let mut list = load_asset_list(env);
     list.push_back(key);
     save_asset_list(env, &list);
@@ -516,19 +537,38 @@ pub fn update_asset_config(
 }
 
 /// Store the latest oracle price for an asset (raw units, `price_decimals` scale).
+///
+/// # Access control
+/// `caller` must be the stored protocol admin, else
+/// [`CrossAssetError::Unauthorized`] is returned before any state is touched.
 pub fn update_asset_price(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     price: i128,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     if price <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
     cfg.price = price;
+    cfg.last_update_ts = env.ledger().timestamp();
     save_config(env, &key, &cfg);
     Ok(())
+}
+
+/// Return how old (in seconds) the stored oracle price for an asset is.
+pub fn get_asset_price_age(
+    env: &Env,
+    asset: Option<Address>,
+) -> Result<u64, CrossAssetError> {
+    let key = asset_key(asset);
+    let cfg = load_config(env, &key)?;
+    let now = env.ledger().timestamp();
+    Ok(now.saturating_sub(cfg.last_update_ts))
 }
 
 /// Return the configuration for a given asset.
@@ -740,7 +780,7 @@ pub fn cross_asset_withdraw(
     pos.supplied -= amount;
     save_user_supply(env, &key, &user, pos.supplied);
 
-    let total = load_total_supply(env, &key) - amount;
+    let total = checked_sub_total(load_total_supply(env, &key), amount)?;
     save_total_supply(env, &key, total);
 
     Ok(pos)
@@ -806,8 +846,118 @@ pub fn cross_asset_repay(
     pos.borrowed -= repay;
     save_user_debt(env, &key, &user, pos.borrowed);
 
-    let total = (load_total_debt(env, &key) - repay).max(0);
+    let total = checked_sub_total(load_total_debt(env, &key), repay)?;
     save_total_debt(env, &key, total);
 
     Ok(pos)
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: issue #1714 — aggregate total underflow
+// ---------------------------------------------------------------------------
+//
+// `cross_asset_withdraw`/`cross_asset_repay` used to subtract from the
+// protocol-wide `TotalSupply`/`TotalDebt` counters with the plain `-`
+// operator. If those aggregates ever drift below an individual user's
+// withdrawal/repay amount (e.g. due to desynced bookkeeping elsewhere), the
+// subtraction would go negative and, depending on build overflow-check
+// settings, could abort the transaction as an unrecoverable panic instead of
+// a typed error. These tests force that desync directly (bypassing the
+// public API, which cannot itself produce it under normal use) and assert a
+// clean `CrossAssetError::Overflow` is returned instead.
+#[cfg(test)]
+mod total_underflow_regression_test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn with_contract<F, T>(env: &Env, f: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        let contract_id = env.register(NoOpContract {}, ());
+        env.as_contract(&contract_id, f)
+    }
+
+    /// `cross_asset_withdraw` must return `Overflow`, not panic, when the
+    /// protocol-wide total is smaller than the user's own supplied balance
+    /// (a desync that should never happen but must fail safely if it does).
+    #[test]
+    fn withdraw_returns_overflow_when_total_supply_desynced_below_amount() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            // User appears to have 100 supplied, but the aggregate total was
+            // (incorrectly) only ever bumped to 50 — an inconsistent state.
+            save_user_supply(&env, &key, &user, 100);
+            save_total_supply(&env, &key, 50);
+
+            let result = cross_asset_withdraw(&env, user.clone(), None, 80);
+            assert_eq!(result, Err(CrossAssetError::Overflow));
+
+            // State must be left untouched by the failed call's total write —
+            // the per-user balance was already saved before the total check,
+            // matching pre-existing behaviour for this function.
+            assert_eq!(load_total_supply(&env, &key), 50);
+        });
+    }
+
+    /// `cross_asset_repay` must return `Overflow`, not panic or silently
+    /// clamp to zero, when the protocol-wide total debt is smaller than the
+    /// amount being repaid.
+    #[test]
+    fn repay_returns_overflow_when_total_debt_desynced_below_repay() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            // User appears to owe 100, but total debt was only ever bumped
+            // to 50 — an inconsistent state.
+            save_user_debt(&env, &key, &user, 100);
+            save_total_debt(&env, &key, 50);
+
+            let result = cross_asset_repay(&env, user.clone(), None, 80);
+            assert_eq!(result, Err(CrossAssetError::Overflow));
+        });
+    }
+
+    /// Normal (synced) withdraw is unaffected by the fix: the total is
+    /// decremented exactly as before.
+    #[test]
+    fn withdraw_normal_path_unaffected() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            save_user_supply(&env, &key, &user, 100);
+            save_total_supply(&env, &key, 100);
+
+            let pos = cross_asset_withdraw(&env, user.clone(), None, 40).unwrap();
+            assert_eq!(pos.supplied, 60);
+            assert_eq!(load_total_supply(&env, &key), 60);
+        });
+    }
+
+    /// Normal (synced) repay is unaffected by the fix, including the exact
+    /// case that used to rely on `.max(0)`: total debt reaching exactly zero
+    /// still succeeds without error.
+    #[test]
+    fn repay_normal_path_reaching_exact_zero_still_succeeds() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            save_user_debt(&env, &key, &user, 100);
+            save_total_debt(&env, &key, 80);
+
+            // repay = min(80, 100) = 80; total = 80 - 80 = 0, no error.
+            let pos = cross_asset_repay(&env, user.clone(), None, 80).unwrap();
+            assert_eq!(pos.borrowed, 20);
+            assert_eq!(load_total_debt(&env, &key), 0);
+        });
+    }
 }

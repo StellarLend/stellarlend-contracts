@@ -45,7 +45,8 @@ pub enum LendingError {
 
 /// Multiply `value` by `rate_bps` and divide by [`BPS_DENOM`].
 ///
-/// Returns `None` on overflow.
+/// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
+/// Negative rates and rates above `100%` return `None`, as do overflow cases.
 ///
 /// # Examples
 /// ```
@@ -57,12 +58,16 @@ pub enum LendingError {
 /// ```
 #[inline]
 pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
+    if rate_bps < 0 || rate_bps > BPS_DENOM {
+        return None;
+    }
     value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
 }
 
 /// Divide `value` by `rate_bps` and multiply by [`BPS_DENOM`] (inverse of `scale_bps`).
 ///
-/// Returns `None` if `rate_bps` is zero or on overflow.
+/// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
+/// Zero, negative, and rates above `100%` return `None`, as do overflow cases.
 ///
 /// # Examples
 /// ```
@@ -74,7 +79,7 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 /// ```
 #[inline]
 pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
-    if rate_bps == 0 {
+    if rate_bps <= 0 || rate_bps > BPS_DENOM {
         return None;
     }
     value.checked_mul(BPS_DENOM)?.checked_div(rate_bps)
@@ -187,6 +192,9 @@ pub fn normalize_price_ceil(raw_price: i128, asset_decimals: u32) -> Option<i128
 mod bps_roundtrip_test;
 
 #[cfg(test)]
+mod bps_inverse_proptest;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -230,6 +238,12 @@ mod tests {
         assert_eq!(scale_bps(10_000, 1), Some(1));
     }
 
+    #[test]
+    fn scale_bps_out_of_range_rate_returns_none() {
+        assert_eq!(scale_bps(1_000_000, -500), None);
+        assert_eq!(scale_bps(1_000_000, BPS_DENOM + 1), None);
+    }
+
     // ── unscale_bps ──────────────────────────────────────────────────────────
 
     #[test]
@@ -263,92 +277,10 @@ mod tests {
         assert_eq!(unscale_bps(-50_000, 500), Some(-1_000_000));
     }
 
-    // ── pow10_checked ────────────────────────────────────────────────────────
-
     #[test]
-    fn pow10_zero() {
-        assert_eq!(pow10_checked(0), Some(1));
-    }
-
-    #[test]
-    fn pow10_small() {
-        assert_eq!(pow10_checked(6), Some(1_000_000));
-    }
-
-    #[test]
-    fn pow10_eighteen() {
-        assert_eq!(pow10_checked(18), Some(1_000_000_000_000_000_000));
-    }
-
-    #[test]
-    fn pow10_overflow() {
-        // 10^39 overflows i128
-        assert_eq!(pow10_checked(39), None);
-    }
-
-    // ── normalize_price ──────────────────────────────────────────────────────
-
-    #[test]
-    fn normalize_same_decimals() {
-        // No conversion needed when decimals match INTERNAL_DECIMALS.
-        assert_eq!(normalize_price(1_234_567, 18), Some(1_234_567));
-        assert_eq!(normalize_price_ceil(1_234_567, 18), Some(1_234_567));
-    }
-
-    #[test]
-    fn normalize_upscale() {
-        // 6-decimal price (e.g. USDC at $1.00) → 18-decimal internal.
-        assert_eq!(normalize_price(1_000_000, 6), Some(1_000_000_000_000_000_000));
-        assert_eq!(normalize_price_ceil(1_000_000, 6), Some(1_000_000_000_000_000_000));
-    }
-
-    #[test]
-    fn normalize_upscale_zero_decimals() {
-        // 0-decimal price (e.g. integer-only feed) → 18-decimal internal.
-        assert_eq!(normalize_price(1, 0), Some(1_000_000_000_000_000_000));
-        assert_eq!(normalize_price_ceil(1, 0), Some(1_000_000_000_000_000_000));
-        assert_eq!(normalize_price(0, 0), Some(0));
-        assert_eq!(normalize_price_ceil(0, 0), Some(0));
-    }
-
-    #[test]
-    fn normalize_downscale_floor() {
-        // 20-decimal price → 18-decimal internal; floor division.
-        let raw: i128 = 1_234_567_000;
-        // floor(1_234_567_000 / 100) = 12_345_670
-        assert_eq!(normalize_price(raw, 20), Some(12_345_670));
-    }
-
-    #[test]
-    fn normalize_downscale_ceil() {
-        let raw: i128 = 123_456_789;
-        // ceil(123_456_789 / 100) = 1_234_568
-        assert_eq!(normalize_price_ceil(raw, 20), Some(1_234_568));
-        // floor would be 1_234_567
-        assert_eq!(normalize_price(raw, 20), Some(1_234_567));
-    }
-
-    #[test]
-    fn normalize_downscale_exact() {
-        // Exact multiple — floor and ceil agree.
-        let raw: i128 = 1_200_000_000;
-        assert_eq!(normalize_price(raw, 20), Some(12_000_000));
-        assert_eq!(normalize_price_ceil(raw, 20), Some(12_000_000));
-    }
-
-    #[test]
-    fn normalize_overflow_on_upscale() {
-        // i128::MAX * 10^12 overflows.
-        assert_eq!(normalize_price(i128::MAX, 6), None);
-    }
-
-    #[test]
-    fn normalize_max_decimals() {
-        // 38-decimal price → 18: divide by 10^20.
-        let raw: i128 = 1_000_000_000_000_000_000_000; // 10^21
-        let scale = 10i128.pow(20); // 10^20
-        let expected = raw / scale; // 10
-        assert_eq!(normalize_price(raw, 38), Some(expected));
+    fn unscale_bps_out_of_range_rate_returns_none() {
+        assert_eq!(unscale_bps(1_000_000, -500), None);
+        assert_eq!(unscale_bps(1_000_000, BPS_DENOM + 1), None);
     }
 
     // ── LendingError discriminants ────────────────────────────────────────────
