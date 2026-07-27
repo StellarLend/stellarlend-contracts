@@ -226,15 +226,48 @@ stellarlend-contracts/
 
 ## Contract Modules
 
-The StellarLend contract is organized into the following modules:
+This workspace contains two separate contract crates whose module layouts should not be
+conflated: the canonical `lending` contract, and the `hello-world` contract, which is a
+larger, mostly-independent parallel implementation, not a "minimal placeholder" for `lending`.
 
-- **Core Lending** (`deposit.rs`, `borrow.rs`, `repay.rs`, `withdraw.rs`): Deposit collateral, borrow assets, repay debt, and withdraw collateral
-- **Liquidation** (`liquidate.rs`): Partial liquidation with close factor and liquidation incentives
-- **Oracle** (`oracle.rs`): Price feed integration with validation, fallback, and caching
-- **Governance** (`governance.rs`): Admin controls, multisig, and parameter management
-- **AMM Integration** (`amm.rs`): Automated market maker hooks for swaps and liquidity
-- **Flash Loans** (`flash_loan.rs`): Configurable flash loan functionality
-- **Analytics** (`analytics.rs`): Protocol and user metrics, activity feeds, and reporting
+### `lending` (`stellar-lend/contracts/lending/src/`) — the canonical contract
+
+Core lending logic (deposit, withdraw, borrow, repay, liquidation, pausing, oracle price
+handling, cross-asset positions, etc.) lives directly in `lib.rs` as `#[contractimpl]`
+functions on `LendingContract` — there are no separate `deposit.rs`/`borrow.rs`/`repay.rs`/
+`withdraw.rs`/`liquidate.rs`/`oracle.rs`/`governance.rs`/`amm.rs`/`flash_loan.rs`/`analytics.rs`
+files in this crate. The supporting modules that do exist are:
+
+- **`debt.rs`**: Debt position accounting and interest accrual (global borrow-index model plus legacy elapsed-time accrual).
+- **`cross_asset.rs`**: Multi-asset collateral/debt storage helpers and cross-asset health-factor computation.
+- **`rate_model.rs`**: Kink-model interest rate curve, plus rate smoothing/hysteresis.
+- **`rounding_strategy.rs`**: Configurable-rounding interest calculator used by `debt.rs`.
+- **`math.rs`**: Shared checked-arithmetic helpers.
+- **`events.rs`**: Versioned event structs/emitters for deposit/withdraw/borrow/repay/liquidate.
+- **`upgrade.rs`**: Self-contained timelocked multisig upgrade governance (propose/approve/execute).
+
+### `hello-world` (`stellar-lend/contracts/hello-world/src/`) — a separate, parallel contract
+
+Despite its name, this is a large, independently-evolving contract with its own
+deposit/borrow/repay/withdraw/liquidate/oracle/governance/AMM/bridge logic. It shares no
+Cargo dependency and no code with `lending`, and several of its files are still one-line
+stubs rather than real implementations:
+
+- **Implemented**: `oracle.rs` (primary/fallback oracle + AMM-TWAP fallback), `governance.rs`
+  (DAO-style proposal/vote/queue/execute + guardian recovery), `amm.rs` / `amm_twap.rs`
+  (AMM reserve and TWAP bookkeeping), `bridge.rs` (guardian-gated freeze switch),
+  `cross_asset.rs` (multi-asset lending), `risk_management.rs` / `risk_params.rs`
+  (collateral ratio, liquidation threshold, close factor config), `interest_rate.rs`,
+  `admin.rs`, `withdraw.rs`, `repay.rs`, `flash_loan.rs`.
+- **Stubs, not yet implemented**: `deposit.rs`, `borrow.rs`, `liquidate.rs`, `analytics.rs`,
+  `multisig.rs`, `recovery.rs` (one-line `// Stub module` placeholders), plus `reentrancy.rs`
+  and `reserve.rs`, which are currently empty files. The crate's own
+  bare-bones `deposit`/`withdraw`/`borrow`/`repay` demo entrypoints (used by its basic test
+  suite) are implemented directly in `hello-world`'s own `lib.rs`, independently of these stub
+  files.
+
+If you're integrating with StellarLend, `lending` is the contract you want — see its own
+[README](stellar-lend/contracts/lending/README.md) for the full, accurate interface.
 
 ---
 

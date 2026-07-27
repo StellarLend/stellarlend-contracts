@@ -56,13 +56,7 @@ fn setup() -> (
 /// requires the position to be healthy at borrow time (collateral * 8000 ≥
 /// debt * 10000).  An unhealthy position can only be created by direct
 /// storage writes (or by price moves / interest accrual in an e2e setting).
-fn seed_unhealthy(
-    env: &Env,
-    id: &Address,
-    user: &Address,
-    collateral: i128,
-    debt: i128,
-) {
+fn seed_unhealthy(env: &Env, id: &Address, user: &Address, collateral: i128, debt: i128) {
     env.as_contract(id, || {
         env.storage()
             .persistent()
