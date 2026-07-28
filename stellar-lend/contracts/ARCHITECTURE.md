@@ -221,7 +221,7 @@ Caveats:
 
 Important existing bounds include:
 
-- `lending` close factor: `1..=10000`
+- `lending` close factor: `1..=7500`
 - `lending` liquidation incentive: `0..=10000`
 - `lending` flash-loan fee: `0..=1000`
 - `amm` slippage bounded by configured `max_slippage`

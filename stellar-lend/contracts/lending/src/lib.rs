@@ -169,6 +169,10 @@ pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 1000;
 /// Caps the liquidation bonus at 50 % so a misconfigured value cannot seize
 /// an outsized share of a borrower's collateral on top of the repaid debt.
 pub const MAX_LIQUIDATION_INCENTIVE_BPS: i128 = 5000;
+/// Upper bound accepted by [`LendingContract::set_close_factor_bps`].
+/// Caps the close factor at 75 % so a single liquidation cannot
+/// extinguish a borrower's entire debt in one block.
+pub const MAX_CLOSE_FACTOR_BPS: i128 = 7500;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
@@ -426,7 +430,7 @@ pub enum LendingError {
     WriteOffExceedsBadDebt = 6002,
     /// `set_liquidation_threshold_bps` called with a value outside `[0, 10000]`.
     InvalidLiquidationThresholdBps = 7000,
-    /// `set_close_factor_bps` called with a value outside `(0, 10000]`.
+    /// `set_close_factor_bps` called with a value outside `(0, 7500]`.
     InvalidCloseFactorBps = 7001,
     /// `set_liquidation_incentive_bps` called with a value outside
     /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
@@ -862,10 +866,10 @@ impl LendingContract {
     }
 
     /// Admin-only setter for close factor bps.
-    /// Must be in (0, 10000].
+    /// Must be in (0, 7500].
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
         assert_admin(&env);
-        if close_factor_bps <= 0 || close_factor_bps > 10000 {
+        if close_factor_bps <= 0 || close_factor_bps > MAX_CLOSE_FACTOR_BPS {
             return Err(LendingError::InvalidFeeBps);
         }
         env.storage()
@@ -1792,16 +1796,16 @@ impl LendingContract {
     /// Set the close-factor cap in basis points (admin-only).
     ///
     /// The close factor bounds the maximum share of a borrower's debt that a
-    /// single `liquidate` call may extinguish. Must be in `(0, 10000]`
-    /// (greater than 0 %, at most 100 %).
+    /// single `liquidate` call may extinguish. Must be in `(0, 7500]`
+    /// (greater than 0 %, at most 75 %).
     ///
     /// # Errors
     /// - [`LendingError::InvalidCloseFactorBps`] if `close_factor_bps <= 0`
-    ///   or `close_factor_bps > 10000`.
+    ///   or `close_factor_bps > 7500`.
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
-        if close_factor_bps <= 0 || close_factor_bps > BPS_DENOM {
+        if close_factor_bps <= 0 || close_factor_bps > MAX_CLOSE_FACTOR_BPS {
             return Err(LendingError::InvalidCloseFactorBps);
         }
         env.storage()
