@@ -3819,3 +3819,5 @@ pub(crate) mod test {
 mod max_borrow_proptest;
 #[cfg(test)]
 mod compound_interest_proptest;
+#[cfg(test)]
+mod cross_asset_borrow_cap_test;
