@@ -162,12 +162,12 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 - `deposit_collateral(user, asset, amount)` → `Result<(), BorrowError>`
 
 ### View Functions (Read-Only)
-- `get_user_position(user)` → `UserPositionSummary`
+- `get_position(user)` / `get_user_position(user)` → `PositionSummary`
 - `get_health_factor(user)` → `i128`
 - `get_collateral_value(user)` → `i128`
 - `get_debt_value(user)` → `i128`
 - `get_max_liquidatable_amount(user)` → `i128`
-- `get_liquidation_incentive_amount(repay_amount)` → `i128`
+- `get_liquidation_incentive_bps()` → `i128`
 - `get_emergency_state()` → `EmergencyState`
 - `get_performance_stats()` → `Vec<u64>`
 - `get_price(asset)` → `Result<i128, OracleError>`

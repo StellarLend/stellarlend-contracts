@@ -15,8 +15,8 @@ where
 }
 
 fn init(env: &Env, admin: Address, total_deposits: i128, total_borrows: i128) {
-    initialize_interest_rate_config(env, admin).unwrap();
-    set_protocol_totals(env, total_deposits, total_borrows).unwrap();
+    initialize_interest_rate_config(env).unwrap();
+    set_protocol_totals(env, admin, total_deposits, total_borrows).unwrap();
 }
 
 fn assert_within_bounds(utilization: i128) {
@@ -53,7 +53,7 @@ fn calculate_utilization_clamps_to_full_utilization_when_borrows_cover_deposits(
         assert_eq!(equal_case, BASIS_POINTS_SCALE);
         assert_within_bounds(equal_case);
 
-        set_protocol_totals(&env, 1_000, 1_500).unwrap();
+        set_protocol_totals(&env, admin.clone(), 1_000, 1_500).unwrap();
 
         let over_borrow_case = calculate_utilization(&env).unwrap();
         assert_eq!(over_borrow_case, BASIS_POINTS_SCALE);
@@ -76,7 +76,7 @@ fn calculate_utilization_matches_exact_bps_for_common_ratios() {
         ];
 
         for (deposits, borrows, expected) in cases {
-            set_protocol_totals(&env, deposits, borrows).unwrap();
+            set_protocol_totals(&env, admin.clone(), deposits, borrows).unwrap();
 
             let utilization = calculate_utilization(&env).unwrap();
             assert_eq!(utilization, expected);

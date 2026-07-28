@@ -39,3 +39,4 @@ lerna-debug.log*
 .soroban/
 
 test_snapshots/
+.opencode

@@ -7,6 +7,8 @@
 
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env};
 
+use crate::admin;
+
 /// Number of basis points representing 100%.
 pub const BASIS_POINTS_SCALE: i128 = 10_000;
 
@@ -20,8 +22,6 @@ pub const DEFAULT_MAX_RATE_BPS: i128 = i128::MAX;
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InterestRateDataKey {
-    /// Address authorized to mutate the interest-rate configuration.
-    Admin,
     /// Persisted [`InterestRateConfig`].
     InterestRateConfig,
     /// Protocol-wide supplied amount used for utilization.
@@ -103,11 +103,11 @@ impl Default for InterestRateConfig {
     }
 }
 
-/// Initialize the module with default rate parameters and an admin.
+/// Initialize the module with default rate parameters.
 ///
 /// Defaults intentionally preserve previous unclamped behaviour: floor `0` and
 /// ceiling `i128::MAX`, until an admin explicitly configures a narrower band.
-pub fn initialize_interest_rate_config(env: &Env, admin: Address) -> Result<(), InterestRateError> {
+pub fn initialize_interest_rate_config(env: &Env) -> Result<(), InterestRateError> {
     if env
         .storage()
         .persistent()
@@ -116,9 +116,6 @@ pub fn initialize_interest_rate_config(env: &Env, admin: Address) -> Result<(), 
         return Err(InterestRateError::AlreadyInitialized);
     }
 
-    env.storage()
-        .persistent()
-        .set(&InterestRateDataKey::Admin, &admin);
     env.storage().persistent().set(
         &InterestRateDataKey::InterestRateConfig,
         &InterestRateConfig::default(),
@@ -192,9 +189,11 @@ pub fn update_interest_rate_config(
 /// accounting in a module separate from the rate model.
 pub fn set_protocol_totals(
     env: &Env,
+    admin: Address,
     total_deposits: i128,
     total_borrows: i128,
 ) -> Result<(), InterestRateError> {
+    require_rate_admin(env, &admin)?;
     if total_deposits < 0 || total_borrows < 0 {
         return Err(InterestRateError::InvalidParameter);
     }
@@ -375,16 +374,10 @@ pub fn clamp_rate(rate_bps: i128, min_rate_bps: i128, max_rate_bps: i128) -> i12
 }
 
 fn require_rate_admin(env: &Env, caller: &Address) -> Result<(), InterestRateError> {
-    caller.require_auth();
-    let admin = env
-        .storage()
-        .persistent()
-        .get::<InterestRateDataKey, Address>(&InterestRateDataKey::Admin)
-        .ok_or(InterestRateError::NotInitialized)?;
-    if &admin != caller {
-        return Err(InterestRateError::Unauthorized);
-    }
-    Ok(())
+    admin::require_admin(env, caller).map_err(|e| match e {
+        crate::admin::AdminError::NotInitialized => InterestRateError::NotInitialized,
+        _ => InterestRateError::Unauthorized,
+    })
 }
 
 fn validate_config(config: &InterestRateConfig) -> Result<(), InterestRateError> {

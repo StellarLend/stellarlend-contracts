@@ -12,8 +12,8 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::cross_asset::{
     cross_asset_borrow, cross_asset_deposit, cross_asset_repay, get_asset_config_by_address,
-    get_user_position_summary, initialize_asset, update_asset_config, AssetConfig, CrossAssetError,
-    MAX_COLLATERAL_FACTOR_BPS,
+    get_user_position_summary, initialize_asset, set_admin, update_asset_config, AssetConfig,
+    CrossAssetError, MAX_COLLATERAL_FACTOR_BPS,
 };
 
 // ---------------------------------------------------------------------------
@@ -33,6 +33,13 @@ where
     env.as_contract(&contract_id, f)
 }
 
+/// Register an admin and return the admin address.
+fn setup_admin(env: &Env) -> soroban_sdk::Address {
+    let admin = soroban_sdk::Address::generate(env);
+    crate::cross_asset::set_admin(env, &admin);
+    admin
+}
+
 fn asset_config(price: i128, price_decimals: u32, factor_bps: i128) -> AssetConfig {
     AssetConfig {
         collateral_factor_bps: factor_bps,
@@ -43,6 +50,7 @@ fn asset_config(price: i128, price_decimals: u32, factor_bps: i128) -> AssetConf
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -56,14 +64,11 @@ fn borrow_only_asset_config(price: i128, price_decimals: u32, factor_bps: i128) 
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
-fn collateral_only_asset_config(
-    price: i128,
-    price_decimals: u32,
-    factor_bps: i128,
-) -> AssetConfig {
+fn collateral_only_asset_config(price: i128, price_decimals: u32, factor_bps: i128) -> AssetConfig {
     AssetConfig {
         collateral_factor_bps: factor_bps,
         liquidation_threshold: 8000,
@@ -73,6 +78,7 @@ fn collateral_only_asset_config(
         can_borrow: false,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -84,24 +90,22 @@ fn collateral_only_asset_config(
 #[test]
 fn test_init_rejects_negative_factor() {
     let env = make_env();
-    let result = initialize_asset(
-        &env,
-        None,
-        asset_config(1_000_000, 6, -1),
-    );
-    assert_eq!(result, Err(CrossAssetError::InvalidCollateralFactor));
+    with_contract(&env, || {
+        let admin = setup_admin(&env);
+        let result = initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, -1));
+        assert_eq!(result, Err(CrossAssetError::InvalidCollateralFactor));
+    });
 }
 
 /// `collateral_factor_bps` above 10_000 must be rejected at the init call.
 #[test]
 fn test_init_rejects_factor_above_max() {
     let env = make_env();
-    let result = initialize_asset(
-        &env,
-        None,
-        asset_config(1_000_000, 6, MAX_COLLATERAL_FACTOR_BPS + 1),
-    );
-    assert_eq!(result, Err(CrossAssetError::InvalidCollateralFactor));
+    with_contract(&env, || {
+        let admin = setup_admin(&env);
+        let result = initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, MAX_COLLATERAL_FACTOR_BPS + 1));
+        assert_eq!(result, Err(CrossAssetError::InvalidCollateralFactor));
+    });
 }
 
 /// Boundary: factor = 0 is accepted (zero-capacity tier).
@@ -109,7 +113,8 @@ fn test_init_rejects_factor_above_max() {
 fn test_init_accepts_zero_factor_boundary() {
     let env = make_env();
     with_contract(&env, || {
-        let result = initialize_asset(&env, None, asset_config(1_000_000, 6, 0));
+        let admin = setup_admin(&env);
+        let result = initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, 0));
         assert_eq!(result, Ok(()));
     });
 }
@@ -119,7 +124,8 @@ fn test_init_accepts_zero_factor_boundary() {
 fn test_init_accepts_max_factor_boundary() {
     let env = make_env();
     with_contract(&env, || {
-        let result = initialize_asset(&env, None, asset_config(1_000_000, 6, 10_000));
+        let admin = setup_admin(&env);
+        let result = initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, 10_000));
         assert_eq!(result, Ok(()));
     });
 }
@@ -129,14 +135,37 @@ fn test_init_accepts_max_factor_boundary() {
 fn test_update_rejects_out_of_range_factor() {
     let env = make_env();
     with_contract(&env, || {
-        initialize_asset(&env, None, asset_config(1_000_000, 6, 7500)).unwrap();
+        let admin = setup_admin(&env);
+        initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, 7500)).unwrap();
 
         // 10_001 → reject
-        let r = update_asset_config(&env, None, Some(MAX_COLLATERAL_FACTOR_BPS + 1), None, None, None, None, None);
+        let r = update_asset_config(
+            &env,
+            &admin,
+            None,
+            Some(MAX_COLLATERAL_FACTOR_BPS + 1),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(r, Err(CrossAssetError::InvalidCollateralFactor));
 
         // −1 → reject
-        let r = update_asset_config(&env, None, Some(-1), None, None, None, None, None);
+        let r = update_asset_config(
+            &env,
+            &admin,
+            None,
+            Some(-1),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(r, Err(CrossAssetError::InvalidCollateralFactor));
 
         // unchanged on disk
@@ -155,10 +184,11 @@ fn test_update_factor_takes_effect_immediately() {
     let borrow_asset = Address::generate(&env);
 
     with_contract(&env, || {
+        let admin = setup_admin(&env);
         // Collateral at 50 % LTV, $1 per unit. Borrow asset also $1 per unit.
-        initialize_asset(&env, None, asset_config(1_000_000, 6, 5_000)).unwrap();
-        initialize_asset(&env, Some(borrow_asset.clone()), borrow_only_asset_config(1_000_000, 6, 5_000))
-            .unwrap();
+        initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, 5_000)).unwrap();
+        initialize_asset(&env, &admin, Some(borrow_asset.clone()), borrow_only_asset_config(1_000_000, 6, 5_000))
+        .unwrap();
 
         cross_asset_deposit(&env, user.clone(), None, 100).unwrap();
 
@@ -168,13 +198,37 @@ fn test_update_factor_takes_effect_immediately() {
         assert_eq!(s.borrow_capacity, 50);
 
         // Cut factor to 25 % — capacity should drop to 25.
-        update_asset_config(&env, None, Some(2_500), None, None, None, None, None).unwrap();
+        update_asset_config(
+            &env,
+            &admin,
+            None,
+            Some(2_500),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let s2 = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(s2.borrow_capacity, 25);
         assert_eq!(s2.total_collateral_value, 100);
 
         // Raise factor to 80 % — capacity rises to 80.
-        update_asset_config(&env, None, Some(8_000), None, None, None, None, None).unwrap();
+        update_asset_config(
+            &env,
+            &admin,
+            None,
+            Some(8_000),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let s3 = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(s3.borrow_capacity, 80);
     });
@@ -201,11 +255,7 @@ fn test_full_factor_no_regression() {
             asset_config(1_000_000, 6, 10_000), // 100 %
         )
         .unwrap();
-        initialize_asset(
-            &env,
-            Some(borrow_asset.clone()),
-            borrow_only_asset_config(1_000_000, 6, 10_000),
-        )
+        initialize_asset(&env, &admin, Some(borrow_asset.clone()), borrow_only_asset_config(1_000_000, 6, 10_000))
         .unwrap();
 
         cross_asset_deposit(&env, user.clone(), None, 100).unwrap();
@@ -241,11 +291,7 @@ fn test_zero_factor_asset_no_capacity() {
             collateral_only_asset_config(1_000_000, 6, 0), // 0 %
         )
         .unwrap();
-        initialize_asset(
-            &env,
-            Some(borrow_asset.clone()),
-            borrow_only_asset_config(1_000_000, 6, 10_000),
-        )
+        initialize_asset(&env, &admin, Some(borrow_asset.clone()), borrow_only_asset_config(1_000_000, 6, 10_000))
         .unwrap();
 
         cross_asset_deposit(&env, user.clone(), None, 1000).unwrap();
@@ -273,25 +319,12 @@ fn test_mixed_factor_portfolio() {
 
     with_contract(&env, || {
         // Blue-chip: $1 / unit, 90 %
-        initialize_asset(
-            &env,
-            None,
-            asset_config(1_000_000, 6, 9_000),
-        )
-        .unwrap();
+        initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, 9_000)).unwrap();
         // Long-tail: $1 / unit, 40 %
-        initialize_asset(
-            &env,
-            Some(blue_chip.clone()),
-            asset_config(1_000_000, 6, 4_000),
-        )
+        initialize_asset(&env, &admin, Some(blue_chip.clone()), asset_config(1_000_000, 6, 4_000))
         .unwrap();
         // Borrow asset (configured to allow borrow)
-        initialize_asset(
-            &env,
-            Some(borrow_asset.clone()),
-            borrow_only_asset_config(1_000_000, 6, 0),
-        )
+        initialize_asset(&env, &admin, Some(borrow_asset.clone()), borrow_only_asset_config(1_000_000, 6, 0))
         .unwrap();
 
         // Note: we deposit using the `None` (Native) slot for the first
@@ -351,11 +384,7 @@ fn test_factor_weighting_arithmetic_reference() {
         )
         .unwrap();
         // Borrow side.
-        initialize_asset(
-            &env,
-            Some(borrow_asset.clone()),
-            borrow_only_asset_config(1_000_000, 6, 0),
-        )
+        initialize_asset(&env, &admin, Some(borrow_asset.clone()), borrow_only_asset_config(1_000_000, 6, 0))
         .unwrap();
 
         // Deposit 100 units each → values: 100×$1=100, 50×$2=100, 20×$5=100.
@@ -393,8 +422,9 @@ fn test_factor_does_not_change_total_collateral_value() {
     let user = Address::generate(&env);
 
     with_contract(&env, || {
+        let admin = setup_admin(&env);
         // Same collateral at 100 % vs 0 %.
-        initialize_asset(&env, None, asset_config(1_000_000, 6, 10_000)).unwrap();
+        initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, 10_000)).unwrap();
         cross_asset_deposit(&env, user.clone(), None, 7).unwrap();
 
         let s_full = get_user_position_summary(&env, &user).unwrap();
@@ -402,7 +432,19 @@ fn test_factor_does_not_change_total_collateral_value() {
         assert_eq!(s_full.borrow_capacity, 7);
 
         // Flip to 0 %.
-        update_asset_config(&env, None, Some(0), None, None, None, None, None).unwrap();
+        update_asset_config(
+            &env,
+            &admin,
+            None,
+            Some(0),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let s_zero = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(s_zero.total_collateral_value, 7); // unchanged
         assert_eq!(s_zero.borrow_capacity, 0); // weighted to zero
@@ -418,7 +460,7 @@ fn test_factor_50bps_small_collateral() {
     let user = Address::generate(&env);
 
     with_contract(&env, || {
-        initialize_asset(&env, None, asset_config(1_000_000, 6, 50)).unwrap();
+        initialize_asset(&env, &admin, None, asset_config(1_000_000, 6, 50)).unwrap();
         cross_asset_deposit(&env, user.clone(), None, 100).unwrap();
         let s = get_user_position_summary(&env, &user).unwrap();
         // 100 × 50 / 10_000 = 0  (integer division)

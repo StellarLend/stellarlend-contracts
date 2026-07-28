@@ -118,28 +118,6 @@ pub struct FlashLoanRepaidEvent {
     pub timestamp: u64,
 }
 
-/// Emitted when a liquidator liquidates an undercollateralized position.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LiquidateEvent {
-    /// Schema version for safe decoding across upgrades.
-    pub schema_version: u32,
-    /// Address of the liquidator executing the liquidation.
-    pub liquidator: Address,
-    /// Address of the borrower being liquidated.
-    pub borrower: Address,
-    /// Amount of debt repaid by the liquidator.
-    pub repaid_debt: i128,
-    /// Amount of collateral seized by the liquidator.
-    pub seized_collateral: i128,
-    /// Borrower's remaining debt after liquidation.
-    pub borrower_remaining_debt: i128,
-    /// Borrower's remaining collateral after liquidation.
-    pub borrower_remaining_collateral: i128,
-    /// Timestamp of the liquidation (ledger timestamp).
-    pub timestamp: u64,
-}
-
 /// Emit the schema version event during contract initialization.
 pub fn emit_schema_version(env: &Env) {
     let event = SchemaVersionEvent {
@@ -235,28 +213,4 @@ pub fn emit_flash_loan_repaid(env: &Env, payer: &Address, asset: &Address, amoun
     };
     env.events()
         .publish((Symbol::new(env, "FlashLoanRepaidEvent"),), event);
-}
-
-/// Emit a liquidate event.
-pub fn emit_liquidate(
-    env: &Env,
-    liquidator: &Address,
-    borrower: &Address,
-    repaid_debt: i128,
-    seized_collateral: i128,
-    borrower_remaining_debt: i128,
-    borrower_remaining_collateral: i128,
-) {
-    let event = LiquidateEvent {
-        schema_version: EVENT_SCHEMA_VERSION,
-        liquidator: liquidator.clone(),
-        borrower: borrower.clone(),
-        repaid_debt,
-        seized_collateral,
-        borrower_remaining_debt,
-        borrower_remaining_collateral,
-        timestamp: env.ledger().timestamp(),
-    };
-    env.events()
-        .publish((Symbol::new(env, "LiquidateEvent"),), event);
 }
