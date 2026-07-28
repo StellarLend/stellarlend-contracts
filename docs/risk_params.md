@@ -12,8 +12,9 @@ This document provides a consolidated view of all protocol risk parameters, incl
 | **Debt Ceiling** | Maximum total protocol debt allowed across all users | **1 trillion** | > 0 | `set_debt_ceiling(ceiling)` | Limits protocol exposure and blast radius if price oracle fails |
 | **Deposit Cap** | Maximum total protocol deposits allowed across all users | **1 trillion** | > 0 | `set_deposit_cap(cap)` | Limits protocol exposure to asset concentration risk |
 | **Minimum Collateral Ratio** | Minimum ratio of collateral to total debt required for a borrow to succeed, in basis points | **15 000 bps (150 %)** | > 0 | `set_collateral_ratio(admin, ratio)` | Prevents under-collateralised borrowing and protects protocol solvency |
-| Close Factor | Maximum portion of a borrow position that can be liquidated in a single transaction | Defined in code | 0% – 100% | Admin-controlled setter | Prevents full liquidation at once, reducing market shock and cascading failures |
-| Liquidation Threshold | Collateral ratio below which a position becomes eligible for liquidation | Defined in code | Protocol-defined bounds | Admin-controlled setter | Ensures positions remain sufficiently collateralized and protects lenders |
+| Close Factor | Maximum portion of a borrower's debt that can be repaid in a single `liquidate` call, in basis points | **5 000 bps (50 %)** | `(0, 10 000]` | `set_close_factor_bps(close_factor_bps)` | Prevents full liquidation at once, reducing market shock and cascading failures |
+| Liquidation Incentive | Bonus collateral, on top of the repaid debt, paid to the liquidator, in basis points | **1 000 bps (10 %)** | `[0, 5 000]` | `set_liquidation_incentive_bps(incentive_bps)` | Rewards liquidators for clearing bad debt while capping the bonus so it can't be misconfigured into an outsized collateral seizure |
+| Liquidation Threshold | Collateral ratio below which a position becomes eligible for liquidation, in basis points | **8 000 bps (80 %)** | Fixed (`LIQUIDATION_THRESHOLD_BPS` constant) | Not governable — recompile-only | Ensures positions remain sufficiently collateralized and protects lenders |
 | Reserve Factor | Percentage of interest allocated to protocol reserves | Defined in code | 0% – 100% | Admin-controlled setter | Builds reserves for protocol stability and risk mitigation |
 | Supply Cap | Maximum total supply allowed for a specific asset | Defined in code | ≥ 0 | Admin-controlled setter | Limits exposure to any single asset and reduces systemic risk |
 | Borrow Cap | Maximum total borrow allowed for a specific asset | Defined in code | ≥ 0 | Admin-controlled setter | Prevents excessive leverage and liquidity stress |
@@ -59,6 +60,37 @@ where `col_ratio` is stored under the `"col_ratio"` instance-storage key (defaul
 - Both totals are updated atomically with per-user state changes
 - Overflow/underflow is prevented via checked arithmetic; operations fail with `LendingError::Overflow`
 
+### Governable Liquidation Parameters (Close Factor & Liquidation Incentive)
+
+`LendingContract::liquidate` (`stellar-lend/contracts/lending/src/lib.rs`) sources its
+close-factor cap and liquidation incentive from governed storage instead of from inline
+`const` literals, so they can be retuned by the admin without a contract upgrade. The
+liquidation threshold remains the fixed `LIQUIDATION_THRESHOLD_BPS` constant — it is not
+governable.
+
+| Parameter | Storage key | Default | Bounds | Setter | Getter |
+|-----------|-------------|---------|--------|--------|--------|
+| Close factor | `DataKey::CloseFactorBps` (instance) | `DEFAULT_CLOSE_FACTOR_BPS` = 5 000 bps (50 %) | `(0, 10 000]` | `set_close_factor_bps(close_factor_bps)` | `get_close_factor_bps()` |
+| Liquidation incentive | `DataKey::LiquidationIncentiveBps` (instance) | `DEFAULT_LIQUIDATION_INCENTIVE_BPS` = 1 000 bps (10 %) | `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (`MAX_LIQUIDATION_INCENTIVE_BPS` = 5 000 bps / 50 %) | `set_liquidation_incentive_bps(incentive_bps)` | `get_liquidation_incentive_bps()` |
+
+**Behaviour:**
+- Both setters call `assert_admin`; a non-admin caller's `liquidate`-affecting setter call
+  fails with the host's auth error (`require_auth` rejection).
+- `set_close_factor_bps` rejects `close_factor_bps <= 0` or `close_factor_bps > 10000` with
+  `LendingError::InvalidCloseFactorBps` (code 7001). Storage is left unchanged on rejection.
+- `set_liquidation_incentive_bps` rejects values outside `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`
+  with `LendingError::InvalidLiquidationIncentiveBps` (code 7002).
+- Until an admin calls a setter, the corresponding getter — and `liquidate` itself —
+  fall back to the default literal, so behaviour is unchanged for deployments that never
+  configure an override (the same 50 % close factor / 10 % incentive as before this change).
+- `liquidate`'s rounding policy is unaffected: `max_repay = debt × close_factor_bps ÷ 10000`
+  and `seized = repay × (10000 + incentive_bps) ÷ 10000` both still floor via
+  `math::checked_mul_div_floor`.
+
+**Source:** `stellar-lend/contracts/lending/src/liquidation_params_test.rs` covers default
+fallthrough, boundary acceptance, out-of-range rejection, unauthorised-caller rejection, and
+that `liquidate` actually reads the overridden values end to end.
+
 ## Implementation Notes
 
 - All parameters are enforced at the smart contract level.
@@ -96,3 +128,56 @@ These parameters are designed to balance:
 Changes to these values should be governed carefully to avoid unintended economic consequences.
 
 **Security Note:** The debt ceiling and deposit cap provide a critical safety mechanism. If a price oracle fails or is compromised, these limits prevent unbounded protocol exposure. The admin should monitor utilization and adjust caps as the protocol scales.
+
+---
+
+## Kink Utilization Rate Model
+
+The protocol uses a **two-slope kink rate model** to compute dynamic borrow interest based on pool utilization. This replaces the static default APR (`DEFAULT_APR_BPS = 500` = 5%) when `set_rate_params` has been called by the admin.
+
+### Formula
+
+```
+utilization = total_borrow / total_supply
+
+if utilization <= kink_utilization:
+    rate = base_rate + utilization * multiplier
+else:
+    rate = base_rate + kink_utilization * multiplier + (utilization - kink_utilization) * jump_multiplier
+
+final_rate = clamp(rate, rate_floor, rate_ceiling)
+```
+
+All values are in basis points (1 bps = 0.01%).
+
+### Parameters
+
+| Parameter | Description | Default (bps) | Admin Setter |
+|-----------|-------------|---------------|--------------|
+| `base_rate_bps` | Minimum borrow rate at 0% utilization | 100 (1%) | `set_rate_params()` |
+| `kink_utilization_bps` | Utilization threshold where slope increases | 8 000 (80%) | `set_rate_params()` |
+| `multiplier_bps` | Slope before kink (per-basis-point of utilization) | 2 000 (20%) | `set_rate_params()` |
+| `jump_multiplier_bps` | Slope after kink (per-basis-point of excess utilization) | 10 000 (100%) | `set_rate_params()` |
+| `rate_floor_bps` | Hard floor on computed rate | 50 (0.5%) | `set_rate_params()` |
+| `rate_ceiling_bps` | Hard ceiling on computed rate | 10 000 (100%) | `set_rate_params()` |
+
+### Curve Shape
+
+- **Below kink (utilization ≤ 80%)**: Rate = base_rate + utilization × multiplier. Linear, gentle slope (e.g., at 50% utilization: 100 + 5000×2000/10000 = 1100 bps = 11%).
+- **At kink (utilization = 80%)**: Rate = 100 + 8000×2000/10000 = 1700 bps = 17%.
+- **Above kink (utilization > 80%)**: The jump_multiplier kicks in, creating a steep slope to incentivize depositors and discourage additional borrowing near full utilization.
+- **Guards**: The rate is always clamped to `[rate_floor_bps, rate_ceiling_bps]`, preventing negative rates and unbounded APRs.
+
+### Monotonicity Invariant
+
+The `compute_borrow_rate` function is **monotonic non-decreasing** in utilization: if `utilization_a ≤ utilization_b`, then `rate_a ≤ rate_b`. This invariant is verified with 256-case property-based tests in `rate_model.rs::monotonicity`.
+
+### Configuration
+
+The admin calls `set_rate_params(params)` to configure the model. Until called, the contract falls back to the static `DEFAULT_APR_BPS` constant (500 bps = 5%) for backward compatibility.
+
+### Source
+
+- Rate computation: `stellar-lend/contracts/lending/src/rate_model.rs`
+- Integration: `stellar-lend/contracts/lending/src/lib.rs` (`set_rate_params`, `get_rate_params`, `get_borrow_rate` entry points; `current_borrow_rate` helper)
+- Property tests: `rate_model.rs::monotonicity`

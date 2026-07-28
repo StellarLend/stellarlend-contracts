@@ -1,95 +1,62 @@
-# Emergency Shutdown and Recovery Flow
+# Emergency Shutdown & Guardian Role
 
-This document describes the contracts-only emergency lifecycle implemented in the lending contract.
+## Overview
 
-## State Machine
+The StellarLend lending contract has a two-tier emergency authority model:
 
-`Normal -> Shutdown -> Recovery -> Normal`
+| Role      | Can trigger Shutdown | Can set Recovery | Can set Normal |
+|-----------|---------------------|-----------------|----------------|
+| Guardian  | ✅ Yes              | ❌ No           | ❌ No          |
+| Admin     | ✅ Yes              | ✅ Yes          | ✅ Yes         |
 
-- `Normal`: regular operation.
-- `Shutdown`: hard stop for high-risk operations.
-- `Recovery`: controlled unwind mode where users can reduce risk.
+This separation allows a fast-response operator (the guardian) to halt the protocol immediately without being granted general admin power. Only the admin can lift an emergency and resume normal operations.
 
-## Roles
+## Emergency States
 
-- `admin`: governance-controlled address. Can configure guardian and manage recovery lifecycle.
-- `guardian`: optional fast-response address set by admin. Can trigger `emergency_shutdown`.
+| State      | Deposit | Borrow | Repay | Withdraw |
+|------------|---------|--------|-------|----------|
+| `Normal`   | ✅      | ✅     | ✅    | ✅       |
+| `Shutdown` | ❌      | ❌     | ❌    | ❌       |
+| `Recovery` | ❌      | ❌     | ✅    | ✅       |
 
-## Authorized Calls
+- **Normal** — full protocol operation.
+- **Shutdown** — all user-facing actions are blocked. Used for immediate halts (e.g., exploit detected).
+- **Recovery** — new positions cannot be opened; users may only repay debt and withdraw collateral.
 
-- `set_guardian(admin, guardian)` -> admin only.
-- `set_emergency_state(caller, new_state)` -> admin or guardian. Caller must present auth. Emits `EmergencyStateChanged(old_state, new_state)`.
-- Recovery lifecycle transitions (`Shutdown -> Recovery -> Normal`) are admin-only when moving out of `Shutdown`.
+## Contract Functions
 
-## Operation Policy by State
+### `set_guardian(guardian: Address)`
+- **Auth**: admin only.
+- Sets the guardian address. Replaces any previously configured guardian.
+- There is no revocation function; call `set_guardian` with a trusted address to rotate.
 
-- `Normal`:
-  - All user-facing mutation entrypoints operate normally (subject to existing granular pause rules).
-- `Shutdown`:
-  - Block: `deposit`, `borrow`, `withdraw`, `repay`, `flash_loan`, `liquidate`, and other mutating entrypoints. (Contract is effectively read-only for users.)
-  - Allow: view/read methods and admin recovery actions.
-- `Recovery`:
-  - Allow: `repay`, `withdraw` (users can reduce exposure and exit positions).
-  - Block: `deposit`, `borrow`, `flash_loan`, `liquidate`, and other operations that create new exposure.
+### `get_guardian() -> Option<Address>`
+- Returns the current guardian address, or `None` if unset.
+
+### `set_emergency_state(new_state: EmergencyState)`
+- **Auth**:
+  - `Shutdown` → guardian **or** admin.
+  - `Recovery` → admin only.
+  - `Normal` → admin only.
+- Emits `EmergencyStateChangedEvent { old_state, new_state }` on every transition.
+- If no guardian is configured, only the admin may call this function for any state.
 
 ## Security Notes
 
-- Emergency checks are enforced in both contract entrypoints and core borrow logic, including token-receiver deposit/repay paths.
-- Recovery mode does not allow users to create new protocol exposure.
-- Granular pauses still apply during recovery (for partial shutdown handling).
-- All key transitions emit contract events (`guardian_set_event`, `emergency_state_event`, existing pause events).
+1. **Principle of least privilege** — The guardian address should be a hot key or automated monitor. It cannot transfer funds, modify parameters, or lift the halt. Its blast radius is limited to triggering a shutdown.
 
-## Operation Policy Matrix
+2. **Admin key hygiene** — The admin key is the only path back to Normal. It should be kept in cold storage (hardware wallet or multisig) and never exposed to automated systems.
 
-| Operation              | Normal | Shutdown | Recovery | Notes                           |
-| ---------------------- | ------ | -------- | -------- | ------------------------------- |
-| `deposit`              | ✅\*   | ❌       | ❌       | Blocked outside `Normal`        |
-| `borrow`               | ✅\*   | ❌       | ❌       | Blocked outside `Normal`        |
-| `repay`                | ✅\*   | ❌       | ✅\*     | Blocked in `Shutdown` only      |
-| `withdraw`             | ✅\*   | ❌       | ✅\*     | Blocked in `Shutdown` only      |
-| `flash_loan`           | ✅\*   | ❌       | ❌       | Blocked outside `Normal`        |
-| `liquidate`            | ✅\*   | ❌       | ❌       | Blocked outside `Normal`        |
-| View methods           | ✅     | ✅       | ✅       | Always available                |
-| Admin recovery actions | ✅     | ✅       | ✅       | Admin only to progress recovery |
+3. **No guardian ≠ no emergency stop** — When no guardian is configured, the admin retains the ability to call `set_emergency_state(Shutdown)`. Setting a guardian is optional but recommended for production deployments.
 
-\*Subject to granular pause controls
+4. **Guardian rotation** — To rotate the guardian (e.g., after a key compromise), the admin calls `set_guardian(new_guardian)`. The old address loses its capability immediately.
 
-## State Transition Authorization Matrix
+5. **Event monitoring** — Every state change emits `EmergencyStateChangedEvent`. Off-chain monitors should subscribe to this event to detect unexpected transitions.
 
-| Transition          | Authorized Roles | Preconditions       |
-| ------------------- | ---------------- | ------------------- |
-| Normal → Shutdown   | Admin, Guardian  | None                |
-| Shutdown → Recovery | Admin only       | Must be in Shutdown |
-| Recovery → Normal   | Admin only       | Must be in Recovery |
-| Normal → Recovery   | None             | Forbidden           |
-| Shutdown → Normal   | None             | Forbidden           |
-| Recovery → Shutdown | Admin, Guardian  | Emergency override  |
+## Deployment Checklist
 
-## Test Coverage
-
-`src/emergency_shutdown_test.rs` covers basic emergency functionality:
-
-- Authorization validation for shutdown triggers
-- State transition flow testing
-- Operation blocking in emergency states
-- Recovery mode unwind operations
-- Edge cases and partial pause interactions
-
-`src/emergency_lifecycle_conformance_test.rs` provides comprehensive conformance validation:
-
-- Complete state machine flow (Normal → Shutdown → Recovery → Normal)
-- Authorization matrix enforcement (admin vs guardian roles)
-- Operation permission validation per state
-- Forbidden transition testing
-- Role-based access control validation
-- Multiple emergency cycle testing
-- Granular pause interaction with emergency states
-
-## Security Invariants
-
-1. **State Machine Integrity**: Emergency transitions follow strict order and authorization
-2. **Operation Boundaries**: High-risk operations blocked in Shutdown and Recovery states
-3. **Role Separation**: Guardian can shutdown, only admin can manage recovery
-4. **Recovery Safety**: Recovery mode allows unwind operations only
-5. **Pause Layering**: Granular controls remain effective during emergency states
-6. **Event Auditing**: All state transitions emit events for monitoring
+- [ ] Call `set_guardian` with a dedicated monitoring/response address after deployment.
+- [ ] Store the admin key in cold storage or a multisig.
+- [ ] Configure an event monitor for `EmergencyStateChangedEvent`.
+- [ ] Document the guardian rotation procedure in your runbook.
+- [ ] Test the shutdown path on testnet before mainnet deployment.

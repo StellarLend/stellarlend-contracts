@@ -1,6 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
-import { ApiError, ValidationError, UnauthorizedError } from '../utils/errors';
+import {
+  ApiError,
+  ConflictError,
+  InternalServerError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from '../utils/errors';
 
 describe('Error Handler Middleware', () => {
   let mockRequest: Partial<Request>;
@@ -49,5 +56,11 @@ describe('Error Handler Middleware', () => {
       success: false,
       error: 'Internal server error',
     });
+  });
+
+  it('should expose specific api error classes', () => {
+    expect(new NotFoundError().statusCode).toBe(404);
+    expect(new ConflictError('Already exists').statusCode).toBe(409);
+    expect(new InternalServerError().statusCode).toBe(500);
   });
 });

@@ -10,11 +10,26 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk = { workspace = true, features = ["hazmat-address"] }
+stellar-lend-common = { path = "../common" }
 
 [dev-dependencies]
-soroban-sdk = { workspace = true, features = ["testutils"] }
+soroban-sdk = { workspace = true, features = ["testutils", "hazmat-address"] }
 proptest = "1.5"
+ed25519-dalek = { version = "1.0.1", features = ["std"] }
+rand = "0.7"
 
+# Re-export modules for integration tests
 [features]
 testutils = ["soroban-sdk/testutils"]
+fuzzing = ["arbitrary"]
+
+# For fuzzing support — arbitrary crate for structure-aware fuzzing
+[dependencies.arbitrary]
+version = "1"
+features = ["derive"]
+optional = true
+
+[[example]]
+name = "scaling_demo"
+path = "examples/scaling_demo.rs"

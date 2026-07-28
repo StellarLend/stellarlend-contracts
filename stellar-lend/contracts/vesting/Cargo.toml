@@ -1,11 +1,14 @@
 [package]
 name = "soroban-token-vesting"
 version = "0.1.0"
+name = "stellarlend-vesting"
+version = "0.0.0"
 edition = "2021"
 publish = false
 
 [lib]
 crate-type = ["cdylib", "lib"]
+crate-type = ["lib", "cdylib"]
 doctest = false
 
 [dependencies]
@@ -14,3 +17,7 @@ soroban-token-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+proptest = { workspace = true }
