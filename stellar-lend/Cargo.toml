@@ -1,14 +1,3 @@
-<<<<<<< HEAD
-[package]
-name = "stellarlend-vesting"
-version = "0.0.0"
-edition = "2021"
-publish = false
-
-[lib]
-crate-type = ["cdylib", "lib"]
-doctest = false
-=======
 [workspace]
 resolver = "2"
 members = [
@@ -27,12 +16,18 @@ members = [
 soroban-sdk = "=25.3.1"
 soroban-token-sdk = "=25.3.1"
 proptest = "1.5"
->>>>>>> adca32b2c9b1e3190cf27b53a9e3d9a4d5af70a6
 
-[dependencies]
-soroban-sdk = { workspace = true }
-soroban-token-sdk = { workspace = true }
+[profile.release]
+opt-level = "z"
+debug = 0
+strip = "symbols"
+debug-assertions = false
+overflow-checks = true
+lto = true
+panic = "abort"
+codegen-units = 1
 
-[dev-dependencies]
-soroban-sdk = { workspace = true, features = ["testutils"] }
-proptest = { workspace = true }
+# For more information about this profile see https://soroban.stellar.org/docs/basic-tutorials/logging#cargotoml-profile
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true

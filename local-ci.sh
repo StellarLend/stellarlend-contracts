@@ -124,8 +124,8 @@ if should_run soroban-checks; then
     # Install Stellar CLI (used for build/optimize/inspect). Mirrors the CI job
     # step which runs `cargo install --locked stellar-cli`.
     if ! command -v stellar &> /dev/null; then
-        echo -e "${BLUE}🛠️  Installing Stellar CLI (cargo install --locked stellar-cli)...${NC}"
-        cargo install --locked stellar-cli
+        echo -e "${BLUE}🛠️  Installing Stellar CLI (cargo install --locked stellar-cli --version 25.2.0)...${NC}"
+        cargo install --locked stellar-cli --version 25.2.0
     fi
 
     run_check "Contract Build" "stellar contract build --verbose"
