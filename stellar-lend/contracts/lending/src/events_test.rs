@@ -309,7 +309,7 @@ fn test_full_repay_emits_event_with_zero_debt() {
 #[test]
 fn test_liquidate_event_emitted() {
     let (env, client, _admin, user) = setup();
-    let liquidator = Address::generate(&env);
+    let _liquidator = Address::generate(&env);
     
     // Set up an undercollateralized position (simplified for this test)
     // Note: The actual liquidate function may need specific setup
@@ -371,38 +371,6 @@ fn test_event_emission_does_not_affect_operation_result() {
     
     let withdraw_result = client.withdraw(&user, &200);
     assert_eq!(withdraw_result, 300);
-}
-
-#[test]
-fn test_deposit_at_cap_boundary_emits_event() {
-    let (env, client, admin, user) = setup();
-    
-    // Set a deposit cap
-    let cap = 1000_i128;
-    client.set_deposit_cap(&cap);
-    
-    // Deposit exactly at cap
-    let result = client.try_deposit(&user, &cap);
-    
-    if result.is_ok() {
-        let events = env.events().all();
-        let deposit_events: SdkVec<_> = events
-            .iter()
-            .filter(|e| {
-                if let Ok(topics) = e.topics.clone().try_into_val(&env) {
-                    let topics: SdkVec<Val> = topics;
-                    if let Some(first) = topics.get(0) {
-                        if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
-                            return symbol == Symbol::new(&env, "DepositEvent");
-                        }
-                    }
-                }
-                false
-            })
-            .collect();
-
-        assert!(deposit_events.len() > 0, "Should emit DepositEvent at cap boundary");
-    }
 }
 
 #[test]

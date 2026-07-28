@@ -45,6 +45,8 @@ mod emergency_state_matrix_test;
 #[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
+mod events_test;
+#[cfg(test)]
 mod flash_pause_gating_test;
 #[cfg(test)]
 mod flash_utilization_test;
