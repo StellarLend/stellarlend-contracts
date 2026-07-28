@@ -17,7 +17,7 @@
 //! | Revoked-only grantee skipped                  | `Ok(())`, no event             |
 //! | Property: claimable == total - claimed        | holds for all valid inputs     |
 
-use super::{VestingContract, VestingError};
+use crate::test_harness::{VestingContract, VestingError};
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -305,6 +305,7 @@ fn revoked_grants_skipped() {
 #[cfg(test)]
 mod proptest_suite {
     use super::*;
+    use crate::test_harness::VestingContract;
     use proptest::prelude::*;
 
     const MAX_PRINCIPAL: u128 = 1_000_000_000_000_000;

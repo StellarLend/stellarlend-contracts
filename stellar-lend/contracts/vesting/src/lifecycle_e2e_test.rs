@@ -20,7 +20,7 @@
 #[cfg(test)]
 
 mod lifecycle_e2e_tests {
-    use crate::{VestingContract, VestingError};
+    use crate::test_harness::{VestingContract, VestingError};
 
     // ── shared parameters ─────────────────────────────────────────────────────
 

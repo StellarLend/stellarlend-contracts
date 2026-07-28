@@ -61,6 +61,8 @@ mod amm_integration_test;
 #[cfg(test)]
 mod clamp_rate_test;
 #[cfg(test)]
+mod dual_kink_test;
+#[cfg(test)]
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
@@ -88,6 +90,8 @@ mod asset_price_age_test;
 
 #[cfg(test)]
 mod guardian_threshold_safety_test;
+#[cfg(test)]
+mod gov_payload_hash_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
@@ -183,13 +187,29 @@ impl HelloContract {
         Ok(())
     }
 
-    /// Transfer super admin rights.
-    pub fn transfer_admin(
+    /// Propose a new admin — step 1 of the two-step admin handover.
+    ///
+    /// The current admin nominates `new_admin` as a pending candidate. The
+    /// active admin does **not** change until `new_admin` calls
+    /// [`accept_admin`].
+    pub fn propose_admin(
         env: Env,
         caller: Address,
         new_admin: Address,
     ) -> Result<(), crate::admin::AdminError> {
-        crate::admin::set_admin(&env, new_admin, Some(caller))
+        crate::admin::propose_admin(&env, new_admin, caller)
+    }
+
+    /// Accept the pending admin proposal — step 2 of the two-step admin handover.
+    ///
+    /// `caller` must be the address previously nominated via [`propose_admin`].
+    /// On success the caller becomes the active admin and the pending slot is
+    /// cleared.
+    pub fn accept_admin(
+        env: Env,
+        caller: Address,
+    ) -> Result<(), crate::admin::AdminError> {
+        crate::admin::accept_admin(&env, caller)
     }
 
     /// Increment the user's deposit balance.
@@ -282,28 +302,6 @@ impl HelloContract {
             close_factor,
             liquidation_incentive,
         )
-        .map_err(|e| match e {
-            RiskParamsError::ParameterChangeTooLarge => {
-                RiskManagementError::ParameterChangeTooLarge
-            }
-            RiskParamsError::InvalidCollateralRatio => RiskManagementError::InvalidCollateralRatio,
-            RiskParamsError::InvalidLiquidationThreshold => {
-                RiskManagementError::InvalidLiquidationThreshold
-            }
-            RiskParamsError::InvalidCloseFactor => RiskManagementError::InvalidCloseFactor,
-            RiskParamsError::InvalidLiquidationIncentive => {
-                RiskManagementError::InvalidLiquidationIncentive
-            }
-            // Distinct arithmetic faults surfaced by `validate_change`.
-            // Routing them to the dedicated `Overflow` variant (rather than
-            // the generic `InvalidParameter` catch-all) lets operators
-            // distinguish a misconfigured value from a real i128-overflow in
-            // incident response. `DivisionByZero` cannot fire in practice
-            // (BASIS_POINTS = 10_000) but is mapped explicitly anyway.
-            RiskParamsError::Overflow => RiskManagementError::Overflow,
-            RiskParamsError::DivisionByZero => RiskManagementError::InvalidParameter,
-            _ => RiskManagementError::InvalidParameter,
-        })
     }
 
     pub fn set_guardians(
@@ -815,12 +813,15 @@ impl HelloContract {
     }
 
     /// Initialize/register a new asset with configuration.
+    ///
+    /// `caller` must be the stored protocol admin.
     pub fn initialize_asset(
         env: Env,
+        caller: Address,
         asset: Option<Address>,
         config: AssetConfig,
     ) -> Result<(), CrossAssetError> {
-        initialize_asset(&env, asset, config)
+        initialize_asset(&env, &caller, asset, config)
     }
 
     /// Update asset configuration (admin only).

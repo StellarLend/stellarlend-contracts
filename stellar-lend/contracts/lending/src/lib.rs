@@ -82,7 +82,7 @@ mod liquidate_pause_test;
 mod liquidate_perf_test;
 #[cfg(test)]
 mod liquidate_rounding_test;
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzing"))]
 mod liquidate_transfer_test;
 #[cfg(test)]
 mod liquidation_branch_test;
@@ -177,7 +177,7 @@ const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
-const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
+const DEFAULT_MAX_FLASH_BPS: i128 = 3_000;
 /// Maximum number of utilization samples retained in persistent storage.
 ///
 /// Samples are kept in an oldest-first bounded vector internally. When the cap
@@ -440,6 +440,7 @@ pub enum LendingError {
     /// `set_rate_params` called with an internally inconsistent `RateParams`.
     InvalidRateParams = 7006,
 }
+pub use stellar_lend_common::LendingError;
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
 ///

@@ -73,7 +73,7 @@ rewritten to describe the **real** authorization surface:
 
 - Single admin model via `admin::require_admin`.
 - Guardian model via `GovernanceDataKey::GuardianConfig`.
-- No RBAC (`grant_role` / `revoke_role` / `require_role_or_admin` do not exist).
+- No RBAC system exists.
 - `gov_can_vote` documented as a governance query function, not a reusable auth primitive.
 
 See `docs/authorization-primitives.md` for the full reference.

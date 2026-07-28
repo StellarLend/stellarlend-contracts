@@ -14,6 +14,8 @@ use crate::cross_asset::{
     AssetConfig, CrossAssetError,
 };
 
+use stellar_lend_common::{normalize_price, normalize_price_ceil};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
