@@ -146,7 +146,7 @@ use debt::{
     repay_amount, save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
 };
 use events::{
-    emit_borrow, emit_deposit, emit_liquidate, emit_repay, emit_schema_version, emit_withdraw,
+    emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw,
 };
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
@@ -1478,8 +1478,6 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
@@ -2033,11 +2031,7 @@ impl LendingContract {
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
@@ -2063,7 +2057,7 @@ impl LendingContract {
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
 
-        updated.principal
+        Ok(updated.principal)
     }
 
     pub fn get_debt_position(env: Env, user: Address) -> DebtPosition {
