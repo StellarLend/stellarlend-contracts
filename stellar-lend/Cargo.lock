@@ -333,6 +333,7 @@ name = "cross-asset-test"
 version = "0.0.0"
 dependencies = [
  "soroban-sdk",
+ "stellar-lend-common",
 ]
 
 [[package]]
@@ -869,6 +870,7 @@ version = "0.0.0"
 dependencies = [
  "proptest",
  "soroban-sdk",
+ "stellar-lend-common",
 ]
 
 [[package]]
@@ -1912,6 +1914,7 @@ dependencies = [
 name = "stellarlend-vesting"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "soroban-sdk",
 ]
 

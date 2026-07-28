@@ -1288,6 +1288,9 @@ mod gov_can_vote_test;
 mod recovery_test;
 
 #[cfg(test)]
+mod oracle_auth_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
