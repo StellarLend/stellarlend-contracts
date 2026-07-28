@@ -1282,6 +1282,8 @@ mod claim_reserves_test;
 
 #[cfg(test)]
 mod gov_can_vote_test;
+#[cfg(test)]
+mod position_summary_test;
 // mod governance_test;
 
 #[cfg(test)]
