@@ -1,1 +1,1 @@
-// Stub module
+pub use crate::governance::GovernanceError;
