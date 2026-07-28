@@ -27,6 +27,7 @@ const envSchema = z.object({
     CACHE_TTL_SECONDS: z.coerce.number().positive().default(30),
     UPDATE_INTERVAL_MS: z.coerce.number().positive().default(60000),
     MAX_PRICE_DEVIATION_PERCENT: z.coerce.number().positive().default(10),
+    MAD_Z_SCORE_THRESHOLD: z.coerce.number().positive().default(3.5),
     PRICE_STALENESS_THRESHOLD_SECONDS: z.coerce.number().positive().default(300),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
@@ -156,6 +157,7 @@ export function loadConfig(): OracleServiceConfig {
         adminSecretKey: env.ADMIN_SECRET_KEY,
         updateIntervalMs: env.UPDATE_INTERVAL_MS,
         maxPriceDeviationPercent: env.MAX_PRICE_DEVIATION_PERCENT,
+        madZScoreThreshold: env.MAD_Z_SCORE_THRESHOLD,
         priceStaleThresholdSeconds: env.PRICE_STALENESS_THRESHOLD_SECONDS,
         cacheTtlSeconds: env.CACHE_TTL_SECONDS,
         redisUrl: env.REDIS_URL,
@@ -173,3 +175,9 @@ export function scalePrice(price: number): bigint {
 export function unscalePrice(price: bigint): number {
     return Number(price) / Number(PRICE_SCALE);
 }
+
+/**
+ * Default MAD z-score threshold for outlier rejection.
+ * Overridden at runtime by MAD_Z_SCORE_THRESHOLD env var.
+ */
+export const MAD_Z_SCORE_THRESHOLD = 3.5;

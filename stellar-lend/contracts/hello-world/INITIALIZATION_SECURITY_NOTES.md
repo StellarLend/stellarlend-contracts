@@ -3,6 +3,29 @@
 ## Overview
 This document outlines the security assumptions, trust boundaries, and critical security considerations for the StellarLend contract initialization process.
 
+## ✅ Initialization Guard (implemented)
+
+Every state-mutating entry point now calls `require_initialized(&env)` as its
+very first action.  The helper checks `DataKey::Admin` in instance storage:
+
+```rust
+pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
+    if env.storage().instance().has(&DataKey::Admin) {
+        Ok(())
+    } else {
+        Err(LendingError::NotInitialized)
+    }
+}
+```
+
+- `initialize` is the **only** entry point exempt from this guard.
+- A second call to `initialize` returns `LendingError::AlreadyInitialized` and
+  leaves the original admin untouched.
+- All admin setters, user-facing deposit/withdraw/borrow/repay/liquidate, and
+  flash-loan entry points are protected.
+- Dedicated test coverage lives in `src/initialization_guard_test.rs` (≥ 41 tests,
+  target ≥ 95 % guard coverage).
+
 ## Critical Security Requirements
 
 ### 1. Double Initialization Prevention
@@ -16,6 +39,7 @@ This document outlines the security assumptions, trust boundaries, and critical 
 - **Implementation**: Centralized admin module with role-based access control
 - **Risk**: Unauthorized access to privileged operations
 - **Mitigation**: Require admin authentication for all privileged functions
+- **Note**: `set_admin` bootstraps the first admin once, but any subsequent admin rotation must be authorized by the current admin to prevent silent takeover.
 
 ### 3. Storage Persistence and Isolation
 - **Requirement**: Initialization data must persist across ledger advancements
@@ -112,20 +136,33 @@ This document outlines the security assumptions, trust boundaries, and critical 
 
 ## Testing Coverage
 
-### 1. Initialization Tests
+### 1. Initialization Guard Tests (`initialization_guard_test.rs`)
+- ✅ `initialize` succeeds on first call, stores admin
+- ✅ Double initialize (same admin) → `AlreadyInitialized`
+- ✅ Double initialize (different admin) → `AlreadyInitialized`, original admin preserved
+- ✅ `deposit`, `withdraw`, `borrow`, `repay` before init → `NotInitialized`
+- ✅ `borrow_against_collateral`, `repay_against_collateral` before init → `NotInitialized`
+- ✅ `liquidate` before init → `NotInitialized`
+- ✅ `flash_loan`, `repay_flash_loan` before init → panic `"NotInitialized"`
+- ✅ All admin setters before init → `NotInitialized` / panic
+- ✅ Cross-asset entry points before init → `NotInitialized`
+- ✅ View functions before init return safe defaults (no panic)
+- ✅ Post-init normal operations unaffected
+
+### 2. Initialization Tests
 - ✅ Successful initialization with valid parameters
-- ✅ Double initialization failure (must panic)
+- ✅ Double initialization failure (returns `AlreadyInitialized`)
 - ✅ Storage persistence across ledger advancements
 - ✅ Storage isolation between contract instances
 - ✅ Production-like initialization sequences
 
-### 2. Security Tests
+### 3. Security Tests
 - ✅ Admin authority validation
 - ✅ Unauthorized access rejection
 - ✅ Emergency pause functionality
 - ✅ Parameter boundary validation
 
-### 3. Edge Case Tests
+### 4. Edge Case Tests
 - ✅ Zero address handling
 - ✅ Different ledger timestamps
 - ✅ Concurrent initialization scenarios

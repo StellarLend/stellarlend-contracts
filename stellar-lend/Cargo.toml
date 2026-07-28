@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 [package]
 name = "stellarlend-vesting"
 version = "0.0.0"
@@ -7,6 +8,26 @@ publish = false
 [lib]
 crate-type = ["cdylib", "lib"]
 doctest = false
+=======
+[workspace]
+resolver = "2"
+members = [
+  "contracts/amm",
+  "contracts/bridge",
+  "contracts/common",
+  "contracts/hello-world",
+  "contracts/lending",
+  "contracts/vesting",
+  "contracts/multisig",
+  "cross_asset_test",
+]
+
+[workspace.dependencies]
+# Keep shared Soroban and test dependency versions pinned in one place.
+soroban-sdk = "=25.3.1"
+soroban-token-sdk = "=25.3.1"
+proptest = "1.5"
+>>>>>>> adca32b2c9b1e3190cf27b53a9e3d9a4d5af70a6
 
 [dependencies]
 soroban-sdk = { workspace = true }

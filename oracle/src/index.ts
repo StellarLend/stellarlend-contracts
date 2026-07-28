@@ -21,6 +21,7 @@ import {
     type PriceAggregator,
     type ContractUpdater,
 } from './services/index.js';
+import { AdminServer } from './services/admin-server.js';
 import type { ProviderConfig } from './types/index.js';
 
 /**
@@ -36,6 +37,7 @@ export class OracleService {
     private aggregator: PriceAggregator;
     private contractUpdater: ContractUpdater;
     private intervalId?: ReturnType<typeof setInterval>;
+    private adminServer?: AdminServer;
     private isRunning: boolean = false;
 
     constructor(config: OracleServiceConfig) {
@@ -54,10 +56,13 @@ export class OracleService {
 
 
         // Create services
-        const validator = createValidator({
-            maxDeviationPercent: config.maxPriceDeviationPercent,
-            maxStalenessSeconds: config.priceStaleThresholdSeconds,
-        });
+        const validator = createValidator(
+            {
+                maxDeviationPercent: config.maxPriceDeviationPercent,
+                maxStalenessSeconds: config.priceStaleThresholdSeconds,
+            },
+            config.priceBounds,
+        );
 
         const cache = createPriceCache(config.cacheTtlSeconds);
 
@@ -71,6 +76,18 @@ export class OracleService {
             maxRetries: 3,
             retryDelayMs: 1000,
         });
+
+        if (config.adminApiPort > 0) {
+            if (!config.adminHmacSecret) {
+                throw new Error('ADMIN_HMAC_SECRET is required when ADMIN_API_PORT is configured');
+            }
+
+            this.adminServer = new AdminServer({
+                port: config.adminApiPort,
+                hmacSecret: config.adminHmacSecret,
+                validator,
+            });
+        }
 
         logger.info('Oracle service initialized', {
             network: config.stellarNetwork,
@@ -103,12 +120,16 @@ export class OracleService {
         logger.info('Oracle service started', {
             intervalMs: this.config.updateIntervalMs,
         });
+
+        if (this.adminServer) {
+            await this.adminServer.start();
+        }
     }
 
     /**
      * Stop the oracle service
      */
-    stop(): void {
+    async stop(): Promise<void> {
         if (!this.isRunning) {
             logger.warn('Oracle service is not running');
             return;
@@ -117,6 +138,10 @@ export class OracleService {
         if (this.intervalId) {
             clearInterval(this.intervalId);
             this.intervalId = undefined;
+        }
+
+        if (this.adminServer) {
+            await this.adminServer.stop();
         }
 
         this.isRunning = false;

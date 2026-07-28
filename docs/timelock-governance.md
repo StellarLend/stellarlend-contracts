@@ -2,309 +2,316 @@
 
 ## Overview
 
-This document provides operational guidance for using the timelock governance system in StellarLend. The timelock introduces delayed execution for high-risk parameter changes while maintaining emergency response capabilities.
+This document describes the timelocked WASM upgrade governance built into the
+lending contract (`stellar-lend/contracts/lending/src/upgrade.rs`). All
+governance for WASM upgrades goes through a three-step propose → approve →
+execute flow enforced entirely inside the lending contract itself — there is
+no separate "Timelock" contract.
 
-## Quick Reference
+For the multisig two-phase threshold-change lifecycle (state diagrams, ETA
+formulas, event schema, and cancellation rules) see the
+[Multisig Change Lifecycle Guide](../stellar-lend/contracts/multisig/docs/CHANGE_LIFECYCLE.md).
 
-### Operation Classifications
+## Architecture
 
-| Risk Level | Delay Required | Examples |
-|------------|----------------|----------|
-| **Immediate** | 0 seconds | `get_admin`, `get_price`, view functions |
-| **High Risk** | 7 days | `set_liquidation_threshold_bps`, `set_pause`, `set_guardian` |
-| **Critical** | 14 days | `set_oracle`, `upgrade_execute`, `complete_recovery` |
+The lending contract admin calls `upgrade_propose` to submit a new WASM hash.
+A configurable set of approvers (seeded with the admin at `upgrade_init` time)
+each call `upgrade_approve`. Once the required number of approvals is reached
+**and** the timelock delay has elapsed, any approver may call `upgrade_execute`
+to apply the upgrade atomically.
 
-### Key Addresses
+```
+upgrade_propose  →  upgrade_approve (×N)  →  upgrade_execute
+     │                     │                       │
+     │  eta = now + 600 000 ledgers                │
+     │  expires = now + 1 200 000 ledgers          │
+     └─────────── proposal stored ────────────────►│
+                                          deployer().update_current_contract_wasm
+```
 
-- **Admin**: Can queue/execute all operations, bound by delay rules
-- **Guardian**: Can execute emergency operations immediately (`emergency_shutdown`, `set_pause`)
-- **Timelock Contract**: Acts as the admin for the lending contract
+### Key Constants
 
-## Common Operations
+| Constant | Value | Approximate wall-clock time |
+|---|---|---|
+| `MIN_THRESHOLD_DELAY_LEDGERS` | 600 000 | ~7 days at 5 s/ledger |
+| `DEFAULT_PROPOSAL_EXPIRY_LEDGERS` | 1 200 000 | ~14 days at 5 s/ledger |
+| `MAX_APPROVERS` | 32 | — |
 
-### 1. Standard Parameter Changes (7-day delay)
+## Upgrade Governance Entrypoints
 
-**Example: Updating Liquidation Threshold**
+All functions below live on the lending contract (not a separate contract).
+Replace `$LENDING_CONTRACT` with the deployed lending contract ID and
+`$ADMIN_KEY` / `$APPROVER_KEY` with the appropriate Stellar secret keys.
+
+### Step 0 — Initialize upgrade governance (once, admin only)
 
 ```bash
-# Step 1: Queue the change
 stellar contract invoke \
-  --id $TIMELOCK_CONTRACT \
+  --id $LENDING_CONTRACT \
   --source $ADMIN_KEY \
   --network testnet \
-  -- queue \
+  -- upgrade_init \
   --caller $ADMIN_ADDRESS \
-  --target $LENDING_CONTRACT \
-  --func "set_liquidation_threshold_bps" \
-  --args '["8000"]' \
-  --eta $(($(date +%s) + 604800))  # 7 days from now
-
-# Step 2: Wait 7 days and monitor community feedback
-
-# Step 3: Execute the change
-stellar contract invoke \
-  --id $TIMELOCK_CONTRACT \
-  --source $ADMIN_KEY \
-  --network testnet \
-  -- execute \
-  --caller $ADMIN_ADDRESS \
-  --target $LENDING_CONTRACT \
-  --func "set_liquidation_threshold_bps" \
-  --args '["8000"]' \
-  --eta $ETA_FROM_STEP1
+  --current_wasm_hash $CURRENT_WASM_HASH \
+  --required_approvals 2
 ```
 
-### 2. Critical Operations (14-day delay)
+Stores the current WASM hash, sets the approval threshold, and seeds the
+approver list with the admin. Must be called exactly once; a second call
+returns `AlreadyInitialized`.
 
-**Example: Oracle Update**
+### Step 1 — Propose a WASM upgrade (admin only)
 
 ```bash
-# Step 1: Queue the oracle change (requires 14-day delay)
 stellar contract invoke \
-  --id $TIMELOCK_CONTRACT \
+  --id $LENDING_CONTRACT \
   --source $ADMIN_KEY \
   --network testnet \
-  -- queue \
+  -- upgrade_propose \
   --caller $ADMIN_ADDRESS \
-  --target $LENDING_CONTRACT \
-  --func "set_oracle" \
-  --args '["$NEW_ORACLE_ADDRESS"]' \
-  --eta $(($(date +%s) + 1209600))  # 14 days from now
-
-# Step 2: Wait 14 days with extended community review
-
-# Step 3: Execute after delay
-stellar contract invoke \
-  --id $TIMELOCK_CONTRACT \
-  --source $ADMIN_KEY \
-  --network testnet \
-  -- execute \
-  --caller $ADMIN_ADDRESS \
-  --target $LENDING_CONTRACT \
-  --func "set_oracle" \
-  --args '["$NEW_ORACLE_ADDRESS"]' \
-  --eta $ETA_FROM_STEP1
+  --new_wasm_hash $NEW_WASM_HASH \
+  --new_version 2
 ```
 
-### 3. Immediate Operations
+- `new_version` must be strictly greater than the current stored version.
+- Returns a `proposal_id` (u64) used in subsequent steps.
+- Sets `eta_ledger = current_ledger + 600 000` and
+  `expires_at_ledger = current_ledger + 1 200 000`.
+- Emits `UpgradeProposedEvent`.
 
-**Example: Reading Protocol State**
+### Step 2 — Approve (approver accounts, once each)
 
 ```bash
-# Can be executed immediately without queueing
 stellar contract invoke \
-  --id $TIMELOCK_CONTRACT \
-  --source $ADMIN_KEY \
+  --id $LENDING_CONTRACT \
+  --source $APPROVER_KEY \
   --network testnet \
-  -- execute_immediate \
-  --caller $ADMIN_ADDRESS \
-  --target $LENDING_CONTRACT \
-  --func "get_admin" \
-  --args '[]'
+  -- upgrade_approve \
+  --caller $APPROVER_ADDRESS \
+  --proposal_id $PROPOSAL_ID
 ```
 
-### 4. Emergency Operations
+- Only addresses in the approver set may call this.
+- Each address may approve at most once per proposal.
+- Returns the running `approval_count`.
+- Emits `UpgradeApprovedEvent`.
 
-**Example: Guardian Emergency Shutdown**
+### Step 3 — Execute after timelock elapses (any approver)
 
 ```bash
-# Guardian can execute immediately
 stellar contract invoke \
-  --id $TIMELOCK_CONTRACT \
-  --source $GUARDIAN_KEY \
+  --id $LENDING_CONTRACT \
+  --source $APPROVER_KEY \
   --network testnet \
-  -- execute_immediate \
-  --caller $GUARDIAN_ADDRESS \
-  --target $LENDING_CONTRACT \
-  --func "emergency_shutdown" \
-  --args '[]'
+  -- upgrade_execute \
+  --caller $APPROVER_ADDRESS \
+  --proposal_id $PROPOSAL_ID
 ```
 
-## Emergency Response Procedures
+- Requires `current_ledger >= eta_ledger` (7-day minimum delay).
+- Requires `approval_count >= required_approvals`.
+- Calls `env.deployer().update_current_contract_wasm` atomically.
+- Updates `CurrentVersion` and `CurrentWasmHash` in storage.
+- Emits `UpgradeExecutedEvent`.
+- Each proposal may execute at most once (`ProposalAlreadyExecuted` on retry).
 
-### 1. Immediate Threat Response
+## Approver Management
 
-When an immediate threat is detected:
+### Add an approver (admin only)
 
-1. **Guardian Action**: Trigger emergency shutdown
-   ```bash
-   stellar contract invoke --id $TIMELOCK_CONTRACT --source $GUARDIAN_KEY \
-     -- execute_immediate --caller $GUARDIAN_ADDRESS \
-     --target $LENDING_CONTRACT --func "emergency_shutdown" --args '[]'
-   ```
-
-2. **Verify State**: Check emergency state
-   ```bash
-   stellar contract invoke --id $TIMELOCK_CONTRACT \
-     -- get_emergency_state
-   ```
-
-### 2. Recovery Process
-
-After threat mitigation:
-
-1. **Start Recovery** (Admin only):
-   ```bash
-   stellar contract invoke --id $TIMELOCK_CONTRACT --source $ADMIN_KEY \
-     -- start_recovery --caller $ADMIN_ADDRESS
-   ```
-
-2. **Allow User Withdrawals**: During recovery, users can repay debts and withdraw collateral
-
-3. **Complete Recovery** (14-day delay required):
-   ```bash
-   # Queue recovery completion
-   stellar contract invoke --id $TIMELOCK_CONTRACT --source $ADMIN_KEY \
-     -- queue --caller $ADMIN_ADDRESS --target $LENDING_CONTRACT \
-     --func "complete_recovery" --args '[]' \
-     --eta $(($(date +%s) + 1209600))
-   
-   # Execute after 14 days
-   stellar contract invoke --id $TIMELOCK_CONTRACT --source $ADMIN_KEY \
-     -- execute --caller $ADMIN_ADDRESS --target $LENDING_CONTRACT \
-     --func "complete_recovery" --args '[]' --eta $ETA
-   ```
-
-## Monitoring and Alerting
-
-### Event Monitoring
-
-Set up monitoring for these critical events:
-
-```javascript
-// Monitor queued actions
-contract.events.filter({
-  topics: ["timelock", "queue"]
-}).on('data', (event) => {
-  console.log('Action queued:', event.data);
-  // Alert community about pending change
-});
-
-// Monitor executions
-contract.events.filter({
-  topics: ["timelock", "execute"]
-}).on('data', (event) => {
-  console.log('Action executed:', event.data);
-  // Log successful execution
-});
-
-// Monitor emergency events
-contract.events.filter({
-  topics: ["timelock", "emergency_shutdown"]
-}).on('data', (event) => {
-  console.log('EMERGENCY: Protocol shutdown triggered');
-  // Send immediate alerts
-});
+```bash
+stellar contract invoke \
+  --id $LENDING_CONTRACT \
+  --source $ADMIN_KEY \
+  --network testnet \
+  -- upgrade_add_approver \
+  --caller $ADMIN_ADDRESS \
+  --approver $NEW_APPROVER_ADDRESS
 ```
 
-### Community Notification
+### Remove an approver (admin only)
 
-For all queued actions:
+Removing is rejected if it would leave `approver_count <= required_approvals`
+or bring the set below one member.
 
-1. **Immediate Notification**: Post to governance forum/Discord
-2. **Technical Details**: Include function name, parameters, execution time
-3. **Impact Assessment**: Explain what the change does and why
-4. **Objection Period**: Provide clear process for community feedback
+```bash
+stellar contract invoke \
+  --id $LENDING_CONTRACT \
+  --source $ADMIN_KEY \
+  --network testnet \
+  -- upgrade_remove_approver \
+  --caller $ADMIN_ADDRESS \
+  --approver $APPROVER_ADDRESS
+```
 
-## Security Best Practices
+### Change the required approval count (admin only)
 
-### Admin Key Management
+```bash
+stellar contract invoke \
+  --id $LENDING_CONTRACT \
+  --source $ADMIN_KEY \
+  --network testnet \
+  -- upgrade_set_required_approvals \
+  --caller $ADMIN_ADDRESS \
+  --required_approvals 3
+```
 
-1. **Multi-signature**: Use multi-sig wallet for admin operations
-2. **Cold Storage**: Keep admin keys in hardware wallets
-3. **Rotation**: Regularly rotate admin keys
-4. **Backup**: Maintain secure backup procedures
+In-flight proposals keep the threshold that was snapshotted at propose time;
+this call only affects future proposals.
 
-### Guardian Key Management
+## Read-Only Queries
 
-1. **Hot Wallet**: Guardian keys should be readily accessible for emergencies
-2. **Monitoring**: 24/7 monitoring for threat detection
-3. **Response Time**: Aim for <1 hour emergency response
-4. **Limited Scope**: Guardian can only execute emergency operations
+```bash
+# Current stored version
+stellar contract invoke --id $LENDING_CONTRACT --network testnet \
+  -- current_version
 
-### Operational Security
+# Proposal status (Pending / Executed / Expired) + approval count
+stellar contract invoke --id $LENDING_CONTRACT --network testnet \
+  -- upgrade_status --proposal_id $PROPOSAL_ID
 
-1. **Verification**: Always verify queued actions before execution
-2. **Community Review**: Allow full delay period for community input
-3. **Cancellation**: Be prepared to cancel malicious or erroneous actions
-4. **Documentation**: Document all parameter changes and rationale
+# Who has approved so far
+stellar contract invoke --id $LENDING_CONTRACT --network testnet \
+  -- get_proposal_approvals --proposal_id $PROPOSAL_ID
 
-## Troubleshooting
+# Full approver list
+stellar contract invoke --id $LENDING_CONTRACT --network testnet \
+  -- get_upgrade_approvers
 
-### Common Errors
+# Required approvals threshold
+stellar contract invoke --id $LENDING_CONTRACT --network testnet \
+  -- get_required_approvals
 
-**`DelayTooShort`**: Operation requires longer delay
-- Solution: Use correct delay for operation risk level
-- High-risk: 7 days minimum
-- Critical: 14 days minimum
+# Minimum delay constant (always 600 000 ledgers)
+stellar contract invoke --id $LENDING_CONTRACT --network testnet \
+  -- get_min_upgrade_delay_ledgers
+```
 
-**`ActionNotQueued`**: Trying to execute non-existent action
-- Solution: Verify action was queued successfully
-- Check action ID matches exactly
+## Events
 
-**`TimelockNotReady`**: Trying to execute before delay expires
-- Solution: Wait until ETA timestamp has passed
+| Event | Emitted by | Key fields |
+|---|---|---|
+| `UpgradeProposedEvent` | `upgrade_propose` | `proposer`, `proposal_id`, `new_wasm_hash`, `new_version`, `eta_ledger`, `expires_at_ledger` |
+| `UpgradeApprovedEvent` | `upgrade_approve` | `approver`, `proposal_id`, `approval_count` |
+| `UpgradeExecutedEvent` | `upgrade_execute` | `executor`, `proposal_id`, `new_version`, `new_wasm_hash`, `ledger` |
+| `UpgradeApproverAddedEvent` | `upgrade_add_approver` | `admin`, `approver` |
+| `UpgradeApproverRemovedEvent` | `upgrade_remove_approver` | `admin`, `approver` |
 
-**`TimelockExpired`**: Action expired after grace period
-- Solution: Re-queue the action with new ETA
+## Error Reference
 
-**`EmergencyActive`**: Non-emergency operation during emergency state
-- Solution: Complete recovery process first, or use emergency-allowed operations only
+| Error | Cause |
+|---|---|
+| `UpgradeNotInitialized` | `upgrade_init` has not been called yet |
+| `AlreadyInitialized` | `upgrade_init` called a second time |
+| `InvalidUpgradeVersion` | `new_version <= current_version` |
+| `InvalidUpgradeConfig` | `required_approvals` is 0, exceeds approver count, or removal would break quorum |
+| `ProposalNotFound` | Unknown `proposal_id` |
+| `ProposalAlreadyExecuted` | Proposal was already executed |
+| `ProposalExpired` | `current_ledger > expires_at_ledger` |
+| `ProposalNotReady` | `current_ledger < eta_ledger` (timelock not elapsed) |
+| `InsufficientUpgradeApprovals` | Not enough approvals collected yet |
+| `AlreadyApproved` | This approver already approved this proposal |
+| `ApproverNotFound` | Address is not in the approver set |
+| `MaxApproversReached` | Approver set is at the 32-address limit |
+| `Unauthorized` | Caller is not an approver (for `upgrade_approve` / `upgrade_execute`) |
 
-**`NotGuardian`**: Guardian trying to execute non-emergency operation
-- Solution: Use admin account, or limit to emergency operations
+## Multisig Threshold Changes (7-day timelock)
 
-### Recovery Scenarios
+> See also: [Multisig Change Lifecycle Guide](../stellar-lend/contracts/multisig/docs/CHANGE_LIFECYCLE.md)
+> for state diagrams, full event schema, signer-change flow, and cancellation rules.
 
-**Compromised Admin Key**:
-1. Guardian triggers emergency shutdown immediately
-2. Deploy new timelock with new admin key
-3. Update lending contract admin to new timelock
-4. Resume operations with new governance structure
+The multisig contract (`stellarlend-multisig`) enforces its own independent
+timelock on threshold adjustments via `queue_threshold_change` →
+`apply_threshold_change`. The minimum delay is also 600 000 ledgers (~7 days).
 
-**Lost Guardian Key**:
-1. Admin can still manage all operations (with delays)
-2. Set new guardian address via standard governance process
-3. Emergency response capability restored
+```bash
+# Queue a new threshold (admin only)
+stellar contract invoke \
+  --id $MULTISIG_CONTRACT \
+  --source $ADMIN_KEY \
+  --network testnet \
+  -- queue_threshold_change \
+  --new_threshold 2
 
-**Malicious Queued Action**:
-1. Admin cancels the queued action immediately
-2. Investigate how malicious action was queued
-3. Implement additional security measures
-4. Consider emergency shutdown if compromise suspected
+# Apply after 7 days
+stellar contract invoke \
+  --id $MULTISIG_CONTRACT \
+  --source $ADMIN_KEY \
+  --network testnet \
+  -- apply_threshold_change
+```
+
+**Implementation signatures**:
+
+```rust
+pub fn queue_threshold_change(env: Env, new_threshold: u32) -> Result<(), MultisigError>
+pub fn apply_threshold_change(env: Env) -> Result<(), MultisigError>
+pub fn get_pending_threshold_change(env: Env) -> Option<ThresholdChange>
+pub fn get_min_threshold_delay_ledgers(env: Env) -> u32
+```
+
+## Timelock Test Coverage
+
+### Upgrade governance (`contracts/lending/src/upgrade.rs`)
+
+| Test | Scenario |
+|---|---|
+| Happy-path propose → approve → execute | Proposal executes after 600 000 ledgers with sufficient approvals |
+| Execute before ETA | Returns `ProposalNotReady` |
+| Execute with insufficient approvals | Returns `InsufficientUpgradeApprovals` |
+| Double-execute | Returns `ProposalAlreadyExecuted` |
+| Execute expired proposal | Returns `ProposalExpired` |
+| Duplicate approval | Returns `AlreadyApproved` |
+| Non-approver calling approve/execute | Returns `Unauthorized` |
+| `new_version <= current_version` | Returns `InvalidUpgradeVersion` |
+
+### Multisig threshold timelock (`contracts/multisig`)
+
+| Test | Ledger position | Expected outcome |
+|---|---|---|
+| `test_queue_threshold_change_success` | at queue ledger | change queued, eta = queue + 600 000 |
+| `test_apply_threshold_change_before_delay` | queue + (MIN − 1) | `DelayNotElapsed` |
+| `test_apply_at_exact_min_delay_boundary` | queue + MIN − 1 then queue + MIN | first `DelayNotElapsed`; second succeeds |
+| `test_apply_threshold_change_after_delay` | queue + MIN | threshold updated, pending cleared |
+| `test_same_ledger_protection` | same ledger as queue | `DelayNotElapsed` |
 
 ## Integration Checklist
 
 ### Pre-deployment
 
-- [ ] Deploy timelock contract with correct parameters
-- [ ] Set guardian address
-- [ ] Configure governance delays (7 days default, 14 days critical)
-- [ ] Test all operation classifications
-- [ ] Verify emergency procedures
+- [ ] Call `upgrade_init` with the deployed WASM hash and desired approval threshold
+- [ ] Add all required approver addresses via `upgrade_add_approver`
+- [ ] Verify approver list with `get_upgrade_approvers`
+- [ ] Verify threshold with `get_required_approvals`
+- [ ] Run a test proposal end-to-end on testnet
+- [ ] Set up event monitoring for `UpgradeProposedEvent` and `UpgradeExecutedEvent`
 
-### Post-deployment
+### Upgrade procedure
 
-- [ ] Update lending contract admin to timelock address
-- [ ] Test parameter change flow end-to-end
-- [ ] Verify emergency shutdown works
-- [ ] Set up event monitoring
-- [ ] Train operations team on procedures
-- [ ] Document all addresses and keys
+- [ ] Build and upload the new WASM; note the resulting hash
+- [ ] Increment the version number (must be > `current_version`)
+- [ ] Call `upgrade_propose` and record the returned `proposal_id`
+- [ ] Notify all approvers with the proposal ID and new WASM hash
+- [ ] Collect approvals from `required_approvals` distinct approver accounts
+- [ ] Wait until `current_ledger >= eta_ledger` (~7 days)
+- [ ] Call `upgrade_execute` to apply the upgrade
+- [ ] Verify new version with `current_version`
 
-### Ongoing Operations
+### Ongoing operations
 
-- [ ] Monitor queued actions daily
-- [ ] Review community feedback on proposals
-- [ ] Maintain guardian key accessibility
-- [ ] Regular security audits of procedures
-- [ ] Update documentation as needed
+- [ ] Monitor `UpgradeProposedEvent` for unexpected proposals
+- [ ] Audit approver set periodically via `get_upgrade_approvers`
+- [ ] Rotate approver keys by pairing `upgrade_add_approver` + `upgrade_remove_approver`
 
-## Contact Information
+## Vesting Treasury Sink
 
-For operational questions or emergency situations:
+When a vesting grant is revoked by the configured admin, any unvested tokens
+are clawed back and deposited to the protocol treasury address. Operators
+should note:
 
-- **Technical Issues**: [Technical Support Channel]
-- **Security Incidents**: [Security Team Contact]
-- **Governance Questions**: [Governance Forum]
-- **Emergency Contact**: [24/7 Emergency Line]
+- **Revocation Authority**: Only the configured `admin` may call `revoke(grantee)`.
+- **Cliff Behavior**: No tokens become claimable until `now >= start + cliff_seconds`.
+- **Treasury Sink**: Unvested balance at the time of revoke is transferred to
+  the protocol treasury address configured in the vesting contract.
+- **Monitoring**: Watch vesting revoke events and treasury inflows to detect
+  unexpected revocations.

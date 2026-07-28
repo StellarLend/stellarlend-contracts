@@ -4,18 +4,22 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PriceValidator, createValidator } from '../src/services/price-validator.js';
+import { DEFAULT_PRICE_BOUNDS } from '../src/config.js';
 import type { RawPriceData } from '../src/types/index.js';
 
 describe('PriceValidator', () => {
     let validator: PriceValidator;
 
     beforeEach(() => {
-        validator = createValidator({
-            maxDeviationPercent: 10,
-            maxStalenessSeconds: 300,
-            minPrice: 0.0001,
-            maxPrice: 1000000,
-        });
+        validator = createValidator(
+            {
+                maxDeviationPercent: 10,
+                maxStalenessSeconds: 300,
+                minPrice: 0.0001,
+                maxPrice: 1000000,
+            },
+            DEFAULT_PRICE_BOUNDS,
+        );
     });
 
     describe('validate', () => {
@@ -146,6 +150,38 @@ describe('PriceValidator', () => {
             const result = validator.validate(rawPrice);
 
             expect(result.isValid).toBe(false);
+        });
+
+        it('should reject price outside asset-specific bounds', () => {
+            const rawPrice: RawPriceData = {
+                asset: 'BTC',
+                price: 500,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.errors.some((e) => e.code === 'PRICE_BELOW_MIN')).toBe(true);
+        });
+
+        it('should reload bounds and enforce tighter limits', () => {
+            validator.reloadConfig({}, {
+                XLM: { minPrice: 0.2, maxPrice: 1_000_000 },
+            });
+
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.errors.some((e) => e.code === 'PRICE_BELOW_MIN')).toBe(true);
         });
     });
 
