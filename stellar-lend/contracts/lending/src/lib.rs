@@ -173,6 +173,10 @@ pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 1000;
 /// Caps the liquidation bonus at 50 % so a misconfigured value cannot seize
 /// an outsized share of a borrower's collateral on top of the repaid debt.
 pub const MAX_LIQUIDATION_INCENTIVE_BPS: i128 = 5000;
+/// Upper bound accepted by [`LendingContract::set_close_factor_bps`].
+/// Caps the close factor at 75 % so a single liquidation cannot
+/// extinguish a borrower's entire debt in one block.
+pub const MAX_CLOSE_FACTOR_BPS: i128 = 7500;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
@@ -377,6 +381,69 @@ pub enum ProtocolAction {
     FlashLoan,
 }
 
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum LendingError {
+    InvalidAmount = 1001,
+    Overflow = 1002,
+    Unauthorized = 1003,
+    PendingAdminNotSet = 1004,
+    BelowMinimumBorrow = 1008,
+    NotInitialized = 1009,
+    AlreadyInitialized = 1010,
+    PositionHealthy = 1011,
+    SelfLiquidation = 2008,
+    DebtCeilingExceeded = 2001,
+    DepositCapExceeded = 2002,
+    /// A borrow would push total outstanding debt for the asset beyond the
+    /// configured per-asset `borrow_cap`.
+    BorrowCapExceeded = 2003,
+    InvalidFeeBps = 2005,
+    InvalidFlashUtilizationBps = 2006,
+    InsufficientCollateral = 2007,
+    IsolationCeilingExceeded = 2009,
+    InvalidLiquidationParams = 2011,
+    InvalidOracleSignature = 5001,
+    PriceOutOfBounds = 3004,
+    PriceUnavailable = 3005,
+    StaleOracleTimestamp = 5002,
+    OraclePubkeyNotSet = 5003,
+    MaxMoveBpsExceeded = 5004,
+    OracleReplay = 5005,
+    /// The asset has not been configured via set_asset_params.
+    AssetNotConfigured = 3001,
+    /// Oracle price record is missing for the requested asset.
+    PriceFeedNotFound = 3002,
+    /// Operation would result in an unsafe health factor.
+    HealthFactorTooLow = 3003,
+    UpgradeNotInitialized = 4001,
+    ProposalNotFound = 4002,
+    ProposalNotReady = 4003,
+    ProposalExpired = 4004,
+    ProposalAlreadyExecuted = 4005,
+    AlreadyApproved = 4006,
+    InsufficientUpgradeApprovals = 4007,
+    InvalidUpgradeVersion = 4008,
+    ApproverNotFound = 4009,
+    MaxApproversReached = 4010,
+    InvalidUpgradeConfig = 4011,
+    /// `write_off_bad_debt` called when there is no recorded bad debt.
+    NoBadDebt = 6001,
+    /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
+    WriteOffExceedsBadDebt = 6002,
+    /// `set_liquidation_threshold_bps` called with a value outside `[0, 10000]`.
+    InvalidLiquidationThresholdBps = 7000,
+    /// `set_close_factor_bps` called with a value outside `(0, 7500]`.
+    InvalidCloseFactorBps = 7001,
+    /// `set_liquidation_incentive_bps` called with a value outside
+    /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
+    InvalidLiquidationIncentiveBps = 7002,
+    /// `set_deposit_cap` called with a value <= 0.
+    InvalidDepositCap = 7005,
+    /// `set_rate_params` called with an internally inconsistent `RateParams`.
+    InvalidRateParams = 7006,
+}
 pub use stellar_lend_common::LendingError;
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -831,8 +898,10 @@ impl LendingContract {
     }
 
     /// Admin-only setter for close factor bps.
-    /// Must be in (0, 10000].
+    /// Must be in (0, 7500].
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
+        assert_admin(&env);
+        if close_factor_bps <= 0 || close_factor_bps > MAX_CLOSE_FACTOR_BPS {
         let admin: Address = env
             .storage()
             .instance()
@@ -1950,16 +2019,16 @@ impl LendingContract {
     /// Set the close-factor cap in basis points (admin-only).
     ///
     /// The close factor bounds the maximum share of a borrower's debt that a
-    /// single `liquidate` call may extinguish. Must be in `(0, 10000]`
-    /// (greater than 0 %, at most 100 %).
+    /// single `liquidate` call may extinguish. Must be in `(0, 7500]`
+    /// (greater than 0 %, at most 75 %).
     ///
     /// # Errors
     /// - [`LendingError::InvalidCloseFactorBps`] if `close_factor_bps <= 0`
-    ///   or `close_factor_bps > 10000`.
+    ///   or `close_factor_bps > 7500`.
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
-        if close_factor_bps <= 0 || close_factor_bps > BPS_DENOM {
+        if close_factor_bps <= 0 || close_factor_bps > MAX_CLOSE_FACTOR_BPS {
             return Err(LendingError::InvalidCloseFactorBps);
         }
         env.storage()
