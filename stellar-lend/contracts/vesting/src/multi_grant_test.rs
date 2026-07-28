@@ -10,18 +10,18 @@
 //! | claimable_total ignores revoked grants   | Revoked grants excluded    |
 //! | claim batches all grants atomically      | All grants claimed in one call |
 
-use super::{Grant, VestingContract};
+use crate::test_harness::{Grant, VestingContract};
 
 // ── claimable_total returns correct aggregate ──────────────────────────────────
 
 /// claimable_total should return the sum of claimable amounts across all grants.
 /// Each grant: 1000 total, starts at t=0, duration=1000s, cliff=0.
-/// At t=500: each grant has 500 claimable, total 1500.
+/// At t=500: each grant has 500 claimable, total 1000.
 #[test]
 fn claimable_total_aggregates_multiple_grants() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
 
     let claimable = c.claimable_total("alice", 500);
     assert_eq!(claimable, 1_000);
@@ -37,9 +37,9 @@ fn claimable_total_aggregates_multiple_grants() {
 #[test]
 fn claimable_total_with_overlapping_schedules() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("bob", 1_000, 0, 1_000, 0);
-    c.add_grant("bob", 1_000, 200, 1_000, 0);
-    c.add_grant("bob", 1_000, 400, 1_000, 0);
+    c.add_grant("admin", "bob", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "bob", 1_000, 200, 1_000, 0).unwrap();
+    c.add_grant("admin", "bob", 1_000, 400, 1_000, 0).unwrap();
 
     let claimable = c.claimable_total("bob", 500);
     assert_eq!(claimable, 900);
@@ -51,11 +51,11 @@ fn claimable_total_with_overlapping_schedules() {
 #[test]
 fn claimable_total_ignores_revoked_grants() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("carol", 1_000, 0, 1_000, 0);
-    c.add_grant("carol", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "carol", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "carol", 1_000, 0, 1_000, 0).unwrap();
 
-    // Revoke first grant
-    let _ = c.revoke("admin", "carol", 500).expect("revoke should succeed");
+    // Revoke the first grant only (by index)
+    let _ = c.revoke_one("admin", "carol", 0, 500).expect("revoke should succeed");
 
     // At t=500: only second grant has 500 claimable, first is revoked
     let claimable = c.claimable_total("carol", 500);
@@ -77,16 +77,16 @@ fn claimable_total_zero_for_no_grants() {
 #[test]
 fn claimable_total_matches_actual_claim() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("dave", 2_000, 0, 1_000, 0);
-    c.add_grant("dave", 1_000, 100, 1_000, 0);
+    c.add_grant("admin", "dave", 2_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "dave", 1_000, 100, 1_000, 0).unwrap();
 
-    // At t=500: grant 1 = 500, grant 2 = 400 (started at 100)
+    // At t=500: grant 1 = 1000 (2000*500/1000), grant 2 = 400 (1000*400/1000)
     let expected_claimable = c.claimable_total("dave", 500);
-    assert_eq!(expected_claimable, 900);
+    assert_eq!(expected_claimable, 1_400);
 
     // Claim should return the same amount
     let claimed = c.claim("dave", 500).expect("claim should succeed");
-    assert_eq!(claimed, 900);
+    assert_eq!(claimed, 1_400);
 }
 
 // ── claim batches all grants atomically ────────────────────────────────────────
@@ -95,9 +95,9 @@ fn claimable_total_matches_actual_claim() {
 #[test]
 fn claim_batches_across_all_grants() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("eve", 1_000, 0, 1_000, 0);
-    c.add_grant("eve", 1_000, 0, 1_000, 0);
-    c.add_grant("eve", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "eve", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "eve", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "eve", 1_000, 0, 1_000, 0).unwrap();
 
     assert_eq!(c.total_locked(), 3_000);
 
@@ -113,11 +113,11 @@ fn claim_batches_across_all_grants() {
 #[test]
 fn claim_with_mixed_revoked_and_active() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("frank", 1_000, 0, 1_000, 0);
-    c.add_grant("frank", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "frank", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "frank", 1_000, 0, 1_000, 0).unwrap();
 
-    // Revoke one grant
-    let _ = c.revoke("admin", "frank", 500).expect("revoke should succeed");
+    // Revoke one grant (index 0)
+    let _ = c.revoke_one("admin", "frank", 0, 500).expect("revoke should succeed");
 
     let claimed = c.claim("frank", 500).expect("claim should succeed");
     let grants = c.get_grants("frank");

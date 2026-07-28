@@ -88,8 +88,8 @@ fn set_close_factor_bps_accepts_lower_boundary() {
 #[test]
 fn set_close_factor_bps_accepts_upper_boundary() {
     let (_env, client, ..) = setup();
-    client.set_close_factor_bps(&10_000);
-    assert_eq!(client.get_close_factor_bps(), 10_000);
+    client.set_close_factor_bps(&7_500);
+    assert_eq!(client.get_close_factor_bps(), 7_500);
 }
 
 #[test]
@@ -128,9 +128,9 @@ fn set_close_factor_bps_rejects_negative() {
 }
 
 #[test]
-fn set_close_factor_bps_rejects_above_10000() {
+fn set_close_factor_bps_rejects_above_7500() {
     let (_env, client, ..) = setup();
-    let res = client.try_set_close_factor_bps(&10_001);
+    let res = client.try_set_close_factor_bps(&7_501);
     assert!(matches!(res, Err(Ok(LendingError::InvalidCloseFactorBps))));
     assert_eq!(client.get_close_factor_bps(), DEFAULT_CLOSE_FACTOR_BPS);
 }
@@ -256,12 +256,12 @@ fn liquidate_uses_default_close_factor_and_incentive_when_unset() {
     assert_eq!(repaid, 100);
 }
 
-/// Raising the close-factor cap to 100% allows a single `liquidate` call to
-/// extinguish the *entire* debt, instead of being capped at 50%.
+/// Raising the close-factor cap to 75% increases the maximum repayable
+/// portion in a single `liquidate` call, without allowing a full wipeout.
 #[test]
 fn liquidate_honours_governed_close_factor_override() {
     let (env, client, cid, _admin) = setup();
-    client.set_close_factor_bps(&10_000);
+    client.set_close_factor_bps(&7_500);
 
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
@@ -272,7 +272,7 @@ fn liquidate_honours_governed_close_factor_override() {
     // hf = 900 * 8000 / 800 = 9000 < 10000 -> unhealthy.
     seed_position(&env, &cid, &borrower, 900, 800);
 
-    // max_repay = 800 * 10000 / 10000 = 800 (100% close factor) -> full repay.
+    // max_repay = 800 * 7500 / 10000 = 600 (75% close factor) -> partial repay.
     let repaid = expect_repaid(
         &liquidator,
         &borrower,
@@ -281,12 +281,12 @@ fn liquidate_honours_governed_close_factor_override() {
         800,
         &client,
     );
-    assert_eq!(repaid, 800);
+    assert_eq!(repaid, 600);
 
     let pos = client.get_position(&borrower);
-    assert_eq!(pos.debt, 0);
-    // seized = 800 * (10000 + 1000) / 10000 = 880 (default incentive, no clamp).
-    assert_eq!(pos.collateral, 900 - 880);
+    assert_eq!(pos.debt, 200);
+    // seized = 600 * (10000 + 1000) / 10000 = 660 (default incentive, no clamp).
+    assert_eq!(pos.collateral, 900 - 660);
 }
 
 /// Zeroing out the liquidation incentive means the liquidator receives

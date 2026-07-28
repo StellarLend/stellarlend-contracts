@@ -2,7 +2,7 @@
 //!
 //! Covers every rejection path and confirms valid schedules are accepted.
 
-use crate::{VestingContract, VestingError};
+use crate::test_harness::{VestingContract, VestingError};
 
 // ── Rejection cases ───────────────────────────────────────────────────────────
 

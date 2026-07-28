@@ -82,25 +82,39 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
-/// Emitted when a liquidator liquidates an undercollateralized position.
+/// Emitted when a flash loan is initiated.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LiquidateEvent {
+pub struct FlashLoanEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
-    /// Address of the liquidator executing the liquidation.
-    pub liquidator: Address,
-    /// Address of the borrower being liquidated.
-    pub borrower: Address,
-    /// Amount of debt repaid by the liquidator.
-    pub repaid_debt: i128,
-    /// Amount of collateral seized by the liquidator.
-    pub seized_collateral: i128,
-    /// Borrower's remaining debt after liquidation.
-    pub borrower_remaining_debt: i128,
-    /// Borrower's remaining collateral after liquidation.
-    pub borrower_remaining_collateral: i128,
-    /// Timestamp of the liquidation (ledger timestamp).
+    /// Address that initiated the flash loan.
+    pub initiator: Address,
+    /// Address receiving the flash-loaned funds.
+    pub receiver: Address,
+    /// Asset being flash-loaned.
+    pub asset: Address,
+    /// Amount of the flash loan.
+    pub amount: i128,
+    /// Fee charged for the flash loan.
+    pub fee: i128,
+    /// Timestamp of the flash loan (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emitted when a flash loan is repaid via `repay_flash_loan`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanRepaidEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// Address repaying the flash loan (the receiver contract).
+    pub payer: Address,
+    /// Asset being repaid.
+    pub asset: Address,
+    /// Amount repaid.
+    pub amount: i128,
+    /// Timestamp of the repayment (ledger timestamp).
     pub timestamp: u64,
 }
 
@@ -166,26 +180,37 @@ pub fn emit_repay(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         .publish((Symbol::new(env, "RepayEvent"),), event);
 }
 
-/// Emit a liquidate event.
-pub fn emit_liquidate(
+/// Emit a flash loan event.
+pub fn emit_flash_loan(
     env: &Env,
-    liquidator: &Address,
-    borrower: &Address,
-    repaid_debt: i128,
-    seized_collateral: i128,
-    borrower_remaining_debt: i128,
-    borrower_remaining_collateral: i128,
+    initiator: &Address,
+    receiver: &Address,
+    asset: &Address,
+    amount: i128,
+    fee: i128,
 ) {
-    let event = LiquidateEvent {
+    let event = FlashLoanEvent {
         schema_version: EVENT_SCHEMA_VERSION,
-        liquidator: liquidator.clone(),
-        borrower: borrower.clone(),
-        repaid_debt,
-        seized_collateral,
-        borrower_remaining_debt,
-        borrower_remaining_collateral,
+        initiator: initiator.clone(),
+        receiver: receiver.clone(),
+        asset: asset.clone(),
+        amount,
+        fee,
         timestamp: env.ledger().timestamp(),
     };
     env.events()
-        .publish((Symbol::new(env, "LiquidateEvent"),), event);
+        .publish((Symbol::new(env, "FlashLoanEvent"),), event);
+}
+
+/// Emit a flash loan repaid event.
+pub fn emit_flash_loan_repaid(env: &Env, payer: &Address, asset: &Address, amount: i128) {
+    let event = FlashLoanRepaidEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        payer: payer.clone(),
+        asset: asset.clone(),
+        amount,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashLoanRepaidEvent"),), event);
 }

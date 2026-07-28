@@ -189,9 +189,11 @@ pub fn update_interest_rate_config(
 /// accounting in a module separate from the rate model.
 pub fn set_protocol_totals(
     env: &Env,
+    admin: Address,
     total_deposits: i128,
     total_borrows: i128,
 ) -> Result<(), InterestRateError> {
+    require_rate_admin(env, &admin)?;
     if total_deposits < 0 || total_borrows < 0 {
         return Err(InterestRateError::InvalidParameter);
     }

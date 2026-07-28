@@ -3,7 +3,7 @@
 This document outlines the testing framework for verifying interactions between the core `hello-world` protocol contract and external contracts (Tokens, Flash Loan Receivers, AMMs).
 
 ## Architecture
-
+ 
 The framework leverages Soroban SDK's `testutils` to simulate a multi-contract environment within a single test execution context.
 
 ### Key Components

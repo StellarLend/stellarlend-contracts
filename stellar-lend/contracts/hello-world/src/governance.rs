@@ -55,6 +55,10 @@ pub enum GovernanceError {
     /// of zero, threshold exceeding the guardian count, or a removal that
     /// would make the current threshold unreachable).
     InvalidGuardianConfig = 12,
+    /// The recovery request's `old_admin` no longer matches the current admin,
+    /// meaning the admin was changed after the recovery was started.  The
+    /// recovery must be restarted against the current admin.
+    RecoveryAdminMismatch = 13,
 }
 
 // ---------------------------------------------------------------------------
@@ -682,6 +686,10 @@ pub fn execute_recovery(env: &Env, executor: Address) -> Result<(), GovernanceEr
         .instance()
         .get(&GovernanceDataKey::Config)
         .ok_or(GovernanceError::NotInitialized)?;
+
+    if config.admin != request.old_admin {
+        return Err(GovernanceError::RecoveryAdminMismatch);
+    }
 
     config.admin = request.new_admin;
     env.storage()
