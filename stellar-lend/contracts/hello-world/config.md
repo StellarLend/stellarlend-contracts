@@ -1,3 +1,5 @@
+> **⚠ STUB NOTICE**: The `config_set`, `config_get`, `config_backup`, and `config_restore` functions documented below are **not yet implemented** — `config.rs` is currently a stub. This documentation describes the intended design only.
+
 # Protocol Configuration Module (`config.rs`)
 
 The `config` module provides a flexible, key-value storage system for the StellarLend protocol's configuration parameters. It allows the protocol admin to efficiently add, retrieve, back up, and restore configuration settings without needing to upgrade the entire contract.
