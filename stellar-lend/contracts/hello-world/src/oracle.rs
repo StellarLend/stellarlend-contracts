@@ -305,6 +305,9 @@ pub fn update_price_feed(
     decimals: u32,
     oracle: Address,
 ) -> Result<i128, OracleError> {
+    caller.require_auth();
+    oracle.require_auth();
+
     // Check if oracle updates are paused
     let pause_key = OracleDataKey::PauseSwitches;
     if let Some(pause_map) = env
@@ -565,6 +568,7 @@ pub fn set_primary_oracle(
     asset: Address,
     primary_oracle: Address,
 ) -> Result<(), OracleError> {
+    caller.require_auth();
     crate::admin::require_admin(env, &caller).map_err(|_| OracleError::Unauthorized)?;
     let primary_key = OracleDataKey::PrimaryOracle(asset);
     env.storage()

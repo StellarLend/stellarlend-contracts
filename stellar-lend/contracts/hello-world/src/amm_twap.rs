@@ -365,9 +365,16 @@ pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> u128 {
     let elapsed_since_stored = now.saturating_sub(current_state.last_timestamp);
     let mut cumulative_now = current_state.price0_cumulative;
     if elapsed_since_stored > 0 && current_state.last_reserve0 > 0 {
-        let extrapolation = (current_state.last_reserve1 * PRICE_SCALE
-            / current_state.last_reserve0)
-            * elapsed_since_stored as u128;
+        let scaled_reserve1 = current_state
+            .last_reserve1
+            .checked_mul(PRICE_SCALE)
+            .expect("TWAP extrapolation overflow: last_reserve1 * PRICE_SCALE");
+        let ratio = scaled_reserve1
+            .checked_div(current_state.last_reserve0)
+            .expect("TWAP extrapolation overflow: last_reserve1 * PRICE_SCALE / last_reserve0");
+        let extrapolation = ratio
+            .checked_mul(elapsed_since_stored as u128)
+            .expect("TWAP extrapolation overflow: reserve ratio * elapsed_since_stored");
         cumulative_now = cumulative_now.wrapping_add(extrapolation);
     }
 

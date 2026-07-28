@@ -27,6 +27,7 @@ pub mod multisig;
 pub mod oracle;
 pub mod recovery;
 pub mod repay;
+pub mod reserve;
 pub mod risk_management;
 pub mod storage;
 pub mod types;
@@ -103,7 +104,7 @@ use deposit::deposit_collateral;
 use repay::repay_debt;
 
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
-use crate::deposit::{DepositDataKey, ProtocolAnalytics};
+
 use crate::risk_management::{
     can_be_liquidated, check_emergency_pause, get_liquidation_incentive_amount,
     get_max_liquidatable_amount, initialize_risk_management, is_emergency_paused,
@@ -564,6 +565,12 @@ impl HelloContract {
     }
 
     /// Claim accumulated protocol reserves (admin only).
+    ///
+    /// Withdraws `amount` of accrued reserves for `asset` and transfers
+    /// tokens to `to`.  Accounting uses the reserve module's storage
+    /// (`ReserveDataKey::ReserveBalance`) but does **not** require a
+    /// treasury address to be configured — the caller specifies the
+    /// destination directly.
     pub fn claim_reserves(
         env: Env,
         caller: Address,
@@ -571,41 +578,112 @@ impl HelloContract {
         _to: Address,
         amount: i128,
     ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &caller).map_err(|_| RiskManagementError::Unauthorized)?;
+        reserve::claim_reserves(&env, caller, asset.clone(), amount).map_err(|e| match e {
+            reserve::ReserveError::Unauthorized => RiskManagementError::Unauthorized,
+            _ => RiskManagementError::InvalidParameter,
+        })?;
 
-        let reserve_key = DepositDataKey::ProtocolReserve(asset.clone());
-        let mut reserve_balance = env
-            .storage()
-            .persistent()
-            .get::<DepositDataKey, i128>(&reserve_key)
-            .unwrap_or(0);
-
-        if amount > reserve_balance {
-            return Err(RiskManagementError::InvalidParameter);
-        }
-
-        if let Some(_asset_addr) = asset {
+        if let Some(asset_addr) = asset {
             #[cfg(not(test))]
             {
-                let token_client = soroban_sdk::token::Client::new(&env, &_asset_addr);
+                let token_client = soroban_sdk::token::Client::new(&env, &asset_addr);
                 token_client.transfer(&env.current_contract_address(), &_to, &amount);
             }
         }
 
-        reserve_balance -= amount;
-        env.storage()
-            .persistent()
-            .set(&reserve_key, &reserve_balance);
         Ok(())
     }
 
     /// Get current protocol reserve balance for an asset.
     pub fn get_reserve_balance(env: Env, asset: Option<Address>) -> i128 {
-        let reserve_key = DepositDataKey::ProtocolReserve(asset);
-        env.storage()
-            .persistent()
-            .get::<DepositDataKey, i128>(&reserve_key)
-            .unwrap_or(0)
+        reserve::get_reserve_balance(&env, asset)
+    }
+
+    // ============================================================================
+    // Reserve and Treasury Module Entrypoints
+    // ============================================================================
+
+    /// Initialize reserve configuration for an asset.
+    ///
+    /// Sets the reserve factor that determines what portion of interest income
+    /// is allocated to protocol reserves.  The factor must be between 0 and
+    /// 5000 basis points (0% – 50%).
+    pub fn initialize_reserve_config(
+        env: Env,
+        asset: Option<Address>,
+        reserve_factor_bps: i128,
+    ) -> Result<(), reserve::ReserveError> {
+        reserve::initialize_reserve_config(&env, asset, reserve_factor_bps)
+    }
+
+    /// Update the reserve factor for an asset (admin only).
+    pub fn set_reserve_factor(
+        env: Env,
+        caller: Address,
+        asset: Option<Address>,
+        reserve_factor_bps: i128,
+    ) -> Result<(), reserve::ReserveError> {
+        reserve::set_reserve_factor(&env, caller, asset, reserve_factor_bps)
+    }
+
+    /// Get the current reserve factor for an asset.
+    pub fn get_reserve_factor(env: Env, asset: Option<Address>) -> i128 {
+        reserve::get_reserve_factor(&env, asset)
+    }
+
+    /// Accrue protocol reserves from an interest payment.
+    ///
+    /// Splits `interest_amount` into a reserve portion (governed by the asset's
+    /// reserve factor) and a lender portion.  The reserve share is credited to
+    /// the asset's reserve balance.
+    ///
+    /// Returns `(reserve_amount, lender_amount)`.
+    pub fn accrue_reserve(
+        env: Env,
+        asset: Option<Address>,
+        interest_amount: i128,
+    ) -> Result<(i128, i128), reserve::ReserveError> {
+        reserve::accrue_reserve(&env, asset, interest_amount)
+    }
+
+    /// Set the treasury address for reserve withdrawals (admin only).
+    ///
+    /// The treasury receives withdrawn reserves.  Cannot be the contract
+    /// itself.
+    pub fn set_treasury_address(
+        env: Env,
+        caller: Address,
+        treasury: Address,
+    ) -> Result<(), reserve::ReserveError> {
+        reserve::set_treasury_address(&env, caller, treasury)
+    }
+
+    /// Get the configured treasury address.
+    pub fn get_treasury_address(env: Env) -> Option<Address> {
+        reserve::get_treasury_address(&env)
+    }
+
+    /// Withdraw accrued reserves to the treasury (admin only).
+    ///
+    /// Requires a treasury address to have been configured via
+    /// [`set_treasury_address`].  Returns the amount actually withdrawn.
+    pub fn withdraw_reserve_to_treasury(
+        env: Env,
+        caller: Address,
+        asset: Option<Address>,
+        amount: i128,
+    ) -> Result<i128, reserve::ReserveError> {
+        reserve::withdraw_reserve_to_treasury(&env, caller, asset, amount)
+    }
+
+    /// Get comprehensive reserve statistics for an asset.
+    ///
+    /// Returns `(balance, factor_bps, treasury_address)`.
+    pub fn get_reserve_stats(
+        env: Env,
+        asset: Option<Address>,
+    ) -> (i128, i128, Option<Address>) {
+        reserve::get_reserve_stats(&env, asset)
     }
 
     /// Generate a comprehensive protocol report.
@@ -1286,6 +1364,9 @@ mod gov_can_vote_test;
 
 #[cfg(test)]
 mod recovery_test;
+
+#[cfg(test)]
+mod oracle_auth_test;
 
 #[cfg(test)]
 mod tests {

@@ -102,7 +102,7 @@ jobs:
 
       - name: Install Stellar CLI
         run: |
-          cargo install --locked stellar-cli
+          cargo install --locked stellar-cli --version 25.2.0
           stellar --version
 
       - name: Build contracts (wasm32)
