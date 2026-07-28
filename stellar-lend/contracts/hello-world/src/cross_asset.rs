@@ -355,6 +355,14 @@ fn save_total_debt(env: &Env, key: &AssetKey, v: i128) {
         .set(&CrossAssetDataKey::TotalDebt(key.clone()), &v);
 }
 
+fn checked_sub_total(total: i128, amount: i128) -> Result<i128, CrossAssetError> {
+    let result = total.checked_sub(amount).ok_or(CrossAssetError::Overflow)?;
+    if result < 0 {
+        return Err(CrossAssetError::Overflow);
+    }
+    Ok(result)
+}
+
 fn load_asset_list(env: &Env) -> Vec<AssetKey> {
     env.storage()
         .persistent()
@@ -762,11 +770,23 @@ pub fn cross_asset_withdraw(
     if pos.supplied < amount {
         return Err(CrossAssetError::InsufficientCollateral);
     }
+
+    let prior_supplied = pos.supplied;
+    let prior_total_supply = load_total_supply(env, &key);
+
     pos.supplied -= amount;
     save_user_supply(env, &key, &user, pos.supplied);
 
-    let total = load_total_supply(env, &key) - amount;
+    let total = checked_sub_total(prior_total_supply, amount)?;
     save_total_supply(env, &key, total);
+
+    let summary = get_user_position_summary(env, &user)?;
+    if summary.is_healthy == 0 {
+        pos.supplied = prior_supplied;
+        save_user_supply(env, &key, &user, pos.supplied);
+        save_total_supply(env, &key, prior_total_supply);
+        return Err(CrossAssetError::InsufficientCollateral);
+    }
 
     Ok(pos)
 }
