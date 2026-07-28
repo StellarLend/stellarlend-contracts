@@ -1786,6 +1786,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-token-sdk"
+version = "25.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7257d888e42da01d031cfc388d4c9c10e4e13388a4e04deabf812fa7d33f0af3"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "soroban-token-vesting"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+ "soroban-token-sdk",
+]
+
+[[package]]
 name = "soroban-wasmi"
 version = "0.31.1-soroban.20.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
