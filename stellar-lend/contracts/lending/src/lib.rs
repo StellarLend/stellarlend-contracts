@@ -63,7 +63,7 @@ mod health_factor_edge_test;
 #[cfg(test)]
 mod insurance_fund_test;
 #[cfg(test)]
-mod insurance_fund_test;
+mod initialize_auth_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
@@ -605,7 +605,16 @@ impl LendingContract {
     /// contract is initialized.  Every state-mutating entry point calls
     /// [`require_initialized`] at the top and will return
     /// [`LendingError::NotInitialized`] until this function succeeds.
+    ///
+    /// `admin.require_auth()` is called as the very first statement to prevent
+    /// front-running: without it, any account that submits a transaction before
+    /// the legitimate deployer could claim the admin role permanently.
     pub fn initialize(env: Env, admin: Address) -> Result<(), LendingError> {
+        // Require the supplied admin address to have signed this transaction.
+        // Without this guard, any account could front-run the deployer and call
+        // initialize() first, naming an arbitrary admin and permanently locking
+        // out the intended owner.
+        admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(LendingError::AlreadyInitialized);
         }
