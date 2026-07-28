@@ -3819,3 +3819,5 @@ pub(crate) mod test {
 mod max_borrow_proptest;
 #[cfg(test)]
 mod compound_interest_proptest;
+#[cfg(test)]
+mod test_flash_loan_reservation;
