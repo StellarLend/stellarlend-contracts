@@ -161,9 +161,9 @@ fn claim_after_accelerate_drains_exactly() {
     assert_eq!(c.balance_of("alice"), 1_000, "grantee has full total");
     assert_eq!(c.balance_of("contract"), 0, "contract is empty");
 
-    // Second claim must yield 0.
-    let second = c.claim("alice", 200).expect("second claim");
-    assert_eq!(second, 0, "nothing left to claim");
+    // Second claim must yield NothingToClaim.
+    let second = c.claim("alice", 200).unwrap_err();
+    assert_eq!(second, VestingError::NothingToClaim, "nothing left to claim");
 }
 
 /// `total_locked` must decrease by exactly `total - released` (the unvested
@@ -256,17 +256,19 @@ fn event_emitted_on_state_change() {
 
 /// When all active grants are already fully released, no `GrantAccelerated`
 /// event must be emitted and the call must return `Ok(())`.
+///
+/// We simulate a fully-released grant by using a very short duration that
+/// vests instantly, then claiming everything.
 #[test]
 fn no_event_on_noop() {
-    let mut c = setup_with_grant();
+    let mut c = VestingContract::new("admin", "treasury");
+    // Grant with duration=1 — fully vested at t >= 1.
+    c.add_grant("admin", "alice", 1_000, 0, 1, 0)
+        .expect("add_grant should succeed");
 
-    // Manually set released = total to simulate an already-fully-vested grant.
-    {
-        let grants = c.grants.get_mut("alice").unwrap();
-        grants[0].released = grants[0].total;
-    }
-    // Adjust total_locked manually to stay consistent.
-    c.total_locked = 0;
+    // Advance past full vesting and claim everything.
+    c.claim("alice", 1).expect("claim at t=1 must succeed");
+    // Now released = 1000, claimed = 1000, total_locked = 0.
 
     c.accelerate_grant("admin", "alice", 999)
         .expect("no-op accelerate must return Ok");
@@ -324,18 +326,17 @@ mod proptest_suite {
             claimed_fraction in 0u128..=1000u128,
             now in 0u64..=MAX_TIME,
         ) {
-            // Set up a grant with a cliff far in the future so nothing is
-            // released by the vesting schedule yet (ensures released=0 at start).
+            // Set up a grant with duration=1 so it vests instantly.
             let mut c = VestingContract::new("admin", "treasury");
-            c.add_grant("admin", "alice", total, now.saturating_add(1_000), 10_000, 5_000)
+            c.add_grant("admin", "alice", total, 0, 1, 0)
                 .expect("add_grant");
 
-            // Simulate prior withdrawals by directly setting claimed.
+            // Simulate prior withdrawals.
             let claimed = total * claimed_fraction / 1000;
-            {
-                let grants = c.grants.get_mut("alice").unwrap();
-                grants[0].claimed = claimed;
-                // Keep contract balance consistent with what add_grant set.
+            // Vest all tokens by advancing past the duration.
+            if claimed > 0 {
+                c.claim_partial("alice", claimed, 1)
+                    .expect("claim_partial should succeed");
             }
 
             c.accelerate_grant("admin", "alice", now)
@@ -351,7 +352,10 @@ mod proptest_suite {
             prop_assert_eq!(
                 claimable_sum,
                 total - claimed,
-                "claimable must equal total - claimed for total={total}, claimed={claimed}, now={now}"
+                "claimable must equal total - claimed for total={:?}, claimed={:?}, now={:?}",
+                total,
+                claimed,
+                now
             );
         }
     }
