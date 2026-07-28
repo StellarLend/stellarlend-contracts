@@ -2,6 +2,12 @@
 
 ## Build Information
 
+
+> **Drift Disclaimer:** The build hash and exported function counts above
+> are from a snapshot captured at a specific point in time. As the codebase
+> evolves, these values will drift from the actual build output. This report
+> serves as a historical reference; current builds should be verified
+> independently.
 - **Build Date**: 2024-12-19
 - **WASM File**: `hello_world.wasm`
 - **WASM Size**: 212,038 bytes (207.1 KB)
