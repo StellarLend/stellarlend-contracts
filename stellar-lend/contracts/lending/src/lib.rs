@@ -146,7 +146,8 @@ use debt::{
     repay_amount, save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
 };
 use events::{
-    emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw,
+    emit_borrow, emit_deposit, emit_flash_loan, emit_flash_loan_repaid,
+    emit_repay, emit_schema_version, emit_withdraw,
 };
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
@@ -2322,6 +2323,9 @@ impl LendingContract {
             .checked_add(amount)
             .expect("repay_flash_loan: treasury balance overflow");
         env.storage().persistent().set(&tre_key, &new_tre_bal);
+
+        // Emit flash loan repaid event
+        emit_flash_loan_repaid(&env, &payer, &asset, amount);
     }
 
     /// Issue a callback-based flash loan.
@@ -2368,12 +2372,7 @@ impl LendingContract {
         let new_tre_bal = tre_bal
             .checked_sub(amount)
             .expect("flash_loan: treasury underflow during transfer");
-        env.storage().persistent().set(
-            &tre_key,
-            if supply_cap < 0 {
-                return Err(LendingError::InvalidAmount);
-            } & new_tre_bal,
-        );
+        env.storage().persistent().set(&tre_key, &new_tre_bal);
 
         let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
         let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
@@ -2381,6 +2380,10 @@ impl LendingContract {
             .checked_add(amount)
             .expect("flash_loan: receiver balance overflow");
         env.storage().persistent().set(&rec_key, &new_rec_bal);
+
+        // Emit flash loan event before callback (rolled back atomically on panic).
+        // Placed here so FlashLoanEvent appears before FlashLoanRepaidEvent in logs.
+        emit_flash_loan(&env, &initiator, &receiver, &asset, amount, fee);
 
         env.storage().instance().set(&DataKey::FlashActive, &true);
 

@@ -82,6 +82,41 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
+/// Emitted when a flash loan is initiated.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// Address that initiated the flash loan.
+    pub initiator: Address,
+    /// Address receiving the flash-loaned funds.
+    pub receiver: Address,
+    /// Asset being flash-loaned.
+    pub asset: Address,
+    /// Amount of the flash loan.
+    pub amount: i128,
+    /// Fee charged for the flash loan.
+    pub fee: i128,
+    /// Timestamp of the flash loan (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emitted when a flash loan is repaid via `repay_flash_loan`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanRepaidEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// Address repaying the flash loan (the receiver contract).
+    pub payer: Address,
+    /// Asset being repaid.
+    pub asset: Address,
+    /// Amount repaid.
+    pub amount: i128,
+    /// Timestamp of the repayment (ledger timestamp).
+    pub timestamp: u64,
+}
 
 /// Emit the schema version event during contract initialization.
 pub fn emit_schema_version(env: &Env) {
@@ -145,3 +180,37 @@ pub fn emit_repay(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         .publish((Symbol::new(env, "RepayEvent"),), event);
 }
 
+/// Emit a flash loan event.
+pub fn emit_flash_loan(
+    env: &Env,
+    initiator: &Address,
+    receiver: &Address,
+    asset: &Address,
+    amount: i128,
+    fee: i128,
+) {
+    let event = FlashLoanEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        initiator: initiator.clone(),
+        receiver: receiver.clone(),
+        asset: asset.clone(),
+        amount,
+        fee,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashLoanEvent"),), event);
+}
+
+/// Emit a flash loan repaid event.
+pub fn emit_flash_loan_repaid(env: &Env, payer: &Address, asset: &Address, amount: i128) {
+    let event = FlashLoanRepaidEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        payer: payer.clone(),
+        asset: asset.clone(),
+        amount,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashLoanRepaidEvent"),), event);
+}
