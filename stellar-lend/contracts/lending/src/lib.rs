@@ -49,8 +49,6 @@ mod deposit_cap_race_test;
 #[cfg(test)]
 mod effective_supply_rate_test;
 #[cfg(test)]
-mod effective_supply_rate_test;
-#[cfg(test)]
 mod emergency_state_matrix_test;
 #[cfg(test)]
 mod error_codes_test;
@@ -97,15 +95,11 @@ mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod max_borrow_proptest;
 #[cfg(test)]
-mod compound_interest_proptest;
-#[cfg(test)]
 mod property_invariants_test;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
 mod position_summary_bench_test;
-#[cfg(test)]
-mod property_invariants_test;
 #[cfg(test)]
 mod rate_cache_test;
 #[cfg(test)]
@@ -120,8 +114,6 @@ mod rate_smoothing_state_test;
 mod rate_smoothing_test;
 #[cfg(test)]
 mod rate_updated_event_test;
-#[cfg(test)]
-mod repay_debt_floor_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
@@ -4242,7 +4234,3 @@ pub(crate) mod test {
         assert!(env.ledger().sequence() >= 0);
     }
 }
-#[cfg(test)]
-mod max_borrow_proptest;
-#[cfg(test)]
-mod compound_interest_proptest;
