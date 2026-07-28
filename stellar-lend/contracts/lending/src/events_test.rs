@@ -333,35 +333,6 @@ fn test_full_repay_emits_event_with_zero_debt() {
     );
 }
 
-#[test]
-fn test_liquidate_event_emitted() {
-    let (env, client, _admin, user) = setup();
-    let liquidator = Address::generate(&env);
-
-    // Set up an undercollateralized position (simplified for this test)
-    // Note: The actual liquidate function may need specific setup
-    // This test focuses on event emission structure
-
-    // Verify liquidate events are filterable
-    let events = env.events().all();
-    let _liquidate_events: SdkVec<_> = events
-        .iter()
-        .filter(|e| {
-            if let Ok(topics) = e.topics.clone().try_into_val(&env) {
-                let topics: SdkVec<Val> = topics;
-                if let Some(first) = topics.get(0) {
-                    if let Ok(symbol) = Symbol::try_from_val(&env, &first) {
-                        return symbol == Symbol::new(&env, "LiquidateEvent");
-                    }
-                }
-            }
-            false
-        })
-        .collect();
-
-    // Liquidation requires specific collateral/debt ratios
-    // This test verifies the event structure can be filtered
-}
 
 #[test]
 fn test_events_have_consistent_schema_version() {
