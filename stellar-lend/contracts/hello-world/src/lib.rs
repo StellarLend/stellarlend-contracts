@@ -1278,6 +1278,9 @@ mod test;
 #[cfg(test)]
 mod amm_pause_integration_test;
 #[cfg(test)]
+mod borrow_isolation_tier_test;
+
+#[cfg(test)]
 mod claim_reserves_test;
 
 #[cfg(test)]
