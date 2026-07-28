@@ -108,7 +108,7 @@ pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
 ### Risk Parameters
 - `min_collateral_ratio` >= 10,000 bps (100%)
 - `liquidation_threshold` < `min_collateral_ratio`
-- `close_factor` <= 7,500 bps (75%)
+- `close_factor` <= 10,000 bps (100%)
 - `liquidation_incentive` <= 5,000 bps (50%)
 
 ### Interest Rate Parameters

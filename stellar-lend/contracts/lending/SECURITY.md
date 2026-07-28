@@ -173,7 +173,7 @@ All arithmetic on protocol-controlled values uses the Rust *checked* API or Soro
 | `min_borrow_amount` | admin-set | default 1 000 |
 | `min_withdraw_amount` | admin-set | default 0 |
 | `liquidation_threshold_bps` | admin-set | 1 – 10 000 (validated) |
-| `close_factor_bps` | admin-set | 1 – 7 500 (validated) |
+| `close_factor_bps` | admin-set | 1 – 10 000 (validated) |
 | `liquidation_incentive_bps` | admin-set | 0 – 10 000 (validated) |
 | `flash_loan_fee_bps` | admin-set | 0 – `MAX_FLASH_LOAN_FEE_BPS` (1 000) |
 
@@ -283,7 +283,7 @@ All arithmetic on protocol-controlled values uses the Rust *checked* API or Soro
 | `min_borrow_amount` | admin-set | default 1 000 |
 | `min_withdraw_amount` | admin-set | default 0 |
 | `liquidation_threshold_bps` | admin-set | 1 – 10 000 (validated) |
-| `close_factor_bps` | admin-set | 1 – 7 500 (validated) |
+| `close_factor_bps` | admin-set | 1 – 10 000 (validated) |
 | `liquidation_incentive_bps` | admin-set | 0 – 10 000 (validated) |
 | `flash_loan_fee_bps` | admin-set | 0 – `MAX_FLASH_LOAN_FEE_BPS` (1 000) |
 
