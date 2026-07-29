@@ -128,6 +128,8 @@ mod storage_tier_test;
 mod supply_rate_split_test;
 
 #[cfg(test)]
+mod config_roundtrip_test;
+#[cfg(test)]
 mod utilization_history_test;
 #[cfg(test)]
 mod withdraw_overflow_test;
@@ -272,6 +274,12 @@ pub enum DataKey {
     /// period) when unset. Configured via
     /// [`LendingContract::set_liquidation_grace_period`].
     LiquidationGracePeriodSecs,
+    /// Config store: initialization flag.
+    ConfigInit,
+    /// Config store: all entries stored as a `Vec<ConfigEntry>`.
+    ConfigEntries,
+    /// Config store: named backup snapshot.
+    ConfigBackup(Symbol),
 }
 
 #[contractevent]
@@ -557,6 +565,14 @@ pub struct CrossWithdrawEvent {
     pub user: Address,
     pub asset: Address,
     pub amount: i128,
+}
+
+/// A single entry in the config store: a `Symbol` key and its `Bytes` value.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigEntry {
+    pub key: Symbol,
+    pub value: Bytes,
 }
 
 // Re-export audit log types for contract visibility
@@ -993,8 +1009,7 @@ impl LendingContract {
             .ok_or(LendingError::NotInitialized)?;
         admin.require_auth();
 
-        let old_guardian: Option<Address> =
-            env.storage().instance().get(&DataKey::Guardian);
+        let old_guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
         GuardianSetEvent {
             old_guardian,
@@ -2910,6 +2925,85 @@ impl LendingContract {
     /// * `limit` - Max entries to return (0 = all available, max = buffer size)
     pub fn get_governance_audit_entries(env: Env, limit: u64) -> Vec<AuditLogEntry> {
         audit_log::get_governance_audit_entries(&env, limit)
+    }
+
+    // -----------------------------------------------------------------------
+    // Config store
+    // -----------------------------------------------------------------------
+
+    pub fn config_set(env: Env, key: Symbol, value: Bytes) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let mut entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut found = false;
+        for i in 0..entries.len() {
+            if entries.get(i).unwrap().key == key {
+                entries.set(
+                    i,
+                    ConfigEntry {
+                        key: key.clone(),
+                        value: value.clone(),
+                    },
+                );
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            entries.push_back(ConfigEntry { key, value });
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigEntries, &entries);
+        Ok(())
+    }
+
+    pub fn config_get(env: Env, key: Symbol) -> Option<Bytes> {
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            if entry.key == key {
+                return Some(entry.value);
+            }
+        }
+        None
+    }
+
+    pub fn config_backup(env: Env, name: Symbol) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigBackup(name), &entries);
+        Ok(())
+    }
+
+    pub fn config_restore(env: Env, name: Symbol) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let backup_key = DataKey::ConfigBackup(name);
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&backup_key)
+            .ok_or(LendingError::BackupNotFound)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigEntries, &entries);
+        Ok(())
     }
 }
 
