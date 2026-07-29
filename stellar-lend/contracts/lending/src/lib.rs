@@ -993,8 +993,7 @@ impl LendingContract {
             .ok_or(LendingError::NotInitialized)?;
         admin.require_auth();
 
-        let old_guardian: Option<Address> =
-            env.storage().instance().get(&DataKey::Guardian);
+        let old_guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
         GuardianSetEvent {
             old_guardian,

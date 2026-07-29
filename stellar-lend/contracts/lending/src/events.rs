@@ -302,6 +302,8 @@ pub fn emit_liquidation_incentive_bps_set(env: &Env, incentive_bps: i128) {
         incentive_bps,
         timestamp: env.ledger().timestamp(),
     };
-    env.events()
-        .publish((Symbol::new(env, "LiquidationIncentiveBpsSetEvent"),), event);
+    env.events().publish(
+        (Symbol::new(env, "LiquidationIncentiveBpsSetEvent"),),
+        event,
+    );
 }
