@@ -879,6 +879,23 @@ impl VestingContract {
     }
 }
 
+// Test modules for vesting contract behavior.
+#[cfg(test)]
+mod accelerate_test;
+#[cfg(test)]
+mod claimable_consistency_test;
+#[cfg(test)]
+mod cliff_bound_test;
+#[cfg(test)]
+mod grant_transfer_test;
+#[cfg(test)]
+mod lifecycle_e2e_test;
+#[cfg(test)]
+mod milestone_schedule_test;
+#[cfg(test)]
+mod multi_grant_test;
+#[cfg(test)]
+mod partial_claim_test;
 #[cfg(test)]
 mod grant_transfer_test;
 #[cfg(test)]
