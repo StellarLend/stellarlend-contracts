@@ -59,6 +59,27 @@ pub struct Proposal {
     pub expires_at: u64,
 }
 
+/// Event emitted when a new proposal is created.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalCreatedEvent {
+    pub id: u64,
+    pub proposer: Address,
+    pub action_kind: Symbol,
+    pub expires_at: u64,
+}
+
+/// Event emitted when a signer approves a proposal.
+/// `passed` is `true` when this approval pushed the proposal to `Passed`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalApprovedEvent {
+    pub id: u64,
+    pub approver: Address,
+    pub approval_count: u32,
+    pub passed: bool,
+}
+
 /// Event emitted after a proposal has been executed.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -312,6 +333,18 @@ impl MultisigContract {
             expires_at,
         };
         Self::save_proposal(&env, &proposal);
+
+        let action_kind = Self::action_kind_symbol(&env, &proposal.action);
+        env.events().publish(
+            (symbol_short!("multisig"), Symbol::new(&env, "created")),
+            ProposalCreatedEvent {
+                id,
+                proposer: proposal.proposer,
+                action_kind,
+                expires_at,
+            },
+        );
+
         Ok(id)
     }
 
@@ -379,16 +412,30 @@ impl MultisigContract {
 
         // Persist the domain-separated binding for off-chain / indexer checks
         // and for `verify_approval_binding`.
+        let binding = Self::approval_auth_hash(&env, id, &caller);
         env.storage().persistent().set(
             &MultisigDataKey::ApprovalBinding(id, caller.clone()),
             &binding,
         );
 
         let threshold = Self::fetch_threshold(&env) as usize;
-        if proposal.approvals.len() as usize >= threshold {
+        let approval_count = proposal.approvals.len();
+        let passed = approval_count as usize >= threshold;
+        if passed {
             proposal.status = ProposalStatus::Passed;
         }
         Self::save_proposal(&env, &proposal);
+
+        env.events().publish(
+            (symbol_short!("multisig"), Symbol::new(&env, "approved")),
+            ProposalApprovedEvent {
+                id,
+                approver: caller,
+                approval_count,
+                passed,
+            },
+        );
+
         Ok(())
     }
 
@@ -476,8 +523,8 @@ impl MultisigContract {
                 // large as the current threshold, otherwise quorum could never
                 // be reached again and the multisig would be permanently bricked.
                 let threshold = Self::fetch_threshold(env);
-                if new_signers.len() < threshold {
-                    return Err(MultisigError::InvalidAction);
+                if (new_signers.len() as u32) < threshold {
+                    return Err(MultisigError::InvalidSigners);
                 }
                 env.storage()
                     .persistent()
