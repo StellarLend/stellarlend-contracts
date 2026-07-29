@@ -116,14 +116,15 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install system dependencies for Stellar CLI
-        # stellar-cli 25.2.0 pulls in libdbus-sys (transitively, for secure
-        # credential storage), which needs the `dbus-1` pkg-config package
-        # to build. GitHub's ubuntu-latest runners don't ship it by default,
-        # so `cargo install stellar-cli` fails at the libdbus-sys build
-        # script step without this.
+        # stellar-cli 25.2.0 pulls in a few crates with native build-script
+        # dependencies that GitHub's ubuntu-latest runners don't ship by
+        # default, so `cargo install stellar-cli` fails compiling them
+        # without these system packages present:
+        #   - libdbus-sys (secure credential storage) needs `dbus-1`.
+        #   - hidapi (hardware wallet / HID device support) needs `libudev`.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config
+          sudo apt-get install -y libdbus-1-dev libudev-dev pkg-config
 
       - name: Install Stellar CLI
         run: |
