@@ -3200,7 +3200,7 @@ pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
 }
 
 /// Assert that the transaction signer is the protocol admin.
-/// Panics with the default auth error if not.
+/// Returns a typed error when the contract has not yet been initialized.
 pub(crate) fn assert_admin(env: &Env) -> Result<(), LendingError> {
     let admin: Address = env
         .storage()
@@ -3242,7 +3242,8 @@ fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), Len
                 .storage()
                 .instance()
                 .get(&DataKey::Guardian)
-                .unwrap_or_else(|| env.storage().instance().get(&DataKey::Admin).unwrap());
+                .ok_or(LendingError::NotInitialized)
+                .or_else(|_| env.storage().instance().get(&DataKey::Admin).ok_or(LendingError::NotInitialized))?;
             caller.require_auth();
             Ok(())
         }
