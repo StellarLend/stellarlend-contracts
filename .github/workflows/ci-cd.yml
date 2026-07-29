@@ -76,6 +76,21 @@ jobs:
   soroban-checks:
     name: Soroban Validations
     runs-on: ubuntu-latest
+    # NOTE on the toolchain version used in this job: `stellar-lend/rust-toolchain.toml`
+    # pins 1.91.0 repo-wide (and that pin is honoured, via rustup's directory
+    # override, by every other job that runs `cargo`/`stellar` inside
+    # `stellar-lend/`). However `stellar-cli` 25.2.0 hard-refuses to build
+    # contracts on rustc 1.81, 1.82, 1.83, *or 1.91.0* ("use a rust version
+    # other than ..."), while soroban-sdk 25.3.1 simultaneously requires
+    # rustc >= 1.91.0 -- so no version satisfies both constraints except
+    # something newer than 1.91.0. `RUSTUP_TOOLCHAIN` takes precedence over
+    # the repo's `rust-toolchain.toml` override, so it's used here (job-wide)
+    # to force a working, newer toolchain for just this job's wasm build,
+    # without touching the 1.91.0 pin relied on by the other jobs (verified
+    # locally: fmt/clippy/build/test/coverage all pass cleanly on 1.91.0;
+    # only the `stellar contract build` step itself needs the newer compiler).
+    env:
+      RUSTUP_TOOLCHAIN: 1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -85,9 +100,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.93.0
           components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
+          targets: wasm32v1-none
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -114,7 +129,7 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          for wasm in stellar-lend/target/wasm32-unknown-unknown/release/*.wasm; do
+          for wasm in stellar-lend/target/wasm32v1-none/release/*.wasm; do
             # Don't re-optimize artifacts that already end in -optimized.wasm.
             case "$wasm" in
               *-optimized.wasm) continue ;;
@@ -126,10 +141,15 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          mkdir -p stellar-lend/target/wasm32-unknown-unknown/inspect
-          for wasm in stellar-lend/target/wasm32-unknown-unknown/release/*-optimized.wasm; do
-            out="stellar-lend/target/wasm32-unknown-unknown/inspect/$(basename "${wasm%.wasm}.json")"
-            stellar contract inspect --wasm "$wasm" --output json > "$out"
+          mkdir -p stellar-lend/target/wasm32v1-none/inspect
+          for wasm in stellar-lend/target/wasm32v1-none/release/*-optimized.wasm; do
+            out="stellar-lend/target/wasm32v1-none/inspect/$(basename "${wasm%.wasm}.json")"
+            # `contract inspect` is deprecated in stellar-cli 25.2.0 and its
+            # `--output json` option was removed outright (only
+            # xdr-base64/xdr-base64-array/docs remain) -- `contract info
+            # interface` is the supported replacement and still has a real
+            # `json` output format.
+            stellar contract info interface --wasm "$wasm" --output json > "$out"
             echo "inspected: $out"
           done
 
@@ -139,8 +159,8 @@ jobs:
         with:
           name: soroban-wasm-builds
           path: |
-            stellar-lend/target/wasm32-unknown-unknown/release/*.wasm
-            stellar-lend/target/wasm32-unknown-unknown/inspect/
+            stellar-lend/target/wasm32v1-none/release/*.wasm
+            stellar-lend/target/wasm32v1-none/inspect/
 
   build-and-test:
     name: Build & Test

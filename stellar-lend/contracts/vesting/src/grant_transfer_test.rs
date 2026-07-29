@@ -1,6 +1,4 @@
-#![cfg(test)]
-
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, Env};
 
 use crate::{Grant, VestingContract, VestingContractClient, VestingError};
 
@@ -8,8 +6,14 @@ fn setup() -> (Env, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_address = env.register_stellar_asset_contract(token_admin);
+    // `add_grant` escrows the granted amount from the admin, so fund the
+    // admin generously up front for every test in this file.
+    token::StellarAssetClient::new(&env, &token_address).mint(&admin, &1_000_000);
     let id = env.register(VestingContract, ());
-    VestingContractClient::new(&env, &id).initialize(&admin);
+    VestingContractClient::new(&env, &id).initialize(&admin, &treasury, &token_address);
     (env, admin, id)
 }
 
@@ -17,10 +21,11 @@ fn advance(env: &Env, secs: u64) {
     env.ledger().with_mut(|li| li.timestamp += secs);
 }
 
-fn create_alice_grant(env: &Env, client: &VestingContractClient, admin: &Address) -> Address {
+fn create_alice_grant(env: &Env, client: &VestingContractClient, _admin: &Address) -> Address {
     let alice = Address::generate(env);
     let start = env.ledger().timestamp();
-    client.create_grant(admin, &alice, &1_000, &start, &0, &1_000);
+    // 1_000 tokens, duration 1_000s, no cliff.
+    client.add_grant(&alice, &1_000, &start, &1_000, &0);
     alice
 }
 
@@ -68,7 +73,7 @@ fn transfer_grant_to_destination_with_existing_grant_fails() {
     let alice = create_alice_grant(&env, &client, &admin);
     let bob = Address::generate(&env);
     let start = env.ledger().timestamp();
-    client.create_grant(&admin, &bob, &500, &start, &0, &1_000);
+    client.add_grant(&bob, &500, &start, &1_000, &0);
 
     let res = client.try_transfer_grant(&admin, &alice, &bob);
     assert_eq!(res, Err(Ok(VestingError::DestinationAlreadyHasGrant)));
@@ -104,7 +109,7 @@ fn transfer_grant_preserves_schedule() {
     assert_eq!(after.start_ts, before.start_ts);
     assert_eq!(after.cliff_secs, before.cliff_secs);
     assert_eq!(after.duration_secs, before.duration_secs);
-    assert_eq!(after.revoked, false);
+    assert!(!after.revoked);
 }
 
 #[test]
@@ -115,7 +120,7 @@ fn transfer_grant_preserves_claimed_amount() {
     let bob = Address::generate(&env);
     let start = env.ledger().timestamp();
     // 1000 tokens over 1000s, no cliff
-    client.create_grant(&admin, &alice, &1_000, &start, &0, &1_000);
+    client.add_grant(&alice, &1_000, &start, &1_000, &0);
 
     advance(&env, 500);
     let claimed = client.claim(&alice);

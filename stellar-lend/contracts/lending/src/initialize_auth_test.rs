@@ -11,8 +11,6 @@
 //!   Soroban test harness).
 //! - Sad path: no auth mock at all → the call is rejected.
 
-#![cfg(test)]
-
 use super::{LendingContract, LendingContractClient};
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},

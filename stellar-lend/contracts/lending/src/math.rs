@@ -7,6 +7,12 @@ use crate::rounding_strategy::SECONDS_PER_YEAR;
 /// Basis points scale (100% = 10,000 bps).
 pub const BPS_SCALE: u32 = 10_000;
 
+/// Sanity ceiling on `rate_bps` accepted by [`compute_compound_interest`]
+/// (1000% APR). Anything above this is certainly a caller error (e.g. a
+/// mis-scaled input) rather than a legitimate rate, so it is rejected
+/// outright instead of silently producing a huge or overflowing result.
+pub const MAX_RATE_BPS: i128 = 100_000;
+
 /// Error types for checked arithmetic.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -27,14 +33,14 @@ pub fn compute_compound_interest(
     rate_bps: i128,
     elapsed_seconds: u64,
 ) -> Result<i128, MathError> {
-    if principal < 0 || rate_bps < 0 {
+    if principal < 0 || rate_bps < 0 || rate_bps > MAX_RATE_BPS {
         return Err(MathError::OutOfRange);
     }
     if principal == 0 || elapsed_seconds == 0 || rate_bps == 0 {
         return Ok(0);
     }
 
-    let elapsed_i128 = i128::try_from(elapsed_seconds).map_err(|_| MathError::Overflow)?;
+    let elapsed_i128 = i128::from(elapsed_seconds);
     let interest = principal
         .checked_mul(rate_bps)
         .ok_or(MathError::Overflow)?

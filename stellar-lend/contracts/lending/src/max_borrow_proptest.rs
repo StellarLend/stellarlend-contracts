@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 extern crate std;
 
 use super::math::{checked_mul_div_floor, MathError};

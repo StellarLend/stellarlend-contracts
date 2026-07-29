@@ -13,8 +13,6 @@
 //! | `doc_test_reentrancy_guard`       | Reentrancy Guard §Blocked Operations |
 //! | `doc_test_fee_zero_and_max`       | Edge Cases §fee_bps = 0 / fee_bps = 9 999 |
 
-#![cfg(test)]
-
 use crate::{inverse_swap_in, AmmContract, AmmContractClient};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
@@ -224,7 +222,10 @@ fn doc_test_reentrancy_guard() {
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
         let result = client.try_flash_swap_a_for_b(&flash_caller, &1, &Bytes::new(&env));
-        assert!(result.is_err(), "nested flash_swap_a_for_b must be blocked while FlashActive");
+        assert!(
+            result.is_err(),
+            "nested flash_swap_a_for_b must be blocked while FlashActive"
+        );
     }
 }
 

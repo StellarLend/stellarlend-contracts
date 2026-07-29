@@ -16,7 +16,7 @@
 
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, IntoVal};
 
 const INIT_A: i128 = 1_000_000;
 const INIT_B: i128 = 2_000_000;
@@ -160,6 +160,12 @@ fn test_remove_liquidity_below_floor_a_rejected() {
         },
     }]);
     client.set_min_liquidity(&admin, &2_000_001_i128);
+
+    // `mock_auths` above narrowed authorization to just the
+    // `set_min_liquidity` invocation; restore blanket auth mocking so the
+    // `lp.require_auth()` inside `remove_liquidity` below succeeds and we
+    // actually reach the floor check.
+    env.mock_all_auths();
 
     let balance = client.get_lp_balance(&lp);
     let err = client.try_remove_liquidity(&lp, &balance);

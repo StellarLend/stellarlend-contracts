@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::{
     debt::DebtPosition,
     liquidate_transfer_test::{MockToken, MockTokenClient},
