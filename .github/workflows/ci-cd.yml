@@ -32,13 +32,11 @@ jobs:
           fetch-depth: 0 # Full history avoids git index errors in cached steps
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
-          # Pin to 1.91.0 to honour stellar-lend/rust-toolchain.toml; using the
-          # repo pin (rather than `stable`) prevents surprise upgrades when
-          # GitHub-hosted runners rotate to a newer stable toolchain.
           toolchain: 1.91.0
           components: rustfmt, clippy
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -98,11 +96,12 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: 1.93.0
           components: rustfmt, clippy
           targets: wasm32v1-none
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -184,10 +183,10 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: 1.91.0
-          components: rustfmt, clippy
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -246,9 +245,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: 1.91.0
+          override: true
 
       - name: Install cargo-audit
         # Was pinned to the 0.21.x line the runbook originally promised, but
@@ -285,9 +285,10 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: 1.91.0
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
