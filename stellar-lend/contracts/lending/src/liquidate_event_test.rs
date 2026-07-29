@@ -1,7 +1,7 @@
 use crate::{
     debt::DebtPosition,
     liquidate_transfer_test::{MockToken, MockTokenClient},
-    DataKey, LendingContract, LendingContractClient, LiquidationEventV1,
+    DataKey, LendingContract, LendingContractClient, LiquidationEventV1, PriceRecord,
 };
 use soroban_sdk::{
     events::Event,
@@ -28,6 +28,18 @@ fn setup_liquidatable() -> (
     let debt_asset = env.register(MockToken, ());
     let collateral_asset = env.register(MockToken, ());
     client.initialize(&admin);
+    client.set_collateral_asset(&collateral_asset);
+    // Seed fresh oracle price so require_fresh_valuation_prices passes.
+    let now = env.ledger().timestamp();
+    env.as_contract(&cid, || {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(collateral_asset.clone()),
+            &PriceRecord {
+                price: 1_000_000_000,
+                timestamp: now,
+            },
+        );
+    });
     MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
     MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
     (
@@ -155,7 +167,7 @@ fn liquidate_event_zero_shortfall() {
         );
     });
 
-    client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &150);
+    client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &50);
 
     let all = env.events().all();
     let ev = all.events();
