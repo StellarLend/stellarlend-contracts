@@ -27,7 +27,6 @@ The lending contract is organized into focused modules under `src/`:
 | `oracle.rs` | Price feed management: primary/fallback oracles, staleness checks |
 | `pause.rs` | Granular pause flags per operation type + global pause + emergency lifecycle |
 | `governance_audit.rs` | Immutable audit log for all governance actions |
-| `data_store.rs` | Persistent key-value storage with backup/restore/migration |
 | `interest_rate.rs` | Interest rate model configuration |
 | `views.rs` | Read-only view functions for frontends (health factor, balances, position summary) |
 | `token_receiver.rs` | Soroban token receiver hook for callback-based deposits |
@@ -71,10 +70,9 @@ The lending contract is organized into focused modules under `src/`:
 - Every governance action (initialize, pause, upgrade, oracle config, etc.) is logged immutably.
 - Entries include action type, caller, timestamp, and structured payload.
 
-### 3.7 Data Store
-- Persistent storage with schema versioning.
-- Backup/restore snapshots.
-- Writer-grant access control.
+### 3.7 Storage Architecture
+- Soroban native storage tiers: `persistent` (for user positions/debts), `instance` (for contract config/admin state), and `temporary` (for transient execution state).
+- TTL extension handling for persistent and instance storage entries.
 
 ---
 
@@ -110,7 +108,7 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 | **Governance & Upgrades** | `governance_audit_test.rs`, `upgrade_test.rs`, `upgrade_migration_safety_test.rs`, `proposal_race_test.rs` | Audit log correctness, upgrade flow, race conditions |
 | **Math & Invariants** | `math_safety_test.rs`, `health_factor_monotonicity_test.rs`, `debt_ceiling_invariant_test.rs` | Overflow/underflow, monotonicity, ceiling enforcement |
 | **Performance & Stress** | `stress_test.rs`, `multi_user_contention_test.rs`, `test_performance.rs` | Gas usage, concurrent access, large-scale scenarios |
-| **Data Store** | `data_store_test.rs`, `storage_collision_test.rs` | Persistence, backup/restore, migration, key collisions |
+| **Storage Tiers** | `storage_tier_test.rs` | Persistent, instance, and temporary storage tiers |
 | **Views & Serialization** | `views_test.rs`, `view_serialization_test.rs` | Frontend data consistency, XDR encoding stability |
 | **Bad Debt** | `bad_debt_test.rs`, `bad_debt_accounting.md` | Insurance fund, bad debt offset |
 
@@ -200,13 +198,8 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 - `upgrade_execute(caller, proposal_id)`
 - `upgrade_rollback(caller, proposal_id)`
 
-### Data Store
-- `data_store_init(admin)`
-- `data_grant_writer(caller, writer)`
-- `data_save(caller, key, value)`
-- `data_load(key)` → `Bytes`
-- `data_backup(caller, name)` / `data_restore(caller, name)`
-- `data_migrate_bump_version(caller, new_version, memo)`
+### Storage & Persistence Primitives
+- State persistence uses standard Soroban storage primitives: `env.storage().persistent()`, `env.storage().instance()`, and `env.storage().temporary()` for state reads/writes.
 
 ---
 
@@ -247,7 +240,6 @@ stellarlend-contracts/
     │           ├── oracle.rs
     │           ├── pause.rs
     │           ├── governance_audit.rs
-    │           ├── data_store.rs
     │           ├── interest_rate.rs
     │           ├── views.rs
     │           ├── token_receiver.rs
