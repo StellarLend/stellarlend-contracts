@@ -8,10 +8,22 @@ Key features
 - `validate_inbound_epoch(signed_epoch)` rejects messages signed by retired epochs (signed_epoch < current epoch)
 - `set_inbound_cap(max_per_window, window_size, current_time)` / `admit_inbound(amount, current_time)` enforce a configurable, rolling-ledger-time cap on cumulative inbound value — defense-in-depth against an authorized-but-compromised validator set draining the bridge in a single window. **Fail-closed by default**: a fresh `Bridge` admits no inbound value until a cap is explicitly configured. See `SECURITY_NOTES.md` for the full threat model and design rationale.
 
+## Documentation Index
+
+| Document | Description |
+|---|---|
+| [ROTATION_PROTOCOL.md](./ROTATION_PROTOCOL.md) | Sequenced validator-set rotation flow, signed payload, quorum math, and inbound epoch handling |
+| [SECURITY_NOTES.md](./SECURITY_NOTES.md) | Bridge validator rotation threat model and inbound-cap security rationale |
+| [INBOUND_WINDOW_TUNING.md](./INBOUND_WINDOW_TUNING.md) | Rolling-window cap algorithm and operator parameter-selection guide |
+| [QUORUM_PROOF_BOUNDS.md](./QUORUM_PROOF_BOUNDS.md) | Quorum-proof vector size and duplicate-signer DoS bounds |
+| [WINDOW_GUARD.md](./WINDOW_GUARD.md) | Window-boundary guard rationale for zero windows, clock rollback, and overflow |
+| [EPOCH_INVARIANTS.md](./EPOCH_INVARIANTS.md) | Epoch monotonicity and retired-validator replay invariants |
+| [VALIDATORSET_INVARIANTS.md](./VALIDATORSET_INVARIANTS.md) | Validator-set deduplication and quorum threshold invariants |
+
 Design notes
 - Validator public keys are stored as raw bytes to keep on-disk/state serialization simple and unambiguous.
 - Quorum threshold is a supermajority > 2/3 of current validators.
-- Signatures are over a canonical payload: `bincode((new_set_bytes_vec, epoch))` — this binds the epoch to the new set.
+- Signatures are over a canonical, domain-separated payload: `bincode((QUORUM_PROOF_DOMAIN, bridge_id, new_set_bytes_vec, epoch))` — this binds the purpose, bridge instance, epoch, and proposed set.
 - This crate is intentionally standalone (off-chain validator/quorum verification logic) and is not a member of the parent Soroban workspace; run `cargo test` from this directory.
 
 See `src/lib.rs` for implementation and unit tests.

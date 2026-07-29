@@ -48,7 +48,7 @@ fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
 /// write-off path so we can set up arbitrary initial states for testing.
 fn set_bad_debt(env: &Env, contract: &Address, amount: i128) {
     env.as_contract(contract, || {
-        env.storage().instance().set(&DataKey::BadDebt, &amount);
+        env.storage().persistent().set(&DataKey::BadDebt, &amount);
     });
 }
 
@@ -56,7 +56,7 @@ fn set_bad_debt(env: &Env, contract: &Address, amount: i128) {
 fn read_bad_debt(env: &Env, contract: &Address) -> i128 {
     env.as_contract(contract, || {
         env.storage()
-            .instance()
+            .persistent()
             .get::<DataKey, i128>(&DataKey::BadDebt)
             .unwrap_or(0)
     })
@@ -286,7 +286,7 @@ fn write_off_unauthorized_rejected() {
 
     // Inject bad debt and deposits directly
     env2.as_contract(&id2, || {
-        env2.storage().instance().set(&DataKey::BadDebt, &500i128);
+        env2.storage().persistent().set(&DataKey::BadDebt, &500i128);
         env2.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &500i128);

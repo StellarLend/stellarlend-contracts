@@ -1,23 +1,15 @@
 [package]
-name = "bridge"
-version = "0.1.0"
+name = "stellarlend-bridge"
+version = "0.0.0"
 edition = "2021"
+publish = false
 
-# This crate is intentionally standalone (off-chain validator/quorum
-# verification logic, not a Soroban contract) and is not a member of the
-# parent stellar-lend Soroban workspace. The empty [workspace] table below
-# opts it out of that workspace so `cargo test` / `cargo test -p bridge`
-# work when run from this directory, instead of erroring with "current
-# package believes it's in a workspace when it's not".
-[workspace]
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
 
 [dependencies]
-ed25519-dalek = { version = "1.0.1", features = ["std"] }
-rand = "0.7"
-serde = { version = "1.0", features = ["derive"] }
-bincode = "1.3"
-anyhow = "1.0"
+soroban-sdk = { workspace = true }
 
 [dev-dependencies]
-hex = "0.4"
-proptest = "1.4"
+soroban-sdk = { workspace = true, features = ["testutils"] }

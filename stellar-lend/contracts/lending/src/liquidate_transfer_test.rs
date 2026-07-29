@@ -1,5 +1,8 @@
-use crate::{DataKey, LendingContract, LendingContractClient};
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Symbol};
+#[cfg(test)]
+use crate::{debt::DebtPosition, DataKey, LendingContract, LendingContractClient};
+#[cfg(test)]
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
 #[contract]
 pub struct MockToken;
@@ -73,6 +76,7 @@ impl MockToken {
     }
 }
 
+#[cfg(test)]
 fn setup() -> (
     Env,
     LendingContractClient<'static>,
@@ -109,12 +113,24 @@ fn setup() -> (
     )
 }
 
+#[cfg(test)]
 #[test]
 fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
     let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    env.as_contract(&lending_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &50i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     let repay_amount =
         client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
@@ -142,19 +158,31 @@ fn liquidation_moves_debt_and_collateral_tokens_and_updates_state() {
     assert_eq!(client.get_position(&borrower).collateral, 0);
 }
 
+#[cfg(test)]
 #[test]
 fn liquidation_reverts_when_collateral_payout_transfer_fails() {
     let (env, client, lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
     let collateral_token = MockTokenClient::new(&env, &collateral_asset);
     collateral_token.set_fail_transfer(&lending_id, &true);
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    env.as_contract(&lending_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &50i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
 
     let debt_balance_before = MockTokenClient::new(&env, &debt_asset).balance(&liquidator);
     let collateral_before = MockTokenClient::new(&env, &collateral_asset).balance(&lending_id);
     let result = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
-    assert!(matches!(result, Err(_)));
+    assert!(result.is_err());
     assert_eq!(
         MockTokenClient::new(&env, &debt_asset).balance(&liquidator),
         debt_balance_before
@@ -168,17 +196,36 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
     assert_eq!(client.get_position(&borrower).collateral, 50);
 }
 
+#[cfg(test)]
 #[test]
 fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
-    let (env, client, _lending_id, borrower, liquidator, debt_asset, collateral_asset) = setup();
-    let debt_token = MockTokenClient::new(&env, &debt_asset);
-    debt_token.mint(&liquidator, &50);
+    let (env, client, _lending_id, borrower, _liquidator, debt_asset, collateral_asset) = setup();
 
-    client.deposit(&borrower, &50);
-    client.borrow(&borrower, &200);
+    // Use a separate poor liquidator that has not been minted any tokens.
+    let poor_liquidator = Address::generate(&env);
 
-    let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
-    assert!(matches!(res, Err(_)));
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(borrower.clone()), &50i128);
+        env.storage().persistent().set(
+            &DataKey::Debt(borrower.clone()),
+            &DebtPosition {
+                principal: 200,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
+
+    let res = client.try_liquidate(
+        &poor_liquidator,
+        &borrower,
+        &debt_asset,
+        &collateral_asset,
+        &100,
+    );
+    assert!(res.is_err());
     let position = client.get_debt_position(&borrower);
     assert_eq!(position.principal, 200);
     assert_eq!(client.get_position(&borrower).collateral, 50);

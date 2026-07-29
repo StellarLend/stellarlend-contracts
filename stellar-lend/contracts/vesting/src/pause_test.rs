@@ -16,7 +16,7 @@
 //! | Resume is idempotent                  | second resume is a no-op  |
 //! | `is_paused` reflects current state    | true / false as expected  |
 
-use super::{VestingContract, VestingError};
+use crate::test_harness::{VestingContract, VestingError};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,7 +24,7 @@ use super::{VestingContract, VestingError};
 /// duration = 1 000 s, no cliff.
 fn setup_with_grant() -> VestingContract {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
     c
 }
 
@@ -121,9 +121,15 @@ fn claim_succeeds_after_resume() {
     c.resume("admin").expect("admin should be able to resume");
     assert!(!c.is_paused());
 
-    // Now claim at t=500 — 50 % of 1 000 = 500 tokens.
+    // The blocked-claim probe above set the harness's ledger time to 500
+    // *before* being rejected (the harness always advances the clock to
+    // the requested `now`, independent of whether the call succeeds), and
+    // `resume()` folds that whole [pause, now] span into `TotalPausedSecs`
+    // per PAUSE_OFFSET.md. So reaching 500 seconds of *real* (post-resume)
+    // vesting time requires ledger time 500 (consumed as pause) + 500
+    // (wanted) = 1000; effective_now = 1000 - 500 = 500.
     let claimed = c
-        .claim("alice", 500)
+        .claim("alice", 1_000)
         .expect("claim should succeed after resume");
     assert_eq!(claimed, 500);
     assert_eq!(c.balance_of("alice"), 500);
@@ -147,10 +153,13 @@ fn revoke_succeeds_after_resume() {
 
     c.resume("admin").expect("admin should be able to resume");
 
-    // Revoke at t=500: 500 of 1 000 are vested, so 500 remain locked and go
-    // to treasury.
+    // See the comment in `claim_succeeds_after_resume`: the blocked-revoke
+    // probe above consumed ledger time 0..500 as pause duration, so 500
+    // seconds of real post-resume time requires ledger time 1000.
+    // Revoke at effective t=500: 500 of 1 000 are vested, so 500 remain
+    // locked and go to treasury.
     let transferred = c
-        .revoke("admin", "alice", 500)
+        .revoke("admin", "alice", 1_000)
         .expect("revoke should succeed after resume");
     assert_eq!(transferred, 500);
     assert_eq!(c.balance_of("treasury"), 500);
@@ -182,10 +191,13 @@ fn vesting_math_unchanged_during_pause() {
 
     c.resume("admin").expect("admin should be able to resume");
 
-    // After resume, claim at t=600 — total vested = 600, already claimed = 200,
-    // so 400 more should be released.
+    // The blocked-claim probe advanced ledger time to 600 before being
+    // rejected, and the pause spanned [200, 600) (200 = when `pause()` was
+    // called), so `TotalPausedSecs` becomes 400 on resume. Reaching
+    // effective_now = 600 (total vested = 600, already claimed = 200, so
+    // 400 more released) therefore requires ledger time 600 + 400 = 1000.
     let post_resume_claimed = c
-        .claim("alice", 600)
+        .claim("alice", 1_000)
         .expect("claim should succeed after resume");
     assert_eq!(post_resume_claimed, 400);
     assert_eq!(c.balance_of("alice"), 600);
@@ -241,7 +253,7 @@ fn add_grant_not_blocked_by_pause() {
     c.pause("admin").expect("pause");
 
     // add_grant has no pause check; this must not panic or error.
-    c.add_grant("bob", 2_000, 0, 1_000, 0);
+    c.add_grant("admin", "bob", 2_000, 0, 1_000, 0).unwrap();
     assert_eq!(c.total_locked(), 2_000);
 }
 
@@ -251,8 +263,8 @@ fn add_grant_not_blocked_by_pause() {
 #[test]
 fn full_pause_resume_cycle() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
-    c.add_grant("bob", 500, 0, 500, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "bob", 500, 0, 500, 0).unwrap();
 
     // ── Pause ──────────────────────────────────────────────────────────────
     c.pause("admin").expect("pause");
@@ -274,13 +286,19 @@ fn full_pause_resume_cycle() {
     c.resume("admin").expect("resume");
     assert!(!c.is_paused());
 
-    // Alice claims at t=300: 300/1000 * 1000 = 300 tokens.
-    let claimed = c.claim("alice", 300).expect("claim after resume");
+    // The blocked probes above set ledger time to 300 before being rejected,
+    // and `pause()` was called at t=0, so `TotalPausedSecs` becomes 300 on
+    // resume. Reaching 300 seconds of *real* post-resume vesting time
+    // therefore requires ledger time 300 (consumed as pause) + 300 (wanted)
+    // = 600 for both calls below (effective_now = 600 - 300 = 300).
+
+    // Alice claims at effective t=300: 300/1000 * 1000 = 300 tokens.
+    let claimed = c.claim("alice", 600).expect("claim after resume");
     assert_eq!(claimed, 300);
     assert_eq!(c.balance_of("alice"), 300);
 
-    // Admin revokes Bob at t=300: 300/500 = 300 vested, 200 locked → treasury.
-    let revoked = c.revoke("admin", "bob", 300).expect("revoke after resume");
+    // Admin revokes Bob at effective t=300: 300/500 = 300 vested, 200 locked → treasury.
+    let revoked = c.revoke("admin", "bob", 600).expect("revoke after resume");
     assert_eq!(revoked, 200);
     assert_eq!(c.balance_of("treasury"), 200);
 

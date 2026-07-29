@@ -4,6 +4,8 @@
 
 The StellarLend protocol supports cross-asset borrowing and repaying, allowing users to deposit multiple types of collateral and borrow different assets. This document outlines the rules, invariants, and edge cases for these operations.
 
+For cross‑asset module storage details, see [Cross‑Asset Storage Layout](../stellar-lend/contracts/hello-world/docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+
 ## Core Concepts
 
 ### Asset Configuration
