@@ -18,8 +18,6 @@
 //! | Large fee_bps (9_999) handled safely                  | `test_max_fee_bps`                    |
 //! | Fee accumulator survives add/remove liquidity          | `test_liquidity_ops_preserve_fees`    |
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -30,9 +28,8 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     let client = AmmContractClient::new(&env, &id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
+    client.init_pool(&ra, &rb, &token_a, &token_b);
     let admin = Address::generate(&env);
-    client.init_pool(&admin, &ra, &rb);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
@@ -44,7 +41,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
 
 #[test]
 fn test_initial_fees_zero() {
-    let (env, client, _admin) = setup_pool(10_000, 10_000);
+    let (_env, client, _admin) = setup_pool(10_000, 10_000);
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "fee_a must start at zero");
     assert_eq!(fee_b, 0, "fee_b must start at zero");
@@ -245,7 +242,7 @@ fn test_liquidity_ops_preserve_fees() {
 
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    client.init_pool(&10_000, &10_000, &token_a_addr, &token_b_addr).unwrap();
+    client.init_pool(&10_000, &10_000, &token_a_addr, &token_b_addr);
 
     client.swap_a_for_b(&500);
     let (fee_a_before, _) = client.get_accrued_fees();
@@ -255,14 +252,16 @@ fn test_liquidity_ops_preserve_fees() {
     token::StellarAssetClient::new(&env, &token_a_addr).mint(&caller, &100);
     token::StellarAssetClient::new(&env, &token_b_addr).mint(&caller, &200);
 
-    client.add_liquidity(&caller, &100, &200);
+    client.add_liquidity(&caller, &100_i128, &200_i128);
     let (fa_after_add, _) = client.get_accrued_fees();
     assert_eq!(
         fa_after_add, fee_a_before,
         "add_liquidity must not alter fee_a"
     );
 
-    client.remove_liquidity(&caller, &50, &100);
+    // Burn half of the caller's LP shares (proportional removal).
+    let lp_balance = client.get_lp_balance(&caller);
+    client.remove_liquidity(&caller, &(lp_balance / 2));
     let (fa_after_rem, _) = client.get_accrued_fees();
     assert_eq!(
         fa_after_rem, fee_a_before,

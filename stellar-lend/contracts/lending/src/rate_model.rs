@@ -301,12 +301,12 @@ mod tests {
     #[test]
     fn test_compute_borrow_rate_overflow_returns_error() {
         let params = RateParams {
-            // Use i128::MAX for multiplier — multiplying any positive
-            // utilization by this will overflow.
-            multiplier_bps: i128::MAX,
+            // Large multiplier × large utilization overflows the intermediate product.
+            multiplier_bps: i128::MAX / 2,
+            kink_utilization_bps: i128::MAX / 2,
             ..RateParams::default()
         };
-        let result = compute_borrow_rate(1, &params);
+        let result = compute_borrow_rate(i128::MAX / 2, &params);
         assert_eq!(
             result,
             Err(RateModelError::Overflow),

@@ -17,8 +17,6 @@
 //! | Re-init resets saturated counters back to zero                | `test_reinit_resets_saturated_fees`  |
 //! | No panic on large-swap fee near saturation                    | `test_no_panic_on_large_fee`         |
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -36,6 +34,7 @@ fn setup(ra: i128, rb: i128) -> (Env, Address, AmmContractClient<'static>, Addre
     let client = AmmContractClient::new(&env, &amm_id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
+    let admin = Address::generate(&env);
     client.init_pool(&ra, &rb, &token_a, &token_b);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
@@ -199,9 +198,16 @@ fn test_saturate_never_exceeds_max() {
         // Swap with a moderate fee — using small amount so swap math is safe
         client.swap_a_for_b(&10_000);
         let (fee_a, _) = client.get_accrued_fees();
+        // The real invariant under test: accrual saturates rather than
+        // wrapping/panicking. Reaching this line at all already proves no
+        // overflow panic occurred (checked arithmetic would have aborted);
+        // the non-negativity check additionally guards against a silent
+        // wraparound to a garbage negative value (comparing against
+        // `i128::MAX` directly would be a tautology, since that's the
+        // type's own maximum).
         assert!(
-            fee_a <= i128::MAX,
-            "fee_a must never exceed i128::MAX (seed={}, fee_a={})",
+            fee_a >= 0,
+            "fee_a must never wrap negative (seed={}, fee_a={})",
             seed,
             fee_a
         );
@@ -214,7 +220,7 @@ fn test_saturate_never_exceeds_max() {
 
 #[test]
 fn test_reinit_resets_saturated_fees() {
-    let (env, amm_id, client, admin) = setup(BIG_RESERVE, BIG_RESERVE);
+    let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     seed_fee_a(&env, &amm_id, i128::MAX);
     seed_fee_b(&env, &amm_id, i128::MAX);
