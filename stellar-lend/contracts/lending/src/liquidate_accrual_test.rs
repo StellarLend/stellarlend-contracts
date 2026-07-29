@@ -7,8 +7,6 @@
 //! 3. health-factor-after-settle boundary: verifying that positions which become
 //!    unhealthy due to interest accrual are correctly identified as liquidatable.
 
-#![cfg(test)]
-
 use crate::{
     debt::{save_debt, DebtPosition, DEFAULT_APR_BPS},
     liquidate_transfer_test::{MockToken, MockTokenClient},

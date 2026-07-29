@@ -206,20 +206,29 @@ stellarlend-contracts/
 └── stellar-lend/            # Main contract workspace
     ├── Cargo.toml           # Workspace configuration
     └── contracts/
-        ├── lending/         # Main StellarLend contract (Single Canonical Tree)
+        ├── lending/         # Canonical StellarLend contract (79 .rs files)
         │   ├── Cargo.toml
         │   ├── Makefile     # Build/test shortcuts
         │   ├── README.md    # Contract-specific docs
         │   └── src/
-        │       ├── lib.rs   # Main contract entry point
-        │       ├── rounding_strategy.rs # Mathematical utilities
-        │       └── interest_drift_regression_test.rs # Regression tests
-        └── hello-world/     # Minimal placeholder contract
+        │       ├── lib.rs, debt.rs, cross_asset.rs, rate_model.rs,
+        │       ├── math.rs, events.rs, upgrade.rs,
+        │       ├── rounding_strategy.rs,
+        │       └── 71 test/*_test.rs files
+        └── hello-world/     # Separate parallel contract (53 .rs files)
             ├── Cargo.toml
             ├── Makefile
             ├── README.md
             └── src/
-                └── lib.rs
+                ├── lib.rs, admin.rs, oracle.rs, governance.rs,
+                ├── amm.rs, amm_twap.rs, bridge.rs, cross_asset.rs,
+                ├── risk_management.rs, risk_params.rs, interest_rate.rs,
+                ├── flash_loan.rs, deposit.rs, borrow.rs, repay.rs,
+                ├── withdraw.rs, liquidate.rs, analytics.rs,
+                ├── multisig.rs, recovery.rs, events.rs, storage.rs,
+                ├── types.rs, errors.rs, config_snapshot.rs,
+                ├── reentrancy.rs, reserve.rs,
+                └── 24 test/*_test.rs files
 ```
 
 ---

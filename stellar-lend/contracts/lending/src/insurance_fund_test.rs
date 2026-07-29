@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::debt::DebtPosition;
 use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
 use crate::rounding_strategy::SECONDS_PER_YEAR;

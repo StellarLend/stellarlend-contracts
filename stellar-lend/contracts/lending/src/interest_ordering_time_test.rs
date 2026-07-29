@@ -264,11 +264,11 @@ mod interest_ordering_time_tests {
     /// the repayment. Pure function — no storage access required.
     #[test]
     fn test_debt_module_repay_amount_accrues_first() {
-        let env = Env::default();
-        let user = Address::generate(&env);
-
-        let initial = DebtPosition { principal: 10_000, last_update: 1_000 };
-        save_debt(&env, &user, &initial);
+        let initial = DebtPosition {
+            principal: 10_000,
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
+            last_update: 1_000,
+        };
 
         let now = 1_000 + SECONDS_PER_YEAR;
         let updated =
@@ -288,9 +288,6 @@ mod interest_ordering_time_tests {
             principal: 0,
             last_update: 1_000,
         };
-
-        let initial = DebtPosition { principal: 0, last_update: 1_000 };
-        save_debt(&env, &user, &initial);
 
         let after_borrow = borrow_amount(initial, 1_000, 5_000, DEFAULT_APR_BPS)
             .expect("borrow should succeed");

@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::{DataKey, LendingContract, LendingContractClient, LendingError};
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},
@@ -15,6 +13,7 @@ fn setup() -> (
     Address,
 ) {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);

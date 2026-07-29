@@ -333,6 +333,7 @@ name = "cross-asset-test"
 version = "0.0.0"
 dependencies = [
  "soroban-sdk",
+ "stellar-lend-common",
 ]
 
 [[package]]
@@ -1778,6 +1779,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-token-sdk"
+version = "25.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8230fe7cf1bf138068cbe5cfa54a76657bed8a9bb6a89a4a229383116d3f067"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "soroban-wasmi"
 version = "0.31.1-soroban.20.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1904,7 +1914,9 @@ dependencies = [
 name = "stellarlend-vesting"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "soroban-sdk",
+ "soroban-token-sdk",
 ]
 
 [[package]]

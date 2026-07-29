@@ -29,7 +29,7 @@ fn setup_multisig(env: &Env) -> (Address, Vec<Address>) {
     signers.push_back(s2.clone());
     signers.push_back(s3.clone());
 
-    client.initialize(&signers, &2u32).unwrap();
+    client.initialize(&signers, &2u32);
     (contract_id, signers)
 }
 
@@ -54,13 +54,13 @@ fn test_cancel_proposal_status_is_cancelled() {
     );
 
     // Proposal should be Active before cancellation.
-    let before = client.get_proposal(&id).unwrap();
+    let before = client.get_proposal(&id);
     assert_eq!(before.status, ProposalStatus::Active);
 
     client.cancel_proposal(&signers.get(0).unwrap(), &id);
 
     // Proposal must now be Cancelled in persistent storage.
-    let after = client.get_proposal(&id).unwrap();
+    let after = client.get_proposal(&id);
     assert_eq!(
         after.status,
         ProposalStatus::Cancelled,
@@ -85,9 +85,9 @@ fn test_cancel_proposal_by_non_proposer_signer() {
     );
 
     // s2 (not the proposer) cancels it.
-    client.cancel_proposal(&signers.get(1).unwrap(), &id).unwrap();
+    client.cancel_proposal(&signers.get(1).unwrap(), &id);
 
-    let p = client.get_proposal(&id).unwrap();
+    let p = client.get_proposal(&id);
     assert_eq!(
         p.status,
         ProposalStatus::Cancelled,
@@ -115,7 +115,7 @@ fn test_cancel_already_cancelled_returns_error() {
         &500u64,
     );
 
-    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    client.cancel_proposal(&signers.get(0).unwrap(), &id);
     // Second call must return AlreadyCancelled.
     assert_eq!(
         client.try_cancel_proposal(&signers.get(0).unwrap(), &id),
@@ -146,7 +146,7 @@ fn test_execute_cancelled_proposal_returns_error() {
     );
 
     // Cancel while still Active (before quorum is reached).
-    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    client.cancel_proposal(&signers.get(0).unwrap(), &id);
 
     // execute_proposal must reject a Cancelled proposal.
     assert_eq!(
@@ -203,7 +203,7 @@ fn test_batch_execute_cancelled_proposal_rejected() {
     );
 
     // Cancel while still Active (before quorum).
-    client.cancel_proposal(&signers.get(0).unwrap(), &id).unwrap();
+    client.cancel_proposal(&signers.get(0).unwrap(), &id);
 
     let mut ids = Vec::new(&env);
     ids.push_back(id);

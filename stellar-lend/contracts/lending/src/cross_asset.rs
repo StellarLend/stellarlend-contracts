@@ -6,6 +6,22 @@ use crate::{
     ProtocolAction, DEFAULT_ORACLE_MAX_AGE_SECS,
 };
 
+/// Fixed-point divisor for converting oracle prices into protocol value units.
+///
+/// The Lending oracle feeds all asset prices in a uniform 7-decimal scale
+/// (e.g. `1_000_000_000` = $100.00 at 7 dp).  Therefore this contract does
+/// *not* need the per-asset decimal normalisation offered by
+/// [`stellar_lend_common::normalize_price`] and
+/// [`stellar_lend_common::INTERNAL_DECIMALS`]; a single global divisor is
+/// sufficient and keeps read paths simpler.
+///
+/// The hello-world and `cross_asset_test` crates use the 18-decimal
+/// `INTERNAL_DECIMALS` path instead because their oracle layer was designed
+/// to accept feeds with heterogeneous decimal scales.  Both approaches are
+/// numerically equivalent for a homogenously-scaled feed; the difference is
+/// purely architectural.
+///
+/// See [`docs/cross_asset.md`] for a worked example.
 const PRICE_DIVISOR: i128 = 10_000_000;
 
 /// Sentinel health factor returned when a user has zero outstanding debt.
@@ -584,7 +600,6 @@ pub fn borrow_asset_internal(
     let rate = crate::current_borrow_rate(env);
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
-    let prev_snapshot = position.borrow_index_snapshot;
     let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
     let updated = crate::debt::borrow_amount(settled_position, now, amount, rate)
         .map_err(|_| LendingError::Overflow)?;
