@@ -22,12 +22,8 @@
 //! | `test_k_invariant_preserved`                  | Verify-k still enforced (under-repay reverts).                      |
 //! | `test_initiator_via_proxy_matches_proxy`      | When a proxy contract calls flash_swap, *that proxy* must repay.    |
 
-#![cfg(test)]
-
-use crate::{inverse_swap_in, AmmContract, AmmContractClient, AmmPoolError};
-use soroban_sdk::{
-    contract, contractimpl, testutils::Address as _, Address, Bytes, Env,
-};
+use crate::{inverse_swap_in, AmmContract, AmmContractClient};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
 const FEE_BPS: i128 = 30;
 
@@ -47,6 +43,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
 }
 
 /// Two-address setup: returns (env, amm_id, alice, bob).
+/// Alice is the flash-swap initiator; Bob is a would-be interloper.
 fn setup_two_users(ra: i128, rb: i128) -> (Env, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -61,9 +58,9 @@ fn setup_two_users(ra: i128, rb: i128) -> (Env, Address, Address, Address) {
 }
 
 /// Proxy contract that initiates a flash swap on behalf of a caller.
-/// The proxy's address (not the outer caller's) becomes the recorded
-/// initiator, because `env.current_contract_address()` resolves to the
-/// executing contract.
+/// The proxy passes its own address as the explicit `caller` argument, so
+/// the proxy's address (not the outer caller's) becomes the recorded
+/// initiator.
 #[contract]
 pub struct FlashProxy;
 
@@ -71,13 +68,15 @@ pub struct FlashProxy;
 impl FlashProxy {
     pub fn open_flash(env: Env, amm: Address, amount_out: i128) {
         let client = AmmContractClient::new(&env, &amm);
-        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
+        let this = env.current_contract_address();
+        client.flash_swap_a_for_b(&this, &amount_out, &Bytes::new(&env));
     }
 
     pub fn open_and_repay(env: Env, amm: Address, amount_out: i128, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
-        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
-        client.repay_flash_swap(&amount_in);
+        let this = env.current_contract_address();
+        client.flash_swap_a_for_b(&this, &amount_out, &Bytes::new(&env));
+        client.repay_flash_swap(&this, &amount_in);
     }
 }
 
@@ -89,10 +88,10 @@ pub struct InterloperContract;
 
 #[contractimpl]
 impl InterloperContract {
-    pub fn try_repay(env: Env, amm: Address, amount_in: i128) -> Result<(), AmmPoolError> {
+    pub fn attempt_repay(env: Env, amm: Address, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
-        client.repay_flash_swap(&amount_in);
-        Ok(())
+        let this = env.current_contract_address();
+        client.repay_flash_swap(&this, &amount_in);
     }
 }
 
@@ -103,14 +102,14 @@ impl InterloperContract {
 /// The initiator can always repay their own flash swap.
 #[test]
 fn test_initiator_can_repay() {
-    let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
+    let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 200;
-    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&alice, &amount_out, &Bytes::new(&env));
 
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
-    client.repay_flash_swap(&amount_in);
+    client.repay_flash_swap(&alice, &amount_in);
 
     let (ra, rb) = client.get_reserves();
     let k_after = ra * rb;
@@ -125,22 +124,24 @@ fn test_initiator_can_repay() {
 /// `UnauthorizedCaller`.
 #[test]
 fn test_non_initiator_rejected() {
-    let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
+    let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
 
     // Register a separate contract (the "interloper") that will call
     // repay_flash_swap on the AMM.
     let interloper_id = env.register(InterloperContract, ());
     let interloper = InterloperContractClient::new(&env, &interloper_id);
 
-    // First, open a flash swap via the AMM client directly.
+    // Alice opens a flash swap via the AMM client directly -- she is the
+    // recorded initiator.
     let amm_client = AmmContractClient::new(&env, &amm_id);
     let amount_out: i128 = 200;
-    amm_client
-        .flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
+    amm_client.flash_swap_a_for_b(&alice, &amount_out, &Bytes::new(&env));
 
-    // The interloper tries to repay -- must be rejected.
+    // The interloper tries to repay -- must be rejected. Use the `try_`
+    // client wrapper so the AMM's UnauthorizedCaller panic is captured as
+    // an Err instead of unwinding the test.
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
-    let res = interloper.try_try_repay(&amm_id, &amount_in);
+    let res = interloper.try_attempt_repay(&amm_id, &amount_in);
     assert!(
         res.is_err(),
         "non-initiator repay must fail with UnauthorizedCaller"
@@ -151,14 +152,14 @@ fn test_non_initiator_rejected() {
 /// (no stale reference lingers).
 #[test]
 fn test_initiator_cleared_on_success() {
-    let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
+    let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 100;
-    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&alice, &amount_out, &Bytes::new(&env));
 
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
-    client.repay_flash_swap(&amount_in);
+    client.repay_flash_swap(&alice, &amount_in);
 
     assert!(!client.is_flash_active());
     // Initiator should no longer be stored -- opening a new flash swap
@@ -167,49 +168,56 @@ fn test_initiator_cleared_on_success() {
     new_env.mock_all_auths();
     let new_id = new_env.register(AmmContract, ());
     let new_client = AmmContractClient::new(&new_env, &new_id);
-    let new_ta = Address::generate(&new_env);
-    let new_tb = Address::generate(&new_env);
-    new_client.init_pool(&1_000_i128, &1_000_i128, &new_ta, &new_tb);
-    new_client
-        .flash_swap_a_for_b(&50, &Bytes::new(&new_env));
-    new_client.repay_flash_swap(&inverse_swap_in(1_000, 1_000, 50, FEE_BPS));
+    let carol = Address::generate(&new_env);
+    let new_token_a = Address::generate(&new_env);
+    let new_token_b = Address::generate(&new_env);
+    new_client.init_pool(&1_000, &1_000, &new_token_a, &new_token_b);
+    new_client.flash_swap_a_for_b(&carol, &50, &Bytes::new(&new_env));
+    new_client.repay_flash_swap(&carol, &inverse_swap_in(1_000, 1_000, 50, FEE_BPS));
 }
 
 /// The reentrancy guard still works -- a nested flash swap is blocked.
 #[test]
 fn test_reentrancy_blocks_flash() {
-    let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
+    let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
-    client.flash_swap_a_for_b(&100, &Bytes::new(&env));
+    client.flash_swap_a_for_b(&alice, &100, &Bytes::new(&env));
     // Nested flash swap must be rejected by the reentrancy guard.
-    let res = client.try_flash_swap_a_for_b(&1, &Bytes::new(&env));
+    let res = client.try_flash_swap_a_for_b(&alice, &1, &Bytes::new(&env));
     assert!(res.is_err(), "nested flash swap must be rejected");
 }
 
 /// Verify-k invariant is still enforced: an under-repay panics.
+///
+/// The debit (`flash_swap_a_for_b`) and the failing repay must be routed
+/// through a single host invocation (via `FlashProxy::open_and_repay`) for
+/// Soroban's atomic rollback to cover both writes -- two separate
+/// top-level client calls are each their own transaction, so an under-repay
+/// in the second call cannot undo storage already committed by the first.
 #[test]
 #[ignore = "flash-swap rollback behavior changed by Result-ification; see issue #1419 comment on rollback-vs-error semantics"]
 fn test_k_invariant_preserved() {
     let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
-    let client = AmmContractClient::new(&env, &amm_id);
+
+    let proxy_id = env.register(FlashProxy, ());
+    let proxy_client = FlashProxyClient::new(&env, &proxy_id);
 
     let amount_out: i128 = 300;
-    client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
-
     let exact_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
     let under_in: i128 = exact_in - 1;
 
-    let res = client.try_repay_flash_swap(&under_in);
+    let res = proxy_client.try_open_and_repay(&amm_id, &amount_out, &under_in);
     assert!(
         res.is_err(),
         "under-repay must fail (k-violation rolled back)"
     );
     // Pool should be fully rolled back.
-    let (ra, rb) = client.get_reserves();
+    let amm_client = AmmContractClient::new(&env, &amm_id);
+    let (ra, rb) = amm_client.get_reserves();
     assert_eq!(ra, 1_000, "reserve_a rolled back");
     assert_eq!(rb, 1_000, "reserve_b rolled back");
-    assert!(!client.is_flash_active(), "flag cleared on rollback");
+    assert!(!amm_client.is_flash_active(), "flag cleared on rollback");
 }
 
 /// When a proxy contract initiates the flash swap, `repay_flash_swap`
@@ -223,8 +231,7 @@ fn test_initiator_via_proxy_matches_proxy() {
     let amm_id = env.register(AmmContract, ());
     let ta = Address::generate(&env);
     let tb = Address::generate(&env);
-    AmmContractClient::new(&env, &amm_id)
-        .init_pool(&1_000_i128, &1_000_i128, &ta, &tb);
+    AmmContractClient::new(&env, &amm_id).init_pool(&1_000, &1_000, &ta, &tb);
 
     let proxy_id = env.register(FlashProxy, ());
     let proxy_client = FlashProxyClient::new(&env, &proxy_id);
@@ -237,32 +244,36 @@ fn test_initiator_via_proxy_matches_proxy() {
 
     // The human user trying to repay directly must be rejected because
     // the initiator is the *proxy*, not the human.
+    let human = Address::generate(&env);
     let amm_client = AmmContractClient::new(&env, &amm_id);
-    let res = amm_client.try_repay_flash_swap(&amount_in);
+    let res = amm_client.try_repay_flash_swap(&human, &amount_in);
     assert!(
         res.is_err(),
         "direct repay by human on proxy-initiated flash must fail"
     );
 
-    // The proxy itself can repay (it is the initiator).
-    proxy_client.open_and_repay(&amm_id, &amount_out, &amount_in);
+    // The proxy itself can repay (it is the initiator). The flash swap
+    // opened above via `open_flash` is still pending -- repay it directly
+    // (rather than via `open_and_repay`, which would open a *second*,
+    // nested flash swap and trip the reentrancy guard).
+    amm_client.repay_flash_swap(&proxy_id, &amount_in);
 }
 
 /// Multiple consecutive flash swaps from the same address all succeed
 /// and the initiator binding holds for each one.
 #[test]
 fn test_consecutive_swaps_same_initiator() {
-    let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
+    let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
 
     for i in 0..3u32 {
         let amount_out: i128 = 50 + (i as i128) * 20;
-        client.flash_swap_a_for_b(&amount_out, &Bytes::new(&env));
+        client.flash_swap_a_for_b(&alice, &amount_out, &Bytes::new(&env));
 
         let (ra_pre, rb_pre) = client.get_reserves();
         let rb_before_debit = rb_pre + amount_out;
         let amount_in = inverse_swap_in(ra_pre, rb_before_debit, amount_out, FEE_BPS);
-        client.repay_flash_swap(&amount_in);
+        client.repay_flash_swap(&alice, &amount_in);
         assert!(
             !client.is_flash_active(),
             "flag must be cleared after swap {i}"

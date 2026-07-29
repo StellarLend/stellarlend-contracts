@@ -9,8 +9,6 @@
 //! and the invariant oracle is exercised under plain `cargo test` (no
 //! cargo-fuzz / nightly required).
 
-#![cfg(test)]
-
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::{
@@ -53,8 +51,8 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
     let debt_asset = env.register(MockToken, ());
     let collateral_asset = env.register(MockToken, ());
 
+    // `liquidate` requires an initialized contract (admin key present).
     client.initialize(&admin);
-    client.set_collateral_asset(&collateral_asset);
 
     MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
     MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
@@ -78,7 +76,7 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: debt,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );

@@ -42,11 +42,8 @@
 //! They run quickly and exercise no‑core contracts, making them ideal for CI and
 //! edge‑case detection.
 
-#![cfg(test)]
-
 use super::math::split_interest_by_reserve_factor;
 use proptest::prelude::*;
-use proptest::strategy::Just;
 use proptest::test_runner::Config as ProptestConfig;
 
 /// Strategy for total_interest: non‑negative values that are safe to multiply.
@@ -115,7 +112,7 @@ proptest! {
         total_interest in arb_total_interest_safe(),
         reserve_factor_bps in arb_reserve_factor_bps(),
     ) {
-        let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
+        let (_depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
             total_interest, reserve_factor_bps,
         ).expect("valid inputs should not fail");
         let scale = 10_000i128;
@@ -152,13 +149,8 @@ proptest! {
 }
 
 proptest! {
-    /// Zero interest invariants: both parts zero.
-    ///
-    /// Regardless of reserve factor, zero total interest always produces zero split.
     #[test]
-    fn prop_split_zero_interest(
-        rf_bps in arb_reserve_factor_bps(),
-    ) {
+    fn prop_split_zero_interest(rf_bps in 0u32..=10_000) {
         let total_interest = 0i128;
         let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
             total_interest, rf_bps,
@@ -169,67 +161,58 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// Zero reserve factor: all interest to depositors.
     ///
     /// With rf_bps == 0, protocol share is exactly zero.
     #[test]
-    fn prop_split_zero_reserve_factor(
-        total_interest in arb_total_interest_safe(),
-    ) {
+    fn prop_split_zero_reserve_factor(total_interest in 0i128..=i128::MAX/10_000) {
         let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
             total_interest, 0,
         ).expect("zero reserve factor should always succeed");
-        assert_eq!(
-            depositor_yield,
-            total_interest,
-            "zero reserve factor should send all to depositors"
-        );
-        assert_eq!(reserve_cut, 0, "zero reserve factor should leave reserve unchanged");
+        assert_eq!(depositor_yield, total_interest);
+        assert_eq!(reserve_cut, 0);
     }
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// 100% reserve factor: all interest to protocol.
     ///
     /// With rf_bps == 10_000, depositors receive nothing.
     #[test]
-    fn prop_split_full_reserve_factor(
-        total_interest in arb_total_interest_safe(),
-    ) {
+    fn prop_split_full_reserve_factor(total_interest in 0i128..=i128::MAX/10_000) {
         let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
             total_interest, 10_000,
         ).expect("full reserve factor should always succeed");
-        assert_eq!(depositor_yield, 0, "full reserve factor should leave depositors empty");
-        assert_eq!(
-            reserve_cut,
-            total_interest,
-            "full reserve factor should send all to reserve"
-        );
+        assert_eq!(depositor_yield, 0);
+        assert_eq!(reserve_cut, total_interest);
     }
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// Negative interest rejection: MathError::OutOfRange.
     ///
     /// Inputs < 0 are explicitly rejected as out of range.
     #[test]
-    fn prop_split_negative_interest_rejected(
-        rf_bps in arb_reserve_factor_bps(),
-    ) {
-        let total_interest = -1i128;
-        let result = split_interest_by_reserve_factor(total_interest, rf_bps);
+    fn prop_split_negative_interest_rejected(rf_bps in 0u32..=10_000) {
+        let result = split_interest_by_reserve_factor(-1i128, rf_bps);
         assert_eq!(result, Err(super::math::MathError::OutOfRange));
     }
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// Reserve factor >100% rejection: MathError::OutOfRange.
     ///
     /// rf_bps > 10_000 is never accepted.
     #[test]
-    fn prop_split_reserve_factor_above_100pc_rejected(
-        total_interest in arb_total_interest_safe(),
-    ) {
+    fn prop_split_reserve_factor_above_100pc_rejected(total_interest in 0i128..=i128::MAX/10_000) {
         let result = split_interest_by_reserve_factor(total_interest, 10_001);
         assert_eq!(result, Err(super::math::MathError::OutOfRange));
     }

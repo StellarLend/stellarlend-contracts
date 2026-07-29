@@ -61,6 +61,12 @@ reserve_out -= amount_out
 
 The implementation verifies that the constant-product invariant has not decreased.
 
+> **Inverse direction.** For the *minimum input* required to support a desired
+> output while keeping `k` non-decreasing — the bound used by the flash-swap
+> repayment path (`inverse_swap_in`) — see
+> [INVERSE_SWAP_MATH.md](./INVERSE_SWAP_MATH.md). That bound is fee-independent
+> and rounds up to protect the pool.
+
 ---
 
 ## Fee Model

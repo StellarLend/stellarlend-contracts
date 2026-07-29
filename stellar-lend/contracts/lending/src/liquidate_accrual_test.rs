@@ -7,8 +7,6 @@
 //! 3. health-factor-after-settle boundary: verifying that positions which become
 //!    unhealthy due to interest accrual are correctly identified as liquidatable.
 
-#![cfg(test)]
-
 use crate::{
     debt::{save_debt, DebtPosition, DEFAULT_APR_BPS},
     liquidate_transfer_test::{MockToken, MockTokenClient},
@@ -101,7 +99,7 @@ fn test_liquidate_accrual_parity() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -160,7 +158,7 @@ fn test_liquidate_long_horizon_accrual() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
@@ -216,7 +214,7 @@ fn test_liquidate_health_factor_after_settle_boundary() {
             &user,
             &DebtPosition {
                 principal: initial_debt,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );

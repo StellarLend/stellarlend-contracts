@@ -1,10 +1,14 @@
 #[cfg(test)]
-mod liquidate_pause_test {
+mod liquidate_pause_tests {
     use crate::{
-        debt::DebtPosition, liquidate_transfer_test::MockToken, liquidate_transfer_test::MockTokenClient,
-        DataKey, EmergencyState, LendingContract, LendingContractClient, PauseType,
+        liquidate_transfer_test::MockToken, liquidate_transfer_test::MockTokenClient,
+        rounding_strategy::SECONDS_PER_YEAR, EmergencyState, LendingContract,
+        LendingContractClient, PauseType,
     };
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Address, Env,
+    };
 
     fn setup() -> (
         Env,
@@ -29,10 +33,26 @@ mod liquidate_pause_test {
         MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
         // configure a simple asset
         let asset = Address::generate(&env);
-        client.set_asset_params(&admin, &asset, &7500, &8000, &1_000_000_000_000i128, &0i128);
-        // make borrower unhealthy: deposit 100, borrow 200
+        client.set_asset_params(
+            &admin,
+            &asset,
+            &7500,
+            &8000,
+            &1_000_000_000_000i128,
+            &0i128,
+            &0i128,
+        );
+        // Make the borrower unhealthy: deposit 100, borrow the maximum the
+        // 80% liquidation-threshold solvency check allows at issuance (80),
+        // then let a year of interest accrual push debt just past that
+        // threshold. `borrow()` enforces solvency at open time (hf >= 10000),
+        // so a position can only become liquidatable after time passes.
         client.deposit(&borrower, &100);
-        client.borrow(&borrower, &200);
+        client.borrow(&borrower, &80);
+        let mut info = env.ledger().get();
+        info.timestamp = info.timestamp.saturating_add(SECONDS_PER_YEAR);
+        info.sequence_number = info.sequence_number.saturating_add(1);
+        env.ledger().set(info);
         (
             env,
             client,
@@ -47,24 +67,24 @@ mod liquidate_pause_test {
     #[test]
     #[should_panic(expected = "OperationPaused")]
     fn liquidate_blocked_when_global_pause() {
-        let (env, client, admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_pause(&admin, &PauseType::All, &true, &u32::MAX);
+        let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
+        client.set_pause(&PauseType::All, &true, &u32::MAX);
         client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
     }
 
     #[test]
     #[should_panic(expected = "OperationPaused")]
     fn liquidate_blocked_when_liquidation_pause_granular() {
-        let (env, client, admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_pause(&admin, &PauseType::Liquidation, &true, &u32::MAX);
+        let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
+        client.set_pause(&PauseType::Liquidation, &true, &u32::MAX);
         client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
     }
 
     #[test]
     fn liquidate_allowed_in_recovery() {
-        let (env, client, admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_emergency_state(&admin, &EmergencyState::Recovery);
-        client.set_pause(&admin, &PauseType::All, &false, &0);
+        let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
+        client.set_emergency_state(&EmergencyState::Recovery);
+        client.set_pause(&PauseType::All, &false, &0);
         let res =
             client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
         assert!(res.is_ok());
@@ -72,9 +92,10 @@ mod liquidate_pause_test {
 
     #[test]
     fn liquidate_allowed_in_shutdown() {
-        let (env, client, admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_emergency_state(&admin, &EmergencyState::Shutdown);
-        let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
+        let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
+        client.set_emergency_state(&EmergencyState::Shutdown);
+        let res =
+            client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
         assert!(res.is_ok(), "liquidation must be allowed during Shutdown");
     }
 }
