@@ -3243,7 +3243,12 @@ fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), Len
                 .instance()
                 .get(&DataKey::Guardian)
                 .ok_or(LendingError::NotInitialized)
-                .or_else(|_| env.storage().instance().get(&DataKey::Admin).ok_or(LendingError::NotInitialized))?;
+                .or_else(|_| {
+                    env.storage()
+                        .instance()
+                        .get(&DataKey::Admin)
+                        .ok_or(LendingError::NotInitialized)
+                })?;
             caller.require_auth();
             Ok(())
         }
