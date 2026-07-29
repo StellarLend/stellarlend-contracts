@@ -11,7 +11,7 @@
 //!
 //! See `CLAIMABLE_INVARIANTS.md` for the full accessor consistency documentation.
 
-use super::{Grant, VestingContract};
+use crate::test_harness::{Grant, VestingContract};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -162,7 +162,7 @@ fn claimable_is_monotone_non_decreasing_over_time() {
 #[test]
 fn claimable_is_zero_after_full_claim() {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0);
 
     // At t=1_000 the grant is fully vested; claim everything.
     let claimed = c.claim("alice", 1_000).expect("claim should succeed");
@@ -179,7 +179,7 @@ fn claimable_is_zero_after_full_claim() {
 fn claimable_after_mid_schedule_claim_reflects_new_vesting() {
     let mut c = VestingContract::new("admin", "treasury");
     // 1_000 tokens, starts at 0, 1_000 s duration, no cliff
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0);
 
     // At t=500: 500 tokens vested; claim all of them.
     let claimed1 = c.claim("alice", 500).expect("first claim should succeed");

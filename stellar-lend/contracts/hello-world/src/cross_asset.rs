@@ -15,12 +15,13 @@
 
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Vec};
 
+// Re-export shared price-normalisation utilities from the protocol's common
+// crate so all call sites use identical arithmetic and scale constants.
+pub use stellar_lend_common::{normalize_price, normalize_price_ceil, pow10_checked, INTERNAL_DECIMALS};
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/// Common internal fixed-point scale for value aggregation (10^18).
-pub const INTERNAL_DECIMALS: u32 = 18;
 
 /// Lower bound (inclusive) for `AssetConfig::collateral_factor_bps`.
 pub const MIN_COLLATERAL_FACTOR_BPS: i128 = 0;
@@ -274,44 +275,6 @@ pub struct UserPositionSummary {
 }
 
 // ---------------------------------------------------------------------------
-// Decimal normalization
-// ---------------------------------------------------------------------------
-
-fn pow10_checked(exp: u32) -> Option<i128> {
-    let mut acc: i128 = 1;
-    for _ in 0..exp {
-        acc = acc.checked_mul(10)?;
-    }
-    Some(acc)
-}
-
-/// Normalise `raw_price` to the common `INTERNAL_DECIMALS` (18) scale.
-/// Uses floor division — conservative for collateral values.
-pub fn normalize_price(raw_price: i128, asset_decimals: u32) -> Option<i128> {
-    if asset_decimals == INTERNAL_DECIMALS {
-        return Some(raw_price);
-    }
-    if asset_decimals < INTERNAL_DECIMALS {
-        let scale = pow10_checked(INTERNAL_DECIMALS - asset_decimals)?;
-        raw_price.checked_mul(scale)
-    } else {
-        let scale = pow10_checked(asset_decimals - INTERNAL_DECIMALS)?;
-        Some(raw_price / scale)
-    }
-}
-
-/// Same as [`normalize_price`] but rounds up — conservative for debt values.
-pub fn normalize_price_ceil(raw_price: i128, asset_decimals: u32) -> Option<i128> {
-    if asset_decimals <= INTERNAL_DECIMALS {
-        normalize_price(raw_price, asset_decimals)
-    } else {
-        let scale = pow10_checked(asset_decimals - INTERNAL_DECIMALS)?;
-        let adjusted = raw_price.checked_add(scale.checked_sub(1)?)?;
-        Some(adjusted / scale)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Storage helpers
 // ---------------------------------------------------------------------------
 
@@ -434,15 +397,23 @@ pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
 
 /// Register a new asset with its initial configuration.
 ///
+/// # Access control
+/// `caller` must equal the stored admin address, else
+/// [`CrossAssetError::Unauthorized`] is returned before any state is touched.
+///
 /// # Errors
+/// - [`CrossAssetError::Unauthorized`] — caller is not the protocol admin.
 /// - [`CrossAssetError::AssetAlreadyExists`] — asset key already registered.
 /// - [`CrossAssetError::InvalidDecimals`] — `config.price_decimals > 38`.
 /// - [`CrossAssetError::InvalidCollateralFactor`] — factor outside `[0, 10_000]`.
 pub fn initialize_asset(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     config: AssetConfig,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     if config.price_decimals > 38 {
         return Err(CrossAssetError::InvalidDecimals);
     }

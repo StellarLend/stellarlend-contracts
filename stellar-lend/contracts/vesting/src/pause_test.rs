@@ -16,7 +16,7 @@
 //! | Resume is idempotent                  | second resume is a no-op  |
 //! | `is_paused` reflects current state    | true / false as expected  |
 
-use super::{VestingContract, VestingError};
+use crate::test_harness::{VestingContract, VestingError};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
