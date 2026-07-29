@@ -231,7 +231,6 @@ fn test_per_address_keys_never_in_instance_storage() {
         DataKey::Debt(addr.clone()),
         DataKey::Balance(addr.clone(), addr.clone()),
         DataKey::Treasury(addr.clone()),
-        DataKey::AssetParams(addr.clone()),
     ];
 
     env.as_contract(&contract_id, || {

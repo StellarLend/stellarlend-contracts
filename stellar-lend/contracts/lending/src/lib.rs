@@ -323,6 +323,20 @@ pub struct CollateralAssetSetEvent {
 
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuardianSetEvent {
+    pub old_guardian: Option<Address>,
+    pub new_guardian: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OraclePubKeySetEvent {
+    pub old_pubkey: Option<BytesN<32>>,
+    pub new_pubkey: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidationEventV1 {
     pub schema_version: u32,
     pub liquidator: Address,
@@ -632,9 +646,15 @@ impl LendingContract {
     pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
+        let old_pubkey: Option<BytesN<32>> = env.storage().instance().get(&DataKey::OraclePubKey);
         env.storage()
             .instance()
             .set(&DataKey::OraclePubKey, &pubkey);
+        OraclePubKeySetEvent {
+            old_pubkey,
+            new_pubkey: pubkey,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -973,7 +993,14 @@ impl LendingContract {
             .ok_or(LendingError::NotInitialized)?;
         admin.require_auth();
 
+        let old_guardian: Option<Address> =
+            env.storage().instance().get(&DataKey::Guardian);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
+        GuardianSetEvent {
+            old_guardian,
+            new_guardian: guardian,
+        }
+        .publish(&env);
 
         // Record audit entry
         audit_log::record_audit_entry(
@@ -3243,7 +3270,12 @@ fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), Len
                 .instance()
                 .get(&DataKey::Guardian)
                 .ok_or(LendingError::NotInitialized)
-                .or_else(|_| env.storage().instance().get(&DataKey::Admin).ok_or(LendingError::NotInitialized))?;
+                .or_else(|_| {
+                    env.storage()
+                        .instance()
+                        .get(&DataKey::Admin)
+                        .ok_or(LendingError::NotInitialized)
+                })?;
             caller.require_auth();
             Ok(())
         }

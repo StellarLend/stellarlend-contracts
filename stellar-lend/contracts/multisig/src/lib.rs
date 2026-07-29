@@ -120,6 +120,14 @@ pub enum MultisigError {
 /// churn in a single contract invocation.
 pub const MAX_BATCH_SIZE: u32 = 32;
 
+/// Emitted when a signer revokes a previous approval from an open proposal.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalRevokedEvent {
+    pub proposal_id: u64,
+    pub signer: Address,
+}
+
 #[contract]
 pub struct MultisigContract;
 
@@ -468,7 +476,7 @@ impl MultisigContract {
                 // large as the current threshold, otherwise quorum could never
                 // be reached again and the multisig would be permanently bricked.
                 let threshold = Self::fetch_threshold(env);
-                if (new_signers.len() as u32) < threshold {
+                if new_signers.len() < threshold {
                     return Err(MultisigError::InvalidAction);
                 }
                 env.storage()
@@ -496,6 +504,16 @@ impl MultisigContract {
         Self::require_signer(&env, &caller)?;
 
         let mut proposal = Self::fetch_proposal(&env, id)?;
+
+        // Ledger-based expiry guard (consistent with execute_proposal
+        // and approve_proposal): if the current ledger has passed
+        // expires_at the proposal is expired regardless of the stored
+        // status field.
+        if env.ledger().sequence() as u64 > proposal.expires_at {
+            proposal.status = ProposalStatus::Expired;
+            Self::save_proposal(&env, &proposal);
+            return Err(MultisigError::ProposalExpired);
+        }
         if proposal.status == ProposalStatus::Expired {
             return Err(MultisigError::ProposalExpired);
         }
@@ -713,6 +731,9 @@ impl MultisigContract {
 // mod action_allowlist_test;
 // #[cfg(test)]
 // mod upgrade_e2e_test;
+
+#[cfg(test)]
+mod revoke_approval_test;
 
 #[cfg(test)]
 mod tests {

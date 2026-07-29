@@ -2,6 +2,9 @@
 
 use soroban_sdk::contracterror;
 
+// Reused, not re-declared: a second, independent `31_536_000` here would let
+// this and the rounding-strategy interest paths silently drift apart (e.g. if
+// a leap-year adjustment were ever applied to only one of them).
 use crate::rounding_strategy::SECONDS_PER_YEAR;
 
 /// Basis points scale (100% = 10,000 bps).
@@ -112,6 +115,16 @@ mod tests {
     #[test]
     fn compute_compound_interest_uses_shared_year_length() {
         let interest = compute_compound_interest(100, 500, SECONDS_PER_YEAR).unwrap();
+        assert_eq!(interest, 5);
+    }
+
+    #[test]
+    fn compute_compound_interest_matches_a_365_day_year() {
+        // `elapsed_seconds` here is a literal 365-day year, independent of the
+        // `SECONDS_PER_YEAR` import above, so this fails if `math.rs` ever
+        // divides by a re-hardcoded value that has drifted from it.
+        let one_year_seconds: u64 = 365 * 24 * 60 * 60;
+        let interest = compute_compound_interest(100, 500, one_year_seconds).unwrap();
         assert_eq!(interest, 5);
     }
 
