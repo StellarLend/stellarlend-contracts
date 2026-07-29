@@ -984,11 +984,23 @@ pub fn cross_asset_withdraw(
     if pos.supplied < amount {
         return Err(CrossAssetError::InsufficientCollateral);
     }
+
+    let prior_supplied = pos.supplied;
+    let prior_total_supply = load_total_supply(env, &key);
+
     pos.supplied -= amount;
     save_user_supply(env, &key, &user, pos.supplied);
 
-    let total = checked_sub_total(load_total_supply(env, &key), amount)?;
+    let total = checked_sub_total(prior_total_supply, amount)?;
     save_total_supply(env, &key, total);
+
+    let summary = get_user_position_summary(env, &user)?;
+    if summary.is_healthy == 0 {
+        pos.supplied = prior_supplied;
+        save_user_supply(env, &key, &user, pos.supplied);
+        save_total_supply(env, &key, prior_total_supply);
+        return Err(CrossAssetError::InsufficientCollateral);
+    }
 
     emit_cross_withdraw(
         env,
@@ -1092,6 +1104,88 @@ pub fn cross_asset_repay(
     );
 
     Ok(pos)
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: issue #1687 — withdrawal health checks
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod withdrawal_health_check_regression_test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    #[test]
+    fn withdraw_rejects_state_change_when_post_withdrawal_position_is_unhealthy() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = Address::generate(&env);
+        let debt_asset = Address::generate(&env);
+
+        // One shared contract instance, but a fresh `as_contract` frame per
+        // state-changing call: `require_auth()` may only be satisfied once
+        // per frame, and this test drives the same `user` through three
+        // separate authenticated calls (deposit, borrow, withdraw) -- see
+        // the comment on `with_contract`.
+        let contract_id = env.register(NoOpContract {}, ());
+
+        env.as_contract(&contract_id, || {
+            initialize_asset(
+                &env,
+                None,
+                AssetConfig {
+                    collateral_factor_bps: 7500,
+                    liquidation_threshold: 8000,
+                    max_supply: 0,
+                    max_borrow: 0,
+                    can_collateralize: true,
+                    can_borrow: false,
+                    price: 2_000_000,
+                    price_decimals: 6,
+                    last_update_ts: 0,
+                },
+            )
+            .unwrap();
+
+            initialize_asset(
+                &env,
+                Some(debt_asset.clone()),
+                AssetConfig {
+                    collateral_factor_bps: 7500,
+                    liquidation_threshold: 8000,
+                    max_supply: 0,
+                    max_borrow: 0,
+                    can_collateralize: false,
+                    can_borrow: true,
+                    price: 1_000_000_000_000_000_000,
+                    price_decimals: 18,
+                    last_update_ts: 0,
+                },
+            )
+            .unwrap();
+        });
+
+        env.as_contract(&contract_id, || {
+            cross_asset_deposit(&env, user.clone(), None, 10).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            cross_asset_borrow(&env, user.clone(), Some(debt_asset.clone()), 14).unwrap();
+        });
+
+        env.as_contract(&contract_id, || {
+            let result = cross_asset_withdraw(&env, user.clone(), None, 9);
+            assert_eq!(result, Err(CrossAssetError::InsufficientCollateral));
+
+            let pos = get_user_asset_position(&env, &user, None);
+            assert_eq!(pos.supplied, 10);
+
+            let key = asset_key(None);
+            assert_eq!(load_total_supply(&env, &key), 10);
+
+            let summary = get_user_position_summary(&env, &user).unwrap();
+            assert_eq!(summary.is_healthy, 1);
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
