@@ -111,6 +111,8 @@ mod rate_smoothing_state_test;
 #[cfg(test)]
 mod rate_smoothing_test;
 #[cfg(test)]
+mod rate_surcharge_test;
+#[cfg(test)]
 mod rate_updated_event_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
@@ -2018,6 +2020,8 @@ impl LendingContract {
             || params.rate_floor_bps < 0
             || params.rate_ceiling_bps < params.rate_floor_bps
             || params.hysteresis_bps < 0
+            || params.surcharge_kink_bps < 0
+            || params.surcharge_slope < 0
         {
             return Err(LendingError::InvalidRateParams);
         }
@@ -3664,6 +3668,8 @@ pub(crate) mod test {
             rate_ceiling_bps: 9_000,
             max_rate_change_per_ledger_bps: i128::MAX,
             hysteresis_bps: 0,
+            surcharge_kink_bps: 10_000,
+            surcharge_slope: 0,
         };
         client.set_rate_params(&params);
         assert_eq!(client.get_rate_params(), params);
