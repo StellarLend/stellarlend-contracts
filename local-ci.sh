@@ -12,8 +12,6 @@
 # Run individual sections via the --only flag (see "USAGE" below), or run the
 # whole pipeline with no arguments.
 
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -68,6 +66,9 @@ fi
 
 cd "$PROJECT_DIR"
 
+# Track overall pass/fail across all checks
+FAILED=0
+
 # Function to run a command and report status
 run_check() {
     local name=$1
@@ -78,7 +79,7 @@ run_check() {
         echo -e "${GREEN}✅ $name passed${NC}"
     else
         echo -e "${RED}❌ $name failed${NC}"
-        return 1
+        FAILED=1
     fi
 }
 
@@ -187,31 +188,32 @@ if should_run coverage; then
     fi
 
     echo -e "\n${YELLOW}🔍 Generating coverage${NC}"
-    cargo tarpaulin --verbose --out Xml --workspace
+    run_check "Coverage Generation" "cargo tarpaulin --verbose --out Xml --workspace"
 
     # Coverage enforcement. cwd is stellar-lend/ (set at the top of this
     # script), so cobertura.xml is in the cwd and the thresholds JSON lives at
     # ../scripts/coverage_thresholds.json relative to that.
     #
-    # We deliberately do NOT provide a \"fall back to default 95%\u201d branch here:
-    # any silent-swallow of a coverage failure (e.g. `|| true`) would defeat
-    # `set -e` and let real below-threshold crates slip through. If the JSON is
-    # missing for some reason, hard-fail so the operator fixes the repo rather
-    # than mis-attributing the result.
+    # We deliberately do NOT provide a "fall back to default 95%" branch here:
+    # any silent-swallow of a coverage failure (e.g. `|| true`) would let real
+    # below-threshold crates slip through unreported. If the JSON is missing
+    # for some reason, hard-fail immediately so the operator fixes the repo
+    # rather than mis-attributing the result.
     echo -e "\n${YELLOW}🔍 Enforcing per-crate thresholds${NC}"
     if [ ! -f "../scripts/coverage_thresholds.json" ]; then
         echo -e "${RED}❌ ../scripts/coverage_thresholds.json not found; cannot enforce coverage.${NC}"
         exit 1
     fi
-    python3 ../scripts/enforce_coverage.py \
-        cobertura.xml \
-        --thresholds-json ../scripts/coverage_thresholds.json
+    run_check "Coverage Threshold Enforcement" "python3 ../scripts/enforce_coverage.py cobertura.xml --thresholds-json ../scripts/coverage_thresholds.json"
 fi
 
 # ─── SUMMARY ──────────────────────────────────────────────────────────────────
-echo -e "\n${GREEN}🎉 All requested CI checks completed!${NC}"
+if [ "$FAILED" -eq 0 ]; then
+    echo -e "\n${GREEN}🎉 All requested CI checks passed!${NC}"
+else
+    echo -e "\n${RED}❌ Some CI checks failed.${NC}"
+fi
 echo "===================================="
-echo -e "${GREEN}If all checks passed, your code should pass CI pipeline.${NC}"
 echo -e "${YELLOW}Note: Some checks might behave slightly differently in CI (e.g. ephemeral cache state).${NC}"
 
 echo -e "\n${BLUE}💡 Quick fixes for common issues:${NC}"
@@ -220,3 +222,6 @@ echo "- Clippy warnings:  cd stellar-lend && cargo clippy --fix --all-targets --
 echo "- Build issues:     check error output, fix code, re-run ./local-ci.sh"
 echo "- Security issues:  cargo update or add --ignore RUSTSEC-XXXX-XXXX to audit run"
 echo "- Coverage:          add tests, then re-run ./local-ci.sh --only coverage"
+
+# Exit with non-zero if any check failed
+exit "$FAILED"
