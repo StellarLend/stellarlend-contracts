@@ -79,7 +79,7 @@ fn mock_only_for_state_transition(
         invoke: &MockAuthInvoke {
             contract: cid,
             fn_name: "set_emergency_state",
-            args: (state.clone(),).into_val(env),
+            args: (state,).into_val(env),
             sub_invokes: &[],
         },
     }]);
@@ -508,7 +508,7 @@ fn no_guardian_admin_can_cycle_all_states() {
         EmergencyState::Recovery,
         EmergencyState::Normal,
     ] {
-        mock_only_for_state_transition(&env, &cid, &admin, state.clone());
+        mock_only_for_state_transition(&env, &cid, &admin, state);
         client.set_emergency_state(&state);
     }
 }

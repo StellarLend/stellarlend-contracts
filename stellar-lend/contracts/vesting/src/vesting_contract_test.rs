@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::{VestingContract, VestingContractClient, VestingError};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -32,19 +30,12 @@ fn setup_test() -> (
 
     client.initialize(&admin, &treasury, &token_address);
 
-    (
-        env,
-        client,
-        admin,
-        treasury,
-        token,
-        token_asset_client,
-    )
+    (env, client, admin, treasury, token, token_asset_client)
 }
 
 #[test]
 fn test_initialize_twice_fails() {
-    let (env, client, admin, treasury, token, _token_asset) = setup_test();
+    let (_env, client, admin, treasury, token, _token_asset) = setup_test();
     let res = client.try_initialize(&admin, &treasury, &token.address);
     assert_eq!(res, Err(Ok(VestingError::AlreadyInitialized)));
 }
@@ -144,7 +135,7 @@ fn test_revoke_claws_back_unvested() {
     // At t=300: vested=300, unvested=700
     env.ledger().with_mut(|li| li.timestamp += 300);
 
-    let clawback = client.revoke(&admin, &grantee);
+    let (_vested, clawback) = client.revoke(&admin, &grantee);
     assert_eq!(clawback, 700);
     assert_eq!(token.balance(&treasury), 700);
 

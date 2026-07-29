@@ -9,8 +9,6 @@
 //! and the invariant oracle is exercised under plain `cargo test` (no
 //! cargo-fuzz / nightly required).
 
-#![cfg(test)]
-
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::{

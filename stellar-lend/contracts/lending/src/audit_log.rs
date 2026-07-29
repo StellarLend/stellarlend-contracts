@@ -49,12 +49,7 @@ pub const DEFAULT_MAX_AUDIT_LOG_SIZE: u64 = 100;
 /// * `action` - Short description of the action (e.g. "set_admin", "pause")
 /// * `actor` - Address that performed the action
 /// * `details` - Optional additional context
-pub fn record_audit_entry(
-    env: &Env,
-    action: String,
-    actor: Address,
-    details: Option<String>,
-) {
+pub fn record_audit_entry(env: &Env, action: String, actor: Address, details: Option<String>) {
     let max_size: u64 = env
         .storage()
         .instance()
@@ -156,164 +151,194 @@ pub fn get_governance_audit_entries(env: &Env, limit: u64) -> Vec<AuditLogEntry>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::{contract, testutils::Address as _};
+
+    // `record_audit_entry` and friends touch `env.storage()`, which requires
+    // an active contract context in this SDK version. These low-level unit
+    // tests exercise the free functions directly (no `LendingContract`
+    // registration needed), so we register a minimal dummy contract purely
+    // to give `env.as_contract(&id, ...)` somewhere to scope storage to.
+    #[contract]
+    struct AuditLogTestContract;
+
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let id = env.register(AuditLogTestContract, ());
+        (env, id)
+    }
 
     #[test]
     fn test_get_governance_audit_count_returns_zero_initially() {
-        let env = Env::default();
-        let count = get_governance_audit_count(&env);
-        assert_eq!(count, 0);
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let count = get_governance_audit_count(&env);
+            assert_eq!(count, 0);
+        });
     }
 
     #[test]
     fn test_record_audit_entry_increments_count() {
-        let env = Env::default();
-        let actor = Address::generate(&env);
-        let action = String::from_str(&env, "test_action");
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let actor = Address::generate(&env);
+            let action = String::from_str(&env, "test_action");
 
-        record_audit_entry(&env, action, actor, None);
-        let count = get_governance_audit_count(&env);
-        assert_eq!(count, 1);
+            record_audit_entry(&env, action, actor, None);
+            let count = get_governance_audit_count(&env);
+            assert_eq!(count, 1);
 
-        let actor2 = Address::generate(&env);
-        let action2 = String::from_str(&env, "test_action2");
-        record_audit_entry(&env, action2, actor2, None);
-        let count = get_governance_audit_count(&env);
-        assert_eq!(count, 2);
+            let actor2 = Address::generate(&env);
+            let action2 = String::from_str(&env, "test_action2");
+            record_audit_entry(&env, action2, actor2, None);
+            let count = get_governance_audit_count(&env);
+            assert_eq!(count, 2);
+        });
     }
 
     #[test]
     fn test_get_governance_audit_entries_returns_empty_when_no_entries() {
-        let env = Env::default();
-        let entries = get_governance_audit_entries(&env, 10);
-        assert_eq!(entries.len(), 0);
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let entries = get_governance_audit_entries(&env, 10);
+            assert_eq!(entries.len(), 0);
+        });
     }
 
     #[test]
     fn test_get_governance_audit_entries_returns_most_recent_first() {
-        let env = Env::default();
-        let actor1 = Address::generate(&env);
-        let action1 = String::from_str(&env, "action1");
-        let actor2 = Address::generate(&env);
-        let action2 = String::from_str(&env, "action2");
-        let actor3 = Address::generate(&env);
-        let action3 = String::from_str(&env, "action3");
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let actor1 = Address::generate(&env);
+            let action1 = String::from_str(&env, "action1");
+            let actor2 = Address::generate(&env);
+            let action2 = String::from_str(&env, "action2");
+            let actor3 = Address::generate(&env);
+            let action3 = String::from_str(&env, "action3");
 
-        record_audit_entry(&env, action1.clone(), actor1.clone(), None);
-        record_audit_entry(&env, action2.clone(), actor2.clone(), None);
-        record_audit_entry(&env, action3.clone(), actor3.clone(), None);
+            record_audit_entry(&env, action1.clone(), actor1.clone(), None);
+            record_audit_entry(&env, action2.clone(), actor2.clone(), None);
+            record_audit_entry(&env, action3.clone(), actor3.clone(), None);
 
-        let entries = get_governance_audit_entries(&env, 0);
-        assert_eq!(entries.len(), 3);
+            let entries = get_governance_audit_entries(&env, 0);
+            assert_eq!(entries.len(), 3);
 
-        // Most recent first
-        assert_eq!(entries.get(0).unwrap().sequence, 2);
-        assert_eq!(entries.get(1).unwrap().sequence, 1);
-        assert_eq!(entries.get(2).unwrap().sequence, 0);
+            // Most recent first
+            assert_eq!(entries.get(0).unwrap().sequence, 2);
+            assert_eq!(entries.get(1).unwrap().sequence, 1);
+            assert_eq!(entries.get(2).unwrap().sequence, 0);
+        });
     }
 
     #[test]
     fn test_circular_buffer_overwrites_oldest_when_full() {
-        let env = Env::default();
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            // Set max size to 3 for this test
+            env.storage().instance().set(&AuditLogKey::MaxSize, &3u64);
 
-        // Set max size to 3 for this test
-        env.storage()
-            .instance()
-            .set(&AuditLogKey::MaxSize, &3u64);
+            let actor = Address::generate(&env);
 
-        let actor = Address::generate(&env);
+            // Fill buffer to capacity
+            for _ in 0..3 {
+                let action = String::from_str(&env, "action");
+                record_audit_entry(&env, action, actor.clone(), None);
+            }
 
-        // Fill buffer to capacity
-        for i in 0..3 {
-            let action = String::from_str(&env, &format!("action{}", i));
-            record_audit_entry(&env, action, actor.clone(), None);
-        }
+            let count = get_governance_audit_count(&env);
+            assert_eq!(count, 3);
 
-        let count = get_governance_audit_count(&env);
-        assert_eq!(count, 3);
+            // Add one more — should wrap and overwrite oldest
+            let action_new = String::from_str(&env, "action_new");
+            record_audit_entry(&env, action_new, actor.clone(), None);
 
-        // Add one more — should wrap and overwrite oldest
-        let action_new = String::from_str(&env, "action_new");
-        record_audit_entry(&env, action_new, actor.clone(), None);
+            let count = get_governance_audit_count(&env);
+            assert_eq!(count, 4); // Count never resets
 
-        let count = get_governance_audit_count(&env);
-        assert_eq!(count, 4); // Count never resets
+            // Check that we have 3 entries (buffer full)
+            let entries = get_governance_audit_entries(&env, 0);
+            assert_eq!(entries.len(), 3);
 
-        // Check that we have 3 entries (buffer full)
-        let entries = get_governance_audit_entries(&env, 0);
-        assert_eq!(entries.len(), 3);
-
-        // Most recent should be sequence 3
-        assert_eq!(entries.get(0).unwrap().sequence, 3);
-        // Oldest existing should be sequence 1 (sequence 0 was overwritten)
-        assert_eq!(entries.get(2).unwrap().sequence, 1);
+            // Most recent should be sequence 3
+            assert_eq!(entries.get(0).unwrap().sequence, 3);
+            // Oldest existing should be sequence 1 (sequence 0 was overwritten)
+            assert_eq!(entries.get(2).unwrap().sequence, 1);
+        });
     }
 
     #[test]
     fn test_get_governance_audit_entries_with_limit_returns_correct_count() {
-        let env = Env::default();
-        let actor = Address::generate(&env);
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let actor = Address::generate(&env);
 
-        for i in 0..5 {
-            let action = String::from_str(&env, &format!("action{}", i));
-            record_audit_entry(&env, action, actor.clone(), None);
-        }
+            for _ in 0..5 {
+                let action = String::from_str(&env, "action");
+                record_audit_entry(&env, action, actor.clone(), None);
+            }
 
-        let entries = get_governance_audit_entries(&env, 3);
-        assert_eq!(entries.len(), 3);
+            let entries = get_governance_audit_entries(&env, 3);
+            assert_eq!(entries.len(), 3);
 
-        // Should return most recent: seq 4, 3, 2
-        assert_eq!(entries.get(0).unwrap().sequence, 4);
-        assert_eq!(entries.get(1).unwrap().sequence, 3);
-        assert_eq!(entries.get(2).unwrap().sequence, 2);
+            // Should return most recent: seq 4, 3, 2
+            assert_eq!(entries.get(0).unwrap().sequence, 4);
+            assert_eq!(entries.get(1).unwrap().sequence, 3);
+            assert_eq!(entries.get(2).unwrap().sequence, 2);
+        });
     }
 
     #[test]
     fn test_get_governance_audit_entries_limit_0_returns_all_available() {
-        let env = Env::default();
-        let actor = Address::generate(&env);
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let actor = Address::generate(&env);
 
-        for i in 0..5 {
-            let action = String::from_str(&env, &format!("action{}", i));
-            record_audit_entry(&env, action, actor.clone(), None);
-        }
+            for _ in 0..5 {
+                let action = String::from_str(&env, "action");
+                record_audit_entry(&env, action, actor.clone(), None);
+            }
 
-        let entries = get_governance_audit_entries(&env, 0);
-        assert_eq!(entries.len(), 5);
+            let entries = get_governance_audit_entries(&env, 0);
+            assert_eq!(entries.len(), 5);
+        });
     }
 
     #[test]
     fn test_audit_entry_contains_correct_actor_and_ledger() {
-        let env = Env::default();
-        let actor = Address::generate(&env);
-        let action = String::from_str(&env, "test_action");
-        let details = Some(String::from_str(&env, "test_details"));
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let actor = Address::generate(&env);
+            let action = String::from_str(&env, "test_action");
+            let details = Some(String::from_str(&env, "test_details"));
 
-        record_audit_entry(&env, action.clone(), actor.clone(), details.clone());
+            record_audit_entry(&env, action.clone(), actor.clone(), details.clone());
 
-        let entries = get_governance_audit_entries(&env, 1);
-        assert_eq!(entries.len(), 1);
+            let entries = get_governance_audit_entries(&env, 1);
+            assert_eq!(entries.len(), 1);
 
-        let entry = entries.get(0).unwrap();
-        assert_eq!(entry.actor, actor);
-        assert_eq!(entry.action, action);
-        assert_eq!(entry.details, details);
-        assert_eq!(entry.sequence, 0);
+            let entry = entries.get(0).unwrap();
+            assert_eq!(entry.actor, actor);
+            assert_eq!(entry.action, action);
+            assert_eq!(entry.details, details);
+            assert_eq!(entry.sequence, 0);
+        });
     }
 
     #[test]
     fn test_multiple_actors_recorded_correctly() {
-        let env = Env::default();
-        let actor1 = Address::generate(&env);
-        let actor2 = Address::generate(&env);
-        let action = String::from_str(&env, "governance_action");
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let actor1 = Address::generate(&env);
+            let actor2 = Address::generate(&env);
+            let action = String::from_str(&env, "governance_action");
 
-        record_audit_entry(&env, action.clone(), actor1.clone(), None);
-        record_audit_entry(&env, action.clone(), actor2.clone(), None);
+            record_audit_entry(&env, action.clone(), actor1.clone(), None);
+            record_audit_entry(&env, action.clone(), actor2.clone(), None);
 
-        let entries = get_governance_audit_entries(&env, 0);
-        assert_eq!(entries.len(), 2);
+            let entries = get_governance_audit_entries(&env, 0);
+            assert_eq!(entries.len(), 2);
 
-        assert_eq!(entries.get(0).unwrap().actor, actor2);
-        assert_eq!(entries.get(1).unwrap().actor, actor1);
+            assert_eq!(entries.get(0).unwrap().actor, actor2);
+            assert_eq!(entries.get(1).unwrap().actor, actor1);
+        });
     }
 }

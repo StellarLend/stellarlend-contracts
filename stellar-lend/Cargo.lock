@@ -865,15 +865,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hello-world"
-version = "0.0.0"
-dependencies = [
- "proptest",
- "soroban-sdk",
- "stellar-lend-common",
-]
-
-[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1789,19 +1780,11 @@ dependencies = [
 
 [[package]]
 name = "soroban-token-sdk"
-version = "25.3.0"
+version = "25.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7257d888e42da01d031cfc388d4c9c10e4e13388a4e04deabf812fa7d33f0af3"
+checksum = "d8230fe7cf1bf138068cbe5cfa54a76657bed8a9bb6a89a4a229383116d3f067"
 dependencies = [
  "soroban-sdk",
-]
-
-[[package]]
-name = "soroban-token-vesting"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
- "soroban-token-sdk",
 ]
 
 [[package]]
@@ -1933,6 +1916,7 @@ version = "0.0.0"
 dependencies = [
  "proptest",
  "soroban-sdk",
+ "soroban-token-sdk",
 ]
 
 [[package]]

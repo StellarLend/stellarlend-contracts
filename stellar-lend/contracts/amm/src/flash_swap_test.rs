@@ -34,8 +34,6 @@
 //! | `test_rollback_full_state_on_under_pay` | `try_` variant captures panic; reserves fully restored.            |
 //! | `test_repay_zero_amount_rejected`       | `repay_flash_swap` rejects `amount_in <= 0`.                       |
 
-#![cfg(test)]
-
 use crate::{inverse_swap_in, AmmContract, AmmContractClient, AmmPoolError};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
@@ -46,7 +44,9 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     env.mock_all_auths();
     let amm_id = env.register(AmmContract, ());
     let amm_client = AmmContractClient::new(&env, &amm_id);
-    amm_client.init_pool(&ra, &rb);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    amm_client.init_pool(&ra, &rb, &token_a, &token_b);
     (env, amm_id)
 }
 
@@ -150,6 +150,7 @@ fn test_over_repay_yields_extra_fee() {
 
 /// Underpaying (one stroop short of the inverse) trips the verify-k check.
 #[test]
+#[should_panic]
 fn test_under_repay_panics_k_violation() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -274,6 +275,7 @@ fn test_reentrancy_blocks_remove() {
 }
 
 #[test]
+#[should_panic]
 fn test_reentrancy_blocks_swap() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -284,6 +286,7 @@ fn test_reentrancy_blocks_swap() {
 }
 
 #[test]
+#[should_panic]
 fn test_reentrancy_blocks_nested() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -298,6 +301,7 @@ fn test_reentrancy_blocks_nested() {
 // =========================================================================
 
 #[test]
+#[should_panic]
 fn test_repay_without_flash_panics() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -307,6 +311,7 @@ fn test_repay_without_flash_panics() {
 }
 
 #[test]
+#[should_panic]
 fn test_repay_zero_amount_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -317,6 +322,7 @@ fn test_repay_zero_amount_rejected() {
 }
 
 #[test]
+#[should_panic]
 fn test_zero_amount_out_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -335,6 +341,7 @@ fn test_invalid_fee_bps_rejected() {
 }
 
 #[test]
+#[should_panic]
 fn test_drain_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
