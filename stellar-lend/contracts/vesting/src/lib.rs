@@ -1,8 +1,8 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env,
+    IntoVal, Symbol, Val, Vec,
 };
-use soroban_token_sdk::TokenClient;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,7 +117,7 @@ impl TokenVesting {
         // We do not pull tokens here to keep it simple and follow push-pattern if needed,
         // or we can pull tokens using TokenClient if admin has approved us. Let's pull tokens here to be safe and atomic.
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        let client = TokenClient::new(&env, &token_addr);
+        let client = token::Client::new(&env, &token_addr);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         client.transfer(&admin, &env.current_contract_address(), &total_amount);
 
@@ -165,7 +165,7 @@ impl TokenVesting {
         env.storage().persistent().set(&key, &schedule);
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        let client = TokenClient::new(&env, &token_addr);
+        let client = token::Client::new(&env, &token_addr);
         client.transfer(&env.current_contract_address(), &beneficiary, &claimable);
     }
 
@@ -217,7 +217,7 @@ impl TokenVesting {
         env.storage().persistent().set(&key, &schedule);
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        let client = TokenClient::new(&env, &token_addr);
+        let client = token::Client::new(&env, &token_addr);
 
         if claimable_now > 0 {
             client.transfer(
@@ -257,8 +257,6 @@ impl TokenVesting {
 // Ensure tests are included
 #[cfg(test)]
 mod tests;
-    contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Val, Vec,
-};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -278,6 +276,8 @@ pub enum VestingError {
     AlreadyInitialized = 11,
     /// Destination already holds a vesting grant
     DestinationAlreadyHasGrant = 12,
+    /// Contract balance is insufficient for the clawback
+    InsufficientTreasuryBalance = 13,
 }
 
 #[contracttype]
@@ -371,7 +371,7 @@ impl VestingContract {
     ///
     /// # Arguments
     /// * `admin` - The admin address that controls pause/resume and grant management
-    pub fn initialize(env: Env, admin: Address) -> Result<(), VestingError> {
+    pub fn initialize(env: Env, admin: Address, treasury: Address, token_address: Address) -> Result<(), VestingError> {
         if env.storage().persistent().has(&VestingKey::Admin) {
             return Err(VestingError::AlreadyInitialized);
         }
@@ -386,6 +386,10 @@ impl VestingContract {
         env.storage()
             .persistent()
             .set(&VestingKey::TotalPausedSecs, &0u64);
+        env.storage()
+            .persistent()
+            .set(&VestingKey::TotalLocked, &0i128);
+        Ok(())
     }
 
     pub fn add_grant(
@@ -410,17 +414,18 @@ impl VestingContract {
             .map(|g: Grant| if !g.revoked { g.claimed_amount } else { 0 })
             .unwrap_or(0);
 
-        if total_amount < claimed_amount {
+        if total < claimed_amount {
             return Err(VestingError::InvalidGrant);
         }
 
         let grant = Grant {
             grantee: grantee.clone(),
-            total_amount,
+            total_amount: total,
             claimed_amount,
-            start_ts,
-            cliff_secs,
-            duration_secs,
+            released_amount: 0,
+            start_ts: start,
+            cliff_secs: cliff,
+            duration_secs: duration,
             revoked: false,
         };
 
@@ -429,8 +434,12 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::Grant(grantee.clone()))
             .unwrap_or(Vec::new(&env));
-        grants.push_back(new_grant);
+        grants.push_back(grant);
         env.storage().persistent().set(&VestingKey::Grant(grantee.clone()), &grants);
+
+        let token_addr = Self::get_token_address(&env)?;
+        let token_client = token::Client::new(&env, &token_addr);
+        token_client.transfer(&admin, &env.current_contract_address(), &total);
 
         let total_locked = Self::total_locked(env.clone());
         let new_locked = total_locked.checked_add(total).ok_or(VestingError::Overflow)?;
@@ -690,7 +699,7 @@ impl VestingContract {
             env.storage().persistent().set(&VestingKey::TotalLocked, &new_locked);
         }
 
-        let topics = (soroban_sdk::Symbol::new(&env, "revoked"), grantee.clone());
+        let topics = (Symbol::new(&env, "revoked"), grantee.clone());
         let mut data: Vec<Val> = Vec::new(&env);
         data.push_back(grantee.clone().into_val(&env));
         data.push_back(total_clawback.into_val(&env));
@@ -754,7 +763,7 @@ impl VestingContract {
 
         let retained = grant.released_amount.saturating_sub(grant.claimed_amount);
 
-        let topics = (soroban_sdk::Symbol::new(&env, "revoked"), grantee.clone());
+        let topics = (Symbol::new(&env, "revoked"), grantee.clone());
         let mut data: Vec<Val> = Vec::new(&env);
         data.push_back(grantee.clone().into_val(&env));
         data.push_back(unvested.into_val(&env));
@@ -798,7 +807,7 @@ impl VestingContract {
             let new_locked = total_locked.checked_sub(total_delta).ok_or(VestingError::Overflow)?;
             env.storage().persistent().set(&VestingKey::TotalLocked, &new_locked);
 
-            let topics = (soroban_sdk::Symbol::new(&env, "grant_accelerated"), grantee.clone());
+            let topics = (Symbol::new(&env, "grant_accelerated"), grantee.clone());
             let mut data: Vec<Val> = Vec::new(&env);
             data.push_back(grantee.clone().into_val(&env));
             data.push_back(total_delta.into_val(&env));
@@ -810,7 +819,16 @@ impl VestingContract {
 
     /// Return grant details for a grantee.
     pub fn get_grant(env: Env, grantee: Address) -> Option<Grant> {
-        env.storage().persistent().get(&VestingKey::Grant(grantee))
+        let grants: Vec<Grant> = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Grant(grantee))
+            .unwrap_or(Vec::new(&env));
+        if grants.len() > 0 {
+            Some(grants.get(0).unwrap())
+        } else {
+            None
+        }
     }
 
     pub fn claimable_total(env: Env, grantee: Address) -> i128 {
@@ -918,7 +936,7 @@ impl VestingContract {
     }
 
     fn emit_event(env: &Env, event: &str, actor: &Address) {
-        let topics = (soroban_sdk::Symbol::new(env, event), actor.clone());
+        let topics = (Symbol::new(env, event), actor.clone());
         let mut data: Vec<Val> = Vec::new(env);
         data.push_back(actor.clone().into_val(env));
         env.events().publish(topics, data);
@@ -926,7 +944,7 @@ impl VestingContract {
 }
 
 #[cfg(test)]
-mod grant_transfer_test;
+mod accelerate_test;
 #[cfg(test)]
 mod initialize_test;
 #[cfg(test)]

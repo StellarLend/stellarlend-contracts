@@ -3,18 +3,18 @@
 use crate::{TokenVesting, TokenVestingClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    Address, Env,
+    token, Address, Env,
 };
-use soroban_token_sdk::testutils::TokenClient;
 
 fn setup_env<'a>() -> (
     Env,
     TokenVestingClient<'a>,
     Address,
     Address,
-    soroban_token_sdk::TokenClient<'a>,
+    token::TokenClient<'a>,
 ) {
     let env = Env::default();
+    env.mock_all_auths();
 
     // Create users
     let admin = Address::generate(&env);
@@ -23,14 +23,15 @@ fn setup_env<'a>() -> (
 
     // Create token
     let token_addr = env.register_stellar_asset_contract(token_admin.clone());
-    let token = soroban_token_sdk::TokenClient::new(&env, &token_addr);
+    let token_asset = token::StellarAssetClient::new(&env, &token_addr);
+    let token = token::TokenClient::new(&env, &token_addr);
 
     // Deploy vesting contract
     let contract_id = env.register_contract(None, TokenVesting);
     let client = TokenVestingClient::new(&env, &contract_id);
 
     // Initialize token values
-    token.mint(&admin, &2000);
+    token_asset.mint(&admin, &2000);
 
     // Initialize vesting
     client.init(&admin, &token_addr);
@@ -386,7 +387,7 @@ fn test_treasury_emission_schedule_realistic() {
     
     // Mint tokens to admin
     let token_addr: Address = env.storage().instance().get(&crate::DataKey::Token).unwrap();
-    let token_contract = soroban_token_sdk::TokenClient::new(&env, &token_addr);
+    let token_contract = token::TokenClient::new(&env, &token_addr);
     // (Already minted in setup, but demonstrating the flow)
     
     // Create schedule
@@ -422,7 +423,7 @@ fn test_treasury_multiple_beneficiaries() {
     let token_admin = Address::generate(&env);
     
     let token_addr = env.register_stellar_asset_contract(token_admin.clone());
-    let token = soroban_token_sdk::TokenClient::new(&env, &token_addr);
+    let token = token::TokenClient::new(&env, &token_addr);
     
     let contract_id = env.register_contract(None, TokenVesting);
     let client = TokenVestingClient::new(&env, &contract_id);
@@ -430,7 +431,7 @@ fn test_treasury_multiple_beneficiaries() {
     env.mock_all_auths();
     
     // Mint large amount
-    token.mint(&admin, &3_000_000);
+    token::StellarAssetClient::new(&env, &token_addr).mint(&admin, &3_000_000);
     
     client.init(&admin, &token_addr);
     
