@@ -172,14 +172,8 @@ if should_run audit; then
         cargo install cargo-audit --version '^0.21' --locked
     fi
 
-    # Mirrors the 6 ignored advisories used in .github/workflows/ci-cd.yml.
-    run_check "Security Audit" "cargo audit \
-        --ignore RUSTSEC-2026-0049 \
-        --ignore RUSTSEC-2025-0009 \
-        --ignore RUSTSEC-2023-0071 \
-        --ignore RUSTSEC-2024-0363 \
-        --ignore RUSTSEC-2024-0344 \
-        --ignore RUSTSEC-2022-0093"
+    # Ignored advisories live in stellar-lend/.cargo/audit.toml.
+    run_check "Security Audit" "cargo audit"
 fi
 
 # ─── 5. COVERAGE (matches CI job: coverage on ubuntu-latest) ───────────────────
