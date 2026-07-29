@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::{DataKey, LendingContract, LendingContractClient, LendingError};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env, Symbol};
 

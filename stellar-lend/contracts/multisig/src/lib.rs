@@ -47,7 +47,7 @@ pub enum ProposalStatus {
 
 /// A multisig proposal with an attached typed action.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Proposal {
     pub id: u64,
     pub proposer: Address,
@@ -336,8 +336,14 @@ impl MultisigContract {
     /// * `caller` – Signer casting the approval.
     /// * `id`     – ID of the proposal to approve.
     pub fn approve_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
-        caller.require_auth();
         Self::require_signer(&env, &caller)?;
+
+        // Domain-separated binding (issue #1278): instead of a bare
+        // `require_auth()`, require the caller to have authorized this
+        // exact `(contract, proposal_id, approver)` hash. See
+        // APPROVAL_DOMAIN_BINDING.md for the full threat model.
+        let binding = Self::approval_auth_hash(&env, id, &caller);
+        caller.require_auth_for_args((binding.clone(),).into_val(&env));
 
         let mut proposal = Self::fetch_proposal(&env, id)?;
 
@@ -463,7 +469,7 @@ impl MultisigContract {
                 // be reached again and the multisig would be permanently bricked.
                 let threshold = Self::fetch_threshold(env);
                 if (new_signers.len() as u32) < threshold {
-                    return false;
+                    return Err(MultisigError::InvalidAction);
                 }
                 env.storage()
                     .persistent()
@@ -475,7 +481,7 @@ impl MultisigContract {
                 // arguments carried on the proposal action. The payload hash
                 // still binds the approved action so it cannot be swapped.
                 let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args.clone());
-                true
+                Ok(())
             }
         }
     }
@@ -733,3 +739,6 @@ mod cancel_proposal_test;
 
 #[cfg(test)]
 mod approval_binding_test;
+
+#[cfg(test)]
+mod signer_shrink_guard_test;

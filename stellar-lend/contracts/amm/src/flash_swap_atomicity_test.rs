@@ -28,10 +28,8 @@
 //! | `test_under_repay_flag_cleared_on_rollback`  | `is_flash_active` false after rollback       |
 //! | `test_reentrant_flash_rejected`              | Re-entrant flash during active one → reject  |
 
-#![cfg(test)]
-
 use crate::{inverse_swap_in, AmmContract, AmmContractClient};
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Bytes, Env};
 
 const FEE_BPS: i128 = 30;
 

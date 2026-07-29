@@ -214,3 +214,45 @@ pub fn emit_flash_loan_repaid(env: &Env, payer: &Address, asset: &Address, amoun
     env.events()
         .publish((Symbol::new(env, "FlashLoanRepaidEvent"),), event);
 }
+
+/// Emitted when the admin updates the protocol-level debt ceiling.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebtCeilingUpdatedEvent {
+    pub schema_version: u32,
+    /// New protocol-level debt ceiling.
+    pub ceiling: i128,
+    pub timestamp: u64,
+}
+
+/// Emit a debt-ceiling-updated event.
+pub fn emit_debt_ceiling_updated(env: &Env, ceiling: i128) {
+    let event = DebtCeilingUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        ceiling,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "DebtCeilingUpdatedEvent"),), event);
+}
+
+/// Emitted when the admin updates the flash-loan fee (basis points).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashFeeUpdatedEvent {
+    pub schema_version: u32,
+    /// New flash-loan fee in basis points.
+    pub fee_bps: i128,
+    pub timestamp: u64,
+}
+
+/// Emit a flash-fee-updated event.
+pub fn emit_flash_fee_updated(env: &Env, fee_bps: i128) {
+    let event = FlashFeeUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        fee_bps,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashFeeUpdatedEvent"),), event);
+}

@@ -1,6 +1,4 @@
-#![cfg(test)]
-
-use crate::{VestingContract, VestingContractClient, VestingError};
+use crate::{VestingContract, VestingContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
     token, Address, Env,
@@ -186,7 +184,7 @@ fn revoke_before_cliff_claws_all() {
     client.add_grant(&user, &1000, &now, &1000, &200);
 
     advance_time(&env, 100);
-    let clawback = client.revoke(&admin, &user);
+    let (_vested, clawback) = client.revoke(&admin, &user);
     assert_eq!(clawback, 1000);
 }
 
@@ -198,7 +196,7 @@ fn revoke_after_partial_vest_splits_correctly() {
     client.add_grant(&user, &1000, &now, &1000, &0);
 
     advance_time(&env, 300);
-    let clawback = client.revoke(&admin, &user);
+    let (_vested, clawback) = client.revoke(&admin, &user);
     assert_eq!(clawback, 700);
 }
 

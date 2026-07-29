@@ -3,12 +3,10 @@
 //! Tests verify that all governance and admin actions are properly recorded
 //! in the audit log with correct sequence numbers, actors, timestamps, and ledger info.
 
-#![cfg(test)]
-
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, LedgerInfo},
-    Bytes, Env, String,
+    testutils::{Address as _, Ledger},
+    Env,
 };
 
 /// Create a fresh, initialized contract client.
@@ -35,7 +33,7 @@ fn test_get_governance_audit_count_returns_zero_initially() {
 
 #[test]
 fn test_record_audit_entry_increments_count() {
-    let (env, client, admin) = init_client();
+    let (_env, client, _admin) = init_client();
 
     // Perform an admin action that should be logged
     client.set_min_borrow(&100);
@@ -58,7 +56,7 @@ fn test_get_governance_audit_entries_returns_empty_when_no_entries() {
 
 #[test]
 fn test_get_governance_audit_entries_returns_most_recent_first() {
-    let (env, client, admin) = init_client();
+    let (_env, client, _admin) = init_client();
 
     // Record multiple actions
     client.set_min_borrow(&100);
@@ -76,7 +74,7 @@ fn test_get_governance_audit_entries_returns_most_recent_first() {
 
 #[test]
 fn test_get_governance_audit_entries_with_limit_returns_correct_count() {
-    let (env, client, admin) = init_client();
+    let (_env, client, _admin) = init_client();
 
     // Record 5 actions
     for i in 0..5 {
@@ -95,7 +93,7 @@ fn test_get_governance_audit_entries_with_limit_returns_correct_count() {
 
 #[test]
 fn test_get_governance_audit_entries_limit_0_returns_all_available() {
-    let (env, client, admin) = init_client();
+    let (_env, client, _admin) = init_client();
 
     for i in 0..5 {
         client.set_min_borrow(&(i * 100 + 100));
@@ -107,7 +105,7 @@ fn test_get_governance_audit_entries_limit_0_returns_all_available() {
 
 #[test]
 fn test_audit_entry_contains_correct_actor_and_details() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     // Perform an admin action
     client.set_min_borrow(&500);
@@ -119,8 +117,7 @@ fn test_audit_entry_contains_correct_actor_and_details() {
     assert_eq!(entry.actor, admin);
     assert_eq!(entry.sequence, 0);
     // Check that action is set to something
-    let action_str = entry.action.to_string();
-    assert!(!action_str.is_empty());
+    assert!(!entry.action.is_empty());
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -129,7 +126,7 @@ fn test_audit_entry_contains_correct_actor_and_details() {
 
 #[test]
 fn test_governance_action_is_recorded_after_set_min_borrow() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     let count_before = client.get_governance_audit_count();
     client.set_min_borrow(&1000);
@@ -145,7 +142,7 @@ fn test_governance_action_is_recorded_after_set_min_borrow() {
 
 #[test]
 fn test_governance_action_is_recorded_after_set_debt_ceiling() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     client.set_debt_ceiling(&1_000_000_000_000_000);
 
@@ -156,7 +153,7 @@ fn test_governance_action_is_recorded_after_set_debt_ceiling() {
 
 #[test]
 fn test_governance_action_is_recorded_after_set_insurance_share() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     client.set_insurance_share(&500);
 
@@ -167,7 +164,7 @@ fn test_governance_action_is_recorded_after_set_insurance_share() {
 
 #[test]
 fn test_governance_action_is_recorded_after_accept_admin() {
-    let (env, client, admin) = init_client();
+    let (env, client, _admin) = init_client();
     let new_admin = Address::generate(&env);
 
     // Propose new admin
@@ -196,7 +193,7 @@ fn test_governance_action_is_recorded_after_set_guardian() {
 
 #[test]
 fn test_governance_action_is_recorded_after_set_emergency_state() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     client.set_emergency_state(&EmergencyState::Shutdown);
 
@@ -207,7 +204,7 @@ fn test_governance_action_is_recorded_after_set_emergency_state() {
 
 #[test]
 fn test_governance_action_is_recorded_after_set_pause() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     client.set_pause(&PauseType::All, &true, &1000);
 
@@ -218,7 +215,7 @@ fn test_governance_action_is_recorded_after_set_pause() {
 
 #[test]
 fn test_governance_action_is_recorded_after_set_flash_fee() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     client.set_flash_fee(&500);
 
@@ -241,7 +238,7 @@ fn test_governance_action_is_recorded_after_set_asset_isolation() {
 
 #[test]
 fn test_multiple_actions_recorded_in_sequence() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     client.set_min_borrow(&100);
     client.set_debt_ceiling(&1_000_000_000_000);
@@ -262,7 +259,7 @@ fn test_multiple_actions_recorded_in_sequence() {
 
 #[test]
 fn test_audit_entry_contains_ledger_and_timestamp() {
-    let (env, client, admin) = init_client();
+    let (env, client, _admin) = init_client();
 
     let ledger_before = env.ledger().sequence();
 
@@ -274,13 +271,15 @@ fn test_audit_entry_contains_ledger_and_timestamp() {
     let entry = entries.get(0).unwrap();
     // Ledger should be set and >= ledger_before
     assert!(entry.ledger >= ledger_before);
-    // Timestamp should be set (non-zero in test)
-    assert!(entry.timestamp > 0);
+    // Timestamp should match the ledger's current timestamp at record time
+    // (the default test ledger starts at timestamp 0, so this doesn't
+    // assume a nonzero clock -- it verifies the entry actually captured it).
+    assert_eq!(entry.timestamp, env.ledger().timestamp());
 }
 
 #[test]
 fn test_multiple_different_actions_logged_correctly() {
-    let (env, client, admin) = init_client();
+    let (_env, client, admin) = init_client();
 
     client.set_min_borrow(&100);
     client.set_liquidation_grace_period(&3600);
@@ -302,7 +301,7 @@ fn test_multiple_different_actions_logged_correctly() {
 
 #[test]
 fn test_audit_log_persists_across_calls() {
-    let (env, client, admin) = init_client();
+    let (_env, client, _admin) = init_client();
 
     // First call
     client.set_min_borrow(&100);
@@ -321,7 +320,7 @@ fn test_audit_log_persists_across_calls() {
 
 #[test]
 fn test_audit_entries_return_correct_count_with_limit() {
-    let (env, client, admin) = init_client();
+    let (_env, client, _admin) = init_client();
 
     // Record 10 actions
     for i in 0..10 {
@@ -343,7 +342,7 @@ fn test_audit_entries_return_correct_count_with_limit() {
 
 #[test]
 fn test_sequence_numbers_are_monotonic() {
-    let (env, client, admin) = init_client();
+    let (_env, client, _admin) = init_client();
 
     for i in 0..5 {
         client.set_min_borrow(&(i * 100 + 100));

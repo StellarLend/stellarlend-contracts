@@ -1,36 +1,43 @@
-#![cfg(test)]
-
 use super::{VestingContract, VestingContractClient, VestingError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-fn setup_client() -> (Env, VestingContractClient<'static>, Address) {
+fn setup_client() -> (
+    Env,
+    VestingContractClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_address = env.register_stellar_asset_contract(token_admin);
     let id = env.register(VestingContract, ());
     let client = VestingContractClient::new(&env, &id);
 
-    (env, client, admin)
+    (env, client, admin, treasury, token_address)
 }
 
 #[test]
 fn test_initialize_succeeds_once() {
-    let (_env, client, admin) = setup_client();
+    let (_env, client, admin, treasury, token_address) = setup_client();
 
-    let result = client.try_initialize(&admin);
+    let result = client.try_initialize(&admin, &treasury, &token_address);
     assert_eq!(result, Ok(Ok(())));
 }
 
 #[test]
 fn test_initialize_twice_is_rejected_and_original_admin_is_preserved() {
-    let (env, client, admin) = setup_client();
+    let (env, client, admin, treasury, token_address) = setup_client();
 
-    let init_result = client.try_initialize(&admin);
+    let init_result = client.try_initialize(&admin, &treasury, &token_address);
     assert_eq!(init_result, Ok(Ok(())));
 
     let attacker = Address::generate(&env);
-    let result = client.try_initialize(&attacker);
+    let result = client.try_initialize(&attacker, &treasury, &token_address);
     assert!(
         matches!(result, Err(Ok(VestingError::AlreadyInitialized))),
         "expected AlreadyInitialized, got {:?}",
