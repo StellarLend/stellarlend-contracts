@@ -120,6 +120,14 @@ pub enum MultisigError {
 /// churn in a single contract invocation.
 pub const MAX_BATCH_SIZE: u32 = 32;
 
+/// Emitted when a signer revokes a previous approval from an open proposal.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalRevokedEvent {
+    pub proposal_id: u64,
+    pub signer: Address,
+}
+
 #[contract]
 pub struct MultisigContract;
 
@@ -723,6 +731,9 @@ impl MultisigContract {
 // mod action_allowlist_test;
 // #[cfg(test)]
 // mod upgrade_e2e_test;
+
+#[cfg(test)]
+mod revoke_approval_test;
 
 #[cfg(test)]
 mod tests {
