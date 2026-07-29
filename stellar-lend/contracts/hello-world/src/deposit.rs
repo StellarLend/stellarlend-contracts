@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, Env};
 
 /// Storage keys for protocol reserve balances and deposit operations.
 ///
@@ -12,3 +12,7 @@ pub enum DepositDataKey {
     /// Value type: `i128`.
     ProtocolReserve(Option<Address>),
 }
+
+/// Deposit collateral for a user.
+pub fn deposit_collateral(env: &Env, _caller: Address, _asset: Option<Address>, _amount: i128) {}
+
