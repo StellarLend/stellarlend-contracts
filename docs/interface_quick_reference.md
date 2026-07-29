@@ -76,6 +76,8 @@
 | `set_debt_ceiling` | `(ceiling: i128)` | admin | `Result<(), LendingError>` |
 | `set_flash_fee` | `(fee_bps: i128)` | admin | `Result<(), LendingError>` |
 | `set_emergency_state` | `(new_state: EmergencyState)` | admin; guardian may set `Shutdown` | `()` |
+| `set_pause` | `(pause_type: PauseType, paused: bool, ttl_ledgers: u32)` | admin or guardian | `Result<(), LendingError>` |
+| `get_pause_state` | `(pause_type: PauseType)` | — | `bool` |
 | `set_asset_params` | `(admin: Address, asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128, borrow_cap: i128, supply_cap: i128)` | admin | `Result<(), LendingError>` |
 | `get_asset_params` | `(asset: Address)` | — | `Option<AssetParams>` |
 | `set_close_factor_bps` | `(close_factor_bps: i128)` | admin | `Result<(), LendingError>` |

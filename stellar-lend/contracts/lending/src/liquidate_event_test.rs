@@ -71,7 +71,7 @@ fn liquidate_emits_event_with_correct_fields() {
     // Check that the last event (the liquidation_event_v1) has correct fields.
     let all = env.events().all();
     let ev = all.events();
-    let liq_event = ev.get(ev.len() - 1).expect("expected liquidation event");
+    let liq_event = ev.last().expect("expected liquidation event");
     let expected = LiquidationEventV1 {
         schema_version: 1,
         liquidator: liquidator.clone(),
@@ -114,7 +114,7 @@ fn liquidate_event_close_factor_limits_repay() {
     // Check the last event is the liquidation event.
     let all = env.events().all();
     let ev = all.events();
-    let liq_event = ev.get(ev.len() - 1).expect("expected liquidation event");
+    let liq_event = ev.last().expect("expected liquidation event");
     let expected = LiquidationEventV1 {
         schema_version: 1,
         liquidator: liquidator.clone(),
@@ -159,7 +159,7 @@ fn liquidate_event_zero_shortfall() {
 
     let all = env.events().all();
     let ev = all.events();
-    let liq_event = ev.get(ev.len() - 1).expect("expected liquidation event");
+    let liq_event = ev.last().expect("expected liquidation event");
     let expected = LiquidationEventV1 {
         schema_version: 1,
         liquidator: liquidator.clone(),

@@ -248,7 +248,6 @@ fn correct_domain_auth_payload_accepted() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "AlreadyApproved")]
 fn duplicate_approval_still_rejected() {
     let env = make_env();
     let (_cid, signers, client) = setup_client(&env);
@@ -256,12 +255,18 @@ fn duplicate_approval_still_rejected() {
 
     let id = client.create_proposal(&approver, &make_action(), &dummy_hash(&env), &100u64);
     client.approve_proposal(&approver, &id);
-    // Same signer again → AlreadyApproved
-    client.approve_proposal(&approver, &id);
+    // Same signer again → AlreadyApproved. Typed contract errors surface as
+    // `Error(Contract, #N)` without the variant name in the panic message
+    // in this environment, so assert via `try_` instead of `should_panic`.
+    let res = client.try_approve_proposal(&approver, &id);
+    assert!(
+        matches!(res, Err(Ok(MultisigError::AlreadyApproved))),
+        "expected AlreadyApproved, got {:?}",
+        res
+    );
 }
 
 #[test]
-#[should_panic(expected = "ProposalExpired")]
 fn approval_after_expiry_rejected() {
     let env = make_env();
     let (_cid, signers, client) = setup_client(&env);
@@ -275,7 +280,12 @@ fn approval_after_expiry_rejected() {
     ledger.sequence_number = ledger.sequence_number.saturating_add(10);
     env.ledger().set(ledger);
 
-    client.approve_proposal(&approver, &id);
+    let res = client.try_approve_proposal(&approver, &id);
+    assert!(
+        matches!(res, Err(Ok(MultisigError::ProposalExpired))),
+        "expected ProposalExpired, got {:?}",
+        res
+    );
 }
 
 #[test]

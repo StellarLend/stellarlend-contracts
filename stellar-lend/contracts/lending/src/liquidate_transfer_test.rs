@@ -182,7 +182,7 @@ fn liquidation_reverts_when_collateral_payout_transfer_fails() {
     let debt_balance_before = MockTokenClient::new(&env, &debt_asset).balance(&liquidator);
     let collateral_before = MockTokenClient::new(&env, &collateral_asset).balance(&lending_id);
     let result = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
-    assert!(matches!(result, Err(_)));
+    assert!(result.is_err());
     assert_eq!(
         MockTokenClient::new(&env, &debt_asset).balance(&liquidator),
         debt_balance_before
@@ -225,7 +225,7 @@ fn liquidation_rejects_when_liquidator_has_insufficient_repay_balance() {
         &collateral_asset,
         &100,
     );
-    assert!(matches!(res, Err(_)));
+    assert!(res.is_err());
     let position = client.get_debt_position(&borrower);
     assert_eq!(position.principal, 200);
     assert_eq!(client.get_position(&borrower).collateral, 50);

@@ -114,6 +114,8 @@ pub enum LendingError {
     InvalidDepositCap = 7005,
     /// Rate parameters are internally inconsistent.
     InvalidRateParams = 7006,
+    /// Liquidation grace period exceeds the protocol maximum.
+    InvalidLiquidationGracePeriod = 7007,
 }
 
 /// Multiply `value` by `rate_bps` and divide by [`BPS_DENOM`].

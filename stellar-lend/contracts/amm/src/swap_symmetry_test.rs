@@ -12,9 +12,10 @@ fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) {
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    client.init_pool(&ra, &rb);
-    let admin = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
     client.init_pool(&ra, &rb, &token_a, &token_b);
+    let admin = Address::generate(&env);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
@@ -118,8 +119,10 @@ fn test_symmetric_output_equal_reserves() {
     let id_ba = env.register(AmmContract, ());
     let c_ab = AmmContractClient::new(&env, &id_ab);
     let c_ba = AmmContractClient::new(&env, &id_ba);
-    c_ab.init_pool(&50_000, &50_000);
-    c_ba.init_pool(&50_000, &50_000);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    c_ab.init_pool(&50_000, &50_000, &token_a, &token_b);
+    c_ba.init_pool(&50_000, &50_000, &token_a, &token_b);
 
     let out_ab = c_ab.swap_a_for_b(&1_000_i128);
     let out_ba = c_ba.swap_b_for_a(&1_000_i128);
@@ -185,10 +188,12 @@ fn test_swap_b_for_a_max_fee_gives_reduced_output() {
 
 #[test]
 fn test_swap_b_for_a_dust_input_rounds_down() {
-    // 1-unit input on a large pool: output must be 0 (floor division) or 1, never > input value.
+    // 1-unit input on a large pool floors to zero output, which the
+    // dust-swap guard rejects outright rather than silently consuming
+    // input for no economic exchange. See DUST_SWAP_GUARD.md.
     let (_env, client, _admin) = setup(1_000_000, 1_000_000);
-    let out = client.swap_b_for_a(&1);
-    assert!(out <= 1, "dust input must not produce more than 1 unit out");
+    let res = client.try_swap_b_for_a(&1);
+    assert_eq!(res, Err(Ok(AmmPoolError::ZeroOutput)));
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +212,13 @@ fn fuzz_swap_b_for_a_k_monotonic() {
                     continue; // skip if amount_in would drain reserve_b entirely
                 }
                 let (_env, client, _admin) = setup(ra, rb);
-                let _out = client.swap_b_for_a(&amt);
+                let res = client.try_swap_b_for_a(&amt);
+                if res == Err(Ok(AmmPoolError::ZeroOutput)) {
+                    // Dust input that floors to zero output is rejected by
+                    // the dust-swap guard before touching reserves; nothing
+                    // to check for k-monotonicity in that case.
+                    continue;
+                }
                 let (new_ra, new_rb) = client.get_reserves();
                 let k_before = ra.checked_mul(rb).unwrap();
                 let k_after = new_ra.checked_mul(new_rb).unwrap();
