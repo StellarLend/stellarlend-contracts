@@ -1,5 +1,6 @@
 use super::*;
 use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::Ledger;
 use soroban_sdk::{Address, Bytes, Env, Vec};
 
 // ---------------------------------------------------------------------------
@@ -213,5 +214,102 @@ fn test_batch_execute_cancelled_proposal_rejected() {
     assert_eq!(
         client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
         Err(Ok(MultisigError::AlreadyCancelled))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Cancel after execute
+// ---------------------------------------------------------------------------
+
+/// Attempting to cancel an already-executed proposal must return
+/// `MultisigError::AlreadyExecuted`.
+#[test]
+fn test_cancel_executed_proposal_returns_error() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let hash = make_bytes(&env, b"hash_exec");
+    let id = client.create_proposal(
+        &signers.get(0).unwrap(),
+        &ProposalAction::SetThreshold(3),
+        &hash,
+        &500u64,
+    );
+
+    // Approve twice to reach threshold (2-of-3) so proposal becomes Passed.
+    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    client.approve_proposal(&signers.get(1).unwrap(), &id);
+
+    // Execute the passed proposal.
+    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
+    let p = client.get_proposal(&id);
+    assert_eq!(p.status, ProposalStatus::Executed);
+
+    // Cancel must now fail with AlreadyExecuted.
+    assert_eq!(
+        client.try_cancel_proposal(&signers.get(0).unwrap(), &id),
+        Err(Ok(MultisigError::AlreadyExecuted))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Approve (vote) after cancel
+// ---------------------------------------------------------------------------
+
+/// A cancelled proposal must be rejected by `approve_proposal`.
+#[test]
+fn test_approve_cancelled_proposal_returns_error() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let hash = make_bytes(&env, b"hash_approve_cancel");
+    let id = client.create_proposal(
+        &signers.get(0).unwrap(),
+        &ProposalAction::SetThreshold(3),
+        &hash,
+        &500u64,
+    );
+
+    // Cancel while still Active.
+    client.cancel_proposal(&signers.get(0).unwrap(), &id);
+
+    // Approve must now fail with AlreadyCancelled.
+    assert_eq!(
+        client.try_approve_proposal(&signers.get(1).unwrap(), &id),
+        Err(Ok(MultisigError::AlreadyCancelled))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Cancel after expiry
+// ---------------------------------------------------------------------------
+
+/// Attempting to cancel an expired proposal must return
+/// `MultisigError::ProposalExpired`.
+#[test]
+fn test_cancel_expired_proposal_returns_error() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    // Use a 1-ledger TTL so the proposal expires quickly.
+    let hash = make_bytes(&env, b"hash_exp");
+    let id = client.create_proposal(
+        &signers.get(0).unwrap(),
+        &ProposalAction::SetThreshold(3),
+        &hash,
+        &1u64,
+    );
+
+    // Jump past expiry.
+    let current = env.ledger().sequence();
+    env.ledger().set_sequence_number(current + 2);
+
+    // Cancel must now fail with ProposalExpired.
+    assert_eq!(
+        client.try_cancel_proposal(&signers.get(0).unwrap(), &id),
+        Err(Ok(MultisigError::ProposalExpired))
     );
 }
