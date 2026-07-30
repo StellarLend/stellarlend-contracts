@@ -901,6 +901,8 @@ mod partial_claim_test;
 #[cfg(test)]
 mod pause_offset_test;
 #[cfg(test)]
+mod vested_at_overflow_test;
+#[cfg(test)]
 mod pause_test;
 #[cfg(test)]
 mod revoke_split_test;
