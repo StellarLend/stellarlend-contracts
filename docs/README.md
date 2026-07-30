@@ -37,35 +37,28 @@ StellarLend is a lending and borrowing protocol built on Soroban. It features cr
 - Monitoring: health, performance, and security alerts
 - Social recovery: guardians, timelock approvals, execution
 - Multisig for admin min-collateral changes
-- Upgrade: propose/approve/execute/rollback and status
-- Data management: generic data store, backup/restore, migration
-- Configuration: versioned param store with backup/restore
+- Upgrade: propose/approve/execute and status
+- Data management: generic data store, migration
 
 ## Admin Operations
 
 Key admin entrypoints (see contract for full list):
 
 - `initialize(admin)`
-- `set_min_collateral_ratio(caller, ratio)`
-- `set_risk_params(...)`, `set_pause_switches(...)`
-- `set_price_cache_ttl(caller, ttl)`
+- `set_risk_params(min_collateral_ratio, liquidation_threshold, close_factor, liquidation_incentive)`
+- `set_pause_switch(operation, paused)`, `set_pause_switches(operations)`
 - `register_bridge(caller, network_id, bridge, fee_bps)`
 - `set_bridge_fee(caller, network_id, fee_bps)`
-- `upgrade_propose/approve/execute/rollback`
-- `config_set/config_backup/config_restore`
-- `ms_set_admins`, `ms_propose_set_min_cr`, `ms_approve`, `ms_execute`
+- `upgrade_propose/approve/execute`
 
 ## Monitoring & Analytics
 
-- `record_user_action(user, action)` updates risk and emits events
 - Analytics auto-update on deposit/borrow/repay/withdraw
-- Monitoring entrypoints: `monitor_report_health/performance/security`, `monitor_get`
 
 ### Analytics Read APIs
 
 - `get_protocol_report()` & `get_user_report(address)` surface typed structs (`ProtocolReport`, `UserReport`) containing
   current metrics, active-user counts, and the latest activity feed snapshot time.
-- `get_asset_report(asset)` returns `AssetReport` with per-asset analytics and historical bucketed data.
 - `get_recent_activity(limit)` supplies an `ActivityFeed` with newest-first entries, a `total_available` counter
   (capped at 1,000 retained records), and the `generated_at` ledger timestamp for indexers.
 - Activity entries include `user`, `activity_type`, `amount`, optional `asset`, and a metadata map for extended tags.
@@ -103,6 +96,11 @@ Key admin entrypoints (see contract for full list):
 - Set guardians per-user and execute timelocked recoveries
 - Multisig supports proposing and executing admin changes with threshold
 
+> **Authoritative multisig:** The canonical multisig implementation is the standalone
+> `stellarlend-multisig` crate at `stellar-lend/contracts/multisig/`. The lending contract
+> also has its own timelocked upgrade governance in `upgrade.rs`, which is independent.
+> The now-deleted `hello-world` contract previously contained a stub; it is not authoritative.
+
 ## Documentation
 
-See the [Documentation Index](docs/INDEX.md) for a complete overview of project documentation.
+See the [Documentation Index](INDEX.md) for a complete overview of project documentation.

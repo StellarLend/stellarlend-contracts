@@ -94,6 +94,10 @@ export class CoinGeckoProvider extends BasePriceProvider {
      * Fetch price for a specific asset
      */
     async fetchPrice(asset: string): Promise<RawPriceData> {
+        if (this.isCooledDown) {
+            throw new Error(`CoinGecko provider is in cooldown until ${new Date(this.cooldownUntil).toISOString()}`);
+        }
+
         const coinId = this.getCoingeckoId(asset);
 
         await this.enforceRateLimit();
@@ -120,6 +124,7 @@ export class CoinGeckoProvider extends BasePriceProvider {
                 source: 'coingecko',
             };
         } catch (error) {
+            this.handleRateLimitError(error);
             logger.error(`CoinGecko fetch failed for ${asset}`, { error });
             throw error;
         }
@@ -129,6 +134,10 @@ export class CoinGeckoProvider extends BasePriceProvider {
      * Fetch prices for multiple assets (batch API call)
      */
     async fetchPrices(assets: string[]): Promise<RawPriceData[]> {
+        if (this.isCooledDown) {
+            throw new Error(`CoinGecko provider is in cooldown until ${new Date(this.cooldownUntil).toISOString()}`);
+        }
+
         // Map all assets to CoinGecko IDs
         const assetToId: Map<string, string> = new Map();
         const validAssets: string[] = [];
@@ -178,6 +187,7 @@ export class CoinGeckoProvider extends BasePriceProvider {
 
             return results;
         } catch (error) {
+            this.handleRateLimitError(error);
             logger.error('CoinGecko batch fetch failed', { error });
             throw error;
         }
@@ -188,6 +198,46 @@ export class CoinGeckoProvider extends BasePriceProvider {
      */
     getSupportedAssets(): string[] {
         return Object.keys(COINGECKO_ID_MAP);
+    }
+
+    /**
+     * Parses the Retry-After header.
+     * Can be a number of seconds or an HTTP-date.
+     * Returns delay in milliseconds, or null if parsing fails.
+     */
+    private parseRetryAfter(headerValue?: string | string[]): number | null {
+        if (!headerValue) return null;
+        const valueStr = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+        if (!valueStr) return null;
+
+        // Check if it's a non-negative integer (seconds)
+        const seconds = parseInt(valueStr, 10);
+        if (!isNaN(seconds) && /^\d+$/.test(valueStr.trim())) {
+            return seconds * 1000;
+        }
+
+        // Try parsing as a Date string
+        const parsedDate = Date.parse(valueStr);
+        if (!isNaN(parsedDate)) {
+            const ms = parsedDate - Date.now();
+            return ms > 0 ? ms : 0;
+        }
+
+        return null;
+    }
+
+    /**
+     * Inspects error and sets cooldown if 429 rate limited
+     */
+    private handleRateLimitError(error: any): void {
+        if (error && error.response?.status === 429) {
+            const retryAfterHeader = error.response?.headers?.['retry-after'];
+            const delayMs = this.parseRetryAfter(retryAfterHeader) ?? 60000; // 60s default
+            this.cooldownUntil = Date.now() + delayMs;
+            logger.warn(`CoinGecko rate limited (429). Suspending provider for ${delayMs}ms (until ${new Date(this.cooldownUntil).toISOString()})`, {
+                retryAfter: retryAfterHeader,
+            });
+        }
     }
 }
 

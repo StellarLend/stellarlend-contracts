@@ -13,7 +13,7 @@ import type {
 import { BasePriceProvider } from '../providers/base-provider.js';
 import { PriceValidator } from './price-validator.js';
 import { PriceCache } from './cache.js';
-import { scalePrice } from '../config.js';
+import { scalePrice, MAD_Z_SCORE_THRESHOLD } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -22,6 +22,8 @@ import { logger } from '../utils/logger.js';
 export interface AggregatorConfig {
     minSources: number;
     useWeightedMedian: boolean;
+    /** MAD z-score threshold; prices beyond this are rejected as outliers (0 = disabled). */
+    madZScoreThreshold: number;
 }
 
 /**
@@ -30,6 +32,7 @@ export interface AggregatorConfig {
 const DEFAULT_CONFIG: AggregatorConfig = {
     minSources: 1,
     useWeightedMedian: true,
+    madZScoreThreshold: MAD_Z_SCORE_THRESHOLD,
 };
 
 /**
@@ -123,6 +126,10 @@ export class PriceAggregator {
 
         for (const provider of this.providers) {
             try {
+                if (provider.isCooledDown) {
+                    logger.warn(`Skipping provider ${provider.name} due to active cooldown`);
+                    continue;
+                }
                 const rawPrice = await provider.fetchPrice(asset);
                 const validation = this.validator.validate(rawPrice);
 
@@ -167,9 +174,20 @@ export class PriceAggregator {
             };
         }
 
+        const filtered = filterOutliersByMAD(prices, this.config.madZScoreThreshold);
+        const activePrices = filtered.length >= this.config.minSources ? filtered : prices;
+
+        if (filtered.length < prices.length) {
+            logger.warn(`MAD filter removed ${prices.length - filtered.length} outlier(s) for ${asset}`, {
+                removed: prices
+                    .filter((p) => !filtered.includes(p))
+                    .map((p) => ({ source: p.source, price: p.price.toString() })),
+            });
+        }
+
         const aggregatedPrice = this.config.useWeightedMedian
-            ? this.weightedMedian(prices)
-            : this.simpleMedian(prices);
+            ? this.weightedMedian(activePrices)
+            : this.simpleMedian(activePrices);
 
         const totalWeight = this.providers
             .filter((p) => prices.some((pr) => pr.source === p.name))
@@ -191,14 +209,28 @@ export class PriceAggregator {
     }
 
     /**
-     * Calculate weighted median of prices
+     * Calculate weighted median of prices.
+     *
+     * Weight selection (in priority order):
+     *  1. `price.volume24h` – 24-hour quote volume supplied by the provider (e.g. Binance).
+     *     A higher volume means the pair is more liquid and its price is more reliable.
+     *  2. Static `provider.weight` – configured priority fraction used when no volume is available.
+     *
+     * Using volume as the weight means thin/illiquid pairs automatically carry less influence
+     * during aggregation without any manual tuning.
      */
     private weightedMedian(prices: PriceData[]): bigint {
         const sorted = [...prices].sort((a, b) =>
             a.price < b.price ? -1 : a.price > b.price ? 1 : 0
         );
 
+        // Derive a numeric weight for each price point.
         const weights = sorted.map((p) => {
+            if (p.volume24h !== undefined && p.volume24h > 0n) {
+                // Convert bigint volume to a Number for weight arithmetic.
+                // Precision loss is acceptable here: we only need relative ordering.
+                return Number(p.volume24h);
+            }
             const provider = this.providers.find((pr) => pr.name === p.source);
             return provider?.weight ?? 0.1;
         });
@@ -263,4 +295,52 @@ export function createAggregator(
     config?: Partial<AggregatorConfig>,
 ): PriceAggregator {
     return new PriceAggregator(providers, validator, cache, config);
+}
+
+/**
+ * Filter outlier prices using the Median Absolute Deviation (MAD) method.
+ *
+ * For each price p_i, compute a modified z-score:
+ *   z_i = |p_i - median| / (1.4826 * MAD)
+ * where MAD = median(|p_i - median|).
+ * The constant 1.4826 makes MAD a consistent estimator of σ for Gaussian data.
+ *
+ * Any price with z_i > zMax is rejected as an outlier.
+ *
+ * Special cases:
+ * - <= 2 prices: return all (not enough data to reject reliably).
+ * - MAD == 0 (all prices identical, or a single unique value): return all.
+ * - zMax <= 0: filter disabled, return all.
+ *
+ * @param prices  Validated price data points.
+ * @param zMax    Maximum modified z-score to accept (e.g. 3.5). 0 disables filtering.
+ * @returns       Prices with outliers removed.
+ */
+export function filterOutliersByMAD(prices: PriceData[], zMax: number): PriceData[] {
+    if (zMax <= 0 || prices.length <= 2) return prices;
+
+    const sorted = [...prices].map((p) => p.price).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+    const med = bigintMedian(sorted);
+    const deviations = sorted.map((p) => (p > med ? p - med : med - p));
+    const mad = bigintMedian([...deviations].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+
+    // When MAD is 0 all prices are identical (or only one unique value); nothing to reject.
+    if (mad === 0n) return prices;
+
+    // Scale factor: 1.4826 represented as 14826 / 10000 to stay in integer arithmetic.
+    // threshold = zMax * 1.4826 * MAD  =>  price is outlier if |p - med| * 10000 > zMax * 14826 * MAD
+    const zMaxScaled = BigInt(Math.round(zMax * 14826));
+
+    return prices.filter((p) => {
+        const dev = p.price > med ? p.price - med : med - p.price;
+        return dev * 10000n <= zMaxScaled * mad;
+    });
+}
+
+/** Return the median of a sorted array of bigints. */
+function bigintMedian(sorted: bigint[]): bigint {
+    const mid = Math.floor(sorted.length / 2);
+    if (sorted.length % 2 === 1) return sorted[mid];
+    return (sorted[mid - 1] + sorted[mid]) / 2n;
 }

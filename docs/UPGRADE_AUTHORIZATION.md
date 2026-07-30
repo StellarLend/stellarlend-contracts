@@ -2,8 +2,8 @@
 
 ## Scope
 
-This document describes how upgrade authorization works for contracts using
-`stellarlend_common::upgrade::UpgradeManager` and how to safely rotate upgrade keys.
+This document describes how upgrade authorization works for the lending contract
+(implemented in `stellar-lend/contracts/lending/src/upgrade.rs`) and how to safely rotate upgrade keys.
 
 ## Authorization model
 
@@ -13,14 +13,13 @@ This document describes how upgrade authorization works for contracts using
 - `upgrade_remove_approver(caller, approver)` is `admin` only.
 - `upgrade_approve(caller, proposal_id)` is restricted to the configured approver set.
 - `upgrade_execute(caller, proposal_id)` is restricted to the configured approver set.
-- `upgrade_rollback(caller, proposal_id)` is `admin` only.
 
 All mutating authorization paths call `require_auth()` on the provided caller.
 
 ## Role separation
 
-- The stored `admin` is the governance authority for upgrade configuration: it can propose upgrades,
-  add/remove approvers, and roll back executed upgrades.
+- The stored `admin` is the governance authority for upgrade configuration: it can propose upgrades
+  and add/remove approvers.
 - The approver set is the execution authority for upgrades: only current approvers can approve or
   execute a proposal once it exists.
 - Guardian or emergency operators are not part of the upgrade trust boundary and gain no upgrade
@@ -104,8 +103,7 @@ which must be mitigated by live authorization checks before revoking the old sig
 
 ## Trust boundaries and operator powers
 
-- Upgrade authority boundary: only `admin` can propose upgrades, manage approvers, and roll back
-  executed upgrades.
+- Upgrade authority boundary: only `admin` can propose upgrades and manage approvers.
 - Execution boundary: only currently configured approvers can execute approved proposals.
 - Guardian boundary: guardian operations (pause or emergency flows) are separate from upgrade
   authority and do not grant upgrade proposal, execution, or rollback rights.
@@ -114,18 +112,17 @@ which must be mitigated by live authorization checks before revoking the old sig
 
 ## External call and token transfer safety
 
-- Upgrade entrypoints (`upgrade_propose`, `upgrade_approve`, `upgrade_execute`,
-  `upgrade_rollback`) do not perform token transfers.
+- Upgrade entrypoints (`upgrade_propose`, `upgrade_approve`, `upgrade_execute`)
+  do not perform token transfers.
 - Token transfer paths remain confined to lending operations such as deposit, withdraw, repay,
   and liquidation modules.
 - Authorization checks (`require_auth()`) are enforced on every mutating upgrade path.
 - Upgrade tests should verify both authorization and invalid-status rejection on each external
   entrypoint.
 
-## Rollback and failure-path coverage checklist
+## Failure-path coverage checklist
 
-- Rollback rejects proposals that were never executed (`InvalidStatus`).
-- Execute and rollback reject unknown proposal ids (`ProposalNotFound`).
+- Execute rejects unknown proposal ids (`ProposalNotFound`).
 - Non-monotonic version proposals are rejected after successful execution
   (`new_version <= current_version`).
 - Execution by a removed approver is rejected even if they approved earlier during proposal

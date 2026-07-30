@@ -62,20 +62,20 @@ pub fn calculate_interest_with_rounding(
 - `reconcile_debt_with_drift_correction()` - Validate user vs protocol accounting
 - `apply_rounding()` - Apply selected rounding strategy
 
-### 3. Updated Borrow Module
+### 3. Updated Debt Accrual Path
 
-**File:** `stellar-lend/contracts/lending/src/borrow.rs`
+**File:** `stellar-lend/contracts/lending/src/debt.rs`
 
 ```rust
-pub fn calculate_interest(env: &Env, debt_position: &DebtPosition) -> Result<i128, BorrowError> {
+pub fn accrue_interest(position: DebtPosition, now: u64) -> Result<DebtPosition, RoundingError> {
     // ...
     let result = calculate_interest_with_rounding(
-        debt_position.borrowed_amount,
+        position.principal,
         elapsed,
-        500, // 5% APR
-        RoundingMode::Bankers, // ← Applied here
+        DEFAULT_APR_BPS,
+        RoundingMode::Bankers,
     )?;
-    Ok(result.interest)
+    // ...
 }
 ```
 
@@ -94,6 +94,9 @@ pub fn calculate_interest(env: &Env, debt_position: &DebtPosition) -> Result<i12
 | `test_extreme_horizon_overflow_protection` | u64::MAX seconds | Graceful overflow error |
 | `test_small_amounts_precision` | 1 unit borrowed | Precision preserved |
 | `test_high_rate_long_horizon` | 100% APR, 12 months | Bounded within ±5% |
+| `test_rounding_modes_pin_direction_with_non_zero_remainder` | Below-half and above-half fractional accruals | Floor/truncate round down, ceil rounds up, Bankers rounds nearest |
+| `test_bankers_exact_half_ties_round_to_even_micro_unit` | Exact half-remainder cases | Bankers keeps even micro-units and rounds odd micro-units up |
+| `test_bankers_long_horizon_drift_matches_high_precision_reference` | 730 daily accruals @ 5.37% APR | Drift stays within one micro-unit per accrual vs a high-precision reference |
 
 ### Test Results
 
@@ -108,8 +111,11 @@ test interest_drift_regression_tests::test_rounding_modes_drift_comparison ... o
 test interest_drift_regression_tests::test_extreme_horizon_overflow_protection ... ok
 test interest_drift_regression_tests::test_small_amounts_precision ... ok
 test interest_drift_regression_tests::test_high_rate_long_horizon ... ok
+test rounding_drift_tests::test_rounding_modes_pin_direction_with_non_zero_remainder ... ok
+test rounding_drift_tests::test_bankers_exact_half_ties_round_to_even_micro_unit ... ok
+test rounding_drift_tests::test_bankers_long_horizon_drift_matches_high_precision_reference ... ok
 
-test result: ok. 8 passed
+test result: ok
 ```
 
 ## Numeric Properties Preserved
@@ -145,10 +151,10 @@ test result: ok. 8 passed
 
 ## Files Changed
 
-1. `stellar-lend/contracts/lending/src/rounding_strategy.rs` (NEW)
-2. `stellar-lend/contracts/lending/src/borrow.rs` (UPDATED)
-3. `stellar-lend/contracts/lending/src/lib.rs` (UPDATED)
-4. `stellar-lend/contracts/lending/src/interest_drift_regression_test.rs` (NEW)
+1. `stellar-lend/contracts/lending/src/lib.rs` (UPDATED)
+2. `stellar-lend/contracts/lending/src/math.rs` (UPDATED)
+3. `stellar-lend/contracts/lending/src/rounding_drift_test.rs` (NEW)
+4. `stellar-lend/contracts/lending/tests/interest_drift_regression_test.rs` (NEW)
 5. `stellar-lend/docs/INTEREST_ROUNDING_FIX.md` (NEW)
 
 ## References
