@@ -4,14 +4,12 @@
 //! the shared internal scale before summation so position valuations are
 //! correct regardless of oracle feed precision.
 
-#![cfg(test)]
-
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::cross_asset::{
     cross_asset_borrow, cross_asset_deposit, cross_asset_repay, get_user_position_summary,
-    initialize_asset, normalize_price, normalize_price_ceil, update_asset_price, AssetConfig,
-    CrossAssetError,
+    initialize, initialize_asset, normalize_price, normalize_price_ceil, update_asset_price,
+    AssetConfig, CrossAssetError,
 };
 
 // ---------------------------------------------------------------------------
@@ -24,6 +22,23 @@ fn make_env() -> Env {
 
 /// Soroban storage requires an active contract context.
 /// We register a minimal contract-id to run storage-backed logic.
+///
+/// NOTE: only use this single-call form for a closure that calls
+/// `require_auth()` for a given address **at most once** (e.g. a single
+/// `initialize_asset`/`cross_asset_deposit` call, or several calls that
+/// never repeat the same address). Calling a `require_auth()`-gated free
+/// function (`cross_asset_deposit`/`_borrow`/`_repay`/etc.) more than once
+/// for the *same* address inside one shared `as_contract` closure trips a
+/// real soroban-env-host error ("frame is already authorized" /
+/// `Error(Auth, ExistingValue)`) -- direct free-function calls like these
+/// don't get the fresh per-invocation auth-frame that a generated
+/// `Client::try_x()` call would normally establish. For tests that need
+/// multiple such calls for the same user, register the contract id once and
+/// invoke `env.as_contract(&contract_id, || { .. })` separately for each
+/// operation instead (storage persists across calls since it's keyed by
+/// `contract_id`, not by the frame) -- see
+/// `test_no_regression_same_decimals`, `test_position_summary_equal_usd_different_decimals`,
+/// and `test_borrow_health_check_mixed_decimals` below.
 fn with_contract<F, T>(env: &Env, f: F) -> T
 where
     F: FnOnce() -> T,
@@ -34,7 +49,7 @@ where
 
 fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
     AssetConfig {
-        collateral_factor: 7500, // 75 %
+        collateral_factor_bps: 7500, // 75 %
         liquidation_threshold: 8000,
         max_supply: 0,
         max_borrow: 0,
@@ -42,6 +57,7 @@ fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -126,7 +142,12 @@ fn test_position_summary_equal_usd_different_decimals() {
     let user = Address::generate(&env);
     let token_b = Address::generate(&env);
 
-    with_contract(&env, || {
+    // Two separate `cross_asset_deposit` calls for the *same* `user` --
+    // needs a fresh `as_contract` frame per call (see the comment on
+    // `with_contract`).
+    let contract_id = env.register(crate::cross_asset::NoOpContract {}, ());
+
+    env.as_contract(&contract_id, || {
         // Asset A: 6-decimal feed, $1.00 → price = 1_000_000
         initialize_asset(
             &env,
@@ -142,11 +163,17 @@ fn test_position_summary_equal_usd_different_decimals() {
             default_config(1_000_000_000_000_000_000, 18),
         )
         .unwrap();
+    });
 
-        // Deposit 1 unit of each (raw token units = 1).
+    // Deposit 1 unit of each (raw token units = 1).
+    env.as_contract(&contract_id, || {
         cross_asset_deposit(&env, user.clone(), None, 1).unwrap();
+    });
+    env.as_contract(&contract_id, || {
         cross_asset_deposit(&env, user.clone(), Some(token_b.clone()), 1).unwrap();
+    });
 
+    env.as_contract(&contract_id, || {
         let summary = get_user_position_summary(&env, &user).unwrap();
 
         // Each $1 deposit should contribute 1 * price_normalised / 10^18 = 1 unit of collateral value.
@@ -166,13 +193,18 @@ fn test_borrow_health_check_mixed_decimals() {
     let user = Address::generate(&env);
     let token_b = Address::generate(&env);
 
-    with_contract(&env, || {
-        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor = 7500 (75 %)
+    // Several `require_auth()`-gated calls for the *same* `user` below --
+    // each needs its own `as_contract` frame (see the comment on
+    // `with_contract`).
+    let contract_id = env.register(crate::cross_asset::NoOpContract {}, ());
+
+    env.as_contract(&contract_id, || {
+        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor_bps = 7500 (75 %)
         initialize_asset(
             &env,
             None,
             AssetConfig {
-                collateral_factor: 7500,
+                collateral_factor_bps: 7500,
                 liquidation_threshold: 8000,
                 max_supply: 0,
                 max_borrow: 0,
@@ -180,6 +212,7 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: false,
                 price: 2_000_000, // $2.00 at 6 dp
                 price_decimals: 6,
+                last_update_ts: 0,
             },
         )
         .unwrap();
@@ -189,7 +222,7 @@ fn test_borrow_health_check_mixed_decimals() {
             &env,
             Some(token_b.clone()),
             AssetConfig {
-                collateral_factor: 7500,
+                collateral_factor_bps: 7500,
                 liquidation_threshold: 8000,
                 max_supply: 0,
                 max_borrow: 0,
@@ -197,24 +230,35 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: true,
                 price: 1_000_000_000_000_000_000, // $1.00 at 18 dp
                 price_decimals: 18,
+                last_update_ts: 0,
             },
         )
         .unwrap();
+    });
 
-        // Deposit 10 units of collateral → $20 collateral value.
-        // borrow_capacity = 20 * 75% = 15.
+    // Deposit 10 units of collateral → $20 collateral value.
+    // borrow_capacity = 20 * 75% = 15.
+    env.as_contract(&contract_id, || {
         cross_asset_deposit(&env, user.clone(), None, 10).unwrap();
+    });
 
-        // Borrow 14 units of debt asset → $14 debt value. Should be healthy.
+    // Borrow 14 units of debt asset → $14 debt value. Should be healthy.
+    env.as_contract(&contract_id, || {
         cross_asset_borrow(&env, user.clone(), Some(token_b.clone()), 14).unwrap();
+    });
+    env.as_contract(&contract_id, || {
         let summary = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(
             summary.is_healthy, 1,
             "14 < 15 borrow capacity, should be healthy"
         );
+    });
 
-        // Repay everything and try to borrow 16 — should fail (exceeds capacity).
+    // Repay everything and try to borrow 16 — should fail (exceeds capacity).
+    env.as_contract(&contract_id, || {
         cross_asset_repay(&env, user.clone(), Some(token_b.clone()), 14).unwrap();
+    });
+    env.as_contract(&contract_id, || {
         let result = cross_asset_borrow(&env, user.clone(), Some(token_b.clone()), 16);
         assert_eq!(result, Err(CrossAssetError::InsufficientCollateral));
     });
@@ -230,7 +274,9 @@ fn test_no_regression_same_decimals() {
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
 
-    with_contract(&env, || {
+    let contract_id = env.register(crate::cross_asset::NoOpContract {}, ());
+
+    env.as_contract(&contract_id, || {
         // Both assets use 18-decimal feeds, $1.00 price.
         for tok in [token_a.clone(), token_b.clone()] {
             initialize_asset(
@@ -240,10 +286,16 @@ fn test_no_regression_same_decimals() {
             )
             .unwrap();
         }
+    });
 
+    env.as_contract(&contract_id, || {
         cross_asset_deposit(&env, user.clone(), Some(token_a.clone()), 5).unwrap();
+    });
+    env.as_contract(&contract_id, || {
         cross_asset_deposit(&env, user.clone(), Some(token_b.clone()), 5).unwrap();
+    });
 
+    env.as_contract(&contract_id, || {
         let summary = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(summary.total_collateral_value, 10);
         assert_eq!(summary.is_healthy, 1);
@@ -271,8 +323,10 @@ fn test_price_update_reflected_in_summary() {
     let env = make_env();
     env.mock_all_auths();
     let user = Address::generate(&env);
+    let admin = Address::generate(&env);
 
     with_contract(&env, || {
+        initialize(&env, admin.clone()).unwrap();
         initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
         cross_asset_deposit(&env, user.clone(), None, 10).unwrap();
 
@@ -281,7 +335,7 @@ fn test_price_update_reflected_in_summary() {
         assert_eq!(s1.total_collateral_value, 10);
 
         // Double the price to $2.00.
-        update_asset_price(&env, None, 2_000_000).unwrap();
+        update_asset_price(&env, &admin, None, 2_000_000).unwrap();
         let s2 = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(s2.total_collateral_value, 20);
     });

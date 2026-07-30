@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::rate_model::{compute_smoothed_rate, RateParams};
 use crate::{DataKey, LendingContract, LendingContractClient};
 use soroban_sdk::testutils::{Address as _, Ledger};
@@ -60,11 +58,13 @@ fn overflow_delta_attempt_is_checked() {
 
 #[test]
 fn contract_view_keeps_rate_flat_inside_band_and_respects_clamp() {
-    let mut params = RateParams::default();
-    params.max_rate_change_per_ledger_bps = 50;
-    params.hysteresis_bps = 100;
-    params.rate_floor_bps = 1_100;
-    params.rate_ceiling_bps = 1_760;
+    let params = RateParams {
+        max_rate_change_per_ledger_bps: 50,
+        hysteresis_bps: 100,
+        rate_floor_bps: 1_100,
+        rate_ceiling_bps: 1_760,
+        ..RateParams::default()
+    };
 
     let (env, client, _admin, user) = setup_with_params(params);
 

@@ -10,6 +10,10 @@ To neutralize single-block manipulation, this feature introduces an **optional r
 
 For small target changes caused by utilization jitter, see the companion hysteresis dead-zone in [RATE_HYSTERESIS.md](./RATE_HYSTERESIS.md).
 
+For the debt-position lifecycle that consumes the resulting borrow rate,
+including cache-hit/cache-miss rules and settle-before-mutate ordering, see
+[DEBT_ACCRUAL_STATE_MACHINE.md](./DEBT_ACCRUAL_STATE_MACHINE.md).
+
 ---
 
 ## Smoothing Formula

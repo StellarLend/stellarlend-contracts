@@ -1,4 +1,3 @@
-#![cfg(test)]
 use super::LendingError;
 
 #[test]
@@ -12,6 +11,7 @@ fn test_error_code_stability_and_uniqueness() {
         (LendingError::NotInitialized, 1009),
         (LendingError::AlreadyInitialized, 1010),
         (LendingError::PositionHealthy, 1011),
+        (LendingError::RepayAmountTooHigh, 1012),
         (LendingError::DebtCeilingExceeded, 2001),
         (LendingError::DepositCapExceeded, 2002),
         (LendingError::InvalidFeeBps, 2005),
@@ -45,8 +45,7 @@ fn test_error_code_stability_and_uniqueness() {
         let (err_i, code_i) = cases[i];
         assert_eq!(err_i as u32, code_i, "Error code mismatch for {:?}", err_i);
 
-        for j in i + 1..cases.len() {
-            let (err_j, code_j) = cases[j];
+        for &(err_j, code_j) in cases.iter().skip(i + 1) {
             assert!(
                 code_i != code_j,
                 "Collision detected: {:?} and {:?} both have code {}",

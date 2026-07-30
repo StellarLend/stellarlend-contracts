@@ -65,6 +65,8 @@ pub enum VestingKey {
     Paused,
     PausedAt,
     TotalPausedSecs,
+    TotalLocked,
+    Grant(Address),
 }
 
 // ── Vesting schedule ─────────────────────────────────────────────────────────
@@ -168,12 +170,9 @@ impl VestingContract {
     /// Transfers `total_amount` tokens from the caller into the contract vault.
     pub fn add_grant(
         env: Env,
-        caller: Address,
-        grantee: Address,
-        total_amount: i128,
-        start_ts: u64,
-        cliff_secs: u64,
-        duration_secs: u64,
+        admin: Address,
+        treasury: Address,
+        token_address: Address,
     ) -> Result<(), VestingError> {
         Self::require_admin(&env, &caller)?;
         if total_amount <= 0 { return Err(VestingError::ZeroPrincipal); }
@@ -620,8 +619,20 @@ impl VestingContract {
         }
     }
 
+    fn all_revoked(grants: &Vec<Grant>) -> bool {
+        if grants.is_empty() {
+            return false;
+        }
+        for i in 0..grants.len() {
+            if !grants.get(i).unwrap().revoked {
+                return false;
+            }
+        }
+        true
+    }
+
     fn emit_event(env: &Env, event: &str, actor: &Address) {
-        let topics = (soroban_sdk::Symbol::new(env, event), actor.clone());
+        let topics = (Symbol::new(env, event), actor.clone());
         let mut data: Vec<Val> = Vec::new(env);
         data.push_back(actor.clone().into_val(env));
         env.events().publish(topics, data);

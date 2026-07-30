@@ -70,7 +70,7 @@ cargo install --locked soroban-cli
 
 2. **Navigate to the contract directory**:
    ```bash
-   cd stellar-lend/contracts/hello-world
+   cd stellar-lend/contracts/lending
    ```
 
 3. **Verify your setup**:
@@ -99,7 +99,7 @@ For deployment to networks, you may need:
 Build the contract using the Soroban CLI:
 
 ```bash
-# From stellar-lend/contracts/hello-world/
+# From stellar-lend/contracts/lending/
 stellar contract build
 
 # Or using Cargo directly
@@ -111,7 +111,7 @@ make build
 
 The compiled WASM file will be located at:
 ```
-target/wasm32-unknown-unknown/release/hello_world.wasm
+target/wasm32-unknown-unknown/release/stellarlend_lending.wasm
 ```
 
 ### Testing
@@ -119,7 +119,7 @@ target/wasm32-unknown-unknown/release/hello_world.wasm
 Run the test suite:
 
 ```bash
-# From stellar-lend/contracts/hello-world/
+# From stellar-lend/contracts/lending/
 cargo test
 
 # Run with verbose output
@@ -160,7 +160,7 @@ stellar contract build
 
 # Deploy to testnet (requires testnet account)
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/hello_world.wasm \
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending.wasm \
   --network testnet \
   --source <your-testnet-keypair>
 
@@ -179,11 +179,11 @@ stellar contract invoke \
 # Build and optimize
 stellar contract build
 stellar contract optimize \
-  --wasm target/wasm32-unknown-unknown/release/hello_world.wasm
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending.wasm
 
 # Deploy (use optimized WASM)
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/hello_world-optimized.wasm \
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending-optimized.wasm \
   --network mainnet \
   --source <your-mainnet-keypair>
 ```
@@ -206,35 +206,40 @@ stellarlend-contracts/
 └── stellar-lend/            # Main contract workspace
     ├── Cargo.toml           # Workspace configuration
     └── contracts/
-        ├── lending/         # Main StellarLend contract (Single Canonical Tree)
-        │   ├── Cargo.toml
-        │   ├── Makefile     # Build/test shortcuts
-        │   ├── README.md    # Contract-specific docs
-        │   └── src/
-        │       ├── lib.rs   # Main contract entry point
-        │       ├── rounding_strategy.rs # Mathematical utilities
-        │       └── interest_drift_regression_test.rs # Regression tests
-        └── hello-world/     # Minimal placeholder contract
+        └── lending/         # Canonical StellarLend contract (79 .rs files)
             ├── Cargo.toml
-            ├── Makefile
-            ├── README.md
+            ├── Makefile     # Build/test shortcuts
+            ├── README.md    # Contract-specific docs
             └── src/
-                └── lib.rs
+                ├── lib.rs, debt.rs, cross_asset.rs, rate_model.rs,
+                ├── math.rs, events.rs, upgrade.rs,
+                ├── rounding_strategy.rs,
+                └── 71 test/*_test.rs files
 ```
 
 ---
 
 ## Contract Modules
 
-The StellarLend contract is organized into the following modules:
+The canonical contract lives at `stellar-lend/contracts/lending/`. Its module layout:
 
-- **Core Lending** (`deposit.rs`, `borrow.rs`, `repay.rs`, `withdraw.rs`): Deposit collateral, borrow assets, repay debt, and withdraw collateral
-- **Liquidation** (`liquidate.rs`): Partial liquidation with close factor and liquidation incentives
-- **Oracle** (`oracle.rs`): Price feed integration with validation, fallback, and caching
-- **Governance** (`governance.rs`): Admin controls, multisig, and parameter management
-- **AMM Integration** (`amm.rs`): Automated market maker hooks for swaps and liquidity
-- **Flash Loans** (`flash_loan.rs`): Configurable flash loan functionality
-- **Analytics** (`analytics.rs`): Protocol and user metrics, activity feeds, and reporting
+### `lending` (`stellar-lend/contracts/lending/src/`) — the canonical contract
+
+Core lending logic (deposit, withdraw, borrow, repay, liquidation, pausing, oracle price
+handling, cross-asset positions, etc.) lives directly in `lib.rs` as `#[contractimpl]`
+functions on `LendingContract` — there are no separate `deposit.rs`/`borrow.rs`/`repay.rs`/
+`withdraw.rs`/`liquidate.rs`/`oracle.rs`/`governance.rs`/`amm.rs`/`flash_loan.rs`/`analytics.rs`
+files in this crate. The supporting modules that do exist are:
+
+- **`debt.rs`**: Debt position accounting and interest accrual (global borrow-index model plus legacy elapsed-time accrual).
+- **`cross_asset.rs`**: Multi-asset collateral/debt storage helpers and cross-asset health-factor computation.
+- **`rate_model.rs`**: Kink-model interest rate curve, plus rate smoothing/hysteresis.
+- **`rounding_strategy.rs`**: Configurable-rounding interest calculator used by `debt.rs`.
+- **`math.rs`**: Shared checked-arithmetic helpers.
+- **`events.rs`**: Versioned event structs/emitters for deposit/withdraw/borrow/repay/liquidate.
+- **`upgrade.rs`**: Self-contained timelocked multisig upgrade governance (propose/approve/execute).
+
+See the contract's own [README](stellar-lend/contracts/lending/README.md) for the full, accurate interface.
 
 ---
 
@@ -300,7 +305,7 @@ For exact signatures and planned-but-not-shipping names, see
 - **[Storage Layout and Migration](docs/storage.md)**: Detailed documentation of the contract's persistent storage structure, keys, types, and upgrade/migration strategies
 - **[Cross-Asset Rules](docs/CROSS_ASSET_RULES.md)**: Borrowing/repay rules, view guarantees (G-1..G-10), and invariants for multi-asset positions
 - **[Repay Semantics](stellar-lend/docs/REPAY_SEMANTICS.md)**: Both repay paths (single-asset vs cross-asset), overpay behaviour, interest ordering, and dust prevention
-- **[Contract README](stellar-lend/contracts/hello-world/README.md)**: Contract-specific documentation and entrypoint reference
+- **[Contract README](stellar-lend/contracts/lending/README.md)**: Contract-specific documentation and entrypoint reference
 - **[CI/CD Overview](docs/CI_OVERVIEW.md)**: Continuous integration setup and local reproduction guide
 - **[Example Reports](docs/examples/)**: Example JSON outputs for protocol and user analytics
 

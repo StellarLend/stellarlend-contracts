@@ -2,7 +2,7 @@ use crate::{LendingContract, LendingContractClient, PauseType};
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
-    vec, Address, Bytes, Env, Symbol,
+    Address, Bytes, Env, Symbol,
 };
 
 fn setup() -> (
@@ -86,7 +86,7 @@ fn repay_flash_loan_rejected_when_granular_flash_pause_active() {
 #[test]
 #[should_panic(expected = "OperationDisabledDuringShutdown")]
 fn flash_loan_rejected_during_emergency_shutdown() {
-    let (env, client, admin, initiator, receiver) = setup();
+    let (env, client, _admin, initiator, receiver) = setup();
     client.set_emergency_state(&crate::EmergencyState::Shutdown);
 
     let asset = Address::generate(&env);
@@ -96,7 +96,7 @@ fn flash_loan_rejected_during_emergency_shutdown() {
 #[test]
 #[should_panic(expected = "OperationDisabledDuringShutdown")]
 fn repay_flash_loan_rejected_during_emergency_shutdown() {
-    let (env, client, admin, payer, _receiver) = {
+    let (env, client, _admin, payer, _receiver) = {
         let (env, client, admin, user, receiver) = setup();
         (env, client, admin, user, receiver)
     };
@@ -109,7 +109,7 @@ fn repay_flash_loan_rejected_during_emergency_shutdown() {
 
 #[test]
 fn flash_loan_allowed_when_unpaused_and_normal_emergency_state() {
-    let (env, client, _admin, initiator, receiver) = setup();
+    let (env, client, _admin, initiator, _receiver) = setup();
 
     // Explicitly ensure flash pause is inactive.
     set_flash_pause(&env, &client, &client.get_admin(), false);
@@ -176,9 +176,7 @@ impl FlashReceiverOk {
             let new_tre_bal = tre_bal
                 .checked_add(total)
                 .expect("flash repayment overflow");
-            env.storage()
-                .persistent()
-                .set(&tre_key, &new_tre_bal);
+            env.storage().persistent().set(&tre_key, &new_tre_bal);
         });
     }
 }

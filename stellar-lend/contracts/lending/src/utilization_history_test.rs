@@ -1,10 +1,7 @@
-#![cfg(test)]
-
 use crate::{
     debt::{cached_borrow_rate, try_compute_borrow_rate_from_snapshot, RateSnapshot},
     rate_model::RateParams,
     write_utilization_sample, DataKey, LendingContract, LendingContractClient, UtilizationSample,
-    UTILIZATION_HISTORY_CAPACITY,
 };
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};
@@ -145,10 +142,7 @@ fn utilization_history_capacity_boundary_evicts_oldest() {
         first_ledger + TEST_COUNT - 1
     );
     // Oldest last
-    assert_eq!(
-        sample(&full_history, TEST_COUNT - 1).ledger,
-        first_ledger
-    );
+    assert_eq!(sample(&full_history, TEST_COUNT - 1).ledger, first_ledger);
 
     // Write one more (still under capacity so no eviction)
     env.as_contract(&contract_id, || {
@@ -167,19 +161,20 @@ fn utilization_history_capacity_boundary_evicts_oldest() {
         }
     );
     // Oldest is still the first entry
-    assert_eq!(
-        sample(&after, TEST_COUNT).ledger,
-        first_ledger
-    );
+    assert_eq!(sample(&after, TEST_COUNT).ledger, first_ledger);
 }
 
 #[test]
 fn utilization_history_rate_math_reports_overflow() {
-    let snapshot = RateSnapshot {
-        total_debt: i128::MAX,
-        total_supply: 1,
-        params: Some(RateParams::default()),
-    };
-
-    assert!(try_compute_borrow_rate_from_snapshot(&env, &snapshot).is_err());
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    env.as_contract(&contract_id, || {
+        let snapshot = RateSnapshot {
+            total_debt: i128::MAX,
+            total_supply: 1,
+            params: Some(RateParams::default()),
+        };
+        assert!(try_compute_borrow_rate_from_snapshot(&env, &snapshot).is_err());
+    });
 }

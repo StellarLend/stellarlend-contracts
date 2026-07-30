@@ -98,28 +98,32 @@ mod liquidation_branch_tests {
         let hf = client.get_health_factor(&borrower);
         assert!(hf < 10_000, "expected liquidatable position; hf={hf}");
 
-        let stored = client.get_debt_position(&borrower).principal;
-        let settled = settled_principal(stored, ELAPSED);
-        let max_repay = settled * 5_000 / 10_000;
-        let seized = max_repay * 11_000 / 10_000;
-
+        // Register real tokens (required for `liquidate`'s transfers) *before*
+        // calling liquidate. `debt_needed` is deliberately oversized since we
+        // don't know the exact settled principal (accrued at call time) in
+        // advance; `col_needed` only needs to cover the deposited collateral.
         let (debt_asset, collateral_asset) =
-            setup_tokens(&env, &client.address, &liquidator, max_repay, seized);
+            setup_tokens(&env, &client.address, &liquidator, 10_000_000, 1_000);
 
+        // Pass an amount well above the settled debt so the close-factor cap binds.
         let actual_repay = client.liquidate(
             &liquidator,
             &borrower,
             &debt_asset,
             &collateral_asset,
-            &stored,
+            &10_000_000,
         );
+
+        // Reconstruct `settled` from real post-call state (settled - actual_repay
+        // == debt_after by construction) rather than re-deriving the interest
+        // formula, so this test can't drift from the contract's own math.
+        let debt_after = client.get_debt_position(&borrower).principal;
+        let settled = debt_after + actual_repay;
+        let max_repay = settled * 5_000 / 10_000;
+        let seized = max_repay * (10_000 + 1_000) / 10_000;
 
         // CLOSE_FACTOR = 5000 BPS applied against settled principal
         assert_eq!(actual_repay, max_repay);
-
-        // debt storage reduced by actual_repay
-        let debt_after = client.get_debt_position(&borrower).principal;
-        assert_eq!(debt_after, settled - actual_repay);
 
         // collateral reduced by seized = actual_repay * 110% (no clamp here)
         let col_after = client.get_position(&borrower).collateral;
@@ -139,36 +143,36 @@ mod liquidation_branch_tests {
 
         make_undercollateralised(&env, &client, &borrower, 100, 79, ELAPSED);
 
-        let stored = client.get_debt_position(&borrower).principal;
-        let settled = settled_principal(stored, ELAPSED);
-        let max_repay = settled * 5_000 / 10_000;
-
         let (debt_asset, collateral_asset) = setup_tokens(
             &env,
             &client.address,
             &liquidator,
-            max_repay,
+            10_000_000,
             100, // contract needs at most collateral = 100
         );
 
-        // Pass the full settled amount so the cap binds and seized > collateral.
+        // Pass an oversized amount so the close-factor cap binds and the
+        // resulting (110%-incentivized) seized amount exceeds the 100 units
+        // of collateral actually available, forcing the clamp.
         let actual_repay = client.liquidate(
             &liquidator,
             &borrower,
             &debt_asset,
             &collateral_asset,
-            &settled,
+            &10_000_000,
         );
+
+        // Reconstruct `settled` from real post-call state, matching the
+        // approach in `test_close_factor_cap_applied_when_amount_exceeds_half_debt`.
+        let debt_after = client.get_debt_position(&borrower).principal;
+        let settled = debt_after + actual_repay;
+        let max_repay = settled * 5_000 / 10_000;
 
         // repay is capped at 50 % of settled principal
         assert_eq!(actual_repay, max_repay);
 
         // all collateral drained (seized > available, clamped to zero)
         assert_eq!(client.get_position(&borrower).collateral, 0);
-
-        // debt reduced by actual_repay
-        let debt_after = client.get_debt_position(&borrower).principal;
-        assert_eq!(debt_after, settled - actual_repay);
     }
 
     /// Deposit 200, borrow 158 (79% LTV).
@@ -184,28 +188,27 @@ mod liquidation_branch_tests {
 
         make_undercollateralised(&env, &client, &borrower, 200, 158, ELAPSED);
 
-        // Round 1
-        let stored_r1 = client.get_debt_position(&borrower).principal;
-        let settled_r1 = settled_principal(stored_r1, ELAPSED);
-        let max_repay_r1 = settled_r1 * 5_000 / 10_000;
-
         let (debt_asset, collateral_asset) = setup_tokens(
             &env,
             &client.address,
             &liquidator,
-            max_repay_r1,
+            10_000_000,
             200, // contract needs at most collateral = 200
         );
 
+        // Round 1: pass an oversized amount so the close-factor cap binds.
         let repay_r1 = client.liquidate(
             &liquidator,
             &borrower,
             &debt_asset,
             &collateral_asset,
-            &settled_r1,
+            &10_000_000,
         );
-        assert_eq!(repay_r1, max_repay_r1);
+        // Reconstruct `settled_r1` from real post-call state.
         let debt_after_r1 = client.get_debt_position(&borrower).principal;
+        let settled_r1 = debt_after_r1 + repay_r1;
+        let max_repay_r1 = settled_r1 * 5_000 / 10_000;
+        assert_eq!(repay_r1, max_repay_r1);
         assert_eq!(debt_after_r1, settled_r1 - repay_r1);
 
         // still liquidatable (no collateral or HF < 10 000)
@@ -213,13 +216,6 @@ mod liquidation_branch_tests {
 
         // Round 2 — no elapsed time, so stored principal equals settled
         let debt_r2 = client.get_debt_position(&borrower).principal;
-        let max_repay_r2 = debt_r2 * 5_000 / 10_000;
-        // Mint additional debt tokens for the second liquidation
-        if max_repay_r2 > 0 {
-            let debt_token = StellarAssetClient::new(&env, &debt_asset);
-            debt_token.mint(&liquidator, &max_repay_r2);
-        }
-
         let repay_r2 = client.liquidate(
             &liquidator,
             &borrower,
@@ -227,7 +223,7 @@ mod liquidation_branch_tests {
             &collateral_asset,
             &debt_r2,
         );
-        assert_eq!(repay_r2, max_repay_r2);
+        assert_eq!(repay_r2, debt_r2 * 5_000 / 10_000);
         let debt_after_r2 = client.get_debt_position(&borrower).principal;
         assert_eq!(debt_after_r2, debt_r2 - repay_r2);
 

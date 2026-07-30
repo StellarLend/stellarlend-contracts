@@ -2,8 +2,19 @@
 
 use soroban_sdk::contracterror;
 
+// Reused, not re-declared: a second, independent `31_536_000` here would let
+// this and the rounding-strategy interest paths silently drift apart (e.g. if
+// a leap-year adjustment were ever applied to only one of them).
+use crate::rounding_strategy::SECONDS_PER_YEAR;
+
 /// Basis points scale (100% = 10,000 bps).
 pub const BPS_SCALE: u32 = 10_000;
+
+/// Sanity ceiling on `rate_bps` accepted by [`compute_compound_interest`]
+/// (1000% APR). Anything above this is certainly a caller error (e.g. a
+/// mis-scaled input) rather than a legitimate rate, so it is rejected
+/// outright instead of silently producing a huge or overflowing result.
+pub const MAX_RATE_BPS: i128 = 100_000;
 
 /// Error types for checked arithmetic.
 #[contracterror]
@@ -20,6 +31,30 @@ pub enum MathError {
 ///
 /// The reserve share is rounded down and the depositor receives the remainder,
 /// which guarantees that the two results always sum to `total_interest`.
+pub fn compute_compound_interest(
+    principal: i128,
+    rate_bps: i128,
+    elapsed_seconds: u64,
+) -> Result<i128, MathError> {
+    if principal < 0 || rate_bps < 0 || rate_bps > MAX_RATE_BPS {
+        return Err(MathError::OutOfRange);
+    }
+    if principal == 0 || elapsed_seconds == 0 || rate_bps == 0 {
+        return Ok(0);
+    }
+
+    let elapsed_i128 = i128::from(elapsed_seconds);
+    let interest = principal
+        .checked_mul(rate_bps)
+        .ok_or(MathError::Overflow)?
+        .checked_mul(elapsed_i128)
+        .ok_or(MathError::Overflow)?
+        .checked_div((SECONDS_PER_YEAR as i128) * BPS_SCALE as i128)
+        .ok_or(MathError::DivisionByZero)?;
+
+    Ok(interest)
+}
+
 pub fn split_interest_by_reserve_factor(
     total_interest: i128,
     reserve_factor_bps: u32,
@@ -76,6 +111,22 @@ pub fn checked_mul_div_ceil(a: i128, b: i128, c: i128) -> Result<i128, MathError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compute_compound_interest_uses_shared_year_length() {
+        let interest = compute_compound_interest(100, 500, SECONDS_PER_YEAR).unwrap();
+        assert_eq!(interest, 5);
+    }
+
+    #[test]
+    fn compute_compound_interest_matches_a_365_day_year() {
+        // `elapsed_seconds` here is a literal 365-day year, independent of the
+        // `SECONDS_PER_YEAR` import above, so this fails if `math.rs` ever
+        // divides by a re-hardcoded value that has drifted from it.
+        let one_year_seconds: u64 = 365 * 24 * 60 * 60;
+        let interest = compute_compound_interest(100, 500, one_year_seconds).unwrap();
+        assert_eq!(interest, 5);
+    }
 
     #[test]
     fn split_preserves_all_accrued_interest() {

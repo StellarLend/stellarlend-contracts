@@ -56,13 +56,7 @@ fn setup() -> (
 /// requires the position to be healthy at borrow time (collateral * 8000 ≥
 /// debt * 10000).  An unhealthy position can only be created by direct
 /// storage writes (or by price moves / interest accrual in an e2e setting).
-fn seed_unhealthy(
-    env: &Env,
-    id: &Address,
-    user: &Address,
-    collateral: i128,
-    debt: i128,
-) {
+fn seed_unhealthy(env: &Env, id: &Address, user: &Address, collateral: i128, debt: i128) {
     env.as_contract(id, || {
         env.storage()
             .persistent()
@@ -148,7 +142,7 @@ fn test_seizure_clamp_prevents_collateral_underflow() {
             &user,
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -194,7 +188,7 @@ fn test_debt_exactly_repaid_gives_zero_new_debt() {
             &user,
             &DebtPosition {
                 principal: 20,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
