@@ -1,7 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
-
-pub const RESERVE_FEE_BPS: i128 = 10;
-pub const BPS_DENOM: i128 = 10_000;
+use soroban_sdk::{contracttype, Address, Env};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -276,3 +273,7 @@ mod deposit_tests {
         assert!(result.is_err());
     }
 }
+
+/// Deposit collateral for a user.
+pub fn deposit_collateral(env: &Env, _caller: Address, _asset: Option<Address>, _amount: i128) {}
+

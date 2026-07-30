@@ -30,11 +30,11 @@ const BPS_DENOM: i128 = BASIS_POINTS_SCALE;
 /// Seconds in a 365-day year, used to annualize the bps borrow rate.
 pub const SECONDS_PER_YEAR: i128 = 365 * 24 * 60 * 60;
 
-/// Default annual borrow rate in basis points (5% = 500 bps).
-const DEFAULT_RATE_BPS: i128 = 500;
+/// Basis-point denominator alias used inside `compute_interest`.
+const BPS_DENOM: i128 = BASIS_POINTS_SCALE;
 
-/// Public alias for the default rate, used by liquidate.rs.
-pub const DEFAULT_APR_BPS: i128 = DEFAULT_RATE_BPS;
+/// Default annual percentage rate in basis points (500 bps = 5 %).
+pub const DEFAULT_APR_BPS: i128 = 500;
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -126,9 +126,102 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
+// ---------------------------------------------------------------------------
+// Position helpers (shared with borrow.rs and liquidate.rs)
+// ---------------------------------------------------------------------------
+
+/// A user's debt position.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Position {
+    pub principal: i128,
+    pub last_update: u64,
+}
+
+/// Load the borrower's [`Position`] from persistent storage.
+pub fn load_position(env: &Env, borrower: &Address) -> Position {
+    let key = crate::DataKey::Debt(borrower.clone());
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Position {
+            principal: 0,
+            last_update: env.ledger().timestamp(),
+        })
+}
+
+/// Persist a [`Position`] to storage.
+pub fn save_position(env: &Env, borrower: &Address, position: &Position) {
+    let key = crate::DataKey::Debt(borrower.clone());
+    env.storage().persistent().set(&key, position);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers used by repay_debt
+// ---------------------------------------------------------------------------
+
+/// Accrue interest on `user`'s debt since the last interaction.
+fn accrue_interest(env: &Env, user: &Address) -> Result<(i128, i128), RepayError> {
+    let debt_key = crate::DataKey::Debt(user.clone());
+    let principal: i128 = env.storage().persistent().get(&debt_key).unwrap_or(0);
+
+    let interest_key = RepayDataKey::Interest(user.clone());
+    let existing_interest: i128 = env
+        .storage()
+        .persistent()
+        .get(&interest_key)
+        .unwrap_or(0);
+
+    let last_key = RepayDataKey::LastAccrual(user.clone());
+    let last_update: u64 = env
+        .storage()
+        .persistent()
+        .get(&last_key)
+        .unwrap_or(env.ledger().timestamp());
+
+    let now = env.ledger().timestamp();
+    let elapsed = now.saturating_sub(last_update);
+
+    let new_interest = if principal > 0 && elapsed > 0 {
+        compute_interest(principal, elapsed, DEFAULT_APR_BPS)?
+    } else {
+        0
+    };
+
+    let total_interest = existing_interest
+        .checked_add(new_interest)
+        .ok_or(RepayError::Overflow)?;
+
+    env.storage()
+        .persistent()
+        .set(&interest_key, &total_interest);
+    env.storage().persistent().set(&last_key, &now);
+
+    Ok((principal, total_interest))
+}
+
+fn is_repay_paused(env: &Env) -> bool {
+    env.storage()
+        .persistent()
+        .get(&RepayDataKey::Paused)
+        .unwrap_or(false)
+}
+
+fn set_repay_paused(env: &Env, paused: bool) {
+    env.storage()
+        .persistent()
+        .set(&RepayDataKey::Paused, &paused);
+}
+
+fn set_native_asset_address(env: &Env, addr: Address) {
+    env.storage()
+        .persistent()
+        .set(&RepayDataKey::NativeAsset, &addr);
+}
+
 fn emit_repay(env: &Env, user: &Address, amount: i128, interest_paid: i128, principal_paid: i128) {
     env.events().publish(
-        (symbol_short!("repay"), user.clone()),
+        (Symbol::new(env, "repay"),),
         RepayEvent {
             schema_version: 1,
             user: user.clone(),
@@ -140,48 +233,31 @@ fn emit_repay(env: &Env, user: &Address, amount: i128, interest_paid: i128, prin
     );
 }
 
-fn emit_position_updated(env: &Env, user: &Address, principal: i128, interest: i128) {
+fn emit_position_updated(env: &Env, user: &Address, new_principal: i128, new_interest: i128) {
     env.events().publish(
-        (symbol_short!("pos_upd"), user.clone()),
-        (principal, interest),
+        (Symbol::new(env, "position_updated"),),
+        (user.clone(), new_principal, new_interest),
     );
 }
 
 fn emit_analytics_updated(
     env: &Env,
     user: &Address,
-    user_total: i128,
+    user_total_repayments: i128,
     debt_value: i128,
-    protocol_total: i128,
-    protocol_debt: i128,
+    protocol_repay_total: i128,
+    protocol_debt_value: i128,
 ) {
     env.events().publish(
-        (symbol_short!("anl_upd"), user.clone()),
-        (user_total, debt_value, protocol_total, protocol_debt),
+        (Symbol::new(env, "analytics_updated"),),
+        (
+            user.clone(),
+            user_total_repayments,
+            debt_value,
+            protocol_repay_total,
+            protocol_debt_value,
+        ),
     );
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-fn is_repay_paused(env: &Env) -> bool {
-    env.storage()
-        .persistent()
-        .get::<RepayDataKey, bool>(&RepayDataKey::Paused)
-        .unwrap_or(false)
-}
-
-pub fn set_repay_paused(env: &Env, paused: bool) {
-    env.storage()
-        .persistent()
-        .set(&RepayDataKey::Paused, &paused);
-}
-
-pub fn set_native_asset_address(env: &Env, asset: Address) {
-    env.storage()
-        .persistent()
-        .set(&RepayDataKey::NativeAsset, &asset);
 }
 
 pub fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, RepayError> {
@@ -198,46 +274,6 @@ pub fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result
     numerator
         .checked_div(denominator)
         .ok_or(RepayError::Overflow)
-}
-
-/// Accrue interest for `user` since the last recorded accrual timestamp.
-///
-/// Returns `(principal, accrued_interest)`.  On the first call the accrued
-/// interest will be zero because there is no elapsed time yet.
-fn accrue_interest(env: &Env, user: &Address) -> Result<(i128, i128), RepayError> {
-    let debt_key = crate::DataKey::Debt(user.clone());
-    let principal: i128 = env
-        .storage()
-        .persistent()
-        .get(&debt_key)
-        .unwrap_or(0);
-
-    let interest_key = RepayDataKey::Interest(user.clone());
-    let stored_interest: i128 = env
-        .storage()
-        .persistent()
-        .get(&interest_key)
-        .unwrap_or(0);
-
-    let now = env.ledger().timestamp();
-    let last_accrual_key = RepayDataKey::LastAccrual(user.clone());
-    let last_accrual: u64 = env
-        .storage()
-        .persistent()
-        .get(&last_accrual_key)
-        .unwrap_or(now);
-
-    let elapsed = now.saturating_sub(last_accrual);
-    let new_interest = compute_interest(principal, elapsed, DEFAULT_RATE_BPS)?;
-    let interest = stored_interest
-        .checked_add(new_interest)
-        .ok_or(RepayError::Overflow)?;
-
-    env.storage()
-        .persistent()
-        .set(&last_accrual_key, &now);
-
-    Ok((principal, interest))
 }
 
 // ---------------------------------------------------------------------------

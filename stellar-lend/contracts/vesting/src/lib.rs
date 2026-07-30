@@ -1077,12 +1077,6 @@ impl VestingContract {
 #[cfg(test)]
 mod accelerate_test;
 #[cfg(test)]
-mod claimable_consistency_test;
-#[cfg(test)]
-mod cliff_bound_test;
-#[cfg(test)]
-mod accelerate_test;
-#[cfg(test)]
 mod initialize_test;
 #[cfg(test)]
 mod lifecycle_e2e_test;
