@@ -74,7 +74,9 @@ impl Bridge {
             .unwrap_or_else(|| Map::new(env))
     }
     fn save_nonces(env: &Env, nonces: &Map<u32, u64>) {
-        env.storage().persistent().set(&BridgeDataKey::OutboundNonces, nonces);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundNonces, nonces);
     }
     fn load_validators(env: &Env) -> Vec<BytesN<32>> {
         env.storage()
@@ -83,7 +85,9 @@ impl Bridge {
             .unwrap_or_else(|| Vec::new(env))
     }
     fn save_validators(env: &Env, validators: &Vec<BytesN<32>>) {
-        env.storage().persistent().set(&BridgeDataKey::Validators, validators);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::Validators, validators);
     }
     fn load_paused(env: &Env) -> Map<BytesN<32>, bool> {
         env.storage()
@@ -92,58 +96,98 @@ impl Bridge {
             .unwrap_or_else(|| Map::new(env))
     }
     fn save_paused(env: &Env, paused: &Map<BytesN<32>, bool>) {
-        env.storage().persistent().set(&BridgeDataKey::PausedValidators, paused);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::PausedValidators, paused);
     }
     fn load_epoch(env: &Env) -> u64 {
-        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::Epoch).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::Epoch)
+            .unwrap_or(0)
     }
     fn save_epoch(env: &Env, epoch: u64) {
-        env.storage().persistent().set(&BridgeDataKey::Epoch, &epoch);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::Epoch, &epoch);
     }
     fn load_bridge_id(env: &Env) -> Bytes {
-        env.storage().persistent().get::<BridgeDataKey, Bytes>(&BridgeDataKey::BridgeId).unwrap_or_else(|| Bytes::new(env))
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, Bytes>(&BridgeDataKey::BridgeId)
+            .unwrap_or_else(|| Bytes::new(env))
     }
     fn save_bridge_id(env: &Env, id: &Bytes) {
         env.storage().persistent().set(&BridgeDataKey::BridgeId, id);
     }
     fn load_guardian(env: &Env) -> Option<BytesN<32>> {
-        env.storage().persistent().get::<BridgeDataKey, BytesN<32>>(&BridgeDataKey::Guardian)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, BytesN<32>>(&BridgeDataKey::Guardian)
     }
     fn save_guardian(env: &Env, pk: &BytesN<32>) {
         env.storage().persistent().set(&BridgeDataKey::Guardian, pk);
     }
     fn load_max_churn(env: &Env) -> Option<u32> {
-        env.storage().persistent().get::<BridgeDataKey, u32>(&BridgeDataKey::MaxChurn)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u32>(&BridgeDataKey::MaxChurn)
     }
     fn save_max_churn(env: &Env, limit: u32) {
-        env.storage().persistent().set(&BridgeDataKey::MaxChurn, &limit);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::MaxChurn, &limit);
     }
     fn remove_max_churn(env: &Env) {
         env.storage().persistent().remove(&BridgeDataKey::MaxChurn);
     }
     fn load_max_per_window(env: &Env) -> i128 {
-        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::MaxPerWindow).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, i128>(&BridgeDataKey::MaxPerWindow)
+            .unwrap_or(0)
     }
     fn load_window_size(env: &Env) -> u64 {
-        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::WindowSize).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::WindowSize)
+            .unwrap_or(0)
     }
     fn load_window_start(env: &Env) -> u64 {
-        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::WindowStart).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::WindowStart)
+            .unwrap_or(0)
     }
     fn load_window_inbound_total(env: &Env) -> i128 {
-        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::WindowInboundTotal).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, i128>(&BridgeDataKey::WindowInboundTotal)
+            .unwrap_or(0)
     }
     fn load_max_outbound_per_window(env: &Env) -> i128 {
-        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::MaxOutboundPerWindow).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, i128>(&BridgeDataKey::MaxOutboundPerWindow)
+            .unwrap_or(0)
     }
     fn load_outbound_window_size(env: &Env) -> u64 {
-        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowSize).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowSize)
+            .unwrap_or(0)
     }
     fn load_outbound_window_start(env: &Env) -> u64 {
-        env.storage().persistent().get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowStart).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowStart)
+            .unwrap_or(0)
     }
     fn load_window_outbound_total(env: &Env) -> i128 {
-        env.storage().persistent().get::<BridgeDataKey, i128>(&BridgeDataKey::WindowOutboundTotal).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, i128>(&BridgeDataKey::WindowOutboundTotal)
+            .unwrap_or(0)
     }
 }
 
@@ -152,7 +196,7 @@ impl Bridge {
     /// Return the next outbound nonce for `dest`, then increment it.
     pub fn next_outbound_nonce(env: Env, dest: u32) -> Result<u64, BridgeError> {
         // Access control: only contract itself or authorized caller
-        env.require_auth(&env.current_contract());
+        env.current_contract_address().require_auth();
 
         let mut nonces = Self::load_nonces(&env);
         let current = nonces.get(dest).unwrap_or(0u64);
@@ -162,7 +206,10 @@ impl Bridge {
 
         env.events().publish(
             (soroban_sdk::symbol_short!("outbound"),),
-            OutboundMessageEvent { dest, nonce: current },
+            OutboundMessageEvent {
+                dest,
+                nonce: current,
+            },
         );
         Ok(current)
     }
@@ -727,7 +774,7 @@ impl Bridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Ledger, Env};
+    use soroban_sdk::Env;
 
     fn fresh_env() -> Env {
         Env::default()
@@ -736,6 +783,10 @@ mod tests {
     #[test]
     fn test_outbound_nonce_increments() {
         let env = fresh_env();
+        // `next_outbound_nonce` gates itself behind the contract's own
+        // address via `require_auth()`; mock auths so the test can exercise
+        // the nonce-increment logic without wiring up a real invoker chain.
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 

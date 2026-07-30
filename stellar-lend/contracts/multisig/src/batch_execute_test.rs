@@ -30,7 +30,7 @@ fn setup_multisig(env: &Env) -> (Address, Vec<Address>) {
     signers.push_back(s2.clone());
     signers.push_back(s3.clone());
 
-    client.initialize(&signers, &2u32).unwrap();
+    client.initialize(&signers, &2u32);
     (contract_id, signers)
 }
 
@@ -42,9 +42,9 @@ fn create_passed_proposal(
     action: &ProposalAction,
     payload_hash: &Bytes,
 ) -> u64 {
-    let id = client.create_proposal(&signers.get(0).unwrap(), action, payload_hash, &500u64).unwrap();
-    client.approve_proposal(&signers.get(0).unwrap(), &id).unwrap();
-    client.approve_proposal(&signers.get(1).unwrap(), &id).unwrap();
+    let id = client.create_proposal(&signers.get(0).unwrap(), action, payload_hash, &500u64);
+    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    client.approve_proposal(&signers.get(1).unwrap(), &id);
     id
 }
 
@@ -84,12 +84,12 @@ fn test_batch_execute_all_eligible_success() {
     hashes.push_back(hash_a.clone());
     hashes.push_back(hash_b.clone());
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes).unwrap();
+    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
 
-    let p_a = client.get_proposal(&id_a).unwrap();
+    let p_a = client.get_proposal(&id_a);
     assert_eq!(p_a.status, ProposalStatus::Executed);
 
-    let p_b = client.get_proposal(&id_b).unwrap();
+    let p_b = client.get_proposal(&id_b);
     assert_eq!(p_b.status, ProposalStatus::Executed);
 
     assert_eq!(client.get_threshold(), 4);
@@ -112,11 +112,18 @@ fn test_batch_execute_mixed_actions_success() {
         &hash_a,
     );
 
+    // The batch executes `id_a` (SetThreshold(3)) before `id_b`, and the
+    // signer-shrink guard checks the new signer count against the *live*
+    // threshold at execution time -- so `id_b`'s new set must have at least
+    // 3 members here, not 2, or it would be (correctly) rejected as a
+    // would-be-bricking shrink.
     let new_s1 = Address::generate(&env);
     let new_s2 = Address::generate(&env);
+    let new_s3 = Address::generate(&env);
     let mut new_signers = Vec::new(&env);
     new_signers.push_back(new_s1.clone());
     new_signers.push_back(new_s2.clone());
+    new_signers.push_back(new_s3.clone());
 
     let id_b = create_passed_proposal(
         &env,
@@ -134,12 +141,12 @@ fn test_batch_execute_mixed_actions_success() {
     hashes.push_back(hash_a);
     hashes.push_back(hash_b);
 
-    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes).unwrap();
+    client.batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
 
     assert_eq!(client.get_threshold(), 3);
 
     let stored = client.get_signers();
-    assert!(!stored.contains(&signers.get(0).unwrap()));
+    assert!(!stored.contains(signers.get(0).unwrap()));
     assert!(stored.contains(&new_s1));
     assert!(stored.contains(&new_s2));
 }
@@ -170,7 +177,7 @@ fn test_batch_execute_one_not_passed_rejected() {
         &ProposalAction::SetThreshold(4),
         &hash_b,
         &500u64,
-    ).unwrap();
+    );
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -180,9 +187,12 @@ fn test_batch_execute_one_not_passed_rejected() {
     hashes.push_back(hash_a);
     hashes.push_back(hash_b);
 
+    // `id_b` never received any approvals, so it's still `Active` --
+    // `batch_execute` (like `execute_proposal`) reports that specific case
+    // as `QuorumNotReached` rather than the generic `ProposalNotPassed`.
     assert_eq!(
         client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
-        Err(Ok(MultisigError::ProposalNotPassed))
+        Err(Ok(MultisigError::QuorumNotReached))
     );
 }
 
@@ -208,9 +218,9 @@ fn test_batch_execute_one_expired_rejected() {
         &ProposalAction::SetThreshold(4),
         &hash_b,
         &1u64,
-    ).unwrap();
-    client.approve_proposal(&signers.get(0).unwrap(), &id_b).unwrap();
-    client.approve_proposal(&signers.get(1).unwrap(), &id_b).unwrap();
+    );
+    client.approve_proposal(&signers.get(0).unwrap(), &id_b);
+    client.approve_proposal(&signers.get(1).unwrap(), &id_b);
 
     let current = env.ledger().sequence();
     env.ledger().set_sequence_number(current + 2);
@@ -253,7 +263,7 @@ fn test_batch_execute_one_already_executed_rejected() {
         &hash_b,
     );
 
-    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b).unwrap();
+    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b);
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -524,7 +534,7 @@ fn test_batch_execute_emits_event() {
     let filtered = contract_events.filter_by_contract(&contract_id);
     // At least one event (the BatchExecuted) should be present
     assert!(
-        filtered.events().len() >= 1,
+        !filtered.events().is_empty(),
         "at least one event must have been emitted for the contract"
     );
 }
@@ -557,7 +567,7 @@ fn test_batch_execute_atomicity_on_validation_failure() {
         &hash_b,
     );
 
-    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b).unwrap();
+    client.execute_proposal(&signers.get(0).unwrap(), &id_b, &hash_b);
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -570,14 +580,14 @@ fn test_batch_execute_atomicity_on_validation_failure() {
     let result = client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
     assert!(result.is_err());
 
-    let p_a = client.get_proposal(&id_a).unwrap();
+    let p_a = client.get_proposal(&id_a);
     assert_eq!(
         p_a.status,
         ProposalStatus::Passed,
         "id_a must remain Passed after failed batch"
     );
 
-    let p_b = client.get_proposal(&id_b).unwrap();
+    let p_b = client.get_proposal(&id_b);
     assert_eq!(
         p_b.status,
         ProposalStatus::Executed,

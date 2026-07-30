@@ -1,17 +1,10 @@
-#![cfg(test)]
-
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, Env};
 
 use crate::{VestingContract, VestingContractClient, VestingError};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn setup() -> (
-    Env,
-    Address,
-    Address,
-    token::StellarAssetClient<'static>,
-) {
+fn setup() -> (Env, Address, Address, token::StellarAssetClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);

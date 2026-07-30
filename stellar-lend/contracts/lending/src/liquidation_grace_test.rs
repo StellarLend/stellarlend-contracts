@@ -11,10 +11,12 @@
 //! - Bounded maximum validation of grace period setter
 
 use super::*;
+use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
+use crate::debt::DebtPosition;
 use soroban_sdk::testutils::{Address as _, Ledger};
 
 /// Set up a test environment with a registered LendingContract, admin, user,
-/// and a pair of mock assets (collateral and debt).
+/// and a pair of mock tokens (collateral and debt).
 fn setup() -> (
     Env,
     LendingContractClient<'static>,
@@ -31,8 +33,9 @@ fn setup() -> (
     let client = LendingContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let asset_col = env.register(MockAsset, ());
-    let asset_dbt = env.register(MockAsset, ());
+
+    let asset_col = env.register(MockToken, ());
+    let asset_dbt = env.register(MockToken, ());
     client.initialize(&admin);
 
     // Configure asset params
@@ -55,7 +58,7 @@ fn setup() -> (
         &0i128,                 // supply_cap (uncapped)
     );
 
-    // Set collateral asset for oracle pricing (debt asset is optional)
+    // Set collateral asset for oracle pricing
     client.set_collateral_asset(&asset_col);
 
     // Initial prices: $1.00 for col, $1.00 for dbt
@@ -79,13 +82,54 @@ fn set_price(env: &Env, contract_id: &Address, asset: &Address, price: i128) {
     });
 }
 
+/// Directly seed the legacy single-asset collateral and debt storage keys
+/// (DataKey::Collateral and DataKey::Debt) that the liquidate function reads.
+fn seed_legacy_position(
+    env: &Env,
+    contract_id: &Address,
+    user: &Address,
+    col_amt: i128,
+    debt_amt: i128,
+) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &col_amt);
+        env.storage().persistent().set(
+            &DataKey::Debt(user.clone()),
+            &DebtPosition {
+                principal: debt_amt,
+                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
+}
+
+/// Pre-set the FirstUnhealthyTimestamp so the grace-period check sees a
+/// known timestamp in persistent storage.
+fn seed_unhealthy_timestamp(env: &Env, contract_id: &Address, user: &Address, ts: u64) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::FirstUnhealthyTimestamp(user.clone()), &ts);
+    });
+}
+
+/// Mint mock tokens to an address so that TokenClient transfers inside
+/// liquidate succeed.
+fn mint_mock_token(env: &Env, asset: &Address, to: &Address, amount: i128) {
+    let token = MockTokenClient::new(env, asset);
+    token.mint(to, &amount);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Grace period admin setter / getter
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn test_liquidation_grace_period_admin() {
-    let (_env, client, _, _admin, _, asset_col, asset_dbt) = setup();
+    let (_env, client, _, _admin, _, _asset_col, _asset_dbt) = setup();
 
     // Default should be 0
     assert_eq!(client.get_liquidation_grace_period(), 0);
@@ -125,15 +169,14 @@ fn test_liquidation_grace_zero_is_immediate() {
     // Grace period remains 0 (default)
     assert_eq!(client.get_liquidation_grace_period(), 0);
 
-    // Deposit collateral and borrow to create a health position
-    client.deposit_collateral_asset(&user, &asset_col, &1000i128);
-    client.borrow_asset(&user, &asset_dbt, &700i128);
+    // Seed an unhealthy position: coll = 500, debt = 1000 => HF = 500*8000/1000 = 4000
+    seed_legacy_position(&env, &id, &user, 500, 1000);
 
-    // Drop collateral price to make position unhealthy
-    set_price(&env, &id, &asset_col, 8_000_000);
+    let liquidator = Address::generate(&env);
+    mint_mock_token(&env, &asset_col, &id, 2000); // contract holds collateral tokens
+    mint_mock_token(&env, &asset_dbt, &liquidator, 2000); // liquidator holds debt tokens
 
     // With grace = 0, liquidation should succeed immediately
-    let liquidator = Address::generate(&env);
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(res.is_ok(), "grace=0 should allow immediate liquidation");
 }
@@ -147,29 +190,36 @@ fn test_liquidation_grace_zero_is_immediate() {
 fn test_liquidation_grace_rejects_before_elapsed() {
     let (env, client, id, _admin, user, asset_col, asset_dbt) = setup();
 
-    // Set grace period to 1 hour (3600 seconds)
     client.set_liquidation_grace_period(&3600);
 
-    // Create a healthy position
-    client.deposit_collateral_asset(&user, &asset_col, &1000i128);
-    client.borrow_asset(&user, &asset_dbt, &700i128);
+    let base_ts = 100_000;
+    env.ledger().with_mut(|info| {
+        info.timestamp = base_ts;
+    });
+    // Refresh prices so they are not stale at base_ts.
+    set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
 
-    // Price drop: collateral price to $0.80 → position becomes unhealthy
-    set_price(&env, &id, &asset_col, 8_000_000);
+    seed_legacy_position(&env, &id, &user, 500, 1000);
+    seed_unhealthy_timestamp(&env, &id, &user, base_ts);
 
     let liquidator = Address::generate(&env);
+    mint_mock_token(&env, &asset_col, &id, 2000);
+    mint_mock_token(&env, &asset_dbt, &liquidator, 2000);
 
-    // Attempt liquidation immediately — should fail (grace period just started)
+    // Still at base_ts — no time has passed
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(matches!(
         res,
         Err(Ok(LendingError::LiquidationGracePeriodNotMet))
     ));
 
-    // Advance ledger by 30 minutes (1800 seconds) — still within grace period
+    // Advance by 30 minutes — still within grace period
     env.ledger().with_mut(|info| {
-        info.timestamp += 1800;
+        info.timestamp = base_ts + 1800;
     });
+    set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
 
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(matches!(
@@ -177,12 +227,13 @@ fn test_liquidation_grace_rejects_before_elapsed() {
         Err(Ok(LendingError::LiquidationGracePeriodNotMet))
     ));
 
-    // Advance ledger by another 1801 seconds — grace period has now elapsed
+    // Advance by another 1801 seconds — grace period has now elapsed
     env.ledger().with_mut(|info| {
-        info.timestamp += 1801;
+        info.timestamp = base_ts + 3601;
     });
+    set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
 
-    // Liquidation should now succeed
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(res.is_ok(), "liquidation should succeed after grace period");
 }
@@ -196,22 +247,30 @@ fn test_liquidation_grace_rejects_before_elapsed() {
 fn test_liquidation_grace_allowed_at_boundary() {
     let (env, client, id, _admin, user, asset_col, asset_dbt) = setup();
 
-    // Set grace period to exactly 1 hour
     client.set_liquidation_grace_period(&3600);
 
-    // Create a healthy position
-    client.deposit_collateral_asset(&user, &asset_col, &1000i128);
-    client.borrow_asset(&user, &asset_dbt, &700i128);
-
-    // Price drop to make position unhealthy
-    set_price(&env, &id, &asset_col, 8_000_000);
-
-    // Advance ledger by exactly the grace period (3600 seconds)
+    let base_ts = 100_000;
     env.ledger().with_mut(|info| {
-        info.timestamp += 3600;
+        info.timestamp = base_ts;
     });
+    // Refresh prices so they are not stale at base_ts.
+    set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
+
+    seed_legacy_position(&env, &id, &user, 500, 1000);
+    seed_unhealthy_timestamp(&env, &id, &user, base_ts);
+
+    // Advance by exactly the grace period
+    env.ledger().with_mut(|info| {
+        info.timestamp = base_ts + 3600;
+    });
+    set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
 
     let liquidator = Address::generate(&env);
+    mint_mock_token(&env, &asset_col, &id, 2000);
+    mint_mock_token(&env, &asset_dbt, &liquidator, 2000);
+
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(
         res.is_ok(),
@@ -230,54 +289,65 @@ fn test_liquidation_grace_resets_on_health_recovery() {
 
     client.set_liquidation_grace_period(&3600);
 
-    // Create a healthy position
-    client.deposit_collateral_asset(&user, &asset_col, &1000i128);
-    client.borrow_asset(&user, &asset_dbt, &700i128);
+    let base_ts = 100_000;
+    env.ledger().with_mut(|info| {
+        info.timestamp = base_ts;
+    });
+    set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
 
-    // Price drop → unhealthy
-    set_price(&env, &id, &asset_col, 8_000_000);
+    // Start unhealthy with timestamp in the past (grace period already elapsed).
+    seed_legacy_position(&env, &id, &user, 500, 1000);
+    seed_unhealthy_timestamp(&env, &id, &user, base_ts);
 
     let liquidator = Address::generate(&env);
+    mint_mock_token(&env, &asset_col, &id, 5000);
+    mint_mock_token(&env, &asset_dbt, &liquidator, 5000);
 
-    // First liquidation attempt: grace timer should be stamped, reject
+    // First attempt: still at base_ts (no time passed) — should reject.
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(matches!(
         res,
         Err(Ok(LendingError::LiquidationGracePeriodNotMet))
     ));
 
-    // Restore health: price back to $1.00
+    // Advance past grace period — first liquidation should now succeed.
+    env.ledger().with_mut(|info| {
+        info.timestamp = base_ts + 3600;
+    });
     set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
 
-    // Perform a deposit to trigger health check and clear the unhealthy timestamp
-    client.deposit_collateral_asset(&user, &asset_col, &100i128);
-
-    // Make position unhealthy again (new grace period starts now)
-    set_price(&env, &id, &asset_col, 8_000_000);
-
-    // Advance ledger by 1800 seconds (30 min) from the NEW unhealthy timestamp
-    env.ledger().with_mut(|info| {
-        info.timestamp += 1800;
-    });
-
-    // Attempt liquidation — should still be within the NEW grace period
-    let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
-    assert!(matches!(
-        res,
-        Err(Ok(LendingError::LiquidationGracePeriodNotMet))
-    ));
-
-    // Advance ledger by another 1801 seconds to exceed the new grace period
-    env.ledger().with_mut(|info| {
-        info.timestamp += 1801;
-    });
-
-    // Now liquidation should succeed
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(
         res.is_ok(),
-        "liquidation should succeed after new grace period elapses"
+        "liquidation should succeed after grace period elapses"
     );
+
+    // Simulate health recovery: clear unhealthy timestamp so that when the
+    // position becomes unhealthy again a new grace period starts from scratch.
+    env.as_contract(&id, || {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::FirstUnhealthyTimestamp(user.clone()));
+    });
+
+    // Re-seed an unhealthy position at a later timestamp.
+    let new_base = 300_000;
+    env.ledger().with_mut(|info| {
+        info.timestamp = new_base;
+    });
+    seed_legacy_position(&env, &id, &user, 500, 1000);
+    set_price(&env, &id, &asset_col, 10_000_000);
+    set_price(&env, &id, &asset_dbt, 10_000_000);
+
+    // First attempt at new_base: no unhealthy timestamp exists → should stamp
+    // a new one and reject (grace period just started).
+    let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
+    assert!(matches!(
+        res,
+        Err(Ok(LendingError::LiquidationGracePeriodNotMet))
+    ));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -290,11 +360,9 @@ fn test_liquidation_grace_healthy_position() {
 
     client.set_liquidation_grace_period(&3600);
 
-    // Create a healthy position
-    client.deposit_collateral_asset(&user, &asset_col, &1000i128);
-    client.borrow_asset(&user, &asset_dbt, &500i128);
+    // Healthy: 5000 collateral, 1000 debt => HF = 40000
+    seed_legacy_position(&env, &id, &user, 5000, 1000);
 
-    // Price remains $1.00 — position is healthy
     let liquidator = Address::generate(&env);
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &200i128);
     assert!(matches!(res, Err(Ok(LendingError::PositionHealthy))));

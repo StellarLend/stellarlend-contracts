@@ -32,13 +32,11 @@ jobs:
           fetch-depth: 0 # Full history avoids git index errors in cached steps
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
-          # Pin to 1.91.0 to honour stellar-lend/rust-toolchain.toml; using the
-          # repo pin (rather than `stable`) prevents surprise upgrades when
-          # GitHub-hosted runners rotate to a newer stable toolchain.
           toolchain: 1.91.0
           components: rustfmt, clippy
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -76,6 +74,21 @@ jobs:
   soroban-checks:
     name: Soroban Validations
     runs-on: ubuntu-latest
+    # NOTE on the toolchain version used in this job: `stellar-lend/rust-toolchain.toml`
+    # pins 1.91.0 repo-wide (and that pin is honoured, via rustup's directory
+    # override, by every other job that runs `cargo`/`stellar` inside
+    # `stellar-lend/`). However `stellar-cli` 25.2.0 hard-refuses to build
+    # contracts on rustc 1.81, 1.82, 1.83, *or 1.91.0* ("use a rust version
+    # other than ..."), while soroban-sdk 25.3.1 simultaneously requires
+    # rustc >= 1.91.0 -- so no version satisfies both constraints except
+    # something newer than 1.91.0. `RUSTUP_TOOLCHAIN` takes precedence over
+    # the repo's `rust-toolchain.toml` override, so it's used here (job-wide)
+    # to force a working, newer toolchain for just this job's wasm build,
+    # without touching the 1.91.0 pin relied on by the other jobs (verified
+    # locally: fmt/clippy/build/test/coverage all pass cleanly on 1.91.0;
+    # only the `stellar contract build` step itself needs the newer compiler).
+    env:
+      RUSTUP_TOOLCHAIN: 1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -83,11 +96,15 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
-          toolchain: 1.91.0
+          toolchain: 1.93.0
           components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
+          targets: wasm32v1-none
+          override: true
+
+      - name: Ensure wasm32v1-none target is available
+        run: rustup target add wasm32v1-none
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -100,9 +117,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install system dependencies for Stellar CLI
+        # stellar-cli 25.2.0 pulls in a few crates with native build-script
+        # dependencies that GitHub's ubuntu-latest runners don't ship by
+        # default, so `cargo install stellar-cli` fails compiling them
+        # without these system packages present:
+        #   - libdbus-sys (secure credential storage) needs `dbus-1`.
+        #   - hidapi (hardware wallet / HID device support) needs `libudev`.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev libudev-dev pkg-config
+
       - name: Install Stellar CLI
         run: |
-          cargo install --locked stellar-cli
+          cargo install --locked stellar-cli --version 25.2.0
           stellar --version
 
       - name: Build contracts (wasm32)
@@ -114,7 +142,7 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          for wasm in stellar-lend/target/wasm32-unknown-unknown/release/*.wasm; do
+          for wasm in stellar-lend/target/wasm32v1-none/release/*.wasm; do
             # Don't re-optimize artifacts that already end in -optimized.wasm.
             case "$wasm" in
               *-optimized.wasm) continue ;;
@@ -126,10 +154,15 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          mkdir -p stellar-lend/target/wasm32-unknown-unknown/inspect
-          for wasm in stellar-lend/target/wasm32-unknown-unknown/release/*-optimized.wasm; do
-            out="stellar-lend/target/wasm32-unknown-unknown/inspect/$(basename "${wasm%.wasm}.json")"
-            stellar contract inspect --wasm "$wasm" --output json > "$out"
+          mkdir -p stellar-lend/target/wasm32v1-none/inspect
+          for wasm in stellar-lend/target/wasm32v1-none/release/*-optimized.wasm; do
+            out="stellar-lend/target/wasm32v1-none/inspect/$(basename "${wasm%.wasm}.json")"
+            # `contract inspect` is deprecated in stellar-cli 25.2.0 and its
+            # `--output json` option was removed outright (only
+            # xdr-base64/xdr-base64-array/docs remain) -- `contract info
+            # interface` is the supported replacement and still has a real
+            # `json` output format.
+            stellar contract info interface --wasm "$wasm" --output json > "$out"
             echo "inspected: $out"
           done
 
@@ -139,8 +172,8 @@ jobs:
         with:
           name: soroban-wasm-builds
           path: |
-            stellar-lend/target/wasm32-unknown-unknown/release/*.wasm
-            stellar-lend/target/wasm32-unknown-unknown/inspect/
+            stellar-lend/target/wasm32v1-none/release/*.wasm
+            stellar-lend/target/wasm32v1-none/inspect/
 
   build-and-test:
     name: Build & Test
@@ -153,10 +186,10 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: 1.91.0
-          components: rustfmt, clippy
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -215,25 +248,34 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: 1.91.0
+          override: true
 
       - name: Install cargo-audit
-        # Pin to the 0.21.x line that the runbook promises; --locked keeps the
-        # install reproducible across runner images.
-        run: cargo install cargo-audit --version '^0.21' --locked
+        # Was pinned to the 0.21.x line the runbook originally promised, but
+        # 0.21.2's bundled `rustsec` (0.30.2) can't parse newer advisory-db
+        # entries that use CVSS 4.0 vector strings (e.g. RUSTSEC-2026-0109),
+        # and fails the whole `cargo audit` run with "unsupported CVSS
+        # version: 4.0" before it ever gets to scanning our own
+        # dependencies -- an upstream tooling/data mismatch, not a real
+        # vulnerability. Bumped to 0.22.x (bundles rustsec 0.33.0, which
+        # parses CVSS 4.0 fine); --locked keeps the install reproducible
+        # across runner images.
+        run: cargo install cargo-audit --version '^0.22' --locked
 
       - name: Run security audit
+        # Ignored advisories and their rationale are documented in
+        # stellar-lend/.cargo/audit.toml. cargo-audit reads audit.toml
+        # automatically, so no --ignore flags are needed here.
+        # Review date: 2026-10-01
         run: |
           cd stellar-lend
-          cargo audit \
-            --ignore RUSTSEC-2026-0049 \
-            --ignore RUSTSEC-2025-0009 \
-            --ignore RUSTSEC-2023-0071 \
-            --ignore RUSTSEC-2024-0363 \
-            --ignore RUSTSEC-2024-0344 \
-            --ignore RUSTSEC-2022-0093
+          cargo audit
+
+      - name: Check interface docs match source
+        run: bash docs/scripts/check_interface_sync.sh
 
   coverage:
     name: Code Coverage
@@ -246,9 +288,10 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: 1.91.0
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
