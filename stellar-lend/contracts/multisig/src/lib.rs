@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, xdr::ToXdr,
+    contract, contracterror, contractevent, contractimpl, contracttype, xdr::ToXdr,
     Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
 };
 
@@ -81,7 +81,7 @@ pub struct ProposalApprovedEvent {
 }
 
 /// Event emitted after a proposal has been executed.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug)]
 pub struct ProposalExecutedEvent {
     pub id: u64,
@@ -90,7 +90,7 @@ pub struct ProposalExecutedEvent {
 }
 
 /// Event emitted after a batch of proposals has been atomically executed.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug)]
 pub struct BatchExecutedEvent {
     pub ids: Vec<u64>,
@@ -492,14 +492,12 @@ impl MultisigContract {
         Self::save_proposal(&env, &proposal);
 
         // Emit ProposalExecutedEvent
-        env.events().publish(
-            (symbol_short!("multisig"), symbol_short!("executed")),
-            ProposalExecutedEvent {
-                id,
-                action_kind,
-                ok: true,
-            },
-        );
+        ProposalExecutedEvent {
+            id,
+            action_kind,
+            ok: true,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -757,13 +755,7 @@ impl MultisigContract {
         }
 
         // Emit single BatchExecuted event with all applied IDs
-        env.events().publish(
-            (
-                symbol_short!("multisig"),
-                Symbol::new(&env, "batch_executed"),
-            ),
-            BatchExecutedEvent { ids },
-        );
+        BatchExecutedEvent { ids }.publish(&env);
         Ok(())
     }
 }

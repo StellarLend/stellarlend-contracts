@@ -86,6 +86,22 @@
 | `get_liquidation_incentive_bps` | `()` | — | `i128` |
 | `set_liquidation_threshold_bps` | `(threshold_bps: i128)` | admin | `Result<(), LendingError>` |
 
+### Config Store
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `config_set` | `(key: Symbol, value: Bytes)` | admin | `Result<(), LendingError>` |
+| `config_get` | `(key: Symbol)` | — | `Option<Bytes>` |
+| `config_backup` | `(name: Symbol)` | admin | `Result<(), LendingError>` |
+| `config_restore` | `(name: Symbol)` | admin | `Result<(), LendingError>` |
+
+### Governance Audit
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `get_governance_audit_count` | `()` | — | `u64` |
+| `get_governance_audit_entries` | `(limit: u64)` | — | `Vec<AuditLogEntry>` |
+
 ### Cross-Asset User Operations
 
 | Function | Signature | Auth Required | Returns |
