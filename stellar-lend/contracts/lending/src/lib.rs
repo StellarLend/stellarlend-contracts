@@ -29,6 +29,8 @@ mod borrow_health_factor_test;
 #[cfg(test)]
 mod borrow_index_test;
 #[cfg(test)]
+mod borrow_isolation_tier_test;
+#[cfg(test)]
 mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
 mod compound_interest_proptest;
