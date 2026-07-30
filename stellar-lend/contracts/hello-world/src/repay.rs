@@ -126,78 +126,91 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
-// ---------------------------------------------------------------------------
-// Position helpers (shared with borrow.rs and liquidate.rs)
-// ---------------------------------------------------------------------------
-
-/// A user's debt position.
+/// Emitted whenever a user's position (principal + interest) changes.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Position {
+pub struct PositionUpdatedEvent {
+    pub schema_version: u32,
+    pub user: Address,
     pub principal: i128,
-    pub last_update: u64,
+    pub interest: i128,
+    pub timestamp: u64,
 }
 
-/// Load the borrower's [`Position`] from persistent storage.
-pub fn load_position(env: &Env, borrower: &Address) -> Position {
-    let key = crate::DataKey::Debt(borrower.clone());
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Position {
-            principal: 0,
-            last_update: env.ledger().timestamp(),
-        })
+/// Emitted whenever user/protocol analytics counters change.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnalyticsUpdatedEvent {
+    pub schema_version: u32,
+    pub user: Address,
+    pub user_total_repayments: i128,
+    pub user_debt_value: i128,
+    pub protocol_total_repayments: i128,
+    pub protocol_debt_value: i128,
+    pub timestamp: u64,
 }
 
-/// Persist a [`Position`] to storage.
-pub fn save_position(env: &Env, borrower: &Address, position: &Position) {
-    let key = crate::DataKey::Debt(borrower.clone());
-    env.storage().persistent().set(&key, position);
-}
+pub const EVENT_SCHEMA_VERSION: u32 = 1;
 
-// ---------------------------------------------------------------------------
-// Helpers used by repay_debt
-// ---------------------------------------------------------------------------
-
-/// Accrue interest on `user`'s debt since the last interaction.
-fn accrue_interest(env: &Env, user: &Address) -> Result<(i128, i128), RepayError> {
-    let debt_key = crate::DataKey::Debt(user.clone());
-    let principal: i128 = env.storage().persistent().get(&debt_key).unwrap_or(0);
-
-    let interest_key = RepayDataKey::Interest(user.clone());
-    let existing_interest: i128 = env
-        .storage()
-        .persistent()
-        .get(&interest_key)
-        .unwrap_or(0);
-
-    let last_key = RepayDataKey::LastAccrual(user.clone());
-    let last_update: u64 = env
-        .storage()
-        .persistent()
-        .get(&last_key)
-        .unwrap_or(env.ledger().timestamp());
-
-    let now = env.ledger().timestamp();
-    let elapsed = now.saturating_sub(last_update);
-
-    let new_interest = if principal > 0 && elapsed > 0 {
-        compute_interest(principal, elapsed, DEFAULT_APR_BPS)?
-    } else {
-        0
+fn emit_repay(env: &Env, user: &Address, amount: i128, interest_paid: i128, principal_paid: i128) {
+    let event = RepayEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        user: user.clone(),
+        amount,
+        interest_paid,
+        principal_paid,
+        timestamp: env.ledger().timestamp(),
     };
+    env.events().publish((Symbol::new(env, "repay"),), event);
+}
 
-    let total_interest = existing_interest
-        .checked_add(new_interest)
-        .ok_or(RepayError::Overflow)?;
+fn emit_position_updated(env: &Env, user: &Address, principal: i128, interest: i128) {
+    let event = PositionUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        user: user.clone(),
+        principal,
+        interest,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "position_updated"),), event);
+}
 
+fn emit_analytics_updated(
+    env: &Env,
+    user: &Address,
+    user_total_repayments: i128,
+    user_debt_value: i128,
+    protocol_total_repayments: i128,
+    protocol_debt_value: i128,
+) {
+    let event = AnalyticsUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        user: user.clone(),
+        user_total_repayments,
+        user_debt_value,
+        protocol_total_repayments,
+        protocol_debt_value,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "analytics_updated"),), event);
+}
+
+// ---------------------------------------------------------------------------
+// Admin helpers
+// ---------------------------------------------------------------------------
+
+/// Register the native (XLM) asset contract address used when `asset` is `None`.
+pub fn set_native_asset_address(env: &Env, native_asset: Address) {
     env.storage()
         .persistent()
-        .set(&interest_key, &total_interest);
-    env.storage().persistent().set(&last_key, &now);
+        .set(&RepayDataKey::NativeAsset, &native_asset);
+}
 
-    Ok((principal, total_interest))
+/// Pause or unpause `repay_debt`.
+pub fn set_repay_paused(env: &Env, paused: bool) {
+    env.storage().persistent().set(&RepayDataKey::Paused, &paused);
 }
 
 fn is_repay_paused(env: &Env) -> bool {
@@ -207,73 +220,57 @@ fn is_repay_paused(env: &Env) -> bool {
         .unwrap_or(false)
 }
 
-fn set_repay_paused(env: &Env, paused: bool) {
-    env.storage()
+// ---------------------------------------------------------------------------
+// Interest accrual
+// ---------------------------------------------------------------------------
+
+/// Accrue interest on `user`'s debt since the last accrual, using the current
+/// protocol borrow rate from [`crate::interest_rate::calculate_borrow_rate`].
+///
+/// Returns the updated (principal, interest) pair. No-ops (but still stamps
+/// `LastAccrual`) when there is no outstanding principal.
+fn accrue_interest(env: &Env, user: &Address) -> Result<(i128, i128), RepayError> {
+    let debt_key = crate::DataKey::Debt(user.clone());
+    let principal: i128 = env.storage().persistent().get(&debt_key).unwrap_or(0);
+
+    let interest_key = RepayDataKey::Interest(user.clone());
+    let mut interest: i128 = env
+        .storage()
         .persistent()
-        .set(&RepayDataKey::Paused, &paused);
-}
+        .get(&interest_key)
+        .unwrap_or(0);
 
-fn set_native_asset_address(env: &Env, addr: Address) {
-    env.storage()
+    let last_accrual_key = RepayDataKey::LastAccrual(user.clone());
+    let last_accrual: u64 = env
+        .storage()
         .persistent()
-        .set(&RepayDataKey::NativeAsset, &addr);
-}
+        .get(&last_accrual_key)
+        .unwrap_or_else(|| env.ledger().timestamp());
 
-fn emit_repay(env: &Env, user: &Address, amount: i128, interest_paid: i128, principal_paid: i128) {
-    env.events().publish(
-        (Symbol::new(env, "repay"),),
-        RepayEvent {
-            schema_version: 1,
-            user: user.clone(),
-            amount,
-            interest_paid,
-            principal_paid,
-            timestamp: env.ledger().timestamp(),
-        },
-    );
-}
+    let now = env.ledger().timestamp();
+    let elapsed = now.saturating_sub(last_accrual);
 
-fn emit_position_updated(env: &Env, user: &Address, new_principal: i128, new_interest: i128) {
-    env.events().publish(
-        (Symbol::new(env, "position_updated"),),
-        (user.clone(), new_principal, new_interest),
-    );
-}
-
-fn emit_analytics_updated(
-    env: &Env,
-    user: &Address,
-    user_total_repayments: i128,
-    debt_value: i128,
-    protocol_repay_total: i128,
-    protocol_debt_value: i128,
-) {
-    env.events().publish(
-        (Symbol::new(env, "analytics_updated"),),
-        (
-            user.clone(),
-            user_total_repayments,
-            debt_value,
-            protocol_repay_total,
-            protocol_debt_value,
-        ),
-    );
-}
-
-pub fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, RepayError> {
-    if principal <= 0 || elapsed == 0 || rate_bps <= 0 {
-        return Ok(0);
+    if principal > 0 && elapsed > 0 {
+        let rate_bps = crate::interest_rate::calculate_borrow_rate(env).unwrap_or(0);
+        // interest = principal * rate_bps * elapsed_seconds / (BASIS_POINTS_SCALE * SECONDS_PER_YEAR)
+        let accrued = principal
+            .checked_mul(rate_bps)
+            .ok_or(RepayError::Overflow)?
+            .checked_mul(elapsed as i128)
+            .ok_or(RepayError::Overflow)?
+            .checked_div(BASIS_POINTS_SCALE)
+            .ok_or(RepayError::Overflow)?
+            .checked_div(SECONDS_PER_YEAR)
+            .ok_or(RepayError::Overflow)?;
+        interest = interest.checked_add(accrued).ok_or(RepayError::Overflow)?;
+        env.storage().persistent().set(&interest_key, &interest);
     }
-    let numerator = principal
-        .checked_mul(rate_bps)
-        .and_then(|v| v.checked_mul(elapsed as i128))
-        .ok_or(RepayError::Overflow)?;
-    let denominator = BPS_DENOM
-        .checked_mul(SECONDS_PER_YEAR)
-        .ok_or(RepayError::Overflow)?;
-    numerator
-        .checked_div(denominator)
-        .ok_or(RepayError::Overflow)
+
+    env.storage()
+        .persistent()
+        .set(&last_accrual_key, &now);
+
+    Ok((principal, interest))
 }
 
 // ---------------------------------------------------------------------------
