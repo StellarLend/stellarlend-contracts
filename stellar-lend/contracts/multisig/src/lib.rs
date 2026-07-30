@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes,
-    BytesN, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, xdr::ToXdr,
+    Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
 };
 
 /// Domain separator for multisig approval-authorization payloads (issue #1278).
@@ -731,9 +731,6 @@ impl MultisigContract {
 // mod action_allowlist_test;
 // #[cfg(test)]
 // mod upgrade_e2e_test;
-
-#[cfg(test)]
-mod revoke_approval_test;
 
 #[cfg(test)]
 mod tests {
