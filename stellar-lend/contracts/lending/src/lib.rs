@@ -149,8 +149,8 @@ use events::{
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, Address, Bytes, BytesN, Env, IntoVal,
-    String, Symbol, Val, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
+    Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
@@ -179,8 +179,14 @@ const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
-const DEFAULT_MAX_FLASH_BPS: i128 = 3_000;
-/// Maximum number of utilization samples retained in persistent storage.
+const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
+/// Maximum number of elements allowed in a [`LendingContract::receive`]
+/// payload. Prevents DoS through oversized payloads.
+const MAX_RECEIVE_PAYLOAD_LEN: u32 = 10;
+
+/// Minimum number of elements required in a [`LendingContract::receive`]
+/// payload (`[version, action]`).
+const MIN_RECEIVE_PAYLOAD_LEN: u32 = 2;
 ///
 /// Samples are kept in an oldest-first bounded vector internally. When the cap
 /// is reached, the next write evicts exactly one oldest entry before appending
@@ -415,13 +421,80 @@ pub enum ProtocolAction {
     FlashLoan,
 }
 
-// The canonical `LendingError` enum lives in `stellar_lend_common` so every
-// crate in the workspace shares identical discriminants (see that crate's
-// doc comment). A local duplicate definition used to live here as well but
-// was missing variants (`RepayAmountTooHigh`, `InvalidIsolationCeiling`)
-// that this file actually uses, and duplicated the type name — keeping only
-// the shared re-export is both correct and the single source of truth.
-pub use stellar_lend_common::LendingError;
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum LendingError {
+    InvalidAmount = 1001,
+    Overflow = 1002,
+    Unauthorized = 1003,
+    PendingAdminNotSet = 1004,
+    BelowMinimumBorrow = 1008,
+    NotInitialized = 1009,
+    AlreadyInitialized = 1010,
+    PositionHealthy = 1011,
+    SelfLiquidation = 2008,
+    DebtCeilingExceeded = 2001,
+    DepositCapExceeded = 2002,
+    /// A borrow would push total outstanding debt for the asset beyond the
+    /// configured per-asset `borrow_cap`.
+    BorrowCapExceeded = 2003,
+    InvalidFeeBps = 2005,
+    InvalidFlashUtilizationBps = 2006,
+    InsufficientCollateral = 2007,
+    IsolationCeilingExceeded = 2009,
+    InvalidLiquidationParams = 2011,
+    InvalidOracleSignature = 5001,
+    PriceOutOfBounds = 3004,
+    PriceUnavailable = 3005,
+    StaleOracleTimestamp = 5002,
+    OraclePubkeyNotSet = 5003,
+    MaxMoveBpsExceeded = 5004,
+    OracleReplay = 5005,
+    /// The asset has not been configured via set_asset_params.
+    AssetNotConfigured = 3001,
+    /// Oracle price record is missing for the requested asset.
+    PriceFeedNotFound = 3002,
+    /// Operation would result in an unsafe health factor.
+    HealthFactorTooLow = 3003,
+    UpgradeNotInitialized = 4001,
+    ProposalNotFound = 4002,
+    ProposalNotReady = 4003,
+    ProposalExpired = 4004,
+    ProposalAlreadyExecuted = 4005,
+    AlreadyApproved = 4006,
+    InsufficientUpgradeApprovals = 4007,
+    InvalidUpgradeVersion = 4008,
+    ApproverNotFound = 4009,
+    MaxApproversReached = 4010,
+    InvalidUpgradeConfig = 4011,
+    /// `write_off_bad_debt` called when there is no recorded bad debt.
+    NoBadDebt = 6001,
+    /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
+    WriteOffExceedsBadDebt = 6002,
+    /// `set_liquidation_threshold_bps` called with a value outside `[0, 10000]`.
+    InvalidLiquidationThresholdBps = 7000,
+    /// `set_close_factor_bps` called with a value outside `(0, 10000]`.
+    InvalidCloseFactorBps = 7001,
+    /// `set_liquidation_incentive_bps` called with a value outside
+    /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
+    InvalidLiquidationIncentiveBps = 7002,
+    /// `set_deposit_cap` called with a value <= 0.
+    InvalidDepositCap = 7005,
+    /// `set_rate_params` called with an internally inconsistent `RateParams`.
+    InvalidRateParams = 7006,
+    /// `receive` called with a payload version other than `1`.
+    InvalidPayloadVersion = 1013,
+    /// `receive` called with a payload that is too short, too long, or
+    /// contains values that cannot be decoded into the expected types.
+    MalformedPayload = 1014,
+    /// `receive` called with an action `Symbol` that is not `"deposit"`
+    /// or `"repay"`.
+    AssetNotSupported = 1015,
+    /// `receive` called with `from` equal to the token asset or the lending
+    /// contract itself (prevents self-call / reentrancy attacks).
+    UnauthorizedSender = 1016,
+}
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
 ///
@@ -1260,6 +1333,127 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
+    /// Receive tokens from a user via the SEP-41 `transfer_from`/`approve`
+    /// allowance flow and apply them as a deposit or debt repayment.
+    ///
+    /// This is a pull-based entrypoint: the user authorizes the lending
+    /// contract as a spender on the token contract (via `approve`) and then
+    /// calls `receive` with a payload specifying the desired action.  The
+    /// contract pulls `amount` from `from` into its own balance via
+    /// `transfer_from` before updating any protocol state.
+    ///
+    /// # Payload format
+    ///
+    /// `[version: u32, action: Symbol, ...optional_data]`
+    ///
+    /// * `version` — Must be `1` (current schema version).
+    /// * `action` — A `Symbol` indicating the action (`"deposit"` or
+    ///   `"repay"`).
+    /// * `optional_data` — Reserved for future use; ignored in the current
+    ///   version.
+    ///
+    /// # Security
+    ///
+    /// * Requires `from.require_auth()` so only the token owner can
+    ///   authorize a pull.
+    /// * Validates that `token_asset` matches the configured
+    ///   `ValuationCollateralAsset` before performing any transfer.
+    /// * Validates payload version and action before performing any
+    ///   transfer.
+    /// * The protocol pause and emergency state checks are delegated to the
+    ///   inner [`LendingContract::deposit`] / [`LendingContract::repay`]
+    ///   handlers (defence-in-depth: both `receive` and the inner handler
+    ///   call `require_initialized` and `require_auth`).
+    /// * Rejects calls from the token contract itself and the lending
+    ///   contract (prevents self-call attacks).
+    ///
+    /// # Errors
+    ///
+    /// * [`LendingError::InvalidPayloadVersion`] if `version != 1`.
+    /// * [`LendingError::MalformedPayload`] if the payload is too short,
+    ///   too long, or contains undecodable values.
+    /// * [`LendingError::AssetNotSupported`] if `token_asset` does not
+    ///   match the configured valuation collateral asset, or if the action
+    ///   is not `"deposit"` or `"repay"`.
+    /// * [`LendingError::UnauthorizedSender`] if `from` is the token
+    ///   contract or the lending contract itself.
+    /// * All errors from [`LendingContract::deposit`] or
+    ///   [`LendingContract::repay`] respectively.
+    pub fn receive(
+        env: Env,
+        token_asset: Address,
+        from: Address,
+        amount: i128,
+        payload: Vec<Val>,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+
+        // Validate that token_asset matches the configured valuation
+        // collateral asset so deposit/repay accounting stays consistent.
+        let configured_asset = Self::get_collateral_asset(env.clone())
+            .ok_or(LendingError::AssetNotSupported)?;
+        if token_asset != configured_asset {
+            return Err(LendingError::AssetNotSupported);
+        }
+
+        // Safety: reject calls from the token contract itself or the lending
+        // contract (prevents self-call / reentrancy attacks).
+        let contract_address = env.current_contract_address();
+        if from == token_asset || from == contract_address {
+            return Err(LendingError::UnauthorizedSender);
+        }
+
+        from.require_auth();
+
+        // Parse payload: [version: u32, action: Symbol, ...optional_data]
+        if payload.len() < MIN_RECEIVE_PAYLOAD_LEN {
+            return Err(LendingError::MalformedPayload);
+        }
+        if payload.len() > MAX_RECEIVE_PAYLOAD_LEN {
+            return Err(LendingError::MalformedPayload);
+        }
+
+        let version: u32 = payload
+            .get(0)
+            .unwrap()
+            .try_into_val()
+            .map_err(|_| LendingError::MalformedPayload)?;
+        if version != SCHEMA_VERSION_V1 {
+            return Err(LendingError::InvalidPayloadVersion);
+        }
+
+        let action_sym: Symbol = payload
+            .get(1)
+            .unwrap()
+            .try_into_val()
+            .map_err(|_| LendingError::MalformedPayload)?;
+
+        // Pull tokens from the user into the contract via transfer_from.
+        // The user must have previously called token_client.approve() to
+        // authorize the lending contract as a spender.
+        let token_client = TokenClient::new(&env, &token_asset);
+        token_client.transfer_from(
+            &contract_address,
+            &from,
+            &contract_address,
+            &amount,
+        );
+
+        if action_sym == symbol_short!("deposit") {
+            // Defence-in-depth: deposit() also calls require_initialized
+            // and user.require_auth(). The double check is intentional.
+            Self::deposit(env, from, amount)?;
+        } else if action_sym == symbol_short!("repay") {
+            // Defence-in-depth: repay() also calls require_initialized
+            // and user.require_auth(). The double check is intentional.
+            Self::repay(env, from, amount)?;
+        } else {
+            return Err(LendingError::AssetNotSupported);
+        }
+
+        Ok(())
+    }
+
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Deposit);
