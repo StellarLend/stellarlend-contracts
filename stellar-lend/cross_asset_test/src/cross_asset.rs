@@ -15,6 +15,12 @@
 
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Vec};
 
+// Re-export shared price-normalisation utilities from the protocol's common
+// crate so all call sites use identical arithmetic and scale constants.
+pub use stellar_lend_common::{
+    normalize_price, normalize_price_ceil, pow10_checked, INTERNAL_DECIMALS,
+};
+
 // ---------------------------------------------------------------------------
 // Admin storage
 // ---------------------------------------------------------------------------
@@ -52,9 +58,6 @@ fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/// Common internal fixed-point scale for value aggregation (10^18).
-pub const INTERNAL_DECIMALS: u32 = 18;
 
 /// Lower bound (inclusive) for `AssetConfig::collateral_factor_bps`.
 ///
@@ -141,6 +144,174 @@ pub struct ConfigUpdatedEvent {
 pub fn emit_config_updated(env: &Env, event: ConfigUpdatedEvent) {
     env.events()
         .publish((symbol_short!("crossAsst"), symbol_short!("cfgUpd")), event);
+}
+
+/// Emitted by [`initialize_asset`] when a new asset is successfully registered.
+///
+/// All fields reflect the **initial** configuration of the asset.
+///
+/// Topics: `("cross_asset", "asset_init")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AssetInitializedEvent {
+    /// Asset key identifying the newly registered asset.
+    pub asset_key: AssetKey,
+    /// Initial collateral factor in basis points.
+    pub collateral_factor_bps: i128,
+    /// Initial liquidation threshold in basis points.
+    pub liquidation_threshold: i128,
+    /// Whether the asset can be used as collateral.
+    pub can_collateralize: bool,
+    /// Whether the asset can be borrowed.
+    pub can_borrow: bool,
+    /// Initial oracle price (raw units, scaled by `price_decimals`).
+    pub price: i128,
+    /// Number of decimal places used by the oracle price feed.
+    pub price_decimals: u32,
+    /// Ledger timestamp at registration time.
+    pub timestamp: u64,
+}
+
+/// Emit an [`AssetInitializedEvent`].
+///
+/// Topics: `("cross_asset", "asset_init")`
+pub fn emit_asset_initialized(env: &Env, event: AssetInitializedEvent) {
+    env.events().publish(
+        (symbol_short!("crossAsst"), symbol_short!("assetInit")),
+        event,
+    );
+}
+
+/// Emitted by [`update_asset_price`] on every successful price update.
+///
+/// Topics: `("cross_asset", "price_upd")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PriceUpdatedEvent {
+    /// Asset key identifying the asset whose price was updated.
+    pub asset_key: AssetKey,
+    /// New oracle price (raw units, scaled by the asset's `price_decimals`).
+    pub price: i128,
+    /// Ledger timestamp at the time of the price update.
+    pub timestamp: u64,
+}
+
+/// Emit a [`PriceUpdatedEvent`].
+///
+/// Topics: `("cross_asset", "price_upd")`
+pub fn emit_price_updated(env: &Env, event: PriceUpdatedEvent) {
+    env.events().publish(
+        (symbol_short!("crossAsst"), symbol_short!("priceUpd")),
+        event,
+    );
+}
+
+/// Emitted by [`cross_asset_deposit`] on every successful deposit.
+///
+/// Topics: `("cross_asset", "deposit")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossDepositEvent {
+    /// Asset key identifying the deposited asset.
+    pub asset_key: AssetKey,
+    /// User who deposited.
+    pub user: Address,
+    /// Amount deposited (raw token units).
+    pub amount: i128,
+    /// User's total supplied balance after the deposit (raw token units).
+    pub new_supply: i128,
+    /// Ledger timestamp at the time of the deposit.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossDepositEvent`].
+///
+/// Topics: `("cross_asset", "deposit")`
+pub fn emit_cross_deposit(env: &Env, event: CrossDepositEvent) {
+    env.events().publish(
+        (symbol_short!("crossAsst"), symbol_short!("deposit")),
+        event,
+    );
+}
+
+/// Emitted by [`cross_asset_withdraw`] on every successful withdrawal.
+///
+/// Topics: `("cross_asset", "withdraw")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossWithdrawEvent {
+    /// Asset key identifying the withdrawn asset.
+    pub asset_key: AssetKey,
+    /// User who withdrew.
+    pub user: Address,
+    /// Amount withdrawn (raw token units).
+    pub amount: i128,
+    /// User's total supplied balance after the withdrawal (raw token units).
+    pub new_supply: i128,
+    /// Ledger timestamp at the time of the withdrawal.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossWithdrawEvent`].
+///
+/// Topics: `("cross_asset", "withdraw")`
+pub fn emit_cross_withdraw(env: &Env, event: CrossWithdrawEvent) {
+    env.events().publish(
+        (symbol_short!("crossAsst"), symbol_short!("withdraw")),
+        event,
+    );
+}
+
+/// Emitted by [`cross_asset_borrow`] on every successful borrow.
+///
+/// Topics: `("cross_asset", "borrow")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossBorrowEvent {
+    /// Asset key identifying the borrowed asset.
+    pub asset_key: AssetKey,
+    /// User who borrowed.
+    pub user: Address,
+    /// Amount borrowed (raw token units).
+    pub amount: i128,
+    /// User's total borrowed balance after the borrow (raw token units).
+    pub new_borrowed: i128,
+    /// Ledger timestamp at the time of the borrow.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossBorrowEvent`].
+///
+/// Topics: `("cross_asset", "borrow")`
+pub fn emit_cross_borrow(env: &Env, event: CrossBorrowEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("borrow")), event);
+}
+
+/// Emitted by [`cross_asset_repay`] on every successful repayment.
+///
+/// Topics: `("cross_asset", "repay")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossRepayEvent {
+    /// Asset key identifying the repaid asset.
+    pub asset_key: AssetKey,
+    /// User whose debt was repaid.
+    pub user: Address,
+    /// Amount actually repaid (capped at the outstanding balance; raw token units).
+    pub amount_repaid: i128,
+    /// User's total borrowed balance after the repayment (raw token units).
+    pub new_borrowed: i128,
+    /// Ledger timestamp at the time of the repayment.
+    pub timestamp: u64,
+}
+
+/// Emit a [`CrossRepayEvent`].
+///
+/// Topics: `("cross_asset", "repay")`
+pub fn emit_cross_repay(env: &Env, event: CrossRepayEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("repay")), event);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,60 +424,6 @@ pub struct UserPositionSummary {
     pub borrow_capacity: i128,
     /// 1 if the position is healthy, 0 if under-water.
     pub is_healthy: u32,
-}
-
-// ---------------------------------------------------------------------------
-// Decimal normalization
-// ---------------------------------------------------------------------------
-
-/// Raise 10 to `exp`, checking for overflow.
-fn pow10_checked(exp: u32) -> Option<i128> {
-    let mut acc: i128 = 1;
-    for _ in 0..exp {
-        acc = acc.checked_mul(10)?;
-    }
-    Some(acc)
-}
-
-/// Normalise `raw_price` (which has `asset_decimals` fractional digits) to the
-/// common `INTERNAL_DECIMALS` scale.
-///
-/// # Formula
-///
-/// ```text
-/// normalised = raw_price * 10^(INTERNAL_DECIMALS - asset_decimals)   if INTERNAL >= asset_decimals
-/// normalised = raw_price / 10^(asset_decimals - INTERNAL_DECIMALS)   otherwise
-/// ```
-///
-/// Division is performed with **floor** semantics (rounds toward zero in Rust),
-/// which is conservative for collateral values.  Callers that need ceiling
-/// rounding (debt) should use [`normalize_price_ceil`].
-///
-/// Returns `None` on overflow.
-pub fn normalize_price(raw_price: i128, asset_decimals: u32) -> Option<i128> {
-    if asset_decimals == INTERNAL_DECIMALS {
-        return Some(raw_price);
-    }
-    if asset_decimals < INTERNAL_DECIMALS {
-        let scale = pow10_checked(INTERNAL_DECIMALS - asset_decimals)?;
-        raw_price.checked_mul(scale)
-    } else {
-        let scale = pow10_checked(asset_decimals - INTERNAL_DECIMALS)?;
-        Some(raw_price / scale) // floor (rounds toward zero)
-    }
-}
-
-/// Same as [`normalize_price`] but rounds **up** when dividing (ceiling).
-/// Used for debt values to stay conservative.
-pub fn normalize_price_ceil(raw_price: i128, asset_decimals: u32) -> Option<i128> {
-    if asset_decimals <= INTERNAL_DECIMALS {
-        normalize_price(raw_price, asset_decimals)
-    } else {
-        let scale = pow10_checked(asset_decimals - INTERNAL_DECIMALS)?;
-        // ceiling division: (a + (b-1)) / b
-        let adjusted = raw_price.checked_add(scale.checked_sub(1)?)?;
-        Some(adjusted / scale)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -487,8 +604,23 @@ pub fn initialize_asset(
     }
     save_config(env, &key, &cfg);
     let mut list = load_asset_list(env);
-    list.push_back(key);
+    list.push_back(key.clone());
     save_asset_list(env, &list);
+
+    emit_asset_initialized(
+        env,
+        AssetInitializedEvent {
+            asset_key: key,
+            collateral_factor_bps: cfg.collateral_factor_bps,
+            liquidation_threshold: cfg.liquidation_threshold,
+            can_collateralize: cfg.can_collateralize,
+            can_borrow: cfg.can_borrow,
+            price: cfg.price,
+            price_decimals: cfg.price_decimals,
+            timestamp: cfg.last_update_ts,
+        },
+    );
+
     Ok(())
 }
 
@@ -610,14 +742,21 @@ pub fn update_asset_price(
     cfg.price = price;
     cfg.last_update_ts = env.ledger().timestamp();
     save_config(env, &key, &cfg);
+
+    emit_price_updated(
+        env,
+        PriceUpdatedEvent {
+            asset_key: key,
+            price: cfg.price,
+            timestamp: cfg.last_update_ts,
+        },
+    );
+
     Ok(())
 }
 
 /// Return how old (in seconds) the stored oracle price for an asset is.
-pub fn get_asset_price_age(
-    env: &Env,
-    asset: Option<Address>,
-) -> Result<u64, CrossAssetError> {
+pub fn get_asset_price_age(env: &Env, asset: Option<Address>) -> Result<u64, CrossAssetError> {
     let key = asset_key(asset);
     let cfg = load_config(env, &key)?;
     let now = env.ledger().timestamp();
@@ -794,6 +933,8 @@ pub fn cross_asset_deposit(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -812,6 +953,17 @@ pub fn cross_asset_deposit(
         .ok_or(CrossAssetError::Overflow)?;
     save_total_supply(env, &key, total);
 
+    emit_cross_deposit(
+        env,
+        CrossDepositEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount,
+            new_supply: pos.supplied,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+
     Ok(pos)
 }
 
@@ -822,6 +974,8 @@ pub fn cross_asset_withdraw(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
+
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -830,11 +984,34 @@ pub fn cross_asset_withdraw(
     if pos.supplied < amount {
         return Err(CrossAssetError::InsufficientCollateral);
     }
+
+    let prior_supplied = pos.supplied;
+    let prior_total_supply = load_total_supply(env, &key);
+
     pos.supplied -= amount;
     save_user_supply(env, &key, &user, pos.supplied);
 
-    let total = checked_sub_total(load_total_supply(env, &key), amount)?;
+    let total = checked_sub_total(prior_total_supply, amount)?;
     save_total_supply(env, &key, total);
+
+    let summary = get_user_position_summary(env, &user)?;
+    if summary.is_healthy == 0 {
+        pos.supplied = prior_supplied;
+        save_user_supply(env, &key, &user, pos.supplied);
+        save_total_supply(env, &key, prior_total_supply);
+        return Err(CrossAssetError::InsufficientCollateral);
+    }
+
+    emit_cross_withdraw(
+        env,
+        CrossWithdrawEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount,
+            new_supply: pos.supplied,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
 
     Ok(pos)
 }
@@ -849,6 +1026,7 @@ pub fn cross_asset_borrow(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -880,6 +1058,17 @@ pub fn cross_asset_borrow(
         return Err(CrossAssetError::InsufficientCollateral);
     }
 
+    emit_cross_borrow(
+        env,
+        CrossBorrowEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount,
+            new_borrowed: pos.borrowed,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+
     Ok(pos)
 }
 
@@ -890,6 +1079,7 @@ pub fn cross_asset_repay(
     asset: Option<Address>,
     amount: i128,
 ) -> Result<AssetPosition, CrossAssetError> {
+    user.require_auth();
     if amount <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
@@ -902,7 +1092,100 @@ pub fn cross_asset_repay(
     let total = checked_sub_total(load_total_debt(env, &key), repay)?;
     save_total_debt(env, &key, total);
 
+    emit_cross_repay(
+        env,
+        CrossRepayEvent {
+            asset_key: key,
+            user: user.clone(),
+            amount_repaid: repay,
+            new_borrowed: pos.borrowed,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+
     Ok(pos)
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: issue #1687 — withdrawal health checks
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod withdrawal_health_check_regression_test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    #[test]
+    fn withdraw_rejects_state_change_when_post_withdrawal_position_is_unhealthy() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = Address::generate(&env);
+        let debt_asset = Address::generate(&env);
+
+        // One shared contract instance, but a fresh `as_contract` frame per
+        // state-changing call: `require_auth()` may only be satisfied once
+        // per frame, and this test drives the same `user` through three
+        // separate authenticated calls (deposit, borrow, withdraw) -- see
+        // the comment on `with_contract`.
+        let contract_id = env.register(NoOpContract {}, ());
+
+        env.as_contract(&contract_id, || {
+            initialize_asset(
+                &env,
+                None,
+                AssetConfig {
+                    collateral_factor_bps: 7500,
+                    liquidation_threshold: 8000,
+                    max_supply: 0,
+                    max_borrow: 0,
+                    can_collateralize: true,
+                    can_borrow: false,
+                    price: 2_000_000,
+                    price_decimals: 6,
+                    last_update_ts: 0,
+                },
+            )
+            .unwrap();
+
+            initialize_asset(
+                &env,
+                Some(debt_asset.clone()),
+                AssetConfig {
+                    collateral_factor_bps: 7500,
+                    liquidation_threshold: 8000,
+                    max_supply: 0,
+                    max_borrow: 0,
+                    can_collateralize: false,
+                    can_borrow: true,
+                    price: 1_000_000_000_000_000_000,
+                    price_decimals: 18,
+                    last_update_ts: 0,
+                },
+            )
+            .unwrap();
+        });
+
+        env.as_contract(&contract_id, || {
+            cross_asset_deposit(&env, user.clone(), None, 10).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            cross_asset_borrow(&env, user.clone(), Some(debt_asset.clone()), 14).unwrap();
+        });
+
+        env.as_contract(&contract_id, || {
+            let result = cross_asset_withdraw(&env, user.clone(), None, 9);
+            assert_eq!(result, Err(CrossAssetError::InsufficientCollateral));
+
+            let pos = get_user_asset_position(&env, &user, None);
+            assert_eq!(pos.supplied, 10);
+
+            let key = asset_key(None);
+            assert_eq!(load_total_supply(&env, &key), 10);
+
+            let summary = get_user_position_summary(&env, &user).unwrap();
+            assert_eq!(summary.is_healthy, 1);
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +1220,7 @@ mod total_underflow_regression_test {
     #[test]
     fn withdraw_returns_overflow_when_total_supply_desynced_below_amount() {
         let env = Env::default();
+        env.mock_all_auths();
         with_contract(&env, || {
             let user = Address::generate(&env);
             let key = AssetKey::Native;
@@ -962,6 +1246,7 @@ mod total_underflow_regression_test {
     #[test]
     fn repay_returns_overflow_when_total_debt_desynced_below_repay() {
         let env = Env::default();
+        env.mock_all_auths();
         with_contract(&env, || {
             let user = Address::generate(&env);
             let key = AssetKey::Native;
@@ -981,6 +1266,7 @@ mod total_underflow_regression_test {
     #[test]
     fn withdraw_normal_path_unaffected() {
         let env = Env::default();
+        env.mock_all_auths();
         with_contract(&env, || {
             let user = Address::generate(&env);
             let key = AssetKey::Native;
@@ -1000,6 +1286,7 @@ mod total_underflow_regression_test {
     #[test]
     fn repay_normal_path_reaching_exact_zero_still_succeeds() {
         let env = Env::default();
+        env.mock_all_auths();
         with_contract(&env, || {
             let user = Address::generate(&env);
             let key = AssetKey::Native;
@@ -1011,6 +1298,112 @@ mod total_underflow_regression_test {
             let pos = cross_asset_repay(&env, user.clone(), None, 80).unwrap();
             assert_eq!(pos.borrowed, 20);
             assert_eq!(load_total_debt(&env, &key), 0);
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: issue #1684 — missing require_auth on deposit/withdraw
+// ---------------------------------------------------------------------------
+//
+// `cross_asset_deposit`/`cross_asset_withdraw` used to mutate a `user`'s
+// supply balance without ever calling `user.require_auth()`, so any caller
+// could act on behalf of any other address simply by passing it as the
+// `user` argument. These tests assert both functions now demand the user's
+// authorization before touching state.
+#[cfg(test)]
+mod require_auth_regression_test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn with_contract<F, T>(env: &Env, f: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        let contract_id = env.register(NoOpContract {}, ());
+        env.as_contract(&contract_id, f)
+    }
+
+    /// An attacker who has not obtained the victim's authorization cannot
+    /// deposit on the victim's behalf.
+    #[test]
+    #[should_panic]
+    fn deposit_rejects_caller_without_user_auth() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let victim = Address::generate(&env);
+            let _ = cross_asset_deposit(&env, victim, None, 100);
+        });
+    }
+
+    /// An attacker who has not obtained the victim's authorization cannot
+    /// withdraw the victim's collateral.
+    #[test]
+    #[should_panic]
+    fn withdraw_rejects_caller_without_user_auth() {
+        let env = Env::default();
+        with_contract(&env, || {
+            let victim = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            // Victim has a real balance to steal, established via direct
+            // storage writes (bypassing the public API's own auth check).
+            save_user_supply(&env, &key, &victim, 100);
+            save_total_supply(&env, &key, 100);
+
+            let _ = cross_asset_withdraw(&env, victim, None, 100);
+        });
+    }
+
+    /// Once the user's authorization is present (e.g. the user themself is
+    /// the transaction signer), deposit still succeeds as before.
+    #[test]
+    fn deposit_succeeds_with_user_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            // `cross_asset_deposit` calls `load_config`, so the asset must
+            // be registered first (unlike `cross_asset_withdraw`, which
+            // does not consult the asset config) -- see
+            // `cross_asset_config_bounds_test.rs`'s `default_config()` for
+            // the same minimal-valid-config pattern.
+            initialize_asset(
+                &env,
+                None,
+                AssetConfig {
+                    collateral_factor_bps: 7_500,
+                    liquidation_threshold: 8_000,
+                    max_supply: 0,
+                    max_borrow: 0,
+                    can_collateralize: true,
+                    can_borrow: true,
+                    price: 1_000_000,
+                    price_decimals: 6,
+                    last_update_ts: 0,
+                },
+            )
+            .unwrap();
+            let pos = cross_asset_deposit(&env, user.clone(), None, 100).unwrap();
+            assert_eq!(pos.supplied, 100);
+        });
+    }
+
+    /// Once the user's authorization is present, withdraw still succeeds as
+    /// before.
+    #[test]
+    fn withdraw_succeeds_with_user_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        with_contract(&env, || {
+            let user = Address::generate(&env);
+            let key = AssetKey::Native;
+
+            save_user_supply(&env, &key, &user, 100);
+            save_total_supply(&env, &key, 100);
+
+            let pos = cross_asset_withdraw(&env, user.clone(), None, 40).unwrap();
+            assert_eq!(pos.supplied, 60);
         });
     }
 }

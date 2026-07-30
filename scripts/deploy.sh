@@ -157,7 +157,7 @@ fi
 # ---------------------------------------------------------------------------
 # Locate WASM files
 # ---------------------------------------------------------------------------
-LENDING_WASM="$WASM_DIR/hello_world.optimized.wasm"
+LENDING_WASM="$WASM_DIR/stellarlend_lending.optimized.wasm"
 AMM_WASM="$WASM_DIR/stellarlend_amm.optimized.wasm"
 
 if [[ ! -f "$LENDING_WASM" ]]; then

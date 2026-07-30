@@ -2,10 +2,12 @@
 use soroban_sdk::{contracttype, Env};
 use stellar_lend_common::BPS_DENOM;
 
-/// Configuration parameters for the two-slope kink interest-rate model.
+/// Configuration parameters for the two-slope kink interest-rate model with
+/// an optional emergency surcharge band at high utilization.
 ///
-/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for the full piecewise formula, curve
-/// sketch, and worked examples at representative utilizations.
+/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for the base piecewise formula and
+/// [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for the surcharge band behaviour,
+/// rationale, and a worked example.
 ///
 /// All fields are expressed in basis points (bps), where `100 bps = 1%` and
 /// `10,000 bps = 100%`.
@@ -43,6 +45,31 @@ pub struct RateParams {
     /// Hysteresis band (bps). When the target rate differs from the current rate by less
     /// than this band, the current rate is held steady. Set to `0` to disable hysteresis.
     pub hysteresis_bps: i128,
+
+    /// Utilization threshold (bps) that activates the emergency surcharge band.
+    ///
+    /// When `utilization_bps > surcharge_kink_bps`, an additional linear surcharge
+    /// is computed on top of the base two-slope rate:
+    ///
+    /// ```text
+    /// surcharge = (utilization - surcharge_kink) × surcharge_slope / BPS_DENOM
+    /// ```
+    ///
+    /// The surcharge is applied **before** the ceiling clamp, so it can push the rate
+    /// up to [`rate_ceiling_bps`](Self::rate_ceiling_bps) but not beyond. Set to
+    /// `10_000` (or higher) with [`surcharge_slope`](Self::surcharge_slope)` = 0` to
+    /// disable the surcharge (preserving the legacy two-slope behaviour).
+    ///
+    /// See [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for rationale and a worked example.
+    pub surcharge_kink_bps: i128,
+
+    /// Slope (rate per bps of utilization) applied in the surcharge band.
+    ///
+    /// Multiplied by the excess utilization above
+    /// [`surcharge_kink_bps`](Self::surcharge_kink_bps) and divided by
+    /// `BPS_DENOM = 10_000`. A value of `0` disables the surcharge regardless of
+    /// the kink.
+    pub surcharge_slope: i128,
 }
 
 impl Default for RateParams {
@@ -60,9 +87,13 @@ impl Default for RateParams {
     /// | `rate_ceiling_bps` | 10,000 | 100% maximum rate |
     /// | `max_rate_change_per_ledger_bps` | `i128::MAX` | No per-ledger limit |
     /// | `hysteresis_bps` | 0 | No hysteresis band |
+    /// | `surcharge_kink_bps` | 10_000 | 100% utilization — disables surcharge (kink at max util) |
+    /// | `surcharge_slope` | 0 | Zero slope — disables surcharge regardless of kink |
     ///
     /// This configuration incentivizes capital utilization up to 80%, then steeply penalizes
-    /// scarcity beyond that point. See [`RATE_MODEL.md`](./RATE_MODEL.md) for curve analysis.
+    /// scarcity beyond that point. The surcharge band is disabled by default, preserving the
+    /// legacy two-slope behaviour. See [`RATE_MODEL.md`](./RATE_MODEL.md) for curve analysis
+    /// and [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for the surcharge mechanism.
     fn default() -> Self {
         Self {
             base_rate_bps: 100,
@@ -73,6 +104,8 @@ impl Default for RateParams {
             rate_ceiling_bps: 10_000,
             max_rate_change_per_ledger_bps: i128::MAX,
             hysteresis_bps: 0,
+            surcharge_kink_bps: 10_000,
+            surcharge_slope: 0,
         }
     }
 }
@@ -86,9 +119,13 @@ pub enum RateModelError {
 
 /// Computes the target borrow rate given utilization and rate model parameters.
 ///
-/// Implements a two-slope piecewise linear model with a kink point. Below the kink,
-/// the rate increases gently; above it, the slope increases sharply to incentivize
-/// capital efficiency and protect against runaway scarcity.
+/// Implements a two-slope piecewise linear model with a kink point and an
+/// **optional emergency surcharge band** at very high utilization. Below the
+/// kink, the rate increases gently; above it, the slope increases sharply to
+/// incentivize capital efficiency and protect against runaway scarcity.  When
+/// utilization exceeds [`surcharge_kink_bps`](RateParams::surcharge_kink_bps),
+/// an additional linear surcharge is stacked on top to further incentivise
+/// repayment and new deposits during a liquidity crunch.
 ///
 /// # Formula
 ///
@@ -109,10 +146,20 @@ pub enum RateModelError {
 ///     r_raw = r_pre + jump
 /// ```
 ///
+/// **Surcharge** (added when `u > surcharge_kink`):
+/// ```text
+/// surcharge_band = max(0, u - surcharge_kink)
+/// surcharge = (surcharge_band × surcharge_slope) / BPS_DENOM
+/// r_surcharged = r_raw + surcharge
+/// ```
+///
 /// **Final rate** (after clamping):
 /// ```text
-/// r = max(floor, min(raw, ceiling))
+/// r = max(floor, min(r_surcharged, ceiling))
 /// ```
+///
+/// The function is **monotonic non-decreasing** in utilization: every segment
+/// has a non-negative slope, and the surcharge only adds to the rate.
 ///
 /// # Arguments
 ///
@@ -136,7 +183,15 @@ pub enum RateModelError {
 /// - At 80% utilization (kink): `1,700 bps`
 /// - At 100% utilization: `3,700 bps` (maximum non-ceiling-limited rate)
 ///
-/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for detailed curve sketch and additional worked examples.
+/// With a surcharge configured at 95% util with slope 80,000:
+///
+/// - At 95% utilization and below: no surcharge added
+/// - At 100% utilization: base rate `3,700 bps` + surcharge of
+///   `(10_000 - 9_500) × 80_000 / 10_000 = 4_000 bps` = **7,700 bps**
+///
+/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for detailed curve sketch and
+/// [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for surcharge rationale and a
+/// full worked example.
 pub fn compute_borrow_rate(
     utilization_bps: i128,
     params: &RateParams,
@@ -168,7 +223,24 @@ pub fn compute_borrow_rate(
     } else {
         pre_kink_rate
     };
-    Ok(raw_rate
+
+    let rate_with_surcharge = if utilization_bps > params.surcharge_kink_bps {
+        let surcharge_excess = utilization_bps
+            .checked_sub(params.surcharge_kink_bps)
+            .ok_or(RateModelError::Overflow)?;
+        let surcharge = surcharge_excess
+            .checked_mul(params.surcharge_slope)
+            .ok_or(RateModelError::Overflow)?
+            .checked_div(BPS_DENOM)
+            .ok_or(RateModelError::Overflow)?;
+        raw_rate
+            .checked_add(surcharge)
+            .ok_or(RateModelError::Overflow)?
+    } else {
+        raw_rate
+    };
+
+    Ok(rate_with_surcharge
         .max(params.rate_floor_bps)
         .min(params.rate_ceiling_bps))
 }
