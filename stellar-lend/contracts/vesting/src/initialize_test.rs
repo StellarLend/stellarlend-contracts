@@ -1,13 +1,7 @@
 use super::{VestingContract, VestingContractClient, VestingError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-fn setup_client() -> (
-    Env,
-    VestingContractClient<'static>,
-    Address,
-    Address,
-    Address,
-) {
+fn setup_client() -> (Env, VestingContractClient<'static>, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
