@@ -114,6 +114,10 @@ pub enum LendingError {
     InvalidDepositCap = 7005,
     /// Rate parameters are internally inconsistent.
     InvalidRateParams = 7006,
+    /// Liquidation grace period exceeds the protocol maximum.
+    InvalidLiquidationGracePeriod = 7007,
+    /// Config backup not found.
+    BackupNotFound = 8001,
 }
 
 /// Multiply `value` by `rate_bps` and divide by [`BPS_DENOM`].
@@ -407,5 +411,6 @@ mod tests {
         assert_eq!(LendingError::InvalidLiquidationIncentiveBps as u32, 7002);
         assert_eq!(LendingError::InvalidDepositCap as u32, 7005);
         assert_eq!(LendingError::InvalidRateParams as u32, 7006);
+        assert_eq!(LendingError::BackupNotFound as u32, 8001);
     }
 }

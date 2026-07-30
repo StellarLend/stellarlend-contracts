@@ -109,6 +109,22 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `set_pause` | `(env, pause_type: PauseType, paused: bool, ttl_ledgers: u32)` | admin or guardian | Sets or clears a granular pause flag. `ttl_ledgers` is added to the current ledger to compute expiry. `ttl_ledgers = 0` means the pause expires immediately. `paused = false` is a valid unpause. Emits `PauseStateChangedEvent`. |
 | `get_pause_state` | `(env, pause_type: PauseType) → bool` | — | Returns `true` if the operation is paused (own flag or `All` override). |
 
+### Config Store
+
+| Function | Signature | Auth | Description |
+|---|---|---|---|
+| `config_set` | `(env, key: Symbol, value: Bytes) → Result<(), LendingError>` | admin | Upserts a config entry; replaces existing value for the same key. |
+| `config_get` | `(env, key: Symbol) → Option<Bytes>` | — | Returns the raw value for a config key, or `None` if unset. |
+| `config_backup` | `(env, name: Symbol) → Result<(), LendingError>` | admin | Snapshots all current config entries under `ConfigBackup(name)`. Reverts with `BackupNotFound` if no entries exist. |
+| `config_restore` | `(env, name: Symbol) → Result<(), LendingError>` | admin | Replaces all current config entries with the snapshot stored under `ConfigBackup(name)`. Reverts with `BackupNotFound` if the backup is missing. |
+
+### Governance Audit
+
+| Function | Signature | Auth | Description |
+|---|---|---|---|
+| `get_governance_audit_count` | `(env) → u64` | — | Returns the total number of governance audit entries recorded. |
+| `get_governance_audit_entries` | `(env, limit: u64) → Vec<AuditLogEntry>` | — | Returns up to `limit` audit entries from newest to oldest. |
+
 ### Emergency State Machine
 
 ```
@@ -158,9 +174,9 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 
 The functions listed below appear in older documentation but are **not yet implemented** in `src/lib.rs`. They are tracked for future milestones.
 
-
+| Function | Description |
+|---|---|
 | `deposit_collateral(env, user, asset, amount)` | Multi-asset collateral support. |
-| `data_store_init / data_save / data_load / data_backup / data_restore` | Persistent data-store management helpers. |
 
 ---
 

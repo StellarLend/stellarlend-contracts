@@ -10,8 +10,6 @@
 //! and that `liquidate` actually sources its close-factor cap and incentive
 //! from the governed values rather than from recompiled constants.
 
-#![cfg(test)]
-
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},
     Address, Env, IntoVal,

@@ -1,12 +1,13 @@
-[profile.default]
+[default]
 exclude = [
     "stellarlend-client",
 ]
 exclude-files = [
     "client/**/*",
     "indexing_system/**/*",
-    "contracts/hello-world/**/*",
-    "contracts/amm/**/*"
+    "contracts/amm/**/*",
+    "**/target_check/**/*",
+    "**/examples/**/*",
+    "**/fuzz/**/*"
 ]
-
 

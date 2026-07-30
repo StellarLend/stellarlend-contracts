@@ -15,7 +15,7 @@
 //! Interest, last-accrual timestamp, the native asset address, and analytics
 //! counters are module-local, keyed by [`RepayDataKey`].
 
-use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Symbol};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -24,8 +24,17 @@ use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
 /// Denominator for basis-point interest rates (10_000 = 100%).
 pub const BASIS_POINTS_SCALE: i128 = 10_000;
 
+/// Alias used internally; same value as BASIS_POINTS_SCALE.
+const BPS_DENOM: i128 = BASIS_POINTS_SCALE;
+
 /// Seconds in a 365-day year, used to annualize the bps borrow rate.
 pub const SECONDS_PER_YEAR: i128 = 365 * 24 * 60 * 60;
+
+/// Default annual borrow rate in basis points (5% = 500 bps).
+const DEFAULT_RATE_BPS: i128 = 500;
+
+/// Public alias for the default rate, used by liquidate.rs.
+pub const DEFAULT_APR_BPS: i128 = DEFAULT_RATE_BPS;
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -50,6 +59,31 @@ pub enum RepayDataKey {
     ProtocolTotalRepayments,
     /// Protocol-wide outstanding debt value across all users.
     ProtocolDebtValue,
+}
+
+// ---------------------------------------------------------------------------
+// Position type (shared with liquidate.rs and borrow.rs)
+// ---------------------------------------------------------------------------
+
+/// A user's debt position: outstanding principal and last-known collateral.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Position {
+    pub principal: i128,
+    pub collateral: i128,
+    pub last_accrual: u64,
+}
+
+/// Load a [`Position`] from storage.  Returns `None` when no position exists.
+pub fn load_position(env: &Env, user: &Address) -> Option<Position> {
+    let key = RepayDataKey::Interest(user.clone()); // re-use key namespace for the composite struct
+    env.storage().persistent().get(&key)
+}
+
+/// Persist a [`Position`] to storage.
+pub fn save_position(env: &Env, user: &Address, position: &Position) {
+    let key = RepayDataKey::Interest(user.clone());
+    env.storage().persistent().set(&key, position);
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +126,65 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
-fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, RepayError> {
+fn emit_repay(env: &Env, user: &Address, amount: i128, interest_paid: i128, principal_paid: i128) {
+    env.events().publish(
+        (symbol_short!("repay"), user.clone()),
+        RepayEvent {
+            schema_version: 1,
+            user: user.clone(),
+            amount,
+            interest_paid,
+            principal_paid,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+fn emit_position_updated(env: &Env, user: &Address, principal: i128, interest: i128) {
+    env.events().publish(
+        (symbol_short!("pos_upd"), user.clone()),
+        (principal, interest),
+    );
+}
+
+fn emit_analytics_updated(
+    env: &Env,
+    user: &Address,
+    user_total: i128,
+    debt_value: i128,
+    protocol_total: i128,
+    protocol_debt: i128,
+) {
+    env.events().publish(
+        (symbol_short!("anl_upd"), user.clone()),
+        (user_total, debt_value, protocol_total, protocol_debt),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+fn is_repay_paused(env: &Env) -> bool {
+    env.storage()
+        .persistent()
+        .get::<RepayDataKey, bool>(&RepayDataKey::Paused)
+        .unwrap_or(false)
+}
+
+pub fn set_repay_paused(env: &Env, paused: bool) {
+    env.storage()
+        .persistent()
+        .set(&RepayDataKey::Paused, &paused);
+}
+
+pub fn set_native_asset_address(env: &Env, asset: Address) {
+    env.storage()
+        .persistent()
+        .set(&RepayDataKey::NativeAsset, &asset);
+}
+
+pub fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, RepayError> {
     if principal <= 0 || elapsed == 0 || rate_bps <= 0 {
         return Ok(0);
     }
@@ -101,12 +193,45 @@ fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i12
         .and_then(|v| v.checked_mul(elapsed as i128))
         .ok_or(RepayError::Overflow)?;
     let denominator = BPS_DENOM
-        .checked_mul(SECONDS_PER_YEAR as i128)
+        .checked_mul(SECONDS_PER_YEAR)
         .ok_or(RepayError::Overflow)?;
     numerator
         .checked_div(denominator)
         .ok_or(RepayError::Overflow)
 }
+
+/// Accrue interest for `user` since the last recorded accrual timestamp.
+///
+/// Returns `(principal, accrued_interest)`.  On the first call the accrued
+/// interest will be zero because there is no elapsed time yet.
+fn accrue_interest(env: &Env, user: &Address) -> Result<(i128, i128), RepayError> {
+    let debt_key = crate::DataKey::Debt(user.clone());
+    let principal: i128 = env
+        .storage()
+        .persistent()
+        .get(&debt_key)
+        .unwrap_or(0);
+
+    let interest_key = RepayDataKey::Interest(user.clone());
+    let stored_interest: i128 = env
+        .storage()
+        .persistent()
+        .get(&interest_key)
+        .unwrap_or(0);
+
+    let now = env.ledger().timestamp();
+    let last_accrual_key = RepayDataKey::LastAccrual(user.clone());
+    let last_accrual: u64 = env
+        .storage()
+        .persistent()
+        .get(&last_accrual_key)
+        .unwrap_or(now);
+
+    let elapsed = now.saturating_sub(last_accrual);
+    let new_interest = compute_interest(principal, elapsed, DEFAULT_RATE_BPS)?;
+    let interest = stored_interest
+        .checked_add(new_interest)
+        .ok_or(RepayError::Overflow)?;
 
     env.storage()
         .persistent()
