@@ -9,27 +9,34 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Five-job pipeline that mirrors docs/CI_OVERVIEW.md:
+#
+#   check ──────────────► build-and-test ─► coverage
+#   soroban-checks ─────►       │
+#                              ▼
+#   audit (parallel with the above)
+#
+# - `check`, `soroban-checks`, `audit`: run on ubuntu-latest in parallel.
+# - `build-and-test`: runs on macos-latest, gated on check + soroban-checks.
+# - `coverage`: runs on ubuntu-latest (cargo-tarpaulin is Linux-only, it uses
+#   ptrace), gated on build-and-test so coverage runs only when the
+#   workspace actually compiled and tests linked.
 jobs:
-  ci:
-    name: Lending Contract CI
+  check:
+    name: Format & Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # This ensures a full history, preventing git index errors
-        
-        
-        
-        
-      - name: Set toolchain env variable
-        run: echo "toolchain=stable" >> $GITHUB_ENV
+          fetch-depth: 0 # Full history avoids git index errors in cached steps
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: 1.91.0
           components: rustfmt, clippy
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -44,56 +51,276 @@ jobs:
 
       - name: Check formatting
         run: |
-          cd stellar-lend/contracts/lending
-          cargo fmt -- --check
+          cd stellar-lend
+          cargo fmt --all -- --check
 
       - name: Run clippy
         run: |
-          cd stellar-lend/contracts/lending
-          cargo clippy --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast -A clippy::too-many-arguments -A clippy::enum_variant_names
+          cd stellar-lend
+          # --all-targets --all-features -- -D warnings matches docs/CI_OVERVIEW.md.
+          # The -A flags below are retained for known false positives that have
+          # historically been tolerated in this codebase; flip them back to -D
+          # once the underlying warnings are cleaned up.
+          cargo clippy --all-targets --all-features --workspace -- \
+            -D warnings \
+            -A deprecated \
+            -A dead_code \
+            -A unused-imports \
+            -A unused-attributes \
+            -A clippy::inconsistent-digit-grouping \
+            -A clippy::manual-range-contains \
+            -A clippy::unnecessary-cast
+
+  soroban-checks:
+    name: Soroban Validations
+    runs-on: ubuntu-latest
+    # NOTE on the toolchain version used in this job: `stellar-lend/rust-toolchain.toml`
+    # pins 1.91.0 repo-wide (and that pin is honoured, via rustup's directory
+    # override, by every other job that runs `cargo`/`stellar` inside
+    # `stellar-lend/`). However `stellar-cli` 25.2.0 hard-refuses to build
+    # contracts on rustc 1.81, 1.82, 1.83, *or 1.91.0* ("use a rust version
+    # other than ..."), while soroban-sdk 25.3.1 simultaneously requires
+    # rustc >= 1.91.0 -- so no version satisfies both constraints except
+    # something newer than 1.91.0. `RUSTUP_TOOLCHAIN` takes precedence over
+    # the repo's `rust-toolchain.toml` override, so it's used here (job-wide)
+    # to force a working, newer toolchain for just this job's wasm build,
+    # without touching the 1.91.0 pin relied on by the other jobs (verified
+    # locally: fmt/clippy/build/test/coverage all pass cleanly on 1.91.0;
+    # only the `stellar contract build` step itself needs the newer compiler).
+    env:
+      RUSTUP_TOOLCHAIN: 1.93.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+          targets: wasm32v1-none
+          override: true
+
+      - name: Ensure wasm32v1-none target is available
+        run: rustup target add wasm32v1-none
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            stellar-lend/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install system dependencies for Stellar CLI
+        # stellar-cli 25.2.0 pulls in a few crates with native build-script
+        # dependencies that GitHub's ubuntu-latest runners don't ship by
+        # default, so `cargo install stellar-cli` fails compiling them
+        # without these system packages present:
+        #   - libdbus-sys (secure credential storage) needs `dbus-1`.
+        #   - hidapi (hardware wallet / HID device support) needs `libudev`.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev libudev-dev pkg-config
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked stellar-cli --version 25.2.0
+          stellar --version
+
+      - name: Build contracts (wasm32)
+        run: |
+          cd stellar-lend
+          stellar contract build --verbose
+
+      - name: Optimize contracts
+        run: |
+          set -e
+          shopt -s nullglob
+          for wasm in stellar-lend/target/wasm32v1-none/release/*.wasm; do
+            # Don't re-optimize artifacts that already end in -optimized.wasm.
+            case "$wasm" in
+              *-optimized.wasm) continue ;;
+            esac
+            stellar contract optimize --wasm "$wasm"
+          done
+
+      - name: Inspect compiled contracts
+        run: |
+          set -e
+          shopt -s nullglob
+          mkdir -p stellar-lend/target/wasm32v1-none/inspect
+          for wasm in stellar-lend/target/wasm32v1-none/release/*-optimized.wasm; do
+            out="stellar-lend/target/wasm32v1-none/inspect/$(basename "${wasm%.wasm}.json")"
+            # `contract inspect` is deprecated in stellar-cli 25.2.0 and its
+            # `--output json` option was removed outright (only
+            # xdr-base64/xdr-base64-array/docs remain) -- `contract info
+            # interface` is the supported replacement and still has a real
+            # `json` output format.
+            stellar contract info interface --wasm "$wasm" --output json > "$out"
+            echo "inspected: $out"
+          done
+
+      - name: Upload Soroban build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soroban-wasm-builds
+          path: |
+            stellar-lend/target/wasm32v1-none/release/*.wasm
+            stellar-lend/target/wasm32v1-none/inspect/
+
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-latest
+    needs: [check, soroban-checks]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.91.0
+          override: true
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            stellar-lend/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Build project
         run: |
-          cd stellar-lend/contracts/lending
+          cd stellar-lend
           cargo build --verbose
 
-      - name: Run tests
+      - name: Run unit tests
         run: |
-          cd stellar-lend/contracts/lending
+          cd stellar-lend
           cargo test --lib --verbose
 
       - name: Run integration tests
         run: |
-          cd stellar-lend/contracts/lending
+          cd stellar-lend
           cargo test --tests --verbose
 
-      - name: Generate lending test report
+      # `cargo doc` runs LAST on purpose: a doc-build failure here should not
+      # mask a more important test failure earlier in the same job.
+      - name: Build documentation
         run: |
-          cd stellar-lend/contracts/lending
-          cargo test --lib --verbose -- --nocapture > lending_test_report.txt
-          cat lending_test_report.txt
+          cd stellar-lend
+          cargo doc --no-deps --verbose
+
+      - name: Generate test report
+        if: always()
+        run: |
+          cd stellar-lend || exit 0
+          # Best-effort capture; do not fail the job if test report generation
+          # fails because tests themselves were the failure.
+          cargo test --lib --verbose -- --nocapture > lending_test_report.txt 2>&1 || true
+          tail -n 200 lending_test_report.txt
 
       - name: Upload test report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: stellar-lend/contracts/lending/lending_test_report.txt
+          path: stellar-lend/lending_test_report.txt
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.91.0
+          override: true
+
+      - name: Install cargo-audit
+        # Was pinned to the 0.21.x line the runbook originally promised, but
+        # 0.21.2's bundled `rustsec` (0.30.2) can't parse newer advisory-db
+        # entries that use CVSS 4.0 vector strings (e.g. RUSTSEC-2026-0109),
+        # and fails the whole `cargo audit` run with "unsupported CVSS
+        # version: 4.0" before it ever gets to scanning our own
+        # dependencies -- an upstream tooling/data mismatch, not a real
+        # vulnerability. Bumped to 0.22.x (bundles rustsec 0.33.0, which
+        # parses CVSS 4.0 fine); --locked keeps the install reproducible
+        # across runner images.
+        run: cargo install cargo-audit --version '^0.22' --locked
+
+      - name: Run security audit
+        # Ignored advisories and their rationale are documented in
+        # stellar-lend/.cargo/audit.toml. cargo-audit reads audit.toml
+        # automatically, so no --ignore flags are needed here.
+        # Review date: 2026-10-01
+        run: |
+          cd stellar-lend
+          cargo audit
+
+      - name: Check interface docs match source
+        run: bash docs/scripts/check_interface_sync.sh
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: [build-and-test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.91.0
+          override: true
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            stellar-lend/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked --version 0.31.0
 
       - name: Generate code coverage
         run: |
-          cd stellar-lend/contracts/lending
-          cargo tarpaulin --verbose --out Xml --packages stellarlend-lending --lib --exclude-files "**/indexing_system/**"
-
-      - name: Enforce lending crate coverage threshold
-        run: python3 scripts/enforce_coverage.py stellar-lend/contracts/lending/cobertura.xml --threshold 63.0 --overall-only
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: Run security audit
-        run: |
           cd stellar-lend
-          cargo audit --ignore RUSTSEC-2026-0049 --ignore RUSTSEC-2025-0009 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0363 --ignore RUSTSEC-2024-0344 --ignore RUSTSEC-2022-0093
+          cargo tarpaulin --verbose --out Xml --workspace
+
+      - name: Enforce per-crate coverage thresholds
+        run: |
+          python3 scripts/enforce_coverage.py \
+            stellar-lend/cobertura.xml \
+            --thresholds-json scripts/coverage_thresholds.json
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: stellar-lend/cobertura.xml

@@ -7,10 +7,8 @@
 //! - Large amount near pool depletion behaves correctly (no panic, sensible output).
 //! - Quoted fee matches `compute_fee` output directly.
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient, AmmPoolError, DEFAULT_FEE_BPS};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, Env};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,7 +24,7 @@ fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>) {
     let client = AmmContractClient::new(&env, &id);
     let token_a = soroban_sdk::Address::generate(&env);
     let token_b = soroban_sdk::Address::generate(&env);
-    client.init_pool(&ra, &rb, &token_a, &token_b).unwrap();
+    client.init_pool(&ra, &rb, &token_a, &token_b);
     // SAFETY: env is returned alongside the client and outlives this call.
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client)
@@ -47,7 +45,7 @@ fn test_quote_matches_live_swap_a_for_b() {
     // Get the quote first (read-only — does not mutate state).
     let (_env, client) = setup(ra, rb);
     let fee_bps = client.get_fee_bps();
-    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true).unwrap();
+    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true);
 
     // Execute the live swap on the same pool.
     let live_out = client.swap_a_for_b(&amount_in);
@@ -83,7 +81,7 @@ fn test_quote_matches_live_swap_b_for_a() {
 
     let (_env, client) = setup(ra, rb);
     let fee_bps = client.get_fee_bps();
-    let quote = client.get_swap_quote(&amount_in, &fee_bps, &false).unwrap();
+    let quote = client.get_swap_quote(&amount_in, &fee_bps, &false);
 
     let live_out = client.swap_b_for_a(&amount_in);
 
@@ -154,7 +152,7 @@ fn test_large_amount_near_depletion_a_for_b() {
 
     let (_env, client) = setup(ra, rb);
     let fee_bps = client.get_fee_bps();
-    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true).unwrap();
+    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true);
 
     assert!(
         quote.amount_out > 0,
@@ -183,7 +181,7 @@ fn test_large_amount_near_depletion_b_for_a() {
 
     let (_env, client) = setup(ra, rb);
     let fee_bps = client.get_fee_bps();
-    let quote = client.get_swap_quote(&amount_in, &fee_bps, &false).unwrap();
+    let quote = client.get_swap_quote(&amount_in, &fee_bps, &false);
 
     assert!(
         quote.amount_out > 0,
@@ -216,7 +214,7 @@ fn test_quoted_fee_matches_compute_fee_default_bps() {
     let (_env, client) = setup(1_000_000, 1_000_000);
     let fee_bps = DEFAULT_FEE_BPS; // 30
 
-    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true).unwrap();
+    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true);
     let expected_fee = amount_in * fee_bps / 10_000; // floor division
 
     assert_eq!(
@@ -231,7 +229,7 @@ fn test_quoted_fee_matches_compute_fee_custom_bps() {
     let fee_bps: i128 = 200; // 2 %
     let (_env, client) = setup(1_000_000, 1_000_000);
 
-    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true).unwrap();
+    let quote = client.get_swap_quote(&amount_in, &fee_bps, &true);
     let expected_fee = amount_in * fee_bps / 10_000;
 
     assert_eq!(
@@ -246,9 +244,12 @@ fn test_quoted_fee_zero_bps() {
     let amount_in: i128 = 5_000;
     let (_env, client) = setup(100_000, 100_000);
 
-    let quote = client.get_swap_quote(&amount_in, &0, &true).unwrap();
+    let quote = client.get_swap_quote(&amount_in, &0, &true);
     assert_eq!(quote.fee, 0, "zero fee_bps must yield fee=0 in quote");
-    assert!(quote.amount_out > 0, "zero-fee quote must still produce output");
+    assert!(
+        quote.amount_out > 0,
+        "zero-fee quote must still produce output"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +290,7 @@ fn test_quote_does_not_mutate_reserves() {
     let (_env, client) = setup(ra, rb);
     let fee_bps = client.get_fee_bps();
 
-    let _quote = client.get_swap_quote(&50_000, &fee_bps, &true).unwrap();
+    let _quote = client.get_swap_quote(&50_000, &fee_bps, &true);
 
     let (ra_after, rb_after) = client.get_reserves();
     assert_eq!(ra_after, ra, "get_swap_quote must not mutate reserve_a");

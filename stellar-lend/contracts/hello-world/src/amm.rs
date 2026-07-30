@@ -1,6 +1,6 @@
-use soroban_sdk::{contracttype, symbol_short, Address, Env};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
 
-use crate::amm_twap;
+use crate::{amm_twap, risk_management};
 
 // ---------------------------------------------------------------------------
 // Storage types
@@ -74,6 +74,12 @@ pub fn get_reserves(env: &Env, asset: &Address) -> PoolReserves {
 /// token A, decreasing reserve0 and increasing reserve1.
 pub fn swap(env: &Env, asset: &Address, amount: u128, a_for_b: bool) {
     assert!(amount > 0, "swap amount must be positive");
+    if risk_management::is_emergency_paused(env) {
+        panic!("protocol is emergency paused");
+    }
+    if risk_management::is_operation_paused(env, Symbol::new(env, "amm_swap")) {
+        panic!("amm_swap is paused");
+    }
     let mut r = load_reserves(env, asset);
     assert!(r.reserve0 > 0 && r.reserve1 > 0, "pool not initialised");
     if a_for_b {
@@ -90,6 +96,12 @@ pub fn swap(env: &Env, asset: &Address, amount: u128, a_for_b: bool) {
 
 /// Add liquidity to the pool, increasing both reserves.
 pub fn add_liquidity(env: &Env, asset: &Address, add_a: u128, add_b: u128) {
+    if risk_management::is_emergency_paused(env) {
+        panic!("protocol is emergency paused");
+    }
+    if risk_management::is_operation_paused(env, Symbol::new(env, "amm_add_liquidity")) {
+        panic!("amm_add_liquidity is paused");
+    }
     let mut r = load_reserves(env, asset);
     assert!(r.reserve0 > 0 && r.reserve1 > 0, "pool not initialised");
     r.reserve0 = r.reserve0.wrapping_add(add_a);
@@ -99,6 +111,12 @@ pub fn add_liquidity(env: &Env, asset: &Address, add_a: u128, add_b: u128) {
 
 /// Remove liquidity from the pool, decreasing both reserves.
 pub fn remove_liquidity(env: &Env, asset: &Address, rem_a: u128, rem_b: u128) {
+    if risk_management::is_emergency_paused(env) {
+        panic!("protocol is emergency paused");
+    }
+    if risk_management::is_operation_paused(env, Symbol::new(env, "amm_remove_liquidity")) {
+        panic!("amm_remove_liquidity is paused");
+    }
     let mut r = load_reserves(env, asset);
     assert!(r.reserve0 > rem_a, "remove exceeds reserve0");
     assert!(r.reserve1 > rem_b, "remove exceeds reserve1");

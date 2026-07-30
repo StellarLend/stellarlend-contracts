@@ -8,7 +8,7 @@ This document outlines the versioning policy for the `get_user_position` view fu
 
 ### Schema Stability Guarantee
 
-The `UserPositionSummary` struct and all individual view functions (`get_collateral_balance`, `get_debt_balance`, `get_collateral_value`, `get_debt_value`, `get_health_factor`, `get_max_liquidatable_amount`, `get_liquidation_incentive_amount`) are considered **schema v1** and must remain stable across all contract upgrades.
+The `UserPositionSummary` struct and all individual view functions (`get_collateral_balance`, `get_debt_balance`, `get_collateral_value`, `get_debt_value`, `get_health_factor`, `get_max_liquidatable_amount`, `get_liquidation_incentive_bps`) are considered **schema v1** and must remain stable across all contract upgrades.
 
 ### Versioning Rules
 

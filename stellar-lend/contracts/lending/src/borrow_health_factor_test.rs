@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::{
     DataKey, LendingContract, LendingContractClient, LendingError, HEALTH_FACTOR_SCALE,
     LIQUIDATION_THRESHOLD_BPS,

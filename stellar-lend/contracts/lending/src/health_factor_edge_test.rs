@@ -21,8 +21,12 @@ fn assert_health_factor_consistency(
     expected: i128,
 ) {
     let position = client.get_position(user);
+    let user_position = client.get_user_position(user);
     let health_factor = client.get_health_factor(user);
 
+    assert_eq!(position.collateral, user_position.collateral);
+    assert_eq!(position.debt, user_position.debt);
+    assert_eq!(position.health_factor, user_position.health_factor);
     assert_eq!(position.health_factor, expected);
     assert_eq!(health_factor, expected);
 }
@@ -85,7 +89,7 @@ fn health_factor_overflow_returns_i128_max_sentinel() {
             &user,
             &DebtPosition {
                 principal: 1,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

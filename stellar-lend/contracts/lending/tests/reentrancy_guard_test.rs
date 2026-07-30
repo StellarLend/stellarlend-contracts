@@ -13,11 +13,11 @@ use soroban_sdk::{
     contract,
     contractimpl,
     testutils::Address as _,
+    xdr::FromXdr,
     Address,
     Bytes,
     Env,
     IntoVal,
-    Symbol,
     Val,
 };
 
@@ -80,14 +80,11 @@ impl DepositReentrant {
         params: Bytes,
     ) -> Val {
         // `params` encodes the lending contract address to call back into.
-        // We use env.invoke_contract to call deposit.
-        let lending_id = Address::from_xdr(&env, &params);
+        // We use LendingContractClient to call deposit.
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
+        let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
-        env.invoke_contract::<Val>(
-            &lending_id,
-            &Symbol::new(&env, "deposit"),
-            soroban_sdk::vec![&env, user.into_val(&env), 100_i128.into_val(&env),],
-        );
+        lending_client.deposit(&user, &100_i128);
         true.into_val(&env)
     }
 }
@@ -110,13 +107,10 @@ impl WithdrawReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
+        let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
-        env.invoke_contract::<Val>(
-            &lending_id,
-            &Symbol::new(&env, "withdraw"),
-            soroban_sdk::vec![&env, user.into_val(&env), 100_i128.into_val(&env),],
-        );
+        lending_client.withdraw(&user, &100_i128);
         true.into_val(&env)
     }
 }
@@ -139,13 +133,10 @@ impl BorrowReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
+        let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
-        env.invoke_contract::<Val>(
-            &lending_id,
-            &Symbol::new(&env, "borrow"),
-            soroban_sdk::vec![&env, user.into_val(&env), 100_i128.into_val(&env),],
-        );
+        lending_client.borrow(&user, &100_i128);
         true.into_val(&env)
     }
 }
@@ -168,13 +159,10 @@ impl RepayReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
+        let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
-        env.invoke_contract::<Val>(
-            &lending_id,
-            &Symbol::new(&env, "repay"),
-            soroban_sdk::vec![&env, user.into_val(&env), 100_i128.into_val(&env),],
-        );
+        lending_client.repay(&user, &100_i128);
         true.into_val(&env)
     }
 }
@@ -197,22 +185,18 @@ impl LiquidateReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
+        let lending_client = LendingContractClient::new(&env, &lending_id);
         let liquidator = Address::generate(&env);
         let borrower = Address::generate(&env);
         let debt_asset = Address::generate(&env);
         let collateral_asset = Address::generate(&env);
-        env.invoke_contract::<Val>(
-            &lending_id,
-            &Symbol::new(&env, "liquidate"),
-            soroban_sdk::vec![
-                &env,
-                liquidator.into_val(&env),
-                borrower.into_val(&env),
-                debt_asset.into_val(&env),
-                collateral_asset.into_val(&env),
-                100_i128.into_val(&env),
-            ],
+        lending_client.liquidate(
+            &liquidator,
+            &borrower,
+            &debt_asset,
+            &collateral_asset,
+            &100_i128,
         );
         true.into_val(&env)
     }
@@ -236,20 +220,10 @@ impl NestedFlashReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
+        let lending_client = LendingContractClient::new(&env, &lending_id);
         let receiver2 = Address::generate(&env);
-        env.invoke_contract::<Val>(
-            &lending_id,
-            &Symbol::new(&env, "flash_loan"),
-            soroban_sdk::vec![
-                &env,
-                initiator.into_val(&env),
-                receiver2.into_val(&env),
-                asset.into_val(&env),
-                100_i128.into_val(&env),
-                Bytes::new(&env).into_val(&env),
-            ],
-        );
+        lending_client.flash_loan(&initiator, &receiver2, &asset, &100_i128, &Bytes::new(&env));
         true.into_val(&env)
     }
 }
@@ -267,7 +241,9 @@ fn test_deposit_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(DepositReentrant, ());
     let initiator = Address::generate(&env);
-    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "deposit during flash loan must fail");
@@ -285,7 +261,9 @@ fn test_withdraw_blocked_during_flash_loan() {
     let receiver = env.register(WithdrawReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "withdraw during flash loan must fail");
@@ -304,7 +282,9 @@ fn test_borrow_blocked_during_flash_loan() {
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "borrow during flash loan must fail");
@@ -322,7 +302,9 @@ fn test_repay_blocked_during_flash_loan() {
     let receiver = env.register(RepayReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "repay during flash loan must fail");
@@ -340,7 +322,9 @@ fn test_liquidate_blocked_during_flash_loan() {
     let receiver = env.register(LiquidateReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "liquidate during flash loan must fail");
@@ -358,7 +342,9 @@ fn test_nested_flash_loan_blocked() {
     let receiver = env.register(NestedFlashReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "nested flash loan must fail");
@@ -376,7 +362,9 @@ fn test_operations_resume_after_blocked_reentry() {
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = Bytes::from_slice(&env, &contract_id.to_xdr(&env));
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     // Attempt reentrant borrow — fails.
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);

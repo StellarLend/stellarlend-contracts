@@ -190,9 +190,7 @@ impl CompliantReceiver {
             // Credit treasury
             let tre_key = DataKey::Treasury(asset);
             let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&tre_key, &(tre_bal + total));
+            env.storage().persistent().set(&tre_key, &(tre_bal + total));
         });
     }
 }
@@ -247,9 +245,7 @@ impl OverRepayingReceiver {
 
             let tre_key = DataKey::Treasury(asset);
             let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&tre_key, &(tre_bal + total));
+            env.storage().persistent().set(&tre_key, &(tre_bal + total));
         });
     }
 }
