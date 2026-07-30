@@ -7,34 +7,39 @@ integrators can decode events safely across contract upgrades.
 
 The versioning strategy is minimal by design:
 
-- A single `EVENT_SCHEMA_VERSION: u32` constant in
-  `contracts/hello-world/src/events.rs` is the single source of truth.
+- Each contract defines its own `EVENT_SCHEMA_VERSION: u32` constant in its
+  own event module.
 - Versioned event structs carry a `schema_version: u32` field populated with
-  that constant at emit time.
+  the contract-local constant at emit time.
 - A `SchemaVersionEvent` is emitted once during `initialize`, giving indexers
-  an on-chain anchor for the version active at deployment.
+  an on-chain anchor for the version active at deployment for that contract.
+
+This document covers the event schema versioning policy for each contract
+separately. `contracts/lending` and `contracts/hello-world` maintain independent
+schema versioning, so indexers should track each contract's schema version
+based on the contract address being indexed.
 
 ---
 
 ## Versioned Events
 
-| Struct | Since version | Notes |
-|---|---|---|
-| `SchemaVersionEvent` | 1 | Emitted once on `initialize`. |
-| `DepositEvent` | 1 | Emitted when a user deposits collateral. Includes user, amount, new balance, and timestamp. |
-| `WithdrawEvent` | 1 | Emitted when a user withdraws collateral. Includes user, amount, new balance, and timestamp. |
-| `BorrowEvent` | 1 | Emitted when a user borrows against collateral. Includes user, amount, new debt principal, and timestamp. |
-| `RepayEvent` | 1 | Emitted when a user repays debt. Includes user, amount, new debt principal, and timestamp. |
-| `LiquidateEvent` | 1 | Emitted when a liquidator liquidates an undercollateralized position. Includes liquidator, borrower, repaid debt, seized collateral, remaining debt, remaining collateral, and timestamp. |
-| `LiquidationEventV1` | 1 | Versioned liquidation with post-liquidation borrower snapshot. |
-| `BorrowerHealthEventV1` | 1 | Borrower health snapshot emitted alongside position updates. |
-| `DepositEvent` | 1 | Versioned deposit event with user and new collateral balance. |
-| `WithdrawEvent` | 1 | Versioned withdraw event with user and new collateral balance. |
-| `BorrowEvent` | 1 | Versioned borrow event with user and new debt balance. |
-| `RepayEvent` | 1 | Versioned repay event with user and new debt balance. |
-| `AmmSwapEventV1` | 1 | Versioned AMM swap event with stable `amm/v1` topics. |
-| `AmmLiquidityAddedEventV1` | 1 | Versioned AMM add-liquidity event with stable `amm/v1` topics. |
-| `AmmLiquidityRemovedEventV1` | 1 | Versioned AMM remove-liquidity event with stable `amm/v1` topics. |
+| Struct                       | Since version | Notes                                                                                                                                                                                     |
+| ---------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SchemaVersionEvent`         | 1             | Emitted once on `initialize`.                                                                                                                                                             |
+| `DepositEvent`               | 1             | Emitted when a user deposits collateral. Includes user, amount, new balance, and timestamp.                                                                                               |
+| `WithdrawEvent`              | 1             | Emitted when a user withdraws collateral. Includes user, amount, new balance, and timestamp.                                                                                              |
+| `BorrowEvent`                | 1             | Emitted when a user borrows against collateral. Includes user, amount, new debt principal, and timestamp.                                                                                 |
+| `RepayEvent`                 | 1             | Emitted when a user repays debt. Includes user, amount, new debt principal, and timestamp.                                                                                                |
+| `LiquidateEvent`             | 1             | Emitted when a liquidator liquidates an undercollateralized position. Includes liquidator, borrower, repaid debt, seized collateral, remaining debt, remaining collateral, and timestamp. |
+| `LiquidationEventV1`         | 1             | Versioned liquidation with post-liquidation borrower snapshot.                                                                                                                            |
+| `BorrowerHealthEventV1`      | 1             | Borrower health snapshot emitted alongside position updates.                                                                                                                              |
+| `DepositEvent`               | 1             | Versioned deposit event with user and new collateral balance.                                                                                                                             |
+| `WithdrawEvent`              | 1             | Versioned withdraw event with user and new collateral balance.                                                                                                                            |
+| `BorrowEvent`                | 1             | Versioned borrow event with user and new debt balance.                                                                                                                                    |
+| `RepayEvent`                 | 1             | Versioned repay event with user and new debt balance.                                                                                                                                     |
+| `AmmSwapEventV1`             | 1             | Versioned AMM swap event with stable `amm/v1` topics.                                                                                                                                     |
+| `AmmLiquidityAddedEventV1`   | 1             | Versioned AMM add-liquidity event with stable `amm/v1` topics.                                                                                                                            |
+| `AmmLiquidityRemovedEventV1` | 1             | Versioned AMM remove-liquidity event with stable `amm/v1` topics.                                                                                                                         |
 
 ## AMM Event Topics
 

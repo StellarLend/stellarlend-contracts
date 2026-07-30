@@ -21,6 +21,7 @@ mod accrual_state_doc_test;
 mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
+#[cfg(test)]
 mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
@@ -29,9 +30,13 @@ mod borrow_health_factor_test;
 #[cfg(test)]
 mod borrow_index_test;
 #[cfg(test)]
+mod borrow_isolation_tier_test;
+#[cfg(test)]
 mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
 mod compound_interest_proptest;
+#[cfg(test)]
+mod cross_asset_borrow_cap_test;
 #[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
@@ -62,8 +67,6 @@ mod granular_pause_ops_test;
 mod health_factor_edge_test;
 #[cfg(test)]
 mod initialize_auth_test;
-#[cfg(test)]
-mod insurance_fund_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
@@ -1861,13 +1864,28 @@ impl LendingContract {
     ///   or `close_factor_bps > 7500`.
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
         if close_factor_bps <= 0 || close_factor_bps > MAX_CLOSE_FACTOR_BPS {
             return Err(LendingError::InvalidCloseFactorBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::CloseFactorBps, &close_factor_bps);
+        events::emit_close_factor_bps_set(&env, close_factor_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_close_factor_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
@@ -1912,13 +1930,28 @@ impl LendingContract {
         incentive_bps: i128,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
         if !(0..=MAX_LIQUIDATION_INCENTIVE_BPS).contains(&incentive_bps) {
             return Err(LendingError::InvalidLiquidationIncentiveBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
+        events::emit_liquidation_incentive_bps_set(&env, incentive_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_liquidation_incentive_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 

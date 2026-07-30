@@ -256,3 +256,54 @@ pub fn emit_flash_fee_updated(env: &Env, fee_bps: i128) {
     env.events()
         .publish((Symbol::new(env, "FlashFeeUpdatedEvent"),), event);
 }
+
+/// Emitted when the admin updates the governed close-factor cap (basis points)
+/// used by `liquidate`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloseFactorBpsSetEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// The new close-factor cap in basis points.
+    pub close_factor_bps: i128,
+    /// Timestamp of the update (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emit a close-factor-bps-set event.
+pub fn emit_close_factor_bps_set(env: &Env, close_factor_bps: i128) {
+    let event = CloseFactorBpsSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        close_factor_bps,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "CloseFactorBpsSetEvent"),), event);
+}
+
+/// Emitted when the admin updates the governed liquidation incentive (basis
+/// points) used by `liquidate` to compute the bonus collateral seized on top of
+/// repaid debt.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiquidationIncentiveBpsSetEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// The new liquidation incentive in basis points.
+    pub incentive_bps: i128,
+    /// Timestamp of the update (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emit a liquidation-incentive-bps-set event.
+pub fn emit_liquidation_incentive_bps_set(env: &Env, incentive_bps: i128) {
+    let event = LiquidationIncentiveBpsSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        incentive_bps,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish(
+        (Symbol::new(env, "LiquidationIncentiveBpsSetEvent"),),
+        event,
+    );
+}
