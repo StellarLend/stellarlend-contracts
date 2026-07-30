@@ -109,7 +109,7 @@ mod asset_price_age_test;
 #[cfg(test)]
 mod guardian_threshold_safety_test;
 #[cfg(test)]
-mod gov_payload_hash_test;
+mod gov_quorum_test;
 
 // Legacy test suite currently mismatches contract API and is excluded from CI compile.
 // #[cfg(test)]
