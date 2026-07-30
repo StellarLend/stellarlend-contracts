@@ -351,13 +351,6 @@ fn normal_allows_all_operations() {
 fn set_shutdown_emits_event_with_correct_states() {
     let (env, client, cid, _admin, _guardian, _user) = setup_with_guardian();
 
-    // initialize and set_guardian do not emit events.
-    assert_eq!(
-        env.events().all().events().len(),
-        0,
-        "no events expected after setup"
-    );
-
     client.set_emergency_state(&EmergencyState::Shutdown);
 
     assert_eq!(

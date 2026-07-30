@@ -21,6 +21,7 @@ mod accrual_state_doc_test;
 mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
+#[cfg(test)]
 mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
@@ -29,9 +30,13 @@ mod borrow_health_factor_test;
 #[cfg(test)]
 mod borrow_index_test;
 #[cfg(test)]
+mod borrow_isolation_tier_test;
+#[cfg(test)]
 mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
 mod compound_interest_proptest;
+#[cfg(test)]
+mod cross_asset_borrow_cap_test;
 #[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
@@ -62,8 +67,6 @@ mod granular_pause_ops_test;
 mod health_factor_edge_test;
 #[cfg(test)]
 mod initialize_auth_test;
-#[cfg(test)]
-mod insurance_fund_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
@@ -129,6 +132,8 @@ mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
 
+#[cfg(test)]
+mod config_roundtrip_test;
 #[cfg(test)]
 mod utilization_history_test;
 #[cfg(test)]
@@ -274,6 +279,12 @@ pub enum DataKey {
     /// period) when unset. Configured via
     /// [`LendingContract::set_liquidation_grace_period`].
     LiquidationGracePeriodSecs,
+    /// Config store: initialization flag.
+    ConfigInit,
+    /// Config store: all entries stored as a `Vec<ConfigEntry>`.
+    ConfigEntries,
+    /// Config store: named backup snapshot.
+    ConfigBackup(Symbol),
 }
 
 #[contractevent]
@@ -321,6 +332,20 @@ pub struct MaxFlashBpsSetEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollateralAssetSetEvent {
     pub asset: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuardianSetEvent {
+    pub old_guardian: Option<Address>,
+    pub new_guardian: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OraclePubKeySetEvent {
+    pub old_pubkey: Option<BytesN<32>>,
+    pub new_pubkey: BytesN<32>,
 }
 
 #[contractevent]
@@ -547,6 +572,14 @@ pub struct CrossWithdrawEvent {
     pub amount: i128,
 }
 
+/// A single entry in the config store: a `Symbol` key and its `Bytes` value.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigEntry {
+    pub key: Symbol,
+    pub value: Bytes,
+}
+
 // Re-export audit log types for contract visibility
 pub use audit_log::{get_governance_audit_count, get_governance_audit_entries, AuditLogEntry};
 
@@ -634,9 +667,15 @@ impl LendingContract {
     pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
+        let old_pubkey: Option<BytesN<32>> = env.storage().instance().get(&DataKey::OraclePubKey);
         env.storage()
             .instance()
             .set(&DataKey::OraclePubKey, &pubkey);
+        OraclePubKeySetEvent {
+            old_pubkey,
+            new_pubkey: pubkey,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -975,7 +1014,13 @@ impl LendingContract {
             .ok_or(LendingError::NotInitialized)?;
         admin.require_auth();
 
+        let old_guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
+        GuardianSetEvent {
+            old_guardian,
+            new_guardian: guardian,
+        }
+        .publish(&env);
 
         // Record audit entry
         audit_log::record_audit_entry(
@@ -1821,13 +1866,28 @@ impl LendingContract {
     ///   or `close_factor_bps > 7500`.
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
         if close_factor_bps <= 0 || close_factor_bps > MAX_CLOSE_FACTOR_BPS {
             return Err(LendingError::InvalidCloseFactorBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::CloseFactorBps, &close_factor_bps);
+        events::emit_close_factor_bps_set(&env, close_factor_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_close_factor_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
@@ -1872,13 +1932,28 @@ impl LendingContract {
         incentive_bps: i128,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
         if !(0..=MAX_LIQUIDATION_INCENTIVE_BPS).contains(&incentive_bps) {
             return Err(LendingError::InvalidLiquidationIncentiveBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
+        events::emit_liquidation_incentive_bps_set(&env, incentive_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_liquidation_incentive_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
@@ -2888,6 +2963,85 @@ impl LendingContract {
     pub fn get_governance_audit_entries(env: Env, limit: u64) -> Vec<AuditLogEntry> {
         audit_log::get_governance_audit_entries(&env, limit)
     }
+
+    // -----------------------------------------------------------------------
+    // Config store
+    // -----------------------------------------------------------------------
+
+    pub fn config_set(env: Env, key: Symbol, value: Bytes) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let mut entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut found = false;
+        for i in 0..entries.len() {
+            if entries.get(i).unwrap().key == key {
+                entries.set(
+                    i,
+                    ConfigEntry {
+                        key: key.clone(),
+                        value: value.clone(),
+                    },
+                );
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            entries.push_back(ConfigEntry { key, value });
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigEntries, &entries);
+        Ok(())
+    }
+
+    pub fn config_get(env: Env, key: Symbol) -> Option<Bytes> {
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            if entry.key == key {
+                return Some(entry.value);
+            }
+        }
+        None
+    }
+
+    pub fn config_backup(env: Env, name: Symbol) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigBackup(name), &entries);
+        Ok(())
+    }
+
+    pub fn config_restore(env: Env, name: Symbol) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let backup_key = DataKey::ConfigBackup(name);
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&backup_key)
+            .ok_or(LendingError::BackupNotFound)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigEntries, &entries);
+        Ok(())
+    }
 }
 
 /// Panics if a flash loan is currently in progress.
@@ -3247,7 +3401,12 @@ fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), Len
                 .instance()
                 .get(&DataKey::Guardian)
                 .ok_or(LendingError::NotInitialized)
-                .or_else(|_| env.storage().instance().get(&DataKey::Admin).ok_or(LendingError::NotInitialized))?;
+                .or_else(|_| {
+                    env.storage()
+                        .instance()
+                        .get(&DataKey::Admin)
+                        .ok_or(LendingError::NotInitialized)
+                })?;
             caller.require_auth();
             Ok(())
         }

@@ -889,6 +889,8 @@ mod cliff_bound_test;
 #[cfg(test)]
 mod grant_transfer_test;
 #[cfg(test)]
+mod initialize_test;
+#[cfg(test)]
 mod lifecycle_e2e_test;
 #[cfg(test)]
 mod milestone_schedule_test;
@@ -896,35 +898,18 @@ mod milestone_schedule_test;
 mod multi_grant_test;
 #[cfg(test)]
 mod partial_claim_test;
-#[cfg(test)]
-mod grant_transfer_test;
-#[cfg(test)]
-mod initialize_test;
 #[cfg(test)]
 mod pause_offset_test;
 #[cfg(test)]
 mod vested_at_overflow_test;
-
-#[cfg(test)]
-mod accelerate_test;
-#[cfg(test)]
-mod claimable_consistency_test;
-#[cfg(test)]
-mod cliff_bound_test;
-#[cfg(test)]
-mod lifecycle_e2e_test;
-#[cfg(test)]
-mod milestone_schedule_test;
-#[cfg(test)]
-mod multi_grant_test;
-#[cfg(test)]
-mod partial_claim_test;
 #[cfg(test)]
 mod pause_test;
 #[cfg(test)]
 mod revoke_split_test;
 #[cfg(test)]
 mod test_harness;
+#[cfg(test)]
+mod vested_at_overflow_test;
 #[cfg(test)]
 mod vested_at_proptest;
 #[cfg(test)]
