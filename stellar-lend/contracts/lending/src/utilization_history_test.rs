@@ -1,10 +1,7 @@
-#![cfg(test)]
-
 use crate::{
     debt::{cached_borrow_rate, try_compute_borrow_rate_from_snapshot, RateSnapshot},
     rate_model::RateParams,
     write_utilization_sample, DataKey, LendingContract, LendingContractClient, UtilizationSample,
-    UTILIZATION_HISTORY_CAPACITY,
 };
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};

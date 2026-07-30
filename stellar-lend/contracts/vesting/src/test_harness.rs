@@ -3,7 +3,6 @@
 //! Provides a pure-Rust `VestingContract` and `Grant` that delegate to
 //! the actual on-chain contract semantics using Soroban SDK test environment.
 
-#![cfg(test)]
 #![allow(dead_code, unused_variables)]
 
 extern crate std;
@@ -65,7 +64,7 @@ impl Grant {
         if self.revoked {
             return self.total;
         }
-        if self.total <= 0 {
+        if self.total == 0 {
             return 0;
         }
         let cliff_end = self.start_seconds.saturating_add(self.cliff_seconds);
@@ -113,6 +112,7 @@ pub struct GrantAcceleratedEvent {
 pub struct VestingContract {
     pub env: Env,
     pub client: crate::VestingContractClient<'static>,
+    pub contract_addr: Address,
     pub admin_addr: Address,
     pub treasury_addr: Address,
     pub token_client: soroban_sdk::token::Client<'static>,
@@ -142,7 +142,7 @@ impl VestingContract {
         let client = crate::VestingContractClient::new(&env, &contract_id);
 
         let mut address_map = std::collections::HashMap::new();
-        
+
         let admin_addr = Address::generate(&env);
         let treasury_addr = Address::generate(&env);
         address_map.insert(admin.to_string(), admin_addr.clone());
@@ -154,6 +154,7 @@ impl VestingContract {
         Self {
             env,
             client,
+            contract_addr: contract_id,
             admin_addr,
             treasury_addr,
             token_client,
@@ -168,6 +169,14 @@ impl VestingContract {
     }
 
     fn get_address(&self, tag: &str) -> Address {
+        // "contract" is a reserved tag referring to the deployed vesting
+        // contract's own address (its escrow balance), not a grantee/admin.
+        // It must not be memoized into `address_map` under a fresh random
+        // address -- see `lifecycle_e2e_test.rs`'s `balance_of("contract")`
+        // assertions, which check the real escrow balance.
+        if tag == "contract" {
+            return self.contract_addr.clone();
+        }
         let mut map = self.address_map.borrow_mut();
         if let Some(addr) = map.get(tag) {
             addr.clone()
@@ -179,6 +188,9 @@ impl VestingContract {
     }
 
     fn get_tag(&self, addr: &Address) -> String {
+        if addr == &self.contract_addr {
+            return "contract".to_string();
+        }
         let map = self.address_map.borrow();
         for (tag, a) in map.iter() {
             if a == addr {
@@ -206,8 +218,15 @@ impl VestingContract {
             crate::VestingError::InvalidAmount => VestingError::InvalidAmount,
             crate::VestingError::OverClaim => VestingError::OverClaim,
             crate::VestingError::AlreadyInitialized => VestingError::AlreadyInitialized,
-            crate::VestingError::DestinationAlreadyHasGrant => VestingError::DestinationAlreadyHasGrant,
-            crate::VestingError::InsufficientTreasuryBalance => VestingError::InsufficientTreasuryBalance,
+            crate::VestingError::DestinationAlreadyHasGrant => {
+                VestingError::DestinationAlreadyHasGrant
+            }
+            crate::VestingError::InsufficientTreasuryBalance => {
+                VestingError::InsufficientTreasuryBalance
+            }
+            crate::VestingError::ZeroPrincipal => VestingError::ZeroPrincipal,
+            crate::VestingError::ZeroDuration => VestingError::ZeroDuration,
+            crate::VestingError::CliffExceedsDuration => VestingError::CliffExceedsDuration,
         }
     }
 
@@ -273,7 +292,10 @@ impl VestingContract {
         self.token_asset.mint(&self.contract_addr, &(total as i128));
         self.token_asset.mint(&caller_addr, &(total as i128));
 
-        match self.client.try_add_grant(&grantee_addr, &(total as i128), &start, &duration, &cliff) {
+        match self
+            .client
+            .try_add_grant(&grantee_addr, &(total as i128), &start, &duration, &cliff)
+        {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
@@ -326,7 +348,10 @@ impl VestingContract {
     ) -> Result<u128, VestingError> {
         self.set_time(now);
         let grantee_addr = self.get_address(grantee);
-        match self.client.try_claim_partial(&grantee_addr, &(amount as i128)) {
+        match self
+            .client
+            .try_claim_partial(&grantee_addr, &(amount as i128))
+        {
             Ok(Ok(claimed)) => Ok(claimed as u128),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
@@ -334,12 +359,7 @@ impl VestingContract {
         }
     }
 
-    pub fn revoke(
-        &mut self,
-        caller: &str,
-        grantee: &str,
-        now: u64,
-    ) -> Result<u128, VestingError> {
+    pub fn revoke(&mut self, caller: &str, grantee: &str, now: u64) -> Result<u128, VestingError> {
         self.set_time(now);
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
@@ -361,7 +381,10 @@ impl VestingContract {
         self.set_time(now);
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
-        match self.client.try_revoke_one(&caller_addr, &grantee_addr, &(index as u32)) {
+        match self
+            .client
+            .try_revoke_one(&caller_addr, &grantee_addr, &(index as u32))
+        {
             Ok(Ok((vested, clawed_back))) => Ok(clawed_back as u128),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
@@ -380,7 +403,10 @@ impl VestingContract {
         self.set_time(now);
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
-        match self.client.try_accelerate_grant(&caller_addr, &grantee_addr) {
+        match self
+            .client
+            .try_accelerate_grant(&caller_addr, &grantee_addr)
+        {
             Ok(Ok(())) => {
                 self.sync_events();
                 Ok(())

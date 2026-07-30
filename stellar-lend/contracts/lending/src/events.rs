@@ -82,6 +82,41 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
+/// Emitted when a flash loan is initiated.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// Address that initiated the flash loan.
+    pub initiator: Address,
+    /// Address receiving the flash-loaned funds.
+    pub receiver: Address,
+    /// Asset being flash-loaned.
+    pub asset: Address,
+    /// Amount of the flash loan.
+    pub amount: i128,
+    /// Fee charged for the flash loan.
+    pub fee: i128,
+    /// Timestamp of the flash loan (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emitted when a flash loan is repaid via `repay_flash_loan`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanRepaidEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// Address repaying the flash loan (the receiver contract).
+    pub payer: Address,
+    /// Asset being repaid.
+    pub asset: Address,
+    /// Amount repaid.
+    pub amount: i128,
+    /// Timestamp of the repayment (ledger timestamp).
+    pub timestamp: u64,
+}
 
 /// Emit the schema version event during contract initialization.
 pub fn emit_schema_version(env: &Env) {
@@ -145,3 +180,130 @@ pub fn emit_repay(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         .publish((Symbol::new(env, "RepayEvent"),), event);
 }
 
+/// Emit a flash loan event.
+pub fn emit_flash_loan(
+    env: &Env,
+    initiator: &Address,
+    receiver: &Address,
+    asset: &Address,
+    amount: i128,
+    fee: i128,
+) {
+    let event = FlashLoanEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        initiator: initiator.clone(),
+        receiver: receiver.clone(),
+        asset: asset.clone(),
+        amount,
+        fee,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashLoanEvent"),), event);
+}
+
+/// Emit a flash loan repaid event.
+pub fn emit_flash_loan_repaid(env: &Env, payer: &Address, asset: &Address, amount: i128) {
+    let event = FlashLoanRepaidEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        payer: payer.clone(),
+        asset: asset.clone(),
+        amount,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashLoanRepaidEvent"),), event);
+}
+
+/// Emitted when the admin updates the protocol-level debt ceiling.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebtCeilingUpdatedEvent {
+    pub schema_version: u32,
+    /// New protocol-level debt ceiling.
+    pub ceiling: i128,
+    pub timestamp: u64,
+}
+
+/// Emit a debt-ceiling-updated event.
+pub fn emit_debt_ceiling_updated(env: &Env, ceiling: i128) {
+    let event = DebtCeilingUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        ceiling,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "DebtCeilingUpdatedEvent"),), event);
+}
+
+/// Emitted when the admin updates the flash-loan fee (basis points).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashFeeUpdatedEvent {
+    pub schema_version: u32,
+    /// New flash-loan fee in basis points.
+    pub fee_bps: i128,
+    pub timestamp: u64,
+}
+
+/// Emit a flash-fee-updated event.
+pub fn emit_flash_fee_updated(env: &Env, fee_bps: i128) {
+    let event = FlashFeeUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        fee_bps,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "FlashFeeUpdatedEvent"),), event);
+}
+
+/// Emitted when the admin updates the governed close-factor cap (basis points)
+/// used by `liquidate`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloseFactorBpsSetEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// The new close-factor cap in basis points.
+    pub close_factor_bps: i128,
+    /// Timestamp of the update (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emit a close-factor-bps-set event.
+pub fn emit_close_factor_bps_set(env: &Env, close_factor_bps: i128) {
+    let event = CloseFactorBpsSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        close_factor_bps,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((Symbol::new(env, "CloseFactorBpsSetEvent"),), event);
+}
+
+/// Emitted when the admin updates the governed liquidation incentive (basis
+/// points) used by `liquidate` to compute the bonus collateral seized on top of
+/// repaid debt.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiquidationIncentiveBpsSetEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// The new liquidation incentive in basis points.
+    pub incentive_bps: i128,
+    /// Timestamp of the update (ledger timestamp).
+    pub timestamp: u64,
+}
+
+/// Emit a liquidation-incentive-bps-set event.
+pub fn emit_liquidation_incentive_bps_set(env: &Env, incentive_bps: i128) {
+    let event = LiquidationIncentiveBpsSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        incentive_bps,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish(
+        (Symbol::new(env, "LiquidationIncentiveBpsSetEvent"),),
+        event,
+    );
+}

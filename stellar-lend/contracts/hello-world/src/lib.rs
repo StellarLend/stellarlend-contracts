@@ -2,6 +2,22 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, Map, Symbol};
+
+mod cross_asset;
+mod deposit;
+mod risk_management;
+
+use cross_asset::CrossAssetError;
+use deposit::deposit_collateral;
+use risk_management::{
+    can_be_liquidated, get_close_factor, get_liquidation_incentive,
+    get_liquidation_incentive_amount, get_liquidation_threshold, get_max_liquidatable_amount,
+    get_min_collateral_ratio, initialize_risk_management, is_emergency_paused, is_operation_paused,
+    require_min_collateral_ratio, set_emergency_pause, set_pause_switch, set_pause_switches,
+    set_risk_params, RiskConfig, RiskManagementError,
+};
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HelloError {
@@ -14,6 +30,7 @@ pub mod amm_twap;
 pub mod analytics;
 pub mod borrow;
 pub mod bridge;
+pub mod config;
 pub mod config_snapshot;
 pub mod cross_asset;
 pub mod deposit;
@@ -103,6 +120,7 @@ use crate::oracle::FullOracleConfig;
 use deposit::deposit_collateral;
 use repay::repay_debt;
 
+use crate::config::{config_backup, config_get, config_restore, config_set};
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
 
 use crate::risk_management::{
@@ -412,6 +430,40 @@ impl HelloContract {
     /// No authorization required - safe for any caller.
     pub fn get_config_snapshot(env: Env) -> Option<ConfigSnapshot> {
         get_config_snapshot(&env)
+    }
+
+    /// Set a protocol configuration key to `val` (admin only).
+    pub fn config_set(
+        env: Env,
+        caller: Address,
+        key: soroban_sdk::Symbol,
+        val: soroban_sdk::Val,
+    ) -> Result<(), crate::admin::AdminError> {
+        config_set(&env, &caller, &key, val)
+    }
+
+    /// Retrieve the value stored under `key`, or `None` if not set.
+    pub fn config_get(env: Env, key: soroban_sdk::Symbol) -> Option<soroban_sdk::Val> {
+        config_get(&env, &key)
+    }
+
+    /// Return a map of key → value for every key in `keys` (admin only).
+    pub fn config_backup(
+        env: Env,
+        caller: Address,
+        keys: soroban_sdk::Vec<soroban_sdk::Symbol>,
+    ) -> Result<soroban_sdk::Map<soroban_sdk::Symbol, soroban_sdk::Val>, crate::admin::AdminError>
+    {
+        config_backup(&env, &caller, &keys)
+    }
+
+    /// Restore a set of key-value pairs from a backup map (admin only).
+    pub fn config_restore(
+        env: Env,
+        caller: Address,
+        entries: soroban_sdk::Map<soroban_sdk::Symbol, soroban_sdk::Val>,
+    ) -> Result<(), crate::admin::AdminError> {
+        config_restore(&env, &caller, &entries)
     }
 
     /// Get minimum collateral ratio in basis points.

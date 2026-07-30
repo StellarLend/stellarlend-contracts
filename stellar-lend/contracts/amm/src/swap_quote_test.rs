@@ -7,10 +7,8 @@
 //! - Large amount near pool depletion behaves correctly (no panic, sensible output).
 //! - Quoted fee matches `compute_fee` output directly.
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient, AmmPoolError, DEFAULT_FEE_BPS};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, Env};
 
 // ---------------------------------------------------------------------------
 // Helpers

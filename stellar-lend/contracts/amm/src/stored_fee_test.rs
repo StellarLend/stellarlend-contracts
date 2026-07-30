@@ -18,8 +18,6 @@
 //! | Swap reads stored fee (not caller-supplied)          | `test_swap_uses_stored_fee`           |
 //! | Fee accrual correct after admin sets non-default fee | `test_fee_accrual_with_stored_fee`    |
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient, AmmPoolError, DEFAULT_FEE_BPS, MAX_FEE_BPS};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -28,9 +26,10 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    client.init_pool(&ra, &rb);
-    let admin = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
     client.init_pool(&ra, &rb, &token_a, &token_b);
+    let admin = Address::generate(&env);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
