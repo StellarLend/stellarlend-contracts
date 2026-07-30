@@ -1,0 +1,52 @@
+## Fix #1695: Add Guardian Threshold Validation
+
+### Problem
+The `set_guardian_threshold` function had no validation, allowing:
+1. Setting threshold to 0 (trivially bypasses social recovery)
+2. Setting threshold > guardian count (makes recovery unachievable)
+
+### Solution
+Added validation checks that reject invalid thresholds with `InvalidGuardianConfig` error:
+- Rejects `threshold == 0`
+- Rejects `threshold > guardians.len()`
+- Blocks threshold changes during active recovery
+
+### Changes
+- **governance.rs**: Added threshold validation (2 checks + recovery block)
+- **Error enum**: Added `InvalidGuardianConfig` variant
+- **Tests**: 9 comprehensive test cases covering all scenarios
+
+### Security Impact
+- ✅ Prevents recovery bypass via zero threshold
+- ✅ Prevents recovery bricking via excessive threshold
+- ✅ Maintains existing safety during active recovery
+
+### Testing
+All tests pass:
+```bash
+cargo test --lib guardian_threshold_safety_test
+```
+
+**Tests verify**:
+- Zero threshold rejection
+- Exceeding count rejection
+- Valid threshold acceptance
+- Recovery in-progress blocking
+- Guardian removal safety
+- Edge cases (1 of 1, unanimous)
+
+### Breaking Changes
+None - only rejects invalid states that shouldn't have been accepted.
+
+### Related
+Closes #1695
+
+---
+
+## Checklist
+- [x] Validation prevents threshold = 0
+- [x] Validation prevents threshold > count
+- [x] Recovery operations remain safe
+- [x] Admin auth enforced
+- [x] All 9 tests pass
+- [x] No breaking changes

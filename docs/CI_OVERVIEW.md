@@ -77,11 +77,10 @@ Five job summaries:
   dependency on either, so a flaky audit does not block tests.
 - **Checks**:
   - `cargo install cargo-audit` (not pinned to a version — auto-bumps)
-  - `cargo audit` with **six** ignored advisories currently active:
-    `RUSTSEC-2026-0049`, `RUSTSEC-2025-0009`, `RUSTSEC-2023-0071`,
-    `RUSTSEC-2024-0363`, `RUSTSEC-2024-0344`, `RUSTSEC-2022-0093`. Add to
-    this list (in both the workflow and `local-ci.sh`) if a known false
-    positive surfaces.
+  - `cargo audit` (ignored advisories and their rationale are documented
+    in `stellar-lend/.cargo/audit.toml`). Add a new entry with a one-line
+    justification to `audit.toml` if a known false positive surfaces;
+    there is no need to touch the workflow or `local-ci.sh`.
 
 ### 5. Code Coverage (`coverage`)
 

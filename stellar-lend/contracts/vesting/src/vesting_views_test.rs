@@ -1,4 +1,9 @@
 #[cfg(test)]
+extern crate std;
+#[cfg(test)]
+use std::string::ToString;
+
+#[cfg(test)]
 use crate::test_harness::{Grant, VestingContract};
 
 #[test]

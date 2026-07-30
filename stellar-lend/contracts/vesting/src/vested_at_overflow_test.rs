@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::Grant;
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -105,5 +103,8 @@ fn test_no_panic_for_various_combinations() {
     // Our split quotient-remainder calculation avoids this.
     let elapsed = u64::MAX - 1;
     let vested = grant.vested_at(elapsed);
-    assert!(vested <= i128::MAX);
+    // The real invariant: vested never exceeds the grant's own principal
+    // (checking against `i128::MAX` directly is a tautology since that's
+    // the type's own maximum).
+    assert!(vested <= grant.total_amount);
 }

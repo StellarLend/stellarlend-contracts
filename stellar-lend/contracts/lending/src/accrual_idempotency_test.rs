@@ -26,7 +26,7 @@
 mod accrual_idempotency_tests {
     use crate::debt::{
         effective_debt, elapsed_seconds, settle_accrual, settle_accrual_split, DebtPosition,
-        DEFAULT_APR_BPS, DEFAULT_RESERVE_FACTOR_BPS,
+        DEFAULT_APR_BPS,
     };
     use crate::rounding_strategy::SECONDS_PER_YEAR;
 
@@ -36,7 +36,6 @@ mod accrual_idempotency_tests {
 
     /// Build a `DebtPosition` with the given `principal` and `last_update`.
     fn make_position(principal: i128, last_update: u64) -> DebtPosition {
-    borrow_index_snapshot: 0,
         DebtPosition {
             borrow_index_snapshot: crate::debt::INDEX_SCALE,
             principal,
@@ -97,7 +96,7 @@ mod accrual_idempotency_tests {
     /// identical value — no state is mutated between calls.
     #[test]
     fn test_effective_debt_same_timestamp_is_stable() {
-        let now: u64 = 2_000_000;
+        let now: u64 = SECONDS_PER_YEAR + 2_000_000;
         let position = make_position(10_000, now - SECONDS_PER_YEAR);
 
         let first = effective_debt(&position, now, DEFAULT_APR_BPS)
@@ -105,7 +104,10 @@ mod accrual_idempotency_tests {
         let second = effective_debt(&position, now, DEFAULT_APR_BPS)
             .expect("second effective_debt should succeed");
 
-        assert_eq!(first, second, "effective_debt must be stable across repeated calls at the same timestamp");
+        assert_eq!(
+            first, second,
+            "effective_debt must be stable across repeated calls at the same timestamp"
+        );
     }
 
     /// Same idempotency holds for a high rate to exercise the full arithmetic
@@ -116,16 +118,17 @@ mod accrual_idempotency_tests {
         let now: u64 = SECONDS_PER_YEAR * 5; // five years of accrued interest
         let position = make_position(1_000_000, last_update);
 
-        let first = effective_debt(&position, now, HIGH_RATE_BPS)
-            .expect("first call");
-        let second = effective_debt(&position, now, HIGH_RATE_BPS)
-            .expect("second call");
+        let first = effective_debt(&position, now, HIGH_RATE_BPS).expect("first call");
+        let second = effective_debt(&position, now, HIGH_RATE_BPS).expect("second call");
 
         assert_eq!(
             first, second,
             "effective_debt at the same timestamp must be idempotent regardless of rate"
         );
-        assert!(first > 1_000_000, "interest must have accrued over five years");
+        assert!(
+            first > 1_000_000,
+            "interest must have accrued over five years"
+        );
     }
 
     /// Zero-principal position — `effective_debt` must always return 0 at any
@@ -138,7 +141,10 @@ mod accrual_idempotency_tests {
         let debt = effective_debt(&position, now, HIGH_RATE_BPS)
             .expect("zero-principal effective_debt should not error");
 
-        assert_eq!(debt, 0, "zero principal must yield zero effective debt at any timestamp");
+        assert_eq!(
+            debt, 0,
+            "zero principal must yield zero effective debt at any timestamp"
+        );
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -157,11 +163,14 @@ mod accrual_idempotency_tests {
         let now: u64 = last_update + SECONDS_PER_YEAR;
         let position = make_position(10_000, last_update);
 
-        let settled = settle_accrual(&position, now, DEFAULT_APR_BPS)
-            .expect("settle_accrual should succeed");
+        let settled =
+            settle_accrual(&position, now, DEFAULT_APR_BPS).expect("settle_accrual should succeed");
 
         // After settlement `settled.last_update == now`.
-        assert_eq!(settled.last_update, now, "settled.last_update must equal now");
+        assert_eq!(
+            settled.last_update, now,
+            "settled.last_update must equal now"
+        );
 
         let recomputed = effective_debt(&settled, now, DEFAULT_APR_BPS)
             .expect("effective_debt after settle should succeed");
@@ -188,8 +197,7 @@ mod accrual_idempotency_tests {
             .expect("effective_debt after settle should succeed");
 
         assert_eq!(
-            recomputed,
-            settled.principal,
+            recomputed, settled.principal,
             "no interest must accrue between settle_accrual and effective_debt at the same T"
         );
     }
@@ -219,8 +227,7 @@ mod accrual_idempotency_tests {
             .expect("effective_debt after split settle should succeed");
 
         assert_eq!(
-            recomputed,
-            settled.principal,
+            recomputed, settled.principal,
             "effective_debt must equal settled principal immediately after settle_accrual_split"
         );
     }
@@ -246,8 +253,7 @@ mod accrual_idempotency_tests {
 
         // elapsed is 0 so no interest should be added.
         assert_eq!(
-            settled.principal,
-            position.principal,
+            settled.principal, position.principal,
             "clock rollback must not accrue any interest"
         );
     }

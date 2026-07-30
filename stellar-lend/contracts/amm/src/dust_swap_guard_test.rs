@@ -18,8 +18,6 @@
 //! | Error codes 15/16 are stable                           | `test_dust_error_code_stability`                   |
 //! | Legitimate non-dust swaps are unchanged                | `test_nonzero_swap_output_unchanged`               |
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient, AmmPoolError, DEFAULT_MIN_SWAP_IN};
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
@@ -165,8 +163,8 @@ fn test_set_min_swap_in_rejects_negative() {
 #[test]
 fn test_flash_swap_allows_unit_amount_out() {
     // Default min_swap_in = 0 → any positive amount_out is fine.
-    let (env, client, _admin) = setup_pool(1_000, 1_000);
-    let out = client.flash_swap_a_for_b(&1_i128, &Bytes::new(&env));
+    let (env, client, admin) = setup_pool(1_000, 1_000);
+    let out = client.flash_swap_a_for_b(&admin, &1_i128, &Bytes::new(&env));
     assert_eq!(out, 1);
 }
 
@@ -175,7 +173,7 @@ fn test_flash_swap_respects_min_swap_in() {
     let (env, client, admin) = setup_pool(1_000, 1_000);
     client.set_min_swap_in(&admin, &50_i128);
 
-    let res = client.try_flash_swap_a_for_b(&10_i128, &Bytes::new(&env));
+    let res = client.try_flash_swap_a_for_b(&admin, &10_i128, &Bytes::new(&env));
     assert_eq!(
         res,
         Err(Ok(AmmPoolError::AmountBelowMinSwapIn)),
@@ -183,7 +181,7 @@ fn test_flash_swap_respects_min_swap_in() {
     );
 
     // At the floor the flash opens successfully.
-    let out = client.flash_swap_a_for_b(&50_i128, &Bytes::new(&env));
+    let out = client.flash_swap_a_for_b(&admin, &50_i128, &Bytes::new(&env));
     assert_eq!(out, 50);
 }
 
