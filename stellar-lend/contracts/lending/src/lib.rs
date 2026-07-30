@@ -35,6 +35,8 @@ mod borrow_rate_cache_equiv_test;
 #[cfg(test)]
 mod compound_interest_proptest;
 #[cfg(test)]
+mod cross_asset_borrow_cap_test;
+#[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
 mod cross_asset_health_perf_test;
