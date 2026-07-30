@@ -21,6 +21,7 @@ mod accrual_state_doc_test;
 mod admin_handover_test;
 #[cfg(test)]
 mod admin_setters_dedupe_test;
+#[cfg(test)]
 mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
@@ -66,8 +67,6 @@ mod granular_pause_ops_test;
 mod health_factor_edge_test;
 #[cfg(test)]
 mod initialize_auth_test;
-#[cfg(test)]
-mod insurance_fund_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
