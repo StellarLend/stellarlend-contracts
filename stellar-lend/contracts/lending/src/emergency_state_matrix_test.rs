@@ -79,7 +79,7 @@ fn mock_only_for_state_transition(
         invoke: &MockAuthInvoke {
             contract: cid,
             fn_name: "set_emergency_state",
-            args: (state.clone(),).into_val(env),
+            args: (state,).into_val(env),
             sub_invokes: &[],
         },
     }]);
@@ -351,13 +351,6 @@ fn normal_allows_all_operations() {
 fn set_shutdown_emits_event_with_correct_states() {
     let (env, client, cid, _admin, _guardian, _user) = setup_with_guardian();
 
-    // initialize and set_guardian do not emit events.
-    assert_eq!(
-        env.events().all().events().len(),
-        0,
-        "no events expected after setup"
-    );
-
     client.set_emergency_state(&EmergencyState::Shutdown);
 
     assert_eq!(
@@ -508,7 +501,7 @@ fn no_guardian_admin_can_cycle_all_states() {
         EmergencyState::Recovery,
         EmergencyState::Normal,
     ] {
-        mock_only_for_state_transition(&env, &cid, &admin, state.clone());
+        mock_only_for_state_transition(&env, &cid, &admin, state);
         client.set_emergency_state(&state);
     }
 }

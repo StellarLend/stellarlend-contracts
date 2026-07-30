@@ -15,7 +15,7 @@
 //! Interest, last-accrual timestamp, the native asset address, and analytics
 //! counters are module-local, keyed by [`RepayDataKey`].
 
-use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Symbol};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -23,6 +23,9 @@ use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
 
 /// Denominator for basis-point interest rates (10_000 = 100%).
 pub const BASIS_POINTS_SCALE: i128 = 10_000;
+
+/// Alias used internally; same value as BASIS_POINTS_SCALE.
+const BPS_DENOM: i128 = BASIS_POINTS_SCALE;
 
 /// Seconds in a 365-day year, used to annualize the bps borrow rate.
 pub const SECONDS_PER_YEAR: i128 = 365 * 24 * 60 * 60;
@@ -56,6 +59,31 @@ pub enum RepayDataKey {
     ProtocolTotalRepayments,
     /// Protocol-wide outstanding debt value across all users.
     ProtocolDebtValue,
+}
+
+// ---------------------------------------------------------------------------
+// Position type (shared with liquidate.rs and borrow.rs)
+// ---------------------------------------------------------------------------
+
+/// A user's debt position: outstanding principal and last-known collateral.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Position {
+    pub principal: i128,
+    pub collateral: i128,
+    pub last_accrual: u64,
+}
+
+/// Load a [`Position`] from storage.  Returns `None` when no position exists.
+pub fn load_position(env: &Env, user: &Address) -> Option<Position> {
+    let key = RepayDataKey::Interest(user.clone()); // re-use key namespace for the composite struct
+    env.storage().persistent().get(&key)
+}
+
+/// Persist a [`Position`] to storage.
+pub fn save_position(env: &Env, user: &Address, position: &Position) {
+    let key = RepayDataKey::Interest(user.clone());
+    env.storage().persistent().set(&key, position);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +269,7 @@ pub fn compute_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result
         .and_then(|v| v.checked_mul(elapsed as i128))
         .ok_or(RepayError::Overflow)?;
     let denominator = BPS_DENOM
-        .checked_mul(SECONDS_PER_YEAR as i128)
+        .checked_mul(SECONDS_PER_YEAR)
         .ok_or(RepayError::Overflow)?;
     numerator
         .checked_div(denominator)

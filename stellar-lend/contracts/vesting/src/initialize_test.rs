@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::{VestingContract, VestingContractClient, VestingError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 

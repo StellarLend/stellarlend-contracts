@@ -26,19 +26,11 @@
 //! - Input validation is enforced via `panic!` (this is a test‑grade surface, not a production safety
 //!   wrapper); callers should pre‑validate non‑negative amounts and `0 ≤ fee_bps ≤ 10000` off‑chain.
 //! - The k‑invariant is enforced by [`assert_k_monotonic`] after every reserve mutation.
-//! - Flash‑swap APIs (e.g. `flash_swap_a_for_b`, `repay_flash_swap`) and a dedicated `AmmPoolError`
-//!   type are **not implemented** in this crate; do not reference them until they are introduced
-//!   through a tracked protocol change.
-//!
-//! Note re: [#1413](https://github.com/StellarLend/stellarlend-contracts/issues/1413):
-//! that report describes a signature/body mismatch on a `flash_swap_a_for_b` symbol that
-//! is not declared on this branch, so no source fix is required here. The proposal in the
-//! issue defines the (candidate) shape as
-//! `pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> Result<i128, AmmPoolError>`
-//! — paired, per the issue, with `repay_flash_swap` and `assert_no_active_flash_swap`.
-//! Any eventual landing may differ (the bug report is not a design doc); see the actual
-//! protocol-change PR for the final shape and make sure it introduces a regression test,
-//! since none currently exercises this unimplemented surface.
+//! - Flash‑swap APIs — [`AmmContract::flash_swap_a_for_b`] and
+//!   [`AmmContract::repay_flash_swap`] — implement the "optimistic transfer
+//!   then verify‑k" pattern described in
+//!   [FLASH_SWAP_PROTOCOL.md](../FLASH_SWAP_PROTOCOL.md); `AmmPoolError` is
+//!   the shared error type for all entry points in this crate.
 
 pub mod liquidity_math;
 pub mod math;
@@ -245,6 +237,13 @@ pub const DEFAULT_FEE_BPS: i128 = 30;
 /// zero-output rejection ([`AmmPoolError::ZeroOutput`]).
 pub const DEFAULT_MIN_SWAP_IN: i128 = 0;
 
+/// Default minimum-liquidity floor when no admin has called
+/// `set_min_liquidity`.
+///
+/// `0` means the floor is disabled — fully backward compatible.
+/// See: [MIN_LIQUIDITY.md §Default Behaviour](../MIN_LIQUIDITY.md)
+pub const DEFAULT_MIN_LIQUIDITY: i128 = 0;
+
 #[contracterror]
 #[derive(Eq, PartialEq, Debug)]
 pub enum AmmPoolError {
@@ -282,6 +281,10 @@ pub enum AmmPoolError {
     ZeroOutput = 15,
     /// Input is below the admin-configured `min_swap_in` floor.
     AmountBelowMinSwapIn = 16,
+    /// A `remove_liquidity` or `swap_*` operation would leave a reserve
+    /// below the admin-configured `min_liquidity` floor.
+    /// See [MIN_LIQUIDITY.md](../MIN_LIQUIDITY.md).
+    BelowMinLiquidity = 17,
 }
 
 /// Return value of [`AmmContract::get_swap_quote`].
@@ -343,7 +346,8 @@ impl AmmContract {
             let product = a
                 .checked_mul(b)
                 .expect("init_pool: reserve product overflow");
-            let sqrt_val = crate::math::sqrt(product);
+            let sqrt_val = crate::math::try_sqrt(product)
+                .expect("init_pool: product is non-negative, sqrt cannot overflow");
             // Use at least MINIMUM_LIQUIDITY+1 so that subsequent add_liquidity
             // calls always use the proportional path, not the first-deposit gate.
             if sqrt_val > MINIMUM_LIQUIDITY {
@@ -496,6 +500,46 @@ impl AmmContract {
             .unwrap_or(DEFAULT_MIN_SWAP_IN)
     }
 
+    /// Set the minimum-liquidity floor. Admin only.
+    ///
+    /// Every remaining reserve must stay `>= min_liquidity` after
+    /// `remove_liquidity` or `swap_*`. Passing `0` disables the floor
+    /// (default) — fully backward compatible.
+    ///
+    /// # Arguments
+    /// * `admin`         — address that must authorize the call.
+    /// * `min_liquidity` — non-negative floor applied to reserves.
+    ///
+    /// # Errors
+    /// * [`AmmPoolError::NonPositiveAmount`] — `min_liquidity < 0`.
+    ///
+    /// See: [MIN_LIQUIDITY.md](../MIN_LIQUIDITY.md)
+    pub fn set_min_liquidity(
+        env: Env,
+        admin: Address,
+        min_liquidity: i128,
+    ) -> Result<(), AmmPoolError> {
+        Self::require_admin(&env, &admin)?;
+        if min_liquidity < 0 {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
+        env.storage()
+            .persistent()
+            .set(&KEY_MIN_LIQUIDITY, &min_liquidity);
+        Ok(())
+    }
+
+    /// Return the current minimum-liquidity floor.
+    ///
+    /// Returns [`DEFAULT_MIN_LIQUIDITY`] (`0`) when no admin has called
+    /// [`set_min_liquidity`](AmmContract::set_min_liquidity) yet.
+    pub fn get_min_liquidity(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&KEY_MIN_LIQUIDITY)
+            .unwrap_or(DEFAULT_MIN_LIQUIDITY)
+    }
+
     /// Reentrancy guard — panics if a flash swap is currently in flight.
     ///
     /// Called by `init_pool`, `add_liquidity`, `remove_liquidity`,
@@ -573,8 +617,8 @@ impl AmmContract {
             .persistent()
             .get(&KEY_TOKEN_B)
             .ok_or(AmmPoolError::EmptyPool)?;
-        TokenClient::new(&env, &token_a).transfer(&caller, &env.current_contract_address(), &add_a);
-        TokenClient::new(&env, &token_b).transfer(&caller, &env.current_contract_address(), &add_b);
+        TokenClient::new(&env, &token_a).transfer(&caller, env.current_contract_address(), &add_a);
+        TokenClient::new(&env, &token_b).transfer(&caller, env.current_contract_address(), &add_b);
 
         // Update reserves.
         env.storage().persistent().set(&KEY_RES_A, &new_ra);
@@ -654,6 +698,16 @@ impl AmmContract {
         let new_rb = rb
             .checked_sub(amount_b)
             .ok_or(AmmPoolError::InsufficientReserves)?;
+
+        // Minimum-liquidity floor guard. Both reserves decrease on removal,
+        // so both are checked (matches the documented policy in
+        // MIN_LIQUIDITY.md §"Floor only protects the outgoing reserve on
+        // swaps" — for `remove_liquidity` both reserves are "outgoing").
+        let floor = Self::get_min_liquidity(env.clone());
+        if floor > 0 && (new_ra < floor || new_rb < floor) {
+            return Err(AmmPoolError::BelowMinLiquidity);
+        }
+
         assert_k_monotonic(ra, rb, new_ra, new_rb, false)?;
 
         // Update reserves and LP supply before transferring out to follow
@@ -789,7 +843,7 @@ impl AmmContract {
         // reserve A grows. Only the outgoing reserve is checked (matches the
         // documented policy in MIN_LIQUIDITY.md §"Floor only protects the
         // outgoing reserve on swaps").
-        let floor = Self::get_min_liquidity(&env);
+        let floor = Self::get_min_liquidity(env.clone());
         if floor > 0 && new_rb < floor {
             return Err(AmmPoolError::BelowMinLiquidity);
         }
@@ -925,7 +979,7 @@ impl AmmContract {
         let new_ra = ra.checked_sub(amount_out).ok_or(AmmPoolError::Overflow)?;
 
         // Minimum-liquidity floor guard. For B→A, only reserve A decreases.
-        let floor = Self::get_min_liquidity(&env);
+        let floor = Self::get_min_liquidity(env.clone());
         if floor > 0 && new_ra < floor {
             return Err(AmmPoolError::BelowMinLiquidity);
         }
@@ -1019,7 +1073,12 @@ impl AmmContract {
     /// * [`AmmPoolError::InsufficientReserves`] — `amount_out ≥ reserve_b`.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Call Sequence](../FLASH_SWAP_PROTOCOL.md)
-    pub fn flash_swap_a_for_b(env: Env, amount_out: i128, params: Bytes) -> Result<i128, AmmPoolError> {
+    pub fn flash_swap_a_for_b(
+        env: Env,
+        caller: Address,
+        amount_out: i128,
+        params: Bytes,
+    ) -> Result<i128, AmmPoolError> {
         // `params` is reserved for a future callback variant.  Bound to
         // a local so the parameter is used (no dead-binding lint).
         let _ = params;
@@ -1062,9 +1121,7 @@ impl AmmContract {
         env.storage().persistent().set(&KEY_RES_B, &new_rb);
         env.storage().instance().set(&KEY_FLASH_ACTIVE, &true);
         // Record the initiator so only this address may repay.
-        env.storage()
-            .instance()
-            .set(&KEY_FLASH_INITIATOR, &caller);
+        env.storage().instance().set(&KEY_FLASH_INITIATOR, &caller);
 
         Ok(amount_out)
     }
@@ -1113,7 +1170,11 @@ impl AmmContract {
     ///   Soroban then rolls back all storage changes, including the Op-1 debit.
     ///
     /// See: [FLASH_SWAP_PROTOCOL.md §Verify-K Repay Invariant](../FLASH_SWAP_PROTOCOL.md)
-    pub fn repay_flash_swap(env: Env, amount_in: i128) -> Result<(), AmmPoolError> {
+    pub fn repay_flash_swap(
+        env: Env,
+        caller: Address,
+        amount_in: i128,
+    ) -> Result<(), AmmPoolError> {
         if amount_in <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -1384,7 +1445,10 @@ fn assert_k_monotonic(
 ///
 /// Uses checked arithmetic; panics on overflow.
 fn compute_fee(amount_in: i128, fee_bps: i128) -> Result<i128, AmmPoolError> {
-    Ok(amount_in.checked_mul(fee_bps).ok_or(AmmPoolError::Overflow)? / 10_000)
+    Ok(amount_in
+        .checked_mul(fee_bps)
+        .ok_or(AmmPoolError::Overflow)?
+        / 10_000)
 }
 
 /// Inverse of the verify-k condition: returns the **minimum** `amount_in`
@@ -1468,9 +1532,15 @@ mod inline_test {
         for &ra in reserve_sizes.iter() {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
-                    client.init_pool(&ra, &rb);
+                    client.init_pool(&ra, &rb, &token_a, &token_b);
                     // swap using stored fee (default 30 bps)
-                    let _out = client.swap_a_for_b(&amt);
+                    let res = client.try_swap_a_for_b(&amt);
+                    if res == Err(Ok(AmmPoolError::ZeroOutput)) {
+                        // Dust input that floors to zero output (e.g. a
+                        // small amt against a much larger ra) is rejected
+                        // by the dust-swap guard before touching reserves.
+                        continue;
+                    }
                     let (new_ra, new_rb) = client.get_reserves();
                     let k_before = ra.checked_mul(rb).unwrap();
                     let k_after = new_ra.checked_mul(new_rb).unwrap();
@@ -1495,8 +1565,16 @@ mod inline_test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        client.init_pool(&1000, &2000);
-        client.add_liquidity(&100, &200);
+        let caller = generate_address(&env);
+        let a_admin = generate_address(&env);
+        let b_admin = generate_address(&env);
+        let ta = env.register_stellar_asset_contract(a_admin);
+        let tb = env.register_stellar_asset_contract(b_admin);
+        soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&caller, &1_000_i128);
+        soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &2_000_i128);
+
+        client.init_pool(&1000, &2000, &ta, &tb);
+        client.add_liquidity(&caller, &100, &200);
         let (ra1, rb1) = client.get_reserves();
         let k1 = ra1.checked_mul(rb1).unwrap();
 
@@ -1519,8 +1597,8 @@ mod inline_test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        let token_a = generate_address(&env);
-        let token_b = generate_address(&env);
+        let _token_a = generate_address(&env);
+        let _token_b = generate_address(&env);
         let caller = generate_address(&env);
 
         // Register real token contracts and mint tokens for transfer to succeed.
@@ -1551,8 +1629,8 @@ mod inline_test {
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
 
-        let token_a = generate_address(&env);
-        let token_b = generate_address(&env);
+        let _token_a = generate_address(&env);
+        let _token_b = generate_address(&env);
         let caller = generate_address(&env);
 
         // Register real token contracts and mint tokens.
@@ -1656,8 +1734,16 @@ mod inline_test {
         let obs = client.get_twap_observations();
         for i in 0..obs.len() {
             let (_timestamp, cum_num, cum_denom) = obs.get(i).unwrap();
-            assert!(cum_num >= 0, "cumulative numerator must be non-negative (obs {})", i);
-            assert!(cum_denom >= 0, "cumulative denominator must be non-negative (obs {})", i);
+            assert!(
+                cum_num >= 0,
+                "cumulative numerator must be non-negative (obs {})",
+                i
+            );
+            assert!(
+                cum_denom >= 0,
+                "cumulative denominator must be non-negative (obs {})",
+                i
+            );
         }
     }
 }
