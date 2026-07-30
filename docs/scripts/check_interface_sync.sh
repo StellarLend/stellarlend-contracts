@@ -45,6 +45,8 @@ DOCUMENTED_FUNCTIONS=(
   "get_debt_asset_position"
   "get_debt_position"
   "get_deposit_cap"
+  "get_governance_audit_count"
+  "get_governance_audit_entries"
   "get_guardian"
   "get_health_factor"
   "get_insurance_fund"
