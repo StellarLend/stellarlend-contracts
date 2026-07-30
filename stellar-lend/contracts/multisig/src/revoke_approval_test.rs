@@ -6,7 +6,10 @@ mod revoke_approval_tests {
     use soroban_sdk::testutils::{Address as _, Ledger};
     use soroban_sdk::{Address, Env, Vec};
 
-    fn setup_with_signers(threshold: u32, signer_count: usize) -> (Env, Address, Address, Vec<Address>) {
+    fn setup_with_signers(
+        threshold: u32,
+        signer_count: usize,
+    ) -> (Env, Address, Address, Vec<Address>) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -34,7 +37,8 @@ mod revoke_approval_tests {
         let signer_b = signers.get(1).unwrap();
 
         let current_ledger = env.ledger().sequence();
-        let proposal_id = client.create_proposal(&3, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+        let proposal_id =
+            client.create_proposal(&3, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
 
         client.approve_proposal(&signer_a, &proposal_id);
         client.approve_proposal(&signer_b, &proposal_id);
@@ -60,7 +64,8 @@ mod revoke_approval_tests {
 
         let signer_a = signers.get(0).unwrap();
         let current_ledger = env.ledger().sequence();
-        let proposal_id = client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+        let proposal_id =
+            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
 
         assert_eq!(
             client.try_revoke_approval(&signer_a, &proposal_id),
@@ -76,7 +81,8 @@ mod revoke_approval_tests {
         let signer_a = signers.get(0).unwrap();
         let signer_b = signers.get(1).unwrap();
         let current_ledger = env.ledger().sequence();
-        let proposal_id = client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+        let proposal_id =
+            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
 
         client.approve_proposal(&signer_a, &proposal_id);
 
@@ -93,7 +99,8 @@ mod revoke_approval_tests {
 
         let signer_a = signers.get(0).unwrap();
         let current_ledger = env.ledger().sequence();
-        let proposal_id = client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10));
+        let proposal_id =
+            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10));
         client.approve_proposal(&signer_a, &proposal_id);
 
         env.ledger()
@@ -103,7 +110,8 @@ mod revoke_approval_tests {
             Err(Ok(MultisigError::ProposalExpired))
         );
 
-        let proposal_id_2 = client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+        let proposal_id_2 =
+            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
         client.approve_proposal(&signer_a, &proposal_id_2);
         client.execute_proposal(&proposal_id_2);
         assert_eq!(
@@ -120,7 +128,8 @@ mod revoke_approval_tests {
         let signer_a = signers.get(0).unwrap();
         let signer_b = signers.get(1).unwrap();
         let current_ledger = env.ledger().sequence();
-        let proposal_id = client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+        let proposal_id =
+            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
 
         client.approve_proposal(&signer_a, &proposal_id);
         client.approve_proposal(&signer_b, &proposal_id);

@@ -889,8 +889,6 @@ mod cliff_bound_test;
 #[cfg(test)]
 mod grant_transfer_test;
 #[cfg(test)]
-mod grant_transfer_test;
-#[cfg(test)]
 mod initialize_test;
 #[cfg(test)]
 mod lifecycle_e2e_test;
@@ -910,6 +908,8 @@ mod pause_test;
 mod revoke_split_test;
 #[cfg(test)]
 mod test_harness;
+#[cfg(test)]
+mod vested_at_overflow_test;
 #[cfg(test)]
 mod vested_at_proptest;
 #[cfg(test)]
