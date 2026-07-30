@@ -8,8 +8,8 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address as _, Events as _, Ledger as _},
-    Address, Env, TryFromVal, Val, Vec,
+    testutils::{Address as _, Events, Ledger},
+    Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
 };
 use std::string::{String, ToString};
 
@@ -118,7 +118,8 @@ pub struct VestingContract {
     pub token_client: soroban_sdk::token::Client<'static>,
     pub token_admin: Address,
     pub token_asset: soroban_sdk::token::StellarAssetClient<'static>,
-
+    pub contract_addr: Address,
+    
     pub admin: String,
     pub treasury: String,
     pub address_map: std::cell::RefCell<std::collections::HashMap<String, Address>>,
@@ -146,6 +147,7 @@ impl VestingContract {
         let treasury_addr = Address::generate(&env);
         address_map.insert(admin.to_string(), admin_addr.clone());
         address_map.insert(treasury.to_string(), treasury_addr.clone());
+        address_map.insert("contract".to_string(), contract_id.clone());
 
         client.initialize(&admin_addr, &treasury_addr, &token_address);
 
@@ -162,6 +164,7 @@ impl VestingContract {
             treasury: treasury.to_string(),
             address_map: std::cell::RefCell::new(address_map),
             events: std::vec::Vec::new(),
+            contract_addr: contract_id,
         }
     }
 
@@ -198,10 +201,8 @@ impl VestingContract {
     }
 
     fn set_time(&self, timestamp: u64) {
-        let mut li = self.env.ledger().get();
-        li.timestamp = timestamp;
-        li.sequence_number = timestamp as u32;
-        self.env.ledger().set(li);
+        self.env.ledger().set_timestamp(timestamp);
+        self.env.ledger().set_sequence_number(timestamp as u32);
     }
 
     fn map_error(&self, err: crate::VestingError) -> VestingError {
@@ -230,41 +231,43 @@ impl VestingContract {
     }
 
     fn sync_events(&mut self) {
-        // `ContractEvents::events()` returns raw XDR `ContractEvent`s in this
-        // SDK version (no more `(contract, topics, data): (Address, Vec<Val>,
-        // Val)` tuple iterator), so topics/data are decoded from `ScVal`
-        // rather than `Val`.
-        //
-        // NOTE: `env.events().all()` only returns events published during
-        // the *current* top-level contract invocation (Soroban's test env
-        // resets the event buffer per call), not the whole `Env`'s history.
-        // This method must therefore *accumulate* into `self.events` across
-        // calls rather than clear-and-rebuild each time -- otherwise a
-        // no-op call (which emits no new event) would wipe out events
-        // recorded by earlier calls. See `accelerate_test::idempotent_double_accelerate`,
-        // which asserts the event count is unchanged after a second, no-op
-        // `accelerate_grant` call.
-        let all_events = self.env.events().all();
-        for event in all_events.events() {
-            let soroban_sdk::xdr::ContractEventBody::V0(body) = &event.body;
-            if body.topics.len() >= 2 {
-                if let Ok(topic_sym) = soroban_sdk::Symbol::try_from_val(&self.env, &body.topics[0])
-                {
-                    if topic_sym == soroban_sdk::Symbol::new(&self.env, "grant_accelerated") {
-                        let grantee_addr =
-                            Address::try_from_val(&self.env, &body.topics[1]).unwrap();
-                        let grantee_tag = self.get_tag(&grantee_addr);
+        let events = self.env.events().all();
+        use soroban_sdk::xdr::{ContractEventBody, ContractEventType, ScVal};
+        for raw_event in events.events() {
+            if raw_event.type_ != ContractEventType::Contract {
+                continue;
+            }
+            let body = match &raw_event.body {
+                ContractEventBody::V0(v0) => v0,
+                _ => continue,
+            };
+            if body.topics.len() < 2 {
+                continue;
+            }
+            if let Ok(topic_sym) = Symbol::try_from_val(&self.env, &body.topics[0]) {
+                if topic_sym == Symbol::new(&self.env, "grant_accelerated") {
+                    let grantee_addr =
+                        Address::try_from_val(&self.env, &body.topics[1]).unwrap();
+                    let grantee_tag = self.get_tag(&grantee_addr);
 
-                        let data_vec = Vec::<Val>::try_from_val(&self.env, &body.data).unwrap();
-                        let amount =
-                            i128::try_from_val(&self.env, &data_vec.get(1).unwrap()).unwrap();
-                        let timestamp = self.env.ledger().timestamp();
-
-                        self.events.push(GrantAcceleratedEvent {
-                            grantee: grantee_tag,
-                            amount: amount as u128,
-                            timestamp,
-                        });
+                    if let ScVal::Vec(Some(vec)) = &body.data {
+                        if vec.len() >= 2 {
+                            let amount = match &vec.get(1).unwrap() {
+                                ScVal::I128(p) => {
+                                    (p.hi as i128) << 64 | p.lo as i128
+                                }
+                                ScVal::U128(p) => {
+                                    ((p.hi as u128) << 64 | p.lo as u128) as i128
+                                }
+                                _ => 0,
+                            };
+                            let timestamp = self.env.ledger().timestamp();
+                            self.events.push(GrantAcceleratedEvent {
+                                grantee: grantee_tag,
+                                amount: amount as u128,
+                                timestamp,
+                            });
+                        }
                     }
                 }
             }
@@ -285,7 +288,8 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
 
-        // Pre-mint tokens to admin so contract can escrow them
+        // Mint tokens to the contract so it can distribute them on claim
+        self.token_asset.mint(&self.contract_addr, &(total as i128));
         self.token_asset.mint(&caller_addr, &(total as i128));
 
         match self
@@ -293,8 +297,9 @@ impl VestingContract {
             .try_add_grant(&grantee_addr, &(total as i128), &start, &duration, &cliff)
         {
             Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -302,8 +307,9 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         match self.client.try_pause(&caller_addr) {
             Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -311,8 +317,9 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         match self.client.try_resume(&caller_addr) {
             Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -327,8 +334,9 @@ impl VestingContract {
         let grantee_addr = self.get_address(grantee);
         match self.client.try_claim(&grantee_addr) {
             Ok(Ok(claimed)) => Ok(claimed as u128),
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -345,8 +353,9 @@ impl VestingContract {
             .try_claim_partial(&grantee_addr, &(amount as i128))
         {
             Ok(Ok(claimed)) => Ok(claimed as u128),
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -356,8 +365,9 @@ impl VestingContract {
         let grantee_addr = self.get_address(grantee);
         match self.client.try_revoke(&caller_addr, &grantee_addr) {
             Ok(Ok((vested, clawed_back))) => Ok(clawed_back as u128),
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -376,8 +386,9 @@ impl VestingContract {
             .try_revoke_one(&caller_addr, &grantee_addr, &(index as u32))
         {
             Ok(Ok((vested, clawed_back))) => Ok(clawed_back as u128),
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -400,31 +411,9 @@ impl VestingContract {
                 self.sync_events();
                 Ok(())
             }
+            Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
-        }
-    }
-
-    // ── transfer_grant ────────────────────────────────────────────────────────
-
-    pub fn transfer_grant(
-        &mut self,
-        caller: &str,
-        from: &str,
-        to: &str,
-        now: u64,
-    ) -> Result<(), VestingError> {
-        self.set_time(now);
-        let caller_addr = self.get_address(caller);
-        let from_addr = self.get_address(from);
-        let to_addr = self.get_address(to);
-        match self
-            .client
-            .try_transfer_grant(&caller_addr, &from_addr, &to_addr)
-        {
-            Ok(Ok(())) => Ok(()),
-            Err(Ok(err)) => Err(self.map_error(err)),
-            _ => Err(VestingError::Unauthorized),
+            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 

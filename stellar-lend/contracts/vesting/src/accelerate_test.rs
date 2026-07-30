@@ -138,7 +138,12 @@ fn claim_after_accelerate_drains_exactly() {
 
     let drained = client.claim(&grantee);
     assert_eq!(drained, 800, "must drain exactly total - claimed = 800");
-    assert_eq!(token_client.balance(&grantee), 1_000);
+    assert_eq!(c.balance_of("alice"), 1_000, "grantee has full total");
+    assert_eq!(c.balance_of("contract"), 0, "contract is empty");
+
+    // Second claim must yield NothingToClaim.
+    let second = c.claim("alice", 200).unwrap_err();
+    assert_eq!(second, VestingError::NothingToClaim, "nothing left to claim");
 }
 
 #[test]
@@ -206,12 +211,21 @@ fn event_emitted_on_state_change() {
     assert_eq!(events.events().len(), 1, "exactly one event must be emitted");
 }
 
+/// When all active grants are already fully released, no `GrantAccelerated`
+/// event must be emitted and the call must return `Ok(())`.
+///
+/// We simulate a fully-released grant by using a very short duration that
+/// vests instantly, then claiming everything.
 #[test]
 fn no_event_on_noop() {
-    let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
-    let grantee = Address::generate(&env);
+    let mut c = VestingContract::new("admin", "treasury");
+    // Grant with duration=1 — fully vested at t >= 1.
+    c.add_grant("admin", "alice", 1_000, 0, 1, 0)
+        .expect("add_grant should succeed");
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    // Advance past full vesting and claim everything.
+    c.claim("alice", 1).expect("claim at t=1 must succeed");
+    // Now released = 1000, claimed = 1000, total_locked = 0.
 
     // First accelerate changes state → event emitted
     client.accelerate_grant(&admin, &grantee);
@@ -247,4 +261,64 @@ fn revoked_grants_skipped() {
         events.events().is_empty() || locked_before == 0,
         "no new events on revoked-only grantee"
     );
+    assert_eq!(c.events.len(), 0, "no event when all grants are revoked");
+}
+
+// ── Property-based test ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod proptest_suite {
+    use super::*;
+    use crate::test_harness::VestingContract;
+    use proptest::prelude::*;
+
+    const MAX_PRINCIPAL: u128 = 1_000_000_000_000_000;
+    const MAX_TIME: u64 = 1_000_000_000;
+
+    proptest! {
+        /// For all valid `(total, claimed_fraction, now)` triples,
+        /// `claimable()` after `accelerate_grant` must equal `total - claimed`,
+        /// independent of the original vesting schedule parameters.
+        ///
+        /// `claimed_fraction` is in 0..=1000 and maps to
+        /// `claimed = total * claimed_fraction / 1000`.
+        #[test]
+        fn accelerate_proptest(
+            total in 1u128..=MAX_PRINCIPAL,
+            claimed_fraction in 0u128..=1000u128,
+            now in 0u64..=MAX_TIME,
+        ) {
+            // Set up a grant with duration=1 so it vests instantly.
+            let mut c = VestingContract::new("admin", "treasury");
+            c.add_grant("admin", "alice", total, 0, 1, 0)
+                .expect("add_grant");
+
+            // Simulate prior withdrawals.
+            let claimed = total * claimed_fraction / 1000;
+            // Vest all tokens by advancing past the duration.
+            if claimed > 0 {
+                c.claim_partial("alice", claimed, 1)
+                    .expect("claim_partial should succeed");
+            }
+
+            c.accelerate_grant("admin", "alice", now)
+                .expect("accelerate_grant");
+
+            let grants = c.get_grants("alice");
+            let claimable_sum: u128 = grants
+                .iter()
+                .filter(|g| !g.revoked)
+                .map(|g| g.claimable())
+                .sum();
+
+            prop_assert_eq!(
+                claimable_sum,
+                total - claimed,
+                "claimable must equal total - claimed for total={:?}, claimed={:?}, now={:?}",
+                total,
+                claimed,
+                now
+            );
+        }
+    }
 }
