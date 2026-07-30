@@ -162,12 +162,9 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 ### View Functions (Read-Only)
 - `get_position(user)` / `get_user_position(user)` → `PositionSummary`
 - `get_health_factor(user)` → `i128`
-- `get_collateral_value(user)` → `i128`
-- `get_debt_value(user)` → `i128`
 - `get_max_liquidatable_amount(user)` → `i128`
 - `get_liquidation_incentive_bps()` → `i128`
 - `get_emergency_state()` → `EmergencyState`
-- `get_performance_stats()` → `Vec<u64>`
 - `get_price(asset)` → `Result<i128, OracleError>`
 
 ### Admin & Risk Control
@@ -181,7 +178,6 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 - `set_close_factor_bps(admin, bps)` → `Result<(), BorrowError>`
 - `set_liquidation_incentive_bps(admin, bps)` → `Result<(), BorrowError>`
 - `credit_insurance_fund(caller, asset, amount)` → `Result<(), BorrowError>`
-- `offset_bad_debt(caller, asset, amount)` → `Result<(), BorrowError>`
 
 ### Oracle Management
 - `configure_oracle(caller, config)` → `Result<(), OracleError>`
@@ -189,7 +185,6 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 - `set_fallback_oracle(caller, asset, oracle)` → `Result<(), OracleError>`
 - `update_price_feed(caller, asset, price)` → `Result<(), OracleError>`
 - `set_oracle_paused(caller, paused)` → `Result<(), OracleError>`
-- `set_asset_max_staleness(caller, asset, seconds)` → `Result<(), OracleError>`
 
 ### Governance (Upgrades)
 - `upgrade_init(admin, wasm_hash, threshold)`
