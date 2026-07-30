@@ -11,7 +11,7 @@
 //! | while paused                           | `ContractPaused` error    |
 //! | repeated partials sum correctly        | Success, total matches claimable |
 
-use super::{VestingContract, VestingError};
+use crate::test_harness::{VestingContract, VestingError};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ use super::{VestingContract, VestingError};
 /// duration = 1000 s, cliff = 100 s.
 fn setup_with_grant() -> VestingContract {
     let mut c = VestingContract::new("admin", "treasury");
-    c.add_grant("alice", 1_000, 0, 1_000, 100);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 100).unwrap();
     c
 }
 
@@ -29,13 +29,21 @@ fn setup_with_grant() -> VestingContract {
 #[test]
 fn claim_partial_equals_claimable_succeeds() {
     let mut c = setup_with_grant();
-    // At t=500, 400 tokens are claimable (500 - cliff 100 = 400; vested = 1000 * 400 / 1000 = 400)
+    // The cliff is a pure gate on vesting start, not a subtraction from
+    // elapsed time (see `VESTING_MATH.md`'s `vested_at` spec and
+    // `milestone_schedule_test::linear_vested_at_cliff_end`, which vests
+    // `total * elapsed / duration` counting elapsed from `start`, cliff
+    // already having passed). So at t=500 (cliff=100 already passed),
+    // vested = 1000 * 500 / 1000 = 500; requesting 400 is a valid partial
+    // claim of less than the full 500 claimable.
     let claimed = c
         .claim_partial("alice", 400, 500)
         .expect("claim_partial should succeed");
     assert_eq!(claimed, 400);
     assert_eq!(c.balance_of("alice"), 400);
-    assert_eq!(c.total_locked(), 600);
+    // total_locked tracks the unvested remainder: 1000 - 500 vested = 500
+    // (independent of how much of that 500 was actually claimed).
+    assert_eq!(c.total_locked(), 500);
 }
 
 // ── amount < claimable (partial claim) ───────────────────────────────────────────
@@ -44,17 +52,18 @@ fn claim_partial_equals_claimable_succeeds() {
 #[test]
 fn claim_partial_less_than_claimable_succeeds() {
     let mut c = setup_with_grant();
-    // At t=500, 400 tokens are claimable.
+    // At t=500 (cliff=100 already passed), 500 tokens are vested/claimable
+    // -- see the comment in `claim_partial_equals_claimable_succeeds`.
     let claimed = c
         .claim_partial("alice", 100, 500)
         .expect("claim_partial should succeed");
     assert_eq!(claimed, 100);
     assert_eq!(c.balance_of("alice"), 100);
-    assert_eq!(c.total_locked(), 600); // total_locked unchanged until sync
+    assert_eq!(c.total_locked(), 500); // 1000 - 500 vested
 
-    // Check grant state: 400 vested, 100 claimed, 300 still claimable
+    // Check grant state: 500 vested, 100 claimed, 400 still claimable
     let grants = c.get_grants("alice");
-    assert_eq!(grants[0].released, 400);
+    assert_eq!(grants[0].released, 500);
     assert_eq!(grants[0].claimed, 100);
 }
 
@@ -66,8 +75,9 @@ fn claim_partial_less_than_claimable_succeeds() {
 #[test]
 fn claim_partial_exceeds_claimable_fails() {
     let mut c = setup_with_grant();
-    // At t=500, only 400 tokens are claimable, but we try to claim 500.
-    let result = c.claim_partial("alice", 500, 500);
+    // At t=500, only 500 tokens are claimable (elapsed=500, duration=1000, total=1000).
+    // Trying to claim 501 exceeds the claimable amount.
+    let result = c.claim_partial("alice", 501, 500);
     assert_eq!(result, Err(VestingError::OverClaim));
 
     // Balance should not have changed.
@@ -115,14 +125,15 @@ fn claim_partial_blocked_while_paused() {
 fn repeated_partial_claims_sum_correctly() {
     let mut c = setup_with_grant();
 
-    // First partial at t=500: claim 100 of 400 claimable.
+    // First partial at t=500: 500 vested (cliff=100 already passed --
+    // see the comment in `claim_partial_equals_claimable_succeeds`), claim 100.
     let claimed1 = c
         .claim_partial("alice", 100, 500)
         .expect("first partial should succeed");
     assert_eq!(claimed1, 100);
     assert_eq!(c.balance_of("alice"), 100);
 
-    // Advance to t=700 (600 vested so far, but 100 already claimed, 500 claimable).
+    // Advance to t=700: 700 vested, 100 already claimed, 600 claimable.
     // Claim another 200.
     let claimed2 = c
         .claim_partial("alice", 200, 700)
@@ -130,16 +141,16 @@ fn repeated_partial_claims_sum_correctly() {
     assert_eq!(claimed2, 200);
     assert_eq!(c.balance_of("alice"), 300);
 
-    // Final claim of remaining 300.
+    // Claim another 300 (of the 400 still claimable: 700 vested - 300 claimed).
     let claimed3 = c
         .claim_partial("alice", 300, 700)
         .expect("final partial should succeed");
     assert_eq!(claimed3, 300);
     assert_eq!(c.balance_of("alice"), 600);
 
-    // Nothing left to claim.
+    // 100 remains claimable: 700 vested - 600 claimed so far.
     let grants = c.get_grants("alice");
-    assert_eq!(grants[0].claimable(), 0);
+    assert_eq!(grants[0].claimable(), 100);
 }
 
 // ── partial claim with multiple grants ─────────────────────────────────────────
@@ -149,9 +160,8 @@ fn repeated_partial_claims_sum_correctly() {
 fn partial_claim_distributes_across_multiple_grants() {
     let mut c = VestingContract::new("admin", "treasury");
     // Grant 1: 1000 total, vests from t=0 over 1000s, cliff=0.
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
-    // Grant 2: 1000 total, vests from t=0 over 1000s, cliff=0.
-    c.add_grant("alice", 1_000, 0, 1_000, 0);
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
 
     // At t=500, each grant has 500 claimable, total 1000.
     // Claim 300 - should come from grant 1 first (500 available), leaving 200 from grant 1

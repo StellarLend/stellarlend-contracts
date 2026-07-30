@@ -1,7 +1,7 @@
 use crate::{
     debt::DebtPosition,
     liquidate_transfer_test::{MockToken, MockTokenClient},
-    DataKey, LendingContract, LendingContractClient, LiquidationEventV1,
+    DataKey, LendingContract, LendingContractClient, LiquidationEventV1, PriceRecord,
 };
 use soroban_sdk::{
     events::Event,
@@ -28,6 +28,18 @@ fn setup_liquidatable() -> (
     let debt_asset = env.register(MockToken, ());
     let collateral_asset = env.register(MockToken, ());
     client.initialize(&admin);
+    client.set_collateral_asset(&collateral_asset);
+    // Seed fresh oracle price so require_fresh_valuation_prices passes.
+    let now = env.ledger().timestamp();
+    env.as_contract(&cid, || {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(collateral_asset.clone()),
+            &PriceRecord {
+                price: 1_000_000_000,
+                timestamp: now,
+            },
+        );
+    });
     MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
     MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
     (
@@ -71,7 +83,7 @@ fn liquidate_emits_event_with_correct_fields() {
     // Check that the last event (the liquidation_event_v1) has correct fields.
     let all = env.events().all();
     let ev = all.events();
-    let liq_event = ev.get(ev.len() - 1).expect("expected liquidation event");
+    let liq_event = ev.last().expect("expected liquidation event");
     let expected = LiquidationEventV1 {
         schema_version: 1,
         liquidator: liquidator.clone(),
@@ -114,7 +126,7 @@ fn liquidate_event_close_factor_limits_repay() {
     // Check the last event is the liquidation event.
     let all = env.events().all();
     let ev = all.events();
-    let liq_event = ev.get(ev.len() - 1).expect("expected liquidation event");
+    let liq_event = ev.last().expect("expected liquidation event");
     let expected = LiquidationEventV1 {
         schema_version: 1,
         liquidator: liquidator.clone(),
@@ -155,11 +167,11 @@ fn liquidate_event_zero_shortfall() {
         );
     });
 
-    client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &150);
+    client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &50);
 
     let all = env.events().all();
     let ev = all.events();
-    let liq_event = ev.get(ev.len() - 1).expect("expected liquidation event");
+    let liq_event = ev.last().expect("expected liquidation event");
     let expected = LiquidationEventV1 {
         schema_version: 1,
         liquidator: liquidator.clone(),

@@ -41,13 +41,17 @@ fn test_error_paths() {
 
     client.init_pool(&1000, &1000, &ta, &tb);
 
-    // Test InsufficientReserves in remove_liquidity (hits check before token transfer)
-    let res = client.try_remove_liquidity(&caller, &2000, &2000);
-    assert_eq!(res, Err(Ok(AmmPoolError::InsufficientReserves)));
+    // Test InsufficientLpBalance in remove_liquidity: `caller` never
+    // deposited, so any positive burn exceeds their (zero) LP balance.
+    let res = client.try_remove_liquidity(&caller, &2000);
+    assert_eq!(res, Err(Ok(AmmPoolError::InsufficientLpBalance)));
 
-    // Test Overflow in add_liquidity (hits checked_add before token transfer)
-    client.init_pool(&i128::MAX, &1000, &ta, &tb);
-    let res = client.try_add_liquidity(&caller, &1, &1);
+    // Test Overflow in add_liquidity (hits checked_add before token transfer).
+    // reserve_b = 0 keeps init_pool on the b==0 branch (no a*b product, so
+    // no overflow there); reserve_a = i128::MAX then overflows the very
+    // first checked_add in add_liquidity once a nonzero add_a is applied.
+    client.init_pool(&i128::MAX, &0, &ta, &tb);
+    let res = client.try_add_liquidity(&caller, &2000, &2000);
     assert_eq!(res, Err(Ok(AmmPoolError::Overflow)));
 
     // Test InvariantViolation in add_liquidity (hits assert_k_monotonic before token transfer)

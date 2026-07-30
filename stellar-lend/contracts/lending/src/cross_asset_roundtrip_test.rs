@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::{DataKey, PriceRecord};
 use crate::{LendingContract, LendingContractClient};
 use soroban_sdk::testutils::{Address as _, Ledger};

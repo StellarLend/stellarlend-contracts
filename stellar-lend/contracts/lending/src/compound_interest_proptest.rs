@@ -16,9 +16,13 @@ fn config() -> ProptestConfig {
     }
 }
 
+/// Bound `principal` so that `principal * MAX_RATE_BPS * elapsed` cannot
+/// overflow i128 for any `elapsed` used by these proptests (all `< 2_000_000`).
 fn safe_principal() -> impl Strategy<Value = i128> {
-    0i128..=(i128::MAX / 100_000)
-}proptest! {
+    0i128..=(i128::MAX / (MAX_RATE_BPS * 2_000_000))
+}
+
+proptest! {
     #![proptest_config(config())]
 
     #[test]
@@ -86,7 +90,7 @@ fn zero_elapsed_returns_zero() {
 
 #[test]
 fn zero_rate_returns_zero() {
-    assert_eq!(compute_compound_interest(1000, 0, 1000), Ok(1));
+    assert_eq!(compute_compound_interest(1000, 0, 1000), Ok(0));
 }
 
 #[test]
