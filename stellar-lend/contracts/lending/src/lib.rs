@@ -1036,6 +1036,11 @@ impl LendingContract {
         Self::max_flash_bps_config(&env)
     }
 
+    /// Return the configured flash-loan fee in basis points, falling back to 5 bps when unset.
+    pub fn get_flash_fee(env: Env) -> i128 {
+        Self::get_flash_fee_bps(&env)
+    }
+
     /// Propose a new admin (current admin only).
     ///
     /// Replaces any existing pending admin proposal.
@@ -1146,6 +1151,14 @@ impl LendingContract {
         audit_log::record_audit_entry(&env, String::from_str(&env, state_name), caller, None);
 
         Ok(())
+    }
+
+    /// Return the current protocol emergency state, defaulting to Normal.
+    pub fn get_emergency_state(env: Env) -> EmergencyState {
+        env.storage()
+            .instance()
+            .get(&DataKey::EmergencyState)
+            .unwrap_or(EmergencyState::Normal)
     }
 
     /// Set or clear a granular pause flag with a TTL.
@@ -2246,6 +2259,15 @@ impl LendingContract {
 
         Ok(())
     }
+
+    /// Get the current debt ceiling, falling back to zero (no global limit) when unset.
+    pub fn get_debt_ceiling(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DebtCeiling)
+            .unwrap_or(0)
+    }
+
     /// Set the maximum total deposits allowed across the protocol (admin-only).
     pub fn set_deposit_cap(env: Env, cap: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
