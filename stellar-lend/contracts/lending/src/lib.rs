@@ -1221,6 +1221,10 @@ impl LendingContract {
             .ok_or(LendingError::NotInitialized)?;
         admin.require_auth();
 
+        if min_borrow < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
         env.storage()
             .instance()
             .set(&DataKey::BorrowMinAmount, &min_borrow);
@@ -3968,6 +3972,13 @@ pub(crate) mod test {
         assert_eq!(client.get_min_borrow(), 100);
     }
 
+
+    #[test]
+    #[should_panic]
+    fn test_set_min_borrow_rejects_negative() {
+        let (_env, client, _admin, _user) = setup();
+        client.set_min_borrow(&-1);
+    }
     #[test]
     fn test_set_debt_ceiling_admin_only() {
         let (_env, client, _admin, _user) = setup();
