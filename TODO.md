@@ -1,34 +1,23 @@
-# TODO: Wire `compound_interest_proptest.rs` into `lib.rs`
+# Issue #1713: Fix set_fee_tiers/get_fee_tiers dead code
 
 ## Steps
+- [x] Step 1: Remove `FeeTier` struct, `FEE_TIERS_KEY`, `set_fee_tiers`, `get_fee_tiers`, and duplicate `mod dynamic_fee_test` from `lib.rs`
+- [x] Step 2: Replace `dynamic_fee_test.rs` placeholder with a doc-only file explaining the removal
+- [x] Step 3: Update `DYNAMIC_FEE.md` to reflect removal of fee tiers and document `set_fee_bps`/`get_fee_bps` instead
+- [ ] Step 4: Verify compilation (`cargo build`)
+- [ ] Step 5: Verify tests pass (`cargo test`)
 
-- [x] **Read relevant files**: Analyzed `lib.rs`, `math.rs`, `property_invariants_test.rs`, `Cargo.toml` to understand the codebase structure
-- [x] **Create `compound_interest_proptest.rs`**: Property-based test file covering `math::compute_compound_interest` invariants:
-  - Interest is always non-negative
-  - Zero principal → zero interest
-  - Zero elapsed time → zero interest
-  - Zero rate → zero interest
-  - Interest scales linearly with principal
-  - Minimum interest floor of 1 for any positive principal & elapsed time
-  - Interest monotonically non-decreasing with time/rate
-  - Extreme values don't panic (return `Err` instead)
-  - Known reference values match exactly
-  - Overflow returns `Err(MathError::Overflow)`
-- [x] **Edit `lib.rs`**: Added `#[cfg(test)] mod compound_interest_proptest;` to test-module block
-- [ ] **Run `cargo test -p stellarlend-lending`**: 🔴 Blocked — this machine lacks the MSVC linker (`link.exe`). Requires Visual Studio Build Tools or `gnu` toolchain to be installed. The wasm build target works but cannot run tests.
+## Summary of changes
+### lib.rs
+- Removed unused `FeeTier` struct
+- Removed unused `FEE_TIERS_KEY` constant
+- Removed unused `Symbol` from imports
+- Removed `set_fee_tiers()` and `get_fee_tiers()` free functions (dead code outside `#[contractimpl]`)
+- Removed duplicate `mod dynamic_fee_test;` at bottom of file (only one kept at top)
 
-- [x] Step 1: Add missing DataKey variants (LiquidationThresholdBps, BorrowerList)
-- [x] Step 2: Add missing LendingError variants (SelfLiquidation, InvalidIsolationCeiling)  
-- [x] Step 3: Add `get_liquidation_threshold_bps` helper function
-- [x] Step 4: Fix duplicate `mod rounding_strategy`
-- [x] Step 5: Fix `borrow` function - add missing position/prev_principal variables
-- [x] Step 6: Fix `repay` function - add missing position/prev_principal variables
-- [x] Step 7: Fix `liquidate` function - remove duplicate code, undefined variables, stray code
-- [x] Step 8: Fix corrupted `check_emergency_status` in `repay_flash_loan`
-- [x] Step 9: Fix corrupted storage set in `flash_loan`
-- [x] Step 10: Fix `AssetParamsSetEvent` publish - add supply_cap field
-- [x] Step 11: Run tests to verify compilation
-- [x] Step 12: Create branch and push
-</｜｜DSML｜｜parameter>
-</invoke>
-</｜｜DSML｜｜tool_calls>
+### dynamic_fee_test.rs
+- Replaced placeholder test with documentation comment explaining removal
+
+### DYNAMIC_FEE.md
+- Rewritten to document the actual fee management API (`set_fee_bps`/`get_fee_bps`)
+- Includes implementation details, edge cases, and rationale for removal

@@ -57,22 +57,17 @@ mod mint_shares_proptest;
 mod sqrt_precision_test;
 #[cfg(test)]
 mod stored_fee_test;
+#[cfg(test)]
+mod dynamic_fee_test;
 
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Vec,
 };
 
 use crate::liquidity_math::{
     calculate_burn_amounts, calculate_mint_shares, LiquidityMathError, MINIMUM_LIQUIDITY,
 };
-
-pub struct FeeTier {
-    pub min_reserve: u128,
-    pub fee_bps: u32,
-}
-
-const FEE_TIERS_KEY: &str = "fee_tiers";
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -1750,26 +1745,8 @@ mod inline_test {
 
 #[cfg(test)]
 mod swap_symmetry_test;
-
-/// Set fee tiers for dynamic scaling
-pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
-    admin.require_auth();
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage().persistent().set(&key, &tiers);
-}
-
-/// Get fee tiers
-pub fn get_fee_tiers(env: Env) -> Vec<u128> {
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage()
-        .persistent()
-        .get::<_, Vec<u128>>(&key)
-        .unwrap_or_else(|| Vec::new(&env))
-}
 #[cfg(test)]
 mod dust_swap_guard_test;
-#[cfg(test)]
-mod dynamic_fee_test;
 #[cfg(test)]
 mod inverse_swap_proptest;
 #[cfg(test)]
