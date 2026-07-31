@@ -11,7 +11,7 @@
 `Vesting` stores a `Vec<Grant>` per grantee and iterates the whole vector on
 every state-touching call:
 
-- `claim` calls `sync_grants` (full pass) then sums `grant.claimable()` over all
+- `claim` calls `sync_grants` (full pass) then sums `Grant::claimable_at` over all
   grants, then `claim_partial_internal` does another full pass.
 - `claim_partial`, `total_locked`, `balance_of`, and `claimable_total` each scan
   the grantee's grants.
@@ -28,7 +28,7 @@ Let `n` = number of grants held by a grantee. Per `claim`:
 | Phase                     | Passes | Work per grant                          |
 |---------------------------|:------:|-----------------------------------------|
 | `sync_grants`             |   1    | vested-at recompute, `released` update  |
-| claimable summation       |   1    | `claimable()` + `saturating_add`        |
+| claimable summation       |   1    | `Grant::claimable_at` + `saturating_add` (exposed via `claimable_total`) |
 | `claim_partial_internal`  |   1    | `min`, `checked_add`, `saturating_sub`  |
 
 Total per-grant work is a small constant `c` (no nested loops, no allocation per
@@ -74,7 +74,7 @@ via `#[cfg(test)] mod claim_cost_bench_test;` in `lib.rs`.
 
 Each benchmark helper carries NatSpec-style `///` doc comments.
 
-1. **Harness** — `fn measure_claim(n: usize) -> u64`: build a `Vesting`, fund the
+1. **Harness** — `fn measure_claim(n: usize) -> u64` (proposed benchmark helper; not an existing function): build a `Vesting`, fund the
    contract, create `n` grants for one grantee with partially-elapsed schedules,
    advance `now`, call `claim`, and return a deterministic cost proxy (iteration
    count or, on-chain, the metered CPU instructions / budget).
