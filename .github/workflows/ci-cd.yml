@@ -205,7 +205,7 @@ jobs:
       - name: Build project
         run: |
           cd stellar-lend
-          cargo build --verbose
+          cargo build --verbose --release
 
       - name: Run unit tests
         run: |
