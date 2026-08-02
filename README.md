@@ -281,6 +281,7 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 |-------------------------------|--------------------------------------------------|
 | `flash_loan`                  | Issue a callback-based flash loan                |
 | `repay_flash_loan`            | Repay flash-loan funds to treasury storage       |
+| `receive`                     | Token receiver hook for push deposit/repay flows |
 
 ### Query Functions
 

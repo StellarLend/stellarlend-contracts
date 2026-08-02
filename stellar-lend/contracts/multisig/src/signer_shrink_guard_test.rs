@@ -80,7 +80,7 @@ fn create_and_pass(
 
 /// Executing a `RotateSigners` proposal whose new set is smaller than the
 /// current threshold must fail — the action returns
-/// `Err(MultisigError::InvalidAction)` from `dispatch_action`, propagated by
+/// `Err(MultisigError::InvalidSigners)` from `dispatch_action`, propagated by
 /// `execute_proposal`.
 #[test]
 fn test_shrink_below_threshold_is_rejected() {
@@ -105,8 +105,8 @@ fn test_shrink_below_threshold_is_rejected() {
     // `try_` instead of `should_panic`.
     let res = client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash);
     assert!(
-        matches!(res, Err(Ok(MultisigError::InvalidAction))),
-        "expected InvalidAction, got {:?}",
+        matches!(res, Err(Ok(MultisigError::InvalidSigners))),
+        "expected InvalidSigners, got {:?}",
         res
     );
 }

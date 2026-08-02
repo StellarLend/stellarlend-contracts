@@ -48,6 +48,12 @@
 | `flash_loan` | `(initiator: Address, receiver: Address, asset: Address, amount: i128, params: Bytes)` | `initiator` | `()` |
 | `repay_flash_loan` | `(payer: Address, asset: Address, amount: i128)` | `payer` | `()` |
 
+### Token Receiver Hook
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `receive` | `(token_asset: Address, from: Address, amount: i128, payload: Vec<Val>)` | `from` | `Result<(), LendingError>` — push-flow hook used for `deposit`/`repay`; rejects mismatched valuation asset, self/token-contract callers, and malformed payloads |
+
 ### View Functions
 
 | Function | Signature | Returns |

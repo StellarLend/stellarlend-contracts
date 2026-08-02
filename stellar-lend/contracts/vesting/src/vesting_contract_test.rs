@@ -64,7 +64,7 @@ fn test_pause_blocks_claim() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &1_000, &0);
 
     env.ledger().with_mut(|li| li.timestamp += 500);
     client.pause(&admin);
@@ -81,7 +81,7 @@ fn test_create_grant_and_claim_partial_vest() {
     let start = env.ledger().timestamp();
     // 1_000 tokens, no cliff, 1_000 s duration
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &1_000, &0);
 
     env.ledger().with_mut(|li| li.timestamp += 400);
 
@@ -98,7 +98,7 @@ fn test_claim_before_cliff_returns_nothing_to_claim() {
     let start = env.ledger().timestamp();
     // cliff = 200 s
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &200);
+    client.add_grant(&admin, &grantee, &1_000, &start, &1_000, &200);
 
     env.ledger().with_mut(|li| li.timestamp += 100);
 
@@ -113,7 +113,7 @@ fn test_full_vesting() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &1_000, &0);
 
     // Advance past end of vesting period.
     env.ledger().with_mut(|li| li.timestamp += 2_000);
@@ -130,12 +130,12 @@ fn test_revoke_claws_back_unvested() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &1_000, &0);
 
     // At t=300: vested=300, unvested=700
     env.ledger().with_mut(|li| li.timestamp += 300);
 
-    let (_vested, clawback) = client.revoke(&admin, &grantee);
+    let clawback = client.revoke(&admin, &grantee);
     assert_eq!(clawback, 700);
     assert_eq!(token.balance(&treasury), 700);
 
@@ -160,7 +160,7 @@ fn test_double_revoke_returns_already_revoked() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &1_000, &0);
 
     env.ledger().with_mut(|li| li.timestamp += 500);
     client.revoke(&admin, &grantee);
@@ -176,7 +176,7 @@ fn test_pause_accumulates_offset() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &1_000, &0);
 
     // Advance 200 s, pause 300 s, resume, advance 200 s
     // effective_now = (200+300+200) - 300 = 400 → vested = 400

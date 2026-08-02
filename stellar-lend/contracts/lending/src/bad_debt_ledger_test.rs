@@ -1,4 +1,3 @@
-#![cfg(test)]
 use crate::{LendingContract, LendingContractClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 

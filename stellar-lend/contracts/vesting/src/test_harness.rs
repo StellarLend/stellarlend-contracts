@@ -9,7 +9,7 @@ extern crate std;
 
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
-    Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
+    Address, Env, Symbol, TryFromVal,
 };
 use std::string::{String, ToString};
 
@@ -34,7 +34,6 @@ pub enum VestingError {
     DestinationAlreadyHasGrant,
     AlreadyInitialized,
     NoGrantFound,
-    InsufficientTreasuryBalance,
 }
 
 // ── Grant ────────────────────────────────────────────────────────────────────
@@ -118,8 +117,7 @@ pub struct VestingContract {
     pub token_client: soroban_sdk::token::Client<'static>,
     pub token_admin: Address,
     pub token_asset: soroban_sdk::token::StellarAssetClient<'static>,
-    pub contract_addr: Address,
-    
+
     pub admin: String,
     pub treasury: String,
     pub address_map: std::cell::RefCell<std::collections::HashMap<String, Address>>,
@@ -164,7 +162,6 @@ impl VestingContract {
             treasury: treasury.to_string(),
             address_map: std::cell::RefCell::new(address_map),
             events: std::vec::Vec::new(),
-            contract_addr: contract_id,
         }
     }
 
@@ -221,9 +218,6 @@ impl VestingContract {
             crate::VestingError::DestinationAlreadyHasGrant => {
                 VestingError::DestinationAlreadyHasGrant
             }
-            crate::VestingError::InsufficientTreasuryBalance => {
-                VestingError::InsufficientTreasuryBalance
-            }
             crate::VestingError::ZeroPrincipal => VestingError::ZeroPrincipal,
             crate::VestingError::ZeroDuration => VestingError::ZeroDuration,
             crate::VestingError::CliffExceedsDuration => VestingError::CliffExceedsDuration,
@@ -237,28 +231,20 @@ impl VestingContract {
             if raw_event.type_ != ContractEventType::Contract {
                 continue;
             }
-            let body = match &raw_event.body {
-                ContractEventBody::V0(v0) => v0,
-                _ => continue,
-            };
+            let ContractEventBody::V0(body) = &raw_event.body;
             if body.topics.len() < 2 {
                 continue;
             }
             if let Ok(topic_sym) = Symbol::try_from_val(&self.env, &body.topics[0]) {
                 if topic_sym == Symbol::new(&self.env, "grant_accelerated") {
-                    let grantee_addr =
-                        Address::try_from_val(&self.env, &body.topics[1]).unwrap();
+                    let grantee_addr = Address::try_from_val(&self.env, &body.topics[1]).unwrap();
                     let grantee_tag = self.get_tag(&grantee_addr);
 
                     if let ScVal::Vec(Some(vec)) = &body.data {
                         if vec.len() >= 2 {
                             let amount = match &vec.get(1).unwrap() {
-                                ScVal::I128(p) => {
-                                    (p.hi as i128) << 64 | p.lo as i128
-                                }
-                                ScVal::U128(p) => {
-                                    ((p.hi as u128) << 64 | p.lo as u128) as i128
-                                }
+                                ScVal::I128(p) => (p.hi as i128) << 64 | p.lo as i128,
+                                ScVal::U128(p) => ((p.hi as u128) << 64 | p.lo as u128) as i128,
                                 _ => 0,
                             };
                             let timestamp = self.env.ledger().timestamp();
@@ -288,18 +274,23 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
 
-        // Mint tokens to the contract so it can distribute them on claim
-        self.token_asset.mint(&self.contract_addr, &(total as i128));
+        // `add_grant` pulls `total` from the caller into the vault, so only
+        // the caller needs funding.
         self.token_asset.mint(&caller_addr, &(total as i128));
 
-        match self
-            .client
-            .try_add_grant(&grantee_addr, &(total as i128), &start, &duration, &cliff)
-        {
+        match self.client.try_add_grant(
+            &caller_addr,
+            &grantee_addr,
+            &(total as i128),
+            &start,
+            &duration,
+            &cliff,
+        ) {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) => Err(VestingError::Unauthorized),
+            // try_invoke_contract returns Ok(Err(_)) only for result-value
+            // conversion failures (rare); contract errors surface as Err(Ok(e)).
+            Ok(Err(_)) | Err(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
-            Err(Err(_)) => Err(VestingError::Unauthorized),
         }
     }
 
@@ -364,28 +355,7 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
         match self.client.try_revoke(&caller_addr, &grantee_addr) {
-            Ok(Ok((vested, clawed_back))) => Ok(clawed_back as u128),
-            Ok(Err(_)) => Err(VestingError::Unauthorized),
-            Err(Ok(err)) => Err(self.map_error(err)),
-            Err(Err(_)) => Err(VestingError::Unauthorized),
-        }
-    }
-
-    pub fn revoke_one(
-        &mut self,
-        caller: &str,
-        grantee: &str,
-        index: usize,
-        now: u64,
-    ) -> Result<u128, VestingError> {
-        self.set_time(now);
-        let caller_addr = self.get_address(caller);
-        let grantee_addr = self.get_address(grantee);
-        match self
-            .client
-            .try_revoke_one(&caller_addr, &grantee_addr, &(index as u32))
-        {
-            Ok(Ok((vested, clawed_back))) => Ok(clawed_back as u128),
+            Ok(Ok(clawed_back)) => Ok(clawed_back as u128),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
             Err(Err(_)) => Err(VestingError::Unauthorized),

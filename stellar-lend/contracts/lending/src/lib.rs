@@ -150,7 +150,7 @@ use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
-    Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
+    Bytes, BytesN, Env, IntoVal, String, Symbol, TryIntoVal, Val, Vec,
 };
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
@@ -494,6 +494,15 @@ pub enum LendingError {
     /// `receive` called with `from` equal to the token asset or the lending
     /// contract itself (prevents self-call / reentrancy attacks).
     UnauthorizedSender = 1016,
+    /// `config_restore` called with a backup name that does not exist.
+    BackupNotFound = 1007,
+    /// `set_asset_isolation` called with an isolation ceiling of zero.
+    InvalidIsolationCeiling = 2010,
+    /// `set_liquidation_grace_period` called with a value outside the
+    /// allowed range.
+    InvalidLiquidationGracePeriod = 7008,
+    /// Repay amount exceeds the outstanding debt (surfaced from `debt`).
+    RepayAmountTooHigh = 1012,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -1394,8 +1403,8 @@ impl LendingContract {
 
         // Validate that token_asset matches the configured valuation
         // collateral asset so deposit/repay accounting stays consistent.
-        let configured_asset = Self::get_collateral_asset(env.clone())
-            .ok_or(LendingError::AssetNotSupported)?;
+        let configured_asset =
+            Self::get_collateral_asset(env.clone()).ok_or(LendingError::AssetNotSupported)?;
         if token_asset != configured_asset {
             return Err(LendingError::AssetNotSupported);
         }
@@ -1420,7 +1429,7 @@ impl LendingContract {
         let version: u32 = payload
             .get(0)
             .unwrap()
-            .try_into_val()
+            .try_into_val(&env)
             .map_err(|_| LendingError::MalformedPayload)?;
         if version != SCHEMA_VERSION_V1 {
             return Err(LendingError::InvalidPayloadVersion);
@@ -1429,19 +1438,14 @@ impl LendingContract {
         let action_sym: Symbol = payload
             .get(1)
             .unwrap()
-            .try_into_val()
+            .try_into_val(&env)
             .map_err(|_| LendingError::MalformedPayload)?;
 
         // Pull tokens from the user into the contract via transfer_from.
         // The user must have previously called token_client.approve() to
         // authorize the lending contract as a spender.
         let token_client = TokenClient::new(&env, &token_asset);
-        token_client.transfer_from(
-            &contract_address,
-            &from,
-            &contract_address,
-            &amount,
-        );
+        token_client.transfer_from(&contract_address, &from, &contract_address, &amount);
 
         if action_sym == symbol_short!("deposit") {
             // Defence-in-depth: deposit() also calls require_initialized
@@ -3971,7 +3975,6 @@ pub(crate) mod test {
         client.set_min_borrow(&100);
         assert_eq!(client.get_min_borrow(), 100);
     }
-
 
     #[test]
     #[should_panic]

@@ -1,38 +1,53 @@
 # Vesting Claim Cost: Model, Bound, and Benchmark Plan
 
-> **Status:** Design doc. The `vesting` crate does not currently compile on
-> `main` (pre-existing, unrelated breakage in `lib.rs`, e.g. ambiguous numeric
-> types in `claim`/`claim_partial`). This document lands the cost model and the
-> concrete benchmark plan now; the benchmark test (`claim_cost_bench_test.rs`)
-> will follow once the crate builds.
+> **Status:** Design doc. The benchmark test (`claim_cost_bench_test.rs`) is not
+> yet written; this document lands the cost model and the concrete benchmark
+> plan now, and the benchmark will follow. The plan references only operations
+> that actually exist in `src/lib.rs` (see "Real interface" below), so a
+> harness written against it has real callables. Verified against the current
+> `main`-style code: the vesting crate compiles, `cargo test -p
+> stellarlend-vesting` passes (118 tests), and `cargo clippy` is clean, so the
+> interface listed below is guaranteed to be callable.
 
 ## Problem
 
-`Vesting` stores a `Vec<Grant>` per grantee and iterates the whole vector on
-every state-touching call:
+`Vesting` stores a `Vec<Grant>` per grantee (`VestingKey::Grants(grantee)`) and
+iterates the whole vector on every grantee-touching call:
 
-- `claim` calls `sync_grants` (full pass) then sums `grant.claimable()` over all
-  grants, then `claim_partial_internal` does another full pass.
-- `claim_partial`, `total_locked`, `balance_of`, and `claimable_total` each scan
-  the grantee's grants.
+- `claim` makes one pass over the grantee's grants: for each grant it recomputes
+  `Grant::vested_at(now)` and accumulates `grant.claimable_at(now)` (the
+  internal view `claimable_at = vested_at(now) - claimed_amount`), updating
+  `claimed_amount` in the same pass. There is no separate `sync_grants` or
+  `claim_partial_internal` helper — the sync and summation are inlined in
+  `claim` itself. Revoked grants are still visited (their claimable is 0);
+  `claim_partial` skips them explicitly.
+- `claim_partial` scans the grants twice: once to sum the claimable balance and
+  once to distribute the requested amount.
+- `claimable_total`, `vested_at`, and `get_grants` each scan the grantee's
+  grants. `total_locked()` is a single storage read of the `TotalLocked` key (no
+  scan); `balance_of` is not a vesting entrypoint (it exists only as a token
+  balance helper in the test harness).
 
-So a single `claim` is **O(n)** in the grantee's grant count `n`, with roughly
-three passes over the vector. As one grantee accumulates many grants, claim cost
-grows linearly and is unbounded — there is no cap on grants-per-grantee and no
-documented ceiling beyond which `claim` becomes uneconomic.
+So a single `claim` is **O(n)** in the grantee's grant count `n`, with one pass
+over the vector plus the storage read/write of the `Vec<Grant>` itself. As one
+grantee accumulates many grants, claim cost grows linearly and is unbounded —
+there is no cap on grants-per-grantee and no documented ceiling beyond which
+`claim` becomes uneconomic.
 
 ## Cost Model
 
 Let `n` = number of grants held by a grantee. Per `claim`:
 
-| Phase                     | Passes | Work per grant                          |
-|---------------------------|:------:|-----------------------------------------|
-| `sync_grants`             |   1    | vested-at recompute, `released` update  |
-| claimable summation       |   1    | `claimable()` + `saturating_add`        |
-| `claim_partial_internal`  |   1    | `min`, `checked_add`, `saturating_sub`  |
+| Phase                    | Passes | Work per grant                                                  |
+|--------------------------|:------:|-----------------------------------------------------------------|
+| `claim` sync + summation |   1    | `Grant::vested_at(now)` recompute, `claimable_at(now)` + `saturating_add`, `claimed_amount` update |
+| storage write            |   —    | persist the updated `Vec<Grant>`                                |
 
-Total per-grant work is a small constant `c` (no nested loops, no allocation per
-grant), so:
+(`claim_partial` has the same linear shape with two passes: a claimable
+summation pass and a distribution pass.)
+
+Total per-grant work is a small constant `c` (no nested loops, no per-grant
+re-scan), so:
 
 ```
 cost(claim) ≈ base + c * n          (linear)
@@ -41,6 +56,31 @@ cost(claim) ≈ base + c * n          (linear)
 The concern is purely the **slope `c` and the absence of a ceiling on `n`** — not
 super-linearity. A regression where any phase becomes O(n²) (e.g. a per-grant
 re-scan) must be caught.
+
+## Real Interface (what a harness actually calls)
+
+All of the following exist in `stellar-lend/contracts/vesting/src/lib.rs` and are
+the operations a cost harness should use:
+
+- `add_grant(...)` / `create_grant(...)` — create grants (funds the vault via a
+  token transfer from the caller).
+- `claim(grantee)` — the operation being measured; mutates storage and transfers
+  tokens. A grantee's per-grant claimable is computed inside it via
+  `Grant::claimable_at(now)`.
+- `claimable_total(grantee) -> i128` — public view that sums
+  `grant.claimable_at(now)` across a grantee's non-revoked grants without
+  mutating state; the public read counterpart of `claim`'s internal summation.
+- `get_grants(grantee)` — public view returning the raw `Vec<Grant>`.
+- `Grant::vested_at(now)` / `Grant::claimable_at(now)` — internal inherent
+  methods on `Grant`; **not** exposed as contract entrypoints.
+- `env.ledger().timestamp()` — the clock; the harness advances `now` through it
+  (subject to pause bookkeeping via the internal `effective_now`).
+
+There is **no `measure_claim` function** anywhere in the crate, and no per-grant
+`get_claimable` entrypoint: `claimable_total` already wraps the internal
+summation, and `get_grants` exposes the raw records. The benchmark harness must
+therefore be an internal `#[cfg(test)]` helper of the benchmark module itself,
+not a call into a shipped API that does not exist.
 
 ## Proposed Bound
 
@@ -70,16 +110,22 @@ the **ratio**, not absolute units.)
 ## Benchmark Plan
 
 File: `stellar-lend/contracts/vesting/src/claim_cost_bench_test.rs`, registered
-via `#[cfg(test)] mod claim_cost_bench_test;` in `lib.rs`.
+via `#[cfg(test)] mod claim_cost_bench_test;` in `lib.rs`. **Not yet written** —
+this section is the concrete plan, and the harness helper it describes is an
+internal `#[cfg(test)]` function of that future module, not a contract
+entrypoint.
 
 Each benchmark helper carries NatSpec-style `///` doc comments.
 
-1. **Harness** — `fn measure_claim(n: usize) -> u64`: build a `Vesting`, fund the
-   contract, create `n` grants for one grantee with partially-elapsed schedules,
-   advance `now`, call `claim`, and return a deterministic cost proxy (iteration
-   count or, on-chain, the metered CPU instructions / budget).
+1. **Harness** — an internal helper that builds a `Vesting` contract through the
+   existing Soroban test harness, funds the vault, creates `n` grants for one
+   grantee with partially-elapsed schedules via `add_grant`, advances `now` (via
+   the ledger timestamp), calls the `claim` entrypoint, and returns a
+   deterministic cost proxy (iteration count or, on-chain, the metered CPU
+   instructions / budget). Use `claimable_total` for a pre-claim read of the
+   same sum if a view-side cost is also of interest.
 2. **Linearity assertion** — measure at `n ∈ {1, 8, 32, 128, 256}` and assert
-   `measure_claim(2n) <= 2.2 * measure_claim(n)` between adjacent doublings.
+   `cost(2n) <= 2.2 * cost(n)` between adjacent doublings.
 3. **Edge cases:**
    - *Single grant* — establishes the baseline.
    - *Many grants* — at the soft cap (256); must stay within budget.
