@@ -229,7 +229,6 @@ fn emit_freeze_event(env: &Env, guardian: &Address, is_frozen: bool) {
             timestamp: env.ledger().timestamp(),
         },
     );
-}    );
 }
 
 /// Emit a [`BridgeRegisteredEvent`] on bridge registration.
