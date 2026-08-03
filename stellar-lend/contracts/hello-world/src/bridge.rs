@@ -256,12 +256,7 @@ fn emit_register_event(env: &Env, network_id: u32, bridge: &Address, fee_bps: i1
 /// Emit a [`BridgeFeeUpdatedEvent`] on fee change.
 ///
 /// Topics: `("bridge", "v1", "fee_update")`.
-fn emit_fee_update_event(
-    env: &Env,
-    network_id: u32,
-    old_fee_bps: i128,
-    new_fee_bps: i128,
-) {
+fn emit_fee_update_event(env: &Env, network_id: u32, old_fee_bps: i128, new_fee_bps: i128) {
     const SCHEMA_VERSION: u32 = 1;
 
     env.events().publish(
