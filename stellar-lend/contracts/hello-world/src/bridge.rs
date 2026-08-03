@@ -46,7 +46,7 @@
 //! and a `Vec<u32>` index of registered network IDs (used by [`list_bridges`]).
 //! Persistent storage holds per-network [`BridgeConfig`] records.
 
-use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Map, Vec};
+use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Map, Symbol, Vec};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -263,7 +263,7 @@ fn emit_fee_update_event(env: &Env, network_id: u32, old_fee_bps: i128, new_fee_
         (
             symbol_short!("bridge"),
             symbol_short!("v1"),
-            symbol_short!("fee_update"),
+            Symbol::new(env, "fee_update"),
         ),
         BridgeFeeUpdatedEvent {
             schema_version: SCHEMA_VERSION,
@@ -285,7 +285,7 @@ fn emit_guardian_change_event(env: &Env, old_guardian: &Address, new_guardian: &
         (
             symbol_short!("bridge"),
             symbol_short!("v1"),
-            symbol_short!("guardian_change"),
+            Symbol::new(env, "guardian_change"),
         ),
         BridgeGuardianChangedEvent {
             schema_version: SCHEMA_VERSION,
