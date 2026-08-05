@@ -8,6 +8,8 @@
 //! 2. **Primary feed**: reads the on-chain `PriceFeed` entry; rejects if stale.
 //! 3. **AMM TWAP fallback**: if the primary is stale or missing, derives a
 //!    time-weighted average price from the on-chain AMM pool reserves.
+//!    Returns `None` (rather than panicking) when the pool has insufficient
+//!    history, and falls through to tier 4 in that case.
 //!    Emits [`TwapFallbackUsedEvent`] when this path is taken.
 //! 4. **Configured fallback oracle**: legacy fallback oracle address support.
 //!
@@ -28,11 +30,10 @@
 //! can detect oracle degradation in real time without polling.
 
 #![allow(unused)]
-use crate::deposit::DepositDataKey;
+use crate::admin::get_admin;
 use crate::events::{
     emit_price_updated, emit_twap_fallback_used, PriceUpdatedEvent, PRIMARY_FEED_ABSENT,
 };
-use crate::risk_management::get_admin;
 use soroban_sdk::{
     contracterror, contracttype, symbol_short, Address, Env, IntoVal, Map, Symbol, Val, Vec,
 };
@@ -128,10 +129,6 @@ pub struct CachedPrice {
 }
 
 /// Full oracle configuration (admin-managed).
-///
-/// Stored under [`OracleDataKey::OracleConfig`] and loaded by internal helpers.
-/// For the simpler per-call configuration used with [`get_price_with_fallback`],
-/// see [`SimplifiedOracleConfig`] (re-exported as [`OracleConfig`]).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct FullOracleConfig {
@@ -284,11 +281,6 @@ fn cache_price(env: &Env, asset: &Address, price: i128) {
 // Events (internal oracle-specific helpers)
 // ---------------------------------------------------------------------------
 
-/// Emit a lightweight staleness alarm for off-chain monitoring.
-///
-/// This is a low-level operational signal.  The full fallback-used event with
-/// price and age fields is emitted by [`try_twap_fallback`] via
-/// [`emit_twap_fallback_used`].
 fn emit_oracle_stale_event(env: &Env, asset: &Address, age_secs: u64) {
     env.events()
         .publish((symbol_short!("OrcStale"), asset.clone()), age_secs);
@@ -306,7 +298,9 @@ pub fn update_price_feed(
     decimals: u32,
     oracle: Address,
 ) -> Result<i128, OracleError> {
-    // Check if oracle updates are paused
+    caller.require_auth();
+    oracle.require_auth();
+
     let pause_key = OracleDataKey::PauseSwitches;
     if let Some(pause_map) = env
         .storage()
@@ -395,15 +389,9 @@ pub fn update_price_feed(
 /// 2. Primary feed (if fresh)
 /// 3. AMM TWAP (if primary is stale) — emits [`emit_oracle_stale_event`] and
 ///    then [`emit_twap_fallback_used`] with the resolved TWAP price and the
-///    age of the stale feed.
+///    age of the stale feed.  Falls through to tier 4 if the pool has
+///    insufficient TWAP history (instead of panicking).
 /// 4. Configured fallback oracle feed (legacy path)
-///
-/// A [`TwapFallbackUsedEvent`] is emitted **only** when the TWAP path is
-/// actually taken (steps 3 or the no-primary-feed variant at step 4 that
-/// falls through to TWAP).  It is never emitted on the primary cache or feed
-/// happy path.
-///
-/// [`TwapFallbackUsedEvent`]: crate::events::TwapFallbackUsedEvent
 pub fn get_price(env: &Env, asset: &Address) -> Result<i128, OracleError> {
     // 1. Try cache first
     if let Some(cached_price) = get_cached_price(env, asset) {
@@ -421,8 +409,9 @@ pub fn get_price(env: &Env, asset: &Address) -> Result<i128, OracleError> {
             let age = env.ledger().timestamp().saturating_sub(feed.last_updated);
             emit_oracle_stale_event(env, asset, age);
 
-            // 3. AMM TWAP fallback when primary is stale — pass the measured age
-            //    so the event carries the exact staleness duration.
+            // 3. AMM TWAP fallback when primary is stale.
+            // try_twap_fallback now returns Err when the pool has insufficient
+            // history, so we fall through gracefully to tier 4 in that case.
             if let Ok(twap_price) = try_twap_fallback(env, asset, age) {
                 return Ok(twap_price);
             }
@@ -462,27 +451,23 @@ pub fn get_price(env: &Env, asset: &Address) -> Result<i128, OracleError> {
 ///
 /// # Errors
 /// Returns [`OracleError::FallbackNotConfigured`] when the AMM pool has no
-/// state (pool never initialised or has insufficient history).  In that case
-/// **no event is emitted** because no price was successfully resolved.
-///
-/// [`TwapFallbackUsedEvent`]: crate::events::TwapFallbackUsedEvent
+/// state, has insufficient history (< [`amm_twap::MIN_WINDOW_SECS`]), or
+/// returns a zero-length window.  In all such cases **no event is emitted**
+/// because no price was successfully resolved, and the caller falls through
+/// to the next configured oracle tier.
 fn try_twap_fallback(
     env: &Env,
     asset: &Address,
     primary_age_secs: u64,
 ) -> Result<i128, OracleError> {
-    // Guard: check pool has state before calling get_twap (avoids panic on
-    // empty pool — the absence of a TwapPoolState is not an error, just means
-    // the pool was never initialised).
-    if amm_twap::get_pool_state(env, asset).is_none() {
-        return Err(OracleError::FallbackNotConfigured);
-    }
-
-    // get_twap will panic if there is insufficient history (< MIN_WINDOW_SECS).
-    // The pool-state guard above only confirms the pool exists; history depth
-    // is not checked here.  That panic is the intended fail-safe: callers must
-    // ensure adequate pool history before relying on the TWAP fallback.
-    let twap_raw = amm_twap::get_twap(env, asset, TWAP_FALLBACK_WINDOW_SECS);
+    // get_twap now returns Option<u128>: None when the pool has no state,
+    // has insufficient history, or the window would be zero-length.
+    // All of those cases are a clean "not available" — return FallbackNotConfigured
+    // so get_price falls through to the legacy tier instead of aborting.
+    let twap_raw = match amm_twap::get_twap(env, asset, TWAP_FALLBACK_WINDOW_SECS) {
+        Some(v) => v,
+        None => return Err(OracleError::FallbackNotConfigured),
+    };
 
     // Emit the structured, versioned fallback event **after** a successful
     // TWAP resolution so the event always carries a valid price.
@@ -498,31 +483,22 @@ fn try_twap_fallback(
     Ok(price)
 }
 
-/// Read-only view exposing the same AMM TWAP fallback price that
-/// [`get_price`]'s resolution order would fall back to for `asset`, at the
-/// AMM accumulator's own native scale (`TWAP_PRICE_SCALE`, i.e. 1e18 — the
-/// same scale documented on `amm_twap::get_twap`). This is the *pre*-rescale
-/// value; `try_twap_fallback`'s further division to 6 decimals for the
-/// protocol's `i128` price format is intentionally not applied here, so
-/// integrators/monitors see exactly what the AMM accumulator reports.
-///
-/// Calls the identical `amm_twap::get_twap` code path `try_twap_fallback`
-/// uses internally — this is not a reimplementation.
+/// Read-only view exposing the AMM TWAP fallback price for `asset`.
 ///
 /// Returns `None` (never panics) when no snapshot covers the requested
-/// `window_secs`: the pool has no recorded state yet, there isn't enough
-/// TWAP history for the window, or `window_secs` is below
-/// `amm_twap::MIN_WINDOW_SECS`. Integrators/monitors should treat `None` as
-/// "the fallback is not currently usable for this window" rather than
-/// retrying — it means the data genuinely isn't there yet.
+/// `window_secs`, the pool has no recorded state yet, there isn't enough
+/// TWAP history, or `window_secs` is below `amm_twap::MIN_WINDOW_SECS`.
 ///
-/// Pure read: never mutates contract state (unlike `get_price`, which may
-/// cache the resolved price).
+/// Pure read: never mutates contract state.
 pub fn get_pool_twap_price(env: &Env, asset: &Address, window_secs: u64) -> Option<u128> {
+    // has_window_coverage is a cheap pre-check; get_twap itself also returns
+    // None for all the same conditions, so the guard is redundant for safety
+    // but keeps the read-path explicit and avoids the full extrapolation cost
+    // when coverage is obviously absent.
     if !amm_twap::has_window_coverage(env, asset, window_secs) {
         return None;
     }
-    Some(amm_twap::get_twap(env, asset, window_secs))
+    amm_twap::get_twap(env, asset, window_secs)
 }
 
 /// Get price from the configured legacy fallback oracle feed.
@@ -549,8 +525,6 @@ fn get_fallback_price(env: &Env, asset: &Address) -> Result<i128, OracleError> {
 }
 
 /// Convenience wrapper for the liquidation engine.
-/// Returns the collateral price scaled by TWAP_PRICE_SCALE (1e18) if TWAP
-/// fallback is active, otherwise the raw oracle price cast to u128.
 pub fn get_liquidation_price(env: &Env, collateral_asset: &Address) -> Result<u128, OracleError> {
     let price = get_price(env, collateral_asset)?;
     Ok(price as u128)
@@ -566,10 +540,8 @@ pub fn set_primary_oracle(
     asset: Address,
     primary_oracle: Address,
 ) -> Result<(), OracleError> {
-    let admin = get_admin(env).ok_or(OracleError::Unauthorized)?;
-    if caller != admin {
-        return Err(OracleError::Unauthorized);
-    }
+    caller.require_auth();
+    crate::admin::require_admin(env, &caller).map_err(|_| OracleError::Unauthorized)?;
     let primary_key = OracleDataKey::PrimaryOracle(asset);
     env.storage()
         .persistent()
@@ -616,53 +588,30 @@ pub fn configure_oracle(
 // ---------------------------------------------------------------------------
 
 /// A pluggable oracle source used by [`get_price_with_fallback`].
-///
-/// Implementors return `Some((price_scaled, observation_timestamp))` when a
-/// fresh price is available, or `None` on outage.  The `price_scaled` value
-/// must be expressed in the same `TWAP_PRICE_SCALE` (1 × 10^18) units used
-/// by the AMM TWAP accumulator.
-///
-/// In production, implementors wrap an on-chain oracle contract call.
-/// In tests, [`MockOracle`] provides configurable staleness and outage
-/// simulation without network calls.
 pub trait ExternalOracle {
     /// Return `(price_scaled, observation_timestamp_secs)`, or `None` on outage.
     fn get_price(&self, env: &Env, asset: &Address) -> Option<(u128, u64)>;
 }
 
-/// Simplified oracle configuration used by [`set_oracle_config`] /
-/// [`get_price_with_fallback`].  Separate from the full [`OracleConfig`] to
-/// keep the test-support surface minimal.
+/// Simplified oracle configuration used by [`get_price_with_fallback`].
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct SimplifiedOracleConfig {
-    /// Oracle address (informational; not used for auth in this path).
     pub oracle_address: Address,
-    /// Maximum age in seconds before a price is considered stale.
     pub max_age_secs: u64,
-    /// TWAP window in seconds passed to [`amm_twap::get_twap`] on fallback.
     pub twap_window_secs: u64,
 }
 
-// Storage key for the simplified oracle config used by get_price_with_fallback.
 fn simplified_config_key() -> Symbol {
     symbol_short!("SmpOrcCfg")
 }
 
-/// Persist a [`SimplifiedOracleConfig`] for use by [`get_price_with_fallback`].
-///
-/// Called from tests and integration harnesses to configure per-asset
-/// oracle parameters without going through the full admin flow.
 pub fn set_oracle_config(env: &Env, config: &SimplifiedOracleConfig) {
     env.storage()
         .persistent()
         .set(&simplified_config_key(), config);
 }
 
-// Re-export SimplifiedOracleConfig under the name used by twap_tests.rs so
-// that existing test imports (`use crate::oracle::OracleConfig`) continue to
-// resolve without modification.  The full admin-configured OracleConfig is
-// available as `FullOracleConfig` for code that needs the extended fields.
 #[allow(dead_code)]
 pub type OracleConfig = SimplifiedOracleConfig;
 
@@ -673,11 +622,10 @@ pub type OracleConfig = SimplifiedOracleConfig;
 /// 1. Call `oracle.get_price(env, asset)`.
 /// 2. If `Some((price, obs_ts))` and `now − obs_ts ≤ max_age_secs` → primary
 ///    path, returns `PriceResult { is_twap_fallback: false, … }`.
-/// 3. Otherwise → TWAP path: calls [`amm_twap::get_twap`] and emits
-///    [`TwapFallbackUsedEvent`].  Returns `PriceResult { is_twap_fallback: true, … }`.
-///
-/// Panics (via [`amm_twap::get_twap`]) if the pool has insufficient history
-/// and the primary oracle is also unavailable.
+/// 3. Otherwise → TWAP path: calls [`amm_twap::get_twap`] and, if it returns
+///    `Some`, emits [`TwapFallbackUsedEvent`].  If the TWAP returns `None`
+///    (thin-history pool), falls through and returns the stale/absent primary
+///    price result rather than panicking.
 pub fn get_price_with_fallback(
     env: &Env,
     asset: &Address,
@@ -706,9 +654,30 @@ pub fn get_price_with_fallback(
                 is_twap_fallback: false,
             };
         }
-        // Primary is stale — fall through to TWAP.
-        let twap_raw = amm_twap::get_twap(env, asset, config.twap_window_secs);
-        emit_twap_fallback_used(env, asset, twap_raw, age);
+        // Primary is stale — try TWAP.  If the pool has insufficient history
+        // get_twap returns None; fall through and return the stale primary
+        // result rather than panicking.
+        if let Some(twap_raw) = amm_twap::get_twap(env, asset, config.twap_window_secs) {
+            emit_twap_fallback_used(env, asset, twap_raw, age);
+            return PriceResult {
+                price_scaled: twap_raw,
+                timestamp: now,
+                is_twap_fallback: true,
+            };
+        }
+        // TWAP unavailable (thin-history pool) — return the stale primary price
+        // so the caller can decide how to handle degraded-mode pricing rather
+        // than receiving a contract abort.
+        return PriceResult {
+            price_scaled,
+            timestamp: obs_ts,
+            is_twap_fallback: false,
+        };
+    }
+
+    // Primary oracle returned None (outage) — try TWAP.
+    if let Some(twap_raw) = amm_twap::get_twap(env, asset, config.twap_window_secs) {
+        emit_twap_fallback_used(env, asset, twap_raw, PRIMARY_FEED_ABSENT);
         return PriceResult {
             price_scaled: twap_raw,
             timestamp: now,
@@ -716,12 +685,11 @@ pub fn get_price_with_fallback(
         };
     }
 
-    // Primary oracle returned None (outage) — fall through to TWAP.
-    let twap_raw = amm_twap::get_twap(env, asset, config.twap_window_secs);
-    emit_twap_fallback_used(env, asset, twap_raw, PRIMARY_FEED_ABSENT);
+    // Both primary and TWAP are unavailable.  Return a zero-price sentinel so
+    // the caller can distinguish "no price at all" from a valid result.
     PriceResult {
-        price_scaled: twap_raw,
+        price_scaled: 0,
         timestamp: now,
-        is_twap_fallback: true,
+        is_twap_fallback: false,
     }
 }

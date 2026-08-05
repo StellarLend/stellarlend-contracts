@@ -10,9 +10,11 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::cross_asset::{
     cross_asset_borrow, cross_asset_deposit, cross_asset_repay, get_user_position_summary,
-    initialize_asset, normalize_price, normalize_price_ceil, update_asset_price, AssetConfig,
-    CrossAssetError,
+    initialize, initialize_asset, normalize_price, normalize_price_ceil, update_asset_price,
+    AssetConfig, CrossAssetError,
 };
+
+use stellar_lend_common::{normalize_price, normalize_price_ceil};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,7 +36,7 @@ where
 
 fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
     AssetConfig {
-        collateral_factor: 7500, // 75 %
+        collateral_factor_bps: 7500, // 75 %
         liquidation_threshold: 8000,
         max_supply: 0,
         max_borrow: 0,
@@ -42,6 +44,7 @@ fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -127,9 +130,13 @@ fn test_position_summary_equal_usd_different_decimals() {
     let token_b = Address::generate(&env);
 
     with_contract(&env, || {
+        let admin = Address::generate(&env);
+        crate::cross_asset::set_admin(&env, &admin);
+
         // Asset A: 6-decimal feed, $1.00 → price = 1_000_000
         initialize_asset(
             &env,
+            &admin,
             None, // Native slot for asset A
             default_config(1_000_000, 6),
         )
@@ -138,6 +145,7 @@ fn test_position_summary_equal_usd_different_decimals() {
         // Asset B: 18-decimal feed, $1.00 → price = 1_000_000_000_000_000_000
         initialize_asset(
             &env,
+            &admin,
             Some(token_b.clone()),
             default_config(1_000_000_000_000_000_000, 18),
         )
@@ -167,12 +175,16 @@ fn test_borrow_health_check_mixed_decimals() {
     let token_b = Address::generate(&env);
 
     with_contract(&env, || {
-        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor = 7500 (75 %)
+        let admin = Address::generate(&env);
+        crate::cross_asset::set_admin(&env, &admin);
+
+        // Collateral asset: 6-dp, $2.00 per unit, collateral_factor_bps = 7500 (75 %)
         initialize_asset(
             &env,
+            &admin,
             None,
             AssetConfig {
-                collateral_factor: 7500,
+                collateral_factor_bps: 7500,
                 liquidation_threshold: 8000,
                 max_supply: 0,
                 max_borrow: 0,
@@ -180,6 +192,7 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: false,
                 price: 2_000_000, // $2.00 at 6 dp
                 price_decimals: 6,
+                last_update_ts: 0,
             },
         )
         .unwrap();
@@ -187,9 +200,10 @@ fn test_borrow_health_check_mixed_decimals() {
         // Borrow asset: 18-dp, $1.00 per unit
         initialize_asset(
             &env,
+            &admin,
             Some(token_b.clone()),
             AssetConfig {
-                collateral_factor: 7500,
+                collateral_factor_bps: 7500,
                 liquidation_threshold: 8000,
                 max_supply: 0,
                 max_borrow: 0,
@@ -197,6 +211,7 @@ fn test_borrow_health_check_mixed_decimals() {
                 can_borrow: true,
                 price: 1_000_000_000_000_000_000, // $1.00 at 18 dp
                 price_decimals: 18,
+                last_update_ts: 0,
             },
         )
         .unwrap();
@@ -231,10 +246,14 @@ fn test_no_regression_same_decimals() {
     let token_b = Address::generate(&env);
 
     with_contract(&env, || {
+        let admin = Address::generate(&env);
+        crate::cross_asset::set_admin(&env, &admin);
+
         // Both assets use 18-decimal feeds, $1.00 price.
         for tok in [token_a.clone(), token_b.clone()] {
             initialize_asset(
                 &env,
+                &admin,
                 Some(tok),
                 default_config(1_000_000_000_000_000_000, 18),
             )
@@ -250,19 +269,24 @@ fn test_no_regression_same_decimals() {
     });
 }
 
-/// Edge case: initialize_asset rejects price_decimals > 38.
+/// Edge case: initialize_asset rejects price_decimals > 38 (after auth).
 #[test]
 fn test_invalid_decimals_rejected() {
     let env = make_env();
-    let result = initialize_asset(
-        &env,
-        None,
-        AssetConfig {
-            price_decimals: 39,
-            ..default_config(1, 18)
-        },
-    );
-    assert_eq!(result, Err(CrossAssetError::InvalidDecimals));
+    with_contract(&env, || {
+        let admin = Address::generate(&env);
+        crate::cross_asset::set_admin(&env, &admin);
+        let result = initialize_asset(
+            &env,
+            &admin,
+            None,
+            AssetConfig {
+                price_decimals: 39,
+                ..default_config(1, 18)
+            },
+        );
+        assert_eq!(result, Err(CrossAssetError::InvalidDecimals));
+    });
 }
 
 /// Price update works and the new price is reflected in position summary.
@@ -271,9 +295,11 @@ fn test_price_update_reflected_in_summary() {
     let env = make_env();
     env.mock_all_auths();
     let user = Address::generate(&env);
+    let admin = Address::generate(&env);
 
     with_contract(&env, || {
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        initialize(&env, admin.clone()).unwrap();
+        initialize_asset(&env, &admin, None, default_config(1_000_000, 6)).unwrap();
         cross_asset_deposit(&env, user.clone(), None, 10).unwrap();
 
         // Initially $1.00 each → collateral = 10.
@@ -281,7 +307,7 @@ fn test_price_update_reflected_in_summary() {
         assert_eq!(s1.total_collateral_value, 10);
 
         // Double the price to $2.00.
-        update_asset_price(&env, None, 2_000_000).unwrap();
+        update_asset_price(&env, &admin, None, 2_000_000).unwrap();
         let s2 = get_user_position_summary(&env, &user).unwrap();
         assert_eq!(s2.total_collateral_value, 20);
     });

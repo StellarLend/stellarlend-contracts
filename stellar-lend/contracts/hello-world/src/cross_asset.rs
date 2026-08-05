@@ -15,12 +15,105 @@
 
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Vec};
 
+// Re-export shared price-normalisation utilities from the protocol's common
+// crate so all call sites use identical arithmetic and scale constants.
+pub use stellar_lend_common::{normalize_price, normalize_price_ceil, pow10_checked, INTERNAL_DECIMALS};
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Common internal fixed-point scale for value aggregation (10^18).
-pub const INTERNAL_DECIMALS: u32 = 18;
+/// Lower bound (inclusive) for `AssetConfig::collateral_factor_bps`.
+pub const MIN_COLLATERAL_FACTOR_BPS: i128 = 0;
+
+/// Upper bound (inclusive) for `AssetConfig::collateral_factor_bps` (100 %).
+pub const MAX_COLLATERAL_FACTOR_BPS: i128 = 10_000;
+
+// ---------------------------------------------------------------------------
+// Admin storage
+// ---------------------------------------------------------------------------
+
+/// Storage key for the module's admin address.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CrossAssetAdminKey {
+    Admin,
+}
+
+/// Store an admin address (called once during protocol initialisation).
+pub fn set_admin(env: &Env, admin: &Address) {
+    env.storage()
+        .persistent()
+        .set(&CrossAssetAdminKey::Admin, admin);
+}
+
+/// Return the stored admin address, or `None` if not yet set.
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get::<CrossAssetAdminKey, Address>(&CrossAssetAdminKey::Admin)
+}
+
+/// Admin-only: set the maximum number of distinct debt assets a single user may hold.
+/// Pass `None` to remove the cap (unlimited).
+/// When setting a value it must be >= 1.
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+/// * `caller` - Must be the stored admin address
+/// * `max` - New cap value, or None to disable
+///
+/// # Errors
+/// * `CrossAssetError::Unauthorized` - If caller is not admin
+/// * `CrossAssetError::InvalidMaxDebtAssets` - If max is Some(0)
+pub fn set_max_debt_assets_per_user(
+    env: &Env,
+    caller: &Address,
+    max: Option<u32>,
+) -> Result<(), CrossAssetError> {
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
+
+    if let Some(v) = max {
+        if v < 1 {
+            return Err(CrossAssetError::InvalidMaxDebtAssets);
+        }
+    }
+
+    let key = CrossAssetDataKey::MaxDebtAssetsPerUser;
+    match max {
+        Some(v) => env.storage().persistent().set(&key, &v),
+        None => env.storage().persistent().remove(&key),
+    }
+    Ok(())
+}
+
+/// Read-only getter for the current max-debt-assets-per-user cap.
+/// Returns None when no cap is configured (unlimited).
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+pub fn get_max_debt_assets_per_user(env: &Env) -> Option<u32> {
+    let key = CrossAssetDataKey::MaxDebtAssetsPerUser;
+    env.storage()
+        .persistent()
+        .get::<CrossAssetDataKey, u32>(&key)
+}
+
+/// Require that `caller` is the stored admin; returns `Unauthorized` otherwise.
+///
+/// Calls `caller.require_auth()` so that Soroban enforces a cryptographic
+/// signature check, consistent with `admin::require_admin` and
+/// `bridge::require_guardian`.  A pure address-equality check without
+/// `require_auth` would allow any account to spoof the admin address as a
+/// plain argument with no proof of key ownership.
+fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
+    caller.require_auth();
+    let admin = get_admin(env).ok_or(CrossAssetError::Unauthorized)?;
+    if &admin != caller {
+        return Err(CrossAssetError::Unauthorized);
+    }
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -47,10 +140,53 @@ pub enum CrossAssetError {
     Overflow = 7,
     /// price_decimals value is out of the allowed range (0..=38).
     InvalidDecimals = 8,
+    /// `collateral_factor_bps` is outside the allowed range [0, 10_000].
+    InvalidCollateralFactor = 9,
+    /// Caller is not the protocol admin.
+    Unauthorized = 10,
+    /// `collateral_factor_bps` exceeds `liquidation_threshold`.
+    LtvExceedsThreshold = 11,
+    /// `price_decimals` is zero — silently mis-scales all oracle prices.
+    ZeroDecimals = 12,
+    /// `set_max_debt_assets_per_user` called with `max = Some(0)`.
+    InvalidMaxDebtAssets = 13,
 }
 
 // ---------------------------------------------------------------------------
-// Storage key
+// Events
+// ---------------------------------------------------------------------------
+
+/// Emitted by [`update_asset_config`] on every successful configuration change.
+/// All fields reflect the **post-update** state of the asset config.
+///
+/// Topics: `("crossAsst", "cfgUpd")`
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ConfigUpdatedEvent {
+    /// Asset key identifying the updated asset.
+    pub asset_key: AssetKey,
+    /// Post-update collateral factor in basis points.
+    pub collateral_factor_bps: i128,
+    /// Post-update liquidation threshold in basis points.
+    pub liquidation_threshold: i128,
+    /// Post-update maximum supply cap (0 = unlimited).
+    pub max_supply: i128,
+    /// Post-update maximum borrow cap (0 = unlimited).
+    pub max_borrow: i128,
+    /// Post-update `can_collateralize` flag.
+    pub can_collateralize: bool,
+    /// Post-update `can_borrow` flag.
+    pub can_borrow: bool,
+}
+
+/// Emit a [`ConfigUpdatedEvent`].
+pub fn emit_config_updated(env: &Env, event: ConfigUpdatedEvent) {
+    env.events()
+        .publish((symbol_short!("crossAsst"), symbol_short!("cfgUpd")), event);
+}
+
+// ---------------------------------------------------------------------------
+// Storage keys
 // ---------------------------------------------------------------------------
 
 /// Per-record storage keys used by the cross-asset module.
@@ -63,33 +199,44 @@ pub enum AssetKey {
     Token(Address),
 }
 
+/// Persistent storage keys for the hello-world cross-asset module.
+///
+/// Documented in [`docs/CROSS_ASSET_STORAGE_LAYOUT.md`](../docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+/// New variants must be appended to preserve upgrade compatibility.
 #[contracttype]
 #[derive(Clone, Debug)]
-enum CrossAssetDataKey {
-    /// [`AssetConfig`] for a given asset.
+pub enum CrossAssetDataKey {
     Config(AssetKey),
-    /// List of all registered [`AssetKey`]s.
     AssetList,
-    /// Per-user supply balance for an asset.
     UserSupply(AssetKey, Address),
-    /// Per-user debt balance for an asset.
     UserDebt(AssetKey, Address),
-    /// Protocol-wide total supply for an asset.
     TotalSupply(AssetKey),
-    /// Protocol-wide total debt for an asset.
     TotalDebt(AssetKey),
+    /// Optional cap on distinct debt assets per user (`None` / absent = unlimited).
+    MaxDebtAssetsPerUser,
 }
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+/// Per-asset borrow-power breakdown entry.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AssetBorrowPower {
+    pub asset_key: AssetKey,
+    pub collateral_value: i128,
+    pub borrow_capacity: i128,
+    pub collateral_factor_bps: i128,
+}
+
 /// Configuration for a single asset registered in the protocol.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct AssetConfig {
-    /// Collateral factor in basis points (e.g. 7500 = 75 %).
-    pub collateral_factor: i128,
+    /// Per-asset collateral factor in basis points (e.g. 7500 = 75 %).
+    /// Must be in `0..=10_000`.
+    pub collateral_factor_bps: i128,
     /// Liquidation threshold in basis points.
     pub liquidation_threshold: i128,
     /// Maximum total supply allowed (0 = unlimited).
@@ -102,93 +249,33 @@ pub struct AssetConfig {
     pub can_borrow: bool,
     /// Most-recent oracle price (raw units, scaled by 10^price_decimals).
     pub price: i128,
-    /// Number of decimal places used by the oracle price feed for this asset.
-    /// Must be in 0..=38. Typical values: 6 (USD stablecoins), 8 (BTC/ETH
-    /// feeds), 18 (18-decimal ERC-20-style tokens).
+    /// Number of decimal places for the oracle price feed. Must be in 1..=38.
     pub price_decimals: u32,
+    /// Ledger timestamp when the asset price was last updated.
+    pub last_update_ts: u64,
 }
 
 /// A user's supply/debt balances for a single asset.
 #[contracttype]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AssetPosition {
-    /// Amount the user has supplied (raw token units).
     pub supplied: i128,
-    /// Amount the user has borrowed (raw token units).
     pub borrowed: i128,
 }
 
-/// Aggregated position summary across all assets, expressed in the internal
-/// 18-decimal fixed-point scale.
+/// Aggregated position summary across all assets (18-decimal fixed-point).
 #[contracttype]
 #[derive(Clone, Debug, Default)]
 pub struct UserPositionSummary {
-    /// Total collateral value (normalised, 18-dp).
     pub total_collateral_value: i128,
-    /// Total debt value (normalised, 18-dp).
     pub total_debt_value: i128,
-    /// Weighted borrowing capacity (collateral × collateral_factor / 10 000).
     pub borrow_capacity: i128,
-    /// 1 if the position is healthy, 0 if under-water.
+    /// 1 if healthy, 0 if under-water.
     pub is_healthy: u32,
 }
 
 // ---------------------------------------------------------------------------
-// Decimal normalization
-// ---------------------------------------------------------------------------
-
-/// Raise 10 to `exp`, checking for overflow.
-fn pow10_checked(exp: u32) -> Option<i128> {
-    let mut acc: i128 = 1;
-    for _ in 0..exp {
-        acc = acc.checked_mul(10)?;
-    }
-    Some(acc)
-}
-
-/// Normalise `raw_price` (which has `asset_decimals` fractional digits) to the
-/// common `INTERNAL_DECIMALS` scale.
-///
-/// # Formula
-///
-/// ```text
-/// normalised = raw_price * 10^(INTERNAL_DECIMALS - asset_decimals)   if INTERNAL >= asset_decimals
-/// normalised = raw_price / 10^(asset_decimals - INTERNAL_DECIMALS)   otherwise
-/// ```
-///
-/// Division is performed with **floor** semantics (rounds toward zero in Rust),
-/// which is conservative for collateral values.  Callers that need ceiling
-/// rounding (debt) should use [`normalize_price_ceil`].
-///
-/// Returns `None` on overflow.
-pub fn normalize_price(raw_price: i128, asset_decimals: u32) -> Option<i128> {
-    if asset_decimals == INTERNAL_DECIMALS {
-        return Some(raw_price);
-    }
-    if asset_decimals < INTERNAL_DECIMALS {
-        let scale = pow10_checked(INTERNAL_DECIMALS - asset_decimals)?;
-        raw_price.checked_mul(scale)
-    } else {
-        let scale = pow10_checked(asset_decimals - INTERNAL_DECIMALS)?;
-        Some(raw_price / scale) // floor (rounds toward zero)
-    }
-}
-
-/// Same as [`normalize_price`] but rounds **up** when dividing (ceiling).
-/// Used for debt values to stay conservative.
-pub fn normalize_price_ceil(raw_price: i128, asset_decimals: u32) -> Option<i128> {
-    if asset_decimals <= INTERNAL_DECIMALS {
-        normalize_price(raw_price, asset_decimals)
-    } else {
-        let scale = pow10_checked(asset_decimals - INTERNAL_DECIMALS)?;
-        // ceiling division: (a + (b-1)) / b
-        let adjusted = raw_price.checked_add(scale.checked_sub(1)?)?;
-        Some(adjusted / scale)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
+// Storage helpers
 // ---------------------------------------------------------------------------
 
 fn asset_key(asset: Option<Address>) -> AssetKey {
@@ -282,14 +369,13 @@ fn save_asset_list(env: &Env, list: &Vec<AssetKey>) {
 }
 
 // ---------------------------------------------------------------------------
-// Test harness support
+// Test harness
 // ---------------------------------------------------------------------------
 
-/// Minimal no-op contract used in tests to establish a contract execution
-/// context, which Soroban storage requires.
 #[cfg(test)]
 use soroban_sdk::{contract, contractimpl};
 
+/// Minimal no-op contract used in tests to establish a contract execution context.
 #[cfg(test)]
 #[contract]
 pub struct NoOpContract;
@@ -299,30 +385,42 @@ pub struct NoOpContract;
 impl NoOpContract {}
 
 // ---------------------------------------------------------------------------
-// Module initialization
-// ---------------------------------------------------------------------------
-
-/// Initialize the cross-asset module (no-op; reserved for future admin setup).
-pub fn initialize(_env: &Env, _admin: Address) -> Result<(), CrossAssetError> {
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
 
+/// Initialize the cross-asset module, setting the admin address for subsequent
+/// operations that require authorization.
+pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
+    set_admin(env, &admin);
+    Ok(())
+}
+
 /// Register a new asset with its initial configuration.
 ///
-/// Fails with [`CrossAssetError::AssetAlreadyExists`] if the asset key is
-/// already registered.  Fails with [`CrossAssetError::InvalidDecimals`] if
-/// `config.price_decimals > 38`.
+/// # Access control
+/// `caller` must equal the stored admin address, else
+/// [`CrossAssetError::Unauthorized`] is returned before any state is touched.
+///
+/// # Errors
+/// - [`CrossAssetError::Unauthorized`] — caller is not the protocol admin.
+/// - [`CrossAssetError::AssetAlreadyExists`] — asset key already registered.
+/// - [`CrossAssetError::InvalidDecimals`] — `config.price_decimals > 38`.
+/// - [`CrossAssetError::InvalidCollateralFactor`] — factor outside `[0, 10_000]`.
 pub fn initialize_asset(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     config: AssetConfig,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     if config.price_decimals > 38 {
         return Err(CrossAssetError::InvalidDecimals);
+    }
+    if config.collateral_factor_bps < MIN_COLLATERAL_FACTOR_BPS
+        || config.collateral_factor_bps > MAX_COLLATERAL_FACTOR_BPS
+    {
+        return Err(CrossAssetError::InvalidCollateralFactor);
     }
     let key = asset_key(asset);
     if env
@@ -332,7 +430,11 @@ pub fn initialize_asset(
     {
         return Err(CrossAssetError::AssetAlreadyExists);
     }
-    save_config(env, &key, &config);
+    let mut cfg = config;
+    if cfg.last_update_ts == 0 {
+        cfg.last_update_ts = env.ledger().timestamp();
+    }
+    save_config(env, &key, &cfg);
     let mut list = load_asset_list(env);
     list.push_back(key);
     save_asset_list(env, &list);
@@ -341,21 +443,45 @@ pub fn initialize_asset(
 
 /// Update mutable fields of an existing asset's configuration.
 ///
-/// Only the fields that are `Some(...)` are changed.
+/// Only `Some(...)` fields are changed; `None` fields are no-ops.
+///
+/// # Access control
+/// `caller` must equal the stored admin address, else
+/// [`CrossAssetError::Unauthorized`] is returned before any state is touched.
+///
+/// # Validation (checked against the **post-update** config)
+/// | Rule | Error |
+/// |------|-------|
+/// | `collateral_factor_bps` ∈ \[0, 10_000\] | `InvalidCollateralFactor` |
+/// | `collateral_factor_bps` ≤ `liquidation_threshold` | `LtvExceedsThreshold` |
+/// | `price_decimals` ≠ 0 | `ZeroDecimals` |
+/// | `price_decimals` ≤ 38 | `InvalidDecimals` |
+///
+/// # Events
+/// Emits [`ConfigUpdatedEvent`] on success; no event on failure.
+#[allow(clippy::too_many_arguments)]
 pub fn update_asset_config(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
-    collateral_factor: Option<i128>,
+    collateral_factor_bps: Option<i128>,
     liquidation_threshold: Option<i128>,
     max_supply: Option<i128>,
     max_borrow: Option<i128>,
     can_collateralize: Option<bool>,
     can_borrow: Option<bool>,
+    price_decimals: Option<u32>,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
-    if let Some(v) = collateral_factor {
-        cfg.collateral_factor = v;
+
+    if let Some(v) = collateral_factor_bps {
+        if v < MIN_COLLATERAL_FACTOR_BPS || v > MAX_COLLATERAL_FACTOR_BPS {
+            return Err(CrossAssetError::InvalidCollateralFactor);
+        }
+        cfg.collateral_factor_bps = v;
     }
     if let Some(v) = liquidation_threshold {
         cfg.liquidation_threshold = v;
@@ -372,46 +498,88 @@ pub fn update_asset_config(
     if let Some(v) = can_borrow {
         cfg.can_borrow = v;
     }
+    if let Some(v) = price_decimals {
+        if v == 0 {
+            return Err(CrossAssetError::ZeroDecimals);
+        }
+        if v > 38 {
+            return Err(CrossAssetError::InvalidDecimals);
+        }
+        cfg.price_decimals = v;
+    }
+
+    // Cross-field invariant: LTV must not exceed the liquidation threshold.
+    if cfg.collateral_factor_bps > cfg.liquidation_threshold {
+        return Err(CrossAssetError::LtvExceedsThreshold);
+    }
+
     save_config(env, &key, &cfg);
+
+    emit_config_updated(
+        env,
+        ConfigUpdatedEvent {
+            asset_key: key,
+            collateral_factor_bps: cfg.collateral_factor_bps,
+            liquidation_threshold: cfg.liquidation_threshold,
+            max_supply: cfg.max_supply,
+            max_borrow: cfg.max_borrow,
+            can_collateralize: cfg.can_collateralize,
+            can_borrow: cfg.can_borrow,
+        },
+    );
+
     Ok(())
 }
 
-/// Store the latest oracle price for an asset (raw units, `price_decimals` scale).
+/// Store the latest oracle price for an asset and update its timestamp.
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+/// * `asset` - Optional token address (`None` for native asset)
+/// * `price` - Positive raw oracle price value
+///
+/// # Errors
+/// * [`CrossAssetError::InvalidAmount`] - If `price <= 0`
+/// * [`CrossAssetError::AssetNotFound`] - If the specified asset is not registered
 pub fn update_asset_price(
     env: &Env,
+    caller: &Address,
     asset: Option<Address>,
     price: i128,
 ) -> Result<(), CrossAssetError> {
+    require_admin(env, caller)?;
+
     if price <= 0 {
         return Err(CrossAssetError::InvalidAmount);
     }
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
     cfg.price = price;
+    cfg.last_update_ts = env.ledger().timestamp();
     save_config(env, &key, &cfg);
     Ok(())
 }
 
-/// Return seconds since the asset price was last updated.
+/// Return how old (in seconds) the stored oracle price for an asset is.
 ///
-/// Returns `Ok(None)` when the asset exists but no price update timestamp
-/// has been recorded yet.
+/// Age is calculated as `now - price_timestamp` where `now` is the current
+/// ledger timestamp (`env.ledger().timestamp()`) and `price_timestamp` is
+/// `cfg.last_update_ts`. Uses saturating subtraction to prevent underflow.
+///
+/// # Arguments
+/// * `env` - The Soroban environment
+/// * `asset` - Optional token address (`None` for native asset)
+///
+/// # Errors
+/// * [`CrossAssetError::AssetNotFound`] - If the specified asset is not registered
 pub fn get_asset_price_age(
     env: &Env,
     asset: Option<Address>,
-) -> Result<Option<u64>, CrossAssetError> {
+) -> Result<u64, CrossAssetError> {
     let key = asset_key(asset);
     let cfg = load_config(env, &key)?;
-
-    if cfg.last_price_update == 0 {
-        return Ok(None);
-    }
-
-    Ok(Some(
-        env.ledger()
-            .timestamp()
-            .saturating_sub(cfg.last_price_update),
-    ))
+    let now = env.ledger().timestamp();
+    Ok(now.saturating_sub(cfg.last_update_ts))
 }
 
 /// Return the configuration for a given asset.
@@ -437,19 +605,14 @@ pub fn get_total_borrow_for(env: &Env, asset: Option<Address>) -> i128 {
     load_total_debt(env, &asset_key(asset))
 }
 
-/// Return a user's supply/debt balances for a single asset (raw token units).
+/// Return a user's supply/debt balances for a single asset.
 pub fn get_user_asset_position(env: &Env, user: &Address, asset: Option<Address>) -> AssetPosition {
     load_user_position(env, &asset_key(asset), user)
 }
 
 /// Compute the user's aggregated position across all registered assets.
 ///
-/// All asset values are normalised to [`INTERNAL_DECIMALS`] (18) before
-/// summation, so mixed oracle decimal scales do not corrupt the result.
-///
-/// Collateral value uses **floor** normalisation (conservative for the
-/// protocol); debt value uses **ceiling** normalisation (also conservative for
-/// the protocol).
+/// Collateral values use floor normalisation; debt values use ceiling.
 pub fn get_user_position_summary(
     env: &Env,
     user: &Address,
@@ -464,14 +627,12 @@ pub fn get_user_position_summary(
         let cfg = load_config(env, &key)?;
         let pos = load_user_position(env, &key, user);
 
-        // Normalise price once per asset.
         let norm_price =
             normalize_price(cfg.price, cfg.price_decimals).ok_or(CrossAssetError::Overflow)?;
         let norm_price_ceil =
             normalize_price_ceil(cfg.price, cfg.price_decimals).ok_or(CrossAssetError::Overflow)?;
 
         if pos.supplied > 0 && cfg.can_collateralize {
-            // collateral value: floor(supplied * normalised_price / 10^18)
             let val = (pos.supplied as i128)
                 .checked_mul(norm_price)
                 .ok_or(CrossAssetError::Overflow)?
@@ -479,9 +640,8 @@ pub fn get_user_position_summary(
             total_collateral = total_collateral
                 .checked_add(val)
                 .ok_or(CrossAssetError::Overflow)?;
-            // borrow capacity: collateral_value * collateral_factor / 10_000
             let cap = val
-                .checked_mul(cfg.collateral_factor)
+                .checked_mul(cfg.collateral_factor_bps)
                 .ok_or(CrossAssetError::Overflow)?
                 / 10_000;
             borrow_capacity = borrow_capacity
@@ -490,12 +650,10 @@ pub fn get_user_position_summary(
         }
 
         if pos.borrowed > 0 {
-            // debt value: ceil(borrowed * normalised_price_ceil / 10^18)
             let val_num = (pos.borrowed as i128)
                 .checked_mul(norm_price_ceil)
                 .ok_or(CrossAssetError::Overflow)?;
             let scale = pow10_checked(INTERNAL_DECIMALS).ok_or(CrossAssetError::Overflow)?;
-            // ceiling division
             let val = (val_num + scale - 1) / scale;
             total_debt = total_debt
                 .checked_add(val)
@@ -517,13 +675,51 @@ pub fn get_user_position_summary(
     })
 }
 
+/// Return per-asset borrow-power breakdown for `user`.
+pub fn get_borrow_power_by_asset(
+    env: &Env,
+    user: &Address,
+) -> Result<Vec<AssetBorrowPower>, CrossAssetError> {
+    let list = load_asset_list(env);
+    let mut result = Vec::new(env);
+
+    for i in 0..list.len() {
+        let key = list.get(i).unwrap();
+        let cfg = load_config(env, &key)?;
+        let pos = load_user_position(env, &key, user);
+
+        if pos.supplied == 0 || !cfg.can_collateralize {
+            continue;
+        }
+
+        let norm_price =
+            normalize_price(cfg.price, cfg.price_decimals).ok_or(CrossAssetError::Overflow)?;
+
+        let collateral_value = (pos.supplied as i128)
+            .checked_mul(norm_price)
+            .ok_or(CrossAssetError::Overflow)?
+            / pow10_checked(INTERNAL_DECIMALS).ok_or(CrossAssetError::Overflow)?;
+
+        let borrow_capacity = collateral_value
+            .checked_mul(cfg.collateral_factor_bps)
+            .ok_or(CrossAssetError::Overflow)?
+            / 10_000;
+
+        result.push_back(AssetBorrowPower {
+            asset_key: key,
+            collateral_value,
+            borrow_capacity,
+            collateral_factor_bps: cfg.collateral_factor_bps,
+        });
+    }
+    Ok(result)
+}
+
 // ---------------------------------------------------------------------------
 // Cross-asset operations
 // ---------------------------------------------------------------------------
 
-/// Deposit `amount` of an asset for the `user`.
-///
-/// Updates user supply and protocol total supply.
+/// Deposit `amount` of an asset for `user`.
 pub fn cross_asset_deposit(
     env: &Env,
     user: Address,
@@ -576,9 +772,6 @@ pub fn cross_asset_withdraw(
 }
 
 /// Borrow `amount` of an asset for `user`.
-///
-/// Checks that the asset allows borrowing and that the user has sufficient
-/// collateral after the borrow.
 pub fn cross_asset_borrow(
     env: &Env,
     user: Address,
@@ -606,10 +799,8 @@ pub fn cross_asset_borrow(
         .ok_or(CrossAssetError::Overflow)?;
     save_total_debt(env, &key, total);
 
-    // Health check: borrow_capacity must still cover total debt.
     let summary = get_user_position_summary(env, &user)?;
     if summary.is_healthy == 0 {
-        // Roll back.
         pos.borrowed -= amount;
         save_user_debt(env, &key, &user, pos.borrowed);
         save_total_debt(env, &key, total - amount);

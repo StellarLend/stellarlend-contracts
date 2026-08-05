@@ -7,6 +7,8 @@
 
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env};
 
+use crate::admin;
+
 /// Number of basis points representing 100%.
 pub const BASIS_POINTS_SCALE: i128 = 10_000;
 
@@ -20,8 +22,6 @@ pub const DEFAULT_MAX_RATE_BPS: i128 = i128::MAX;
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InterestRateDataKey {
-    /// Address authorized to mutate the interest-rate configuration.
-    Admin,
     /// Persisted [`InterestRateConfig`].
     InterestRateConfig,
     /// Protocol-wide supplied amount used for utilization.
@@ -65,10 +65,14 @@ pub struct InterestRateConfig {
     pub base_rate_bps: i128,
     /// Utilization kink, in bps, exclusive range `(0, 10_000)`.
     pub kink_utilization_bps: i128,
+    /// Secondary utilization kink, in bps, exclusive range `(kink1, 10_000)`.
+    pub kink2_bps: i128,
     /// Total pre-kink increase added by the time utilization reaches the kink.
     pub multiplier_bps: i128,
     /// Total post-kink increase added between kink and 100% utilization.
     pub jump_multiplier_bps: i128,
+    /// Total increase added between kink2 and 100% utilization.
+    pub slope3_bps: i128,
     /// Legacy floor used by older deployments; retained for storage/API compatibility.
     pub rate_floor_bps: i128,
     /// Legacy ceiling used by older deployments; retained for storage/API compatibility.
@@ -86,8 +90,10 @@ impl Default for InterestRateConfig {
         Self {
             base_rate_bps: 100,
             kink_utilization_bps: 8_000,
+            kink2_bps: 9_000,
             multiplier_bps: 2_000,
             jump_multiplier_bps: 10_000,
+            slope3_bps: 20_000,
             rate_floor_bps: 0,
             rate_ceiling_bps: DEFAULT_MAX_RATE_BPS,
             spread_bps: 0,
@@ -97,14 +103,11 @@ impl Default for InterestRateConfig {
     }
 }
 
-/// Initialize the module with default rate parameters and an admin.
+/// Initialize the module with default rate parameters.
 ///
 /// Defaults intentionally preserve previous unclamped behaviour: floor `0` and
 /// ceiling `i128::MAX`, until an admin explicitly configures a narrower band.
-pub fn initialize_interest_rate_config(
-    env: &Env,
-    admin: Address,
-) -> Result<(), InterestRateError> {
+pub fn initialize_interest_rate_config(env: &Env) -> Result<(), InterestRateError> {
     if env
         .storage()
         .persistent()
@@ -113,9 +116,6 @@ pub fn initialize_interest_rate_config(
         return Err(InterestRateError::AlreadyInitialized);
     }
 
-    env.storage()
-        .persistent()
-        .set(&InterestRateDataKey::Admin, &admin);
     env.storage().persistent().set(
         &InterestRateDataKey::InterestRateConfig,
         &InterestRateConfig::default(),
@@ -189,9 +189,11 @@ pub fn update_interest_rate_config(
 /// accounting in a module separate from the rate model.
 pub fn set_protocol_totals(
     env: &Env,
+    admin: Address,
     total_deposits: i128,
     total_borrows: i128,
 ) -> Result<(), InterestRateError> {
+    require_rate_admin(env, &admin)?;
     if total_deposits < 0 || total_borrows < 0 {
         return Err(InterestRateError::InvalidParameter);
     }
@@ -217,9 +219,10 @@ pub fn set_emergency_rate_adjustment(
     if !(-BASIS_POINTS_SCALE..=BASIS_POINTS_SCALE).contains(&adjustment_bps) {
         return Err(InterestRateError::InvalidParameter);
     }
-    env.storage()
-        .persistent()
-        .set(&InterestRateDataKey::EmergencyRateAdjustment, &adjustment_bps);
+    env.storage().persistent().set(
+        &InterestRateDataKey::EmergencyRateAdjustment,
+        &adjustment_bps,
+    );
     Ok(())
 }
 
@@ -313,8 +316,9 @@ pub fn compute_borrow_rate(
                     .ok_or(InterestRateError::DivisionByZero)?,
             )
             .ok_or(InterestRateError::Overflow)?
-    } else {
-        let post_kink_denominator = BASIS_POINTS_SCALE
+    } else if utilization <= config.kink2_bps {
+        let post_kink_denominator = config
+            .kink2_bps
             .checked_sub(config.kink_utilization_bps)
             .ok_or(InterestRateError::DivisionByZero)?;
         config
@@ -331,13 +335,37 @@ pub fn compute_borrow_rate(
                     .ok_or(InterestRateError::DivisionByZero)?,
             )
             .ok_or(InterestRateError::Overflow)?
+    } else {
+        let post_kink2_denominator = BASIS_POINTS_SCALE
+            .checked_sub(config.kink2_bps)
+            .ok_or(InterestRateError::DivisionByZero)?;
+        config
+            .base_rate_bps
+            .checked_add(config.multiplier_bps)
+            .ok_or(InterestRateError::Overflow)?
+            .checked_add(config.jump_multiplier_bps)
+            .ok_or(InterestRateError::Overflow)?
+            .checked_add(
+                utilization
+                    .checked_sub(config.kink2_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_mul(config.slope3_bps)
+                    .ok_or(InterestRateError::Overflow)?
+                    .checked_div(post_kink2_denominator)
+                    .ok_or(InterestRateError::DivisionByZero)?,
+            )
+            .ok_or(InterestRateError::Overflow)?
     };
 
     let adjusted_rate = raw_rate
         .checked_add(emergency_adjustment_bps)
         .ok_or(InterestRateError::Overflow)?;
 
-    Ok(clamp_rate(adjusted_rate, config.min_rate_bps, config.max_rate_bps))
+    Ok(clamp_rate(
+        adjusted_rate,
+        config.min_rate_bps,
+        config.max_rate_bps,
+    ))
 }
 
 /// Clamp `rate_bps` to the inclusive configured band.
@@ -346,16 +374,10 @@ pub fn clamp_rate(rate_bps: i128, min_rate_bps: i128, max_rate_bps: i128) -> i12
 }
 
 fn require_rate_admin(env: &Env, caller: &Address) -> Result<(), InterestRateError> {
-    caller.require_auth();
-    let admin = env
-        .storage()
-        .persistent()
-        .get::<InterestRateDataKey, Address>(&InterestRateDataKey::Admin)
-        .ok_or(InterestRateError::NotInitialized)?;
-    if &admin != caller {
-        return Err(InterestRateError::Unauthorized);
-    }
-    Ok(())
+    admin::require_admin(env, caller).map_err(|e| match e {
+        crate::admin::AdminError::NotInitialized => InterestRateError::NotInitialized,
+        _ => InterestRateError::Unauthorized,
+    })
 }
 
 fn validate_config(config: &InterestRateConfig) -> Result<(), InterestRateError> {
@@ -374,7 +396,10 @@ fn validate_config(config: &InterestRateConfig) -> Result<(), InterestRateError>
     if config.spread_bps < 0 || config.spread_bps > BASIS_POINTS_SCALE {
         return Err(InterestRateError::InvalidParameter);
     }
-    if config.min_rate_bps < 0 || config.max_rate_bps < config.min_rate_bps {
+    if config.kink2_bps <= config.kink_utilization_bps || config.kink2_bps > BASIS_POINTS_SCALE {
+        return Err(InterestRateError::InvalidParameter);
+    }
+    if config.slope3_bps < 0 || config.slope3_bps > MAX_SLOPE_BPS {
         return Err(InterestRateError::InvalidParameter);
     }
     Ok(())

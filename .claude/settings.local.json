@@ -10,7 +10,11 @@
       "Bash(echo \"EXIT:$?\")",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(rustfmt --check contracts/hello-world/src/lib.rs)",
+      "Bash(rustfmt --check contracts/hello-world/src/config.rs)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)"
     ],
     "deny": [],
     "ask": []

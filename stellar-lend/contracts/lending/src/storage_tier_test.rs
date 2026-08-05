@@ -9,10 +9,8 @@
 //! `ReservedForFlashLoan`, `InterestIndex`) are documented but kept as
 //! `#[ignore]` placeholders until the features land.
 
-#![cfg(test)]
-
-use soroban_sdk::{testutils::Address as _, Address, Env};
 use crate::{DataKey, LendingContract, LendingContractClient};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ---------------------------------------------------------------------------
 // Shared setup
@@ -162,20 +160,27 @@ fn test_treasury_uses_persistent_storage() {
 
     env.as_contract(&contract_id, || {
         assert!(
-            env.storage().persistent().has(&DataKey::Treasury(asset.clone())),
+            env.storage()
+                .persistent()
+                .has(&DataKey::Treasury(asset.clone())),
             "Treasury must be in Persistent storage"
         );
         assert!(
-            !env.storage().instance().has(&DataKey::Treasury(asset.clone())),
+            !env.storage()
+                .instance()
+                .has(&DataKey::Treasury(asset.clone())),
             "Treasury must NOT be in Instance storage"
         );
     });
 }
 
-/// `DataKey::AssetParams(asset)` stores per-asset risk configuration and must
-/// be persistent.
+/// `DataKey::AssetParams(asset)` stores per-asset risk configuration. Unlike
+/// per-user records (unbounded cardinality -> persistent), the set of
+/// configured assets is small and admin-governed, so
+/// `cross_asset::{set_asset_params_internal, load_asset_params}`
+/// deliberately keep it in Instance storage (see their doc comments).
 #[test]
-fn test_asset_params_uses_persistent_storage() {
+fn test_asset_params_uses_instance_storage() {
     let env = Env::default();
     let (contract_id, client) = setup(&env);
     let admin = env.as_contract(&contract_id, || {
@@ -192,17 +197,19 @@ fn test_asset_params_uses_persistent_storage() {
         &7_000i128,
         &8_000i128,
         &1_000_000_000i128,
+        &0i128,
+        &0i128,
     );
 
     env.as_contract(&contract_id, || {
         let key = DataKey::AssetParams(asset.clone());
         assert!(
-            env.storage().persistent().has(&key),
-            "AssetParams must be in Persistent storage"
+            env.storage().instance().has(&key),
+            "AssetParams must be in Instance storage"
         );
         assert!(
-            !env.storage().instance().has(&key),
-            "AssetParams must NOT be in Instance storage"
+            !env.storage().persistent().has(&key),
+            "AssetParams must NOT be in Persistent storage"
         );
     });
 }
@@ -224,7 +231,6 @@ fn test_per_address_keys_never_in_instance_storage() {
         DataKey::Debt(addr.clone()),
         DataKey::Balance(addr.clone(), addr.clone()),
         DataKey::Treasury(addr.clone()),
-        DataKey::AssetParams(addr.clone()),
     ];
 
     env.as_contract(&contract_id, || {

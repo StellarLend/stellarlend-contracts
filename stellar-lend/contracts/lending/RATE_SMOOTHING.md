@@ -8,6 +8,12 @@ The Stellar Lend contract computes the borrow rate dynamically based on instanta
 
 To neutralize single-block manipulation, this feature introduces an **optional rate-smoothing window**. Instead of jumping instantly to the utilization-based target rate, the effective rate moves toward the target rate by a bounded step per ledger.
 
+For small target changes caused by utilization jitter, see the companion hysteresis dead-zone in [RATE_HYSTERESIS.md](./RATE_HYSTERESIS.md).
+
+For the debt-position lifecycle that consumes the resulting borrow rate,
+including cache-hit/cache-miss rules and settle-before-mutate ordering, see
+[DEBT_ACCRUAL_STATE_MACHINE.md](./DEBT_ACCRUAL_STATE_MACHINE.md).
+
 ---
 
 ## Smoothing Formula

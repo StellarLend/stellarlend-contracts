@@ -43,7 +43,8 @@
 /// eviction only removes data that is older than the longest supported query window, ensuring
 /// every valid `get_twap` call can still find a start snapshot.
 ///
-/// See `docs/TWAP_SNAPSHOT_POLICY.md` for the full rationale.
+/// See `docs/TWAP_SNAPSHOT_POLICY.md` for the storage rationale and
+/// `docs/TWAP_READ_PERF.md` for the read-cost budget.
 ///
 /// # Storage keys
 ///
@@ -92,6 +93,19 @@ pub const MAX_TWAP_WINDOW_SECS: u64 = 86_400;
 /// Eviction only removes the single oldest entry once the cap is hit, keeping
 /// the amortised write cost at O(1) per snapshot interval.
 pub const MAX_SNAPSHOTS: u32 = 1_440;
+
+/// Maximum snapshot comparisons performed by one `get_twap` lookup.
+///
+/// `find_snapshot_at_or_before` uses binary search, whose worst-case cost for
+/// the capped ring is `ceil(log2(MAX_SNAPSHOTS + 1))`:
+///
+/// ```text
+/// ceil(log2(1_440 + 1)) = 11
+/// ```
+///
+/// Tests exercise increasing ring sizes and targets at both ends and the
+/// middle so a regression to a linear scan cannot silently exceed this budget.
+pub const TWAP_READ_SEARCH_COMPARISON_BUDGET: u32 = 11;
 
 /// Safety multiplier used during eviction to guarantee the oldest retained
 /// snapshot is never within the maximum query window.
@@ -305,8 +319,18 @@ fn maybe_write_snapshot(env: &Env, asset: &Address, state: &TwapPoolState) {
 /// Compute the time-weighted average price of `asset` (base) in terms of the
 /// paired quote token over the requested window.
 ///
-/// Returns the TWAP scaled by [`PRICE_SCALE`] (i.e. divide the result by 1e18
-/// to obtain the human-readable price).
+/// Returns `Some(twap)` scaled by [`PRICE_SCALE`] (i.e. divide by 1e18 to get
+/// the human-readable price), or `None` when the pool does not have sufficient
+/// history to satisfy the request. Callers should treat `None` as "not yet
+/// available" and fall through to any configured next-tier price source rather
+/// than aborting.
+///
+/// # When `None` is returned
+/// * No `TwapPoolState` exists for `asset` (pool never initialised).
+/// * `window_secs < MIN_WINDOW_SECS` (too short to be manipulation-resistant).
+/// * The pool's accumulated history is shorter than `MIN_WINDOW_SECS` (thin-history
+///   pool — not enough data to compute a meaningful window).
+/// * The computed window length is zero (start anchor timestamp equals `now`).
 ///
 /// # Resolution
 /// `get_twap` first extrapolates the cumulative price to `now` using the most
@@ -316,34 +340,31 @@ fn maybe_write_snapshot(env: &Env, asset: &Address, state: &TwapPoolState) {
 ///
 /// # Arguments
 /// * `asset`         – Base token address.
-/// * `window_secs`   – Look-back window in seconds.  Must be ≥ [`MIN_WINDOW_SECS`].
-///
-/// # Errors (via panic / contract error)
-/// * Window < `MIN_WINDOW_SECS`.
-/// * No observations available within the window (pool too new).
+/// * `window_secs`   – Look-back window in seconds.  Should be ≥ [`MIN_WINDOW_SECS`].
 ///
 /// # Example (pseudo-code caller)
 /// ```text
-/// let raw = get_twap(&env, &xlm_address, 150);
-/// let price_in_usdc = raw / PRICE_SCALE; // e.g. 0.11 USDC per XLM
+/// match get_twap(&env, &xlm_address, 150) {
+///     Some(raw) => raw / PRICE_SCALE, // e.g. 0.11 USDC per XLM
+///     None => { /* fall through to next oracle tier */ }
+/// }
 /// ```
-pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> u128 {
-    assert!(
-        window_secs >= MIN_WINDOW_SECS,
-        "window_secs must be >= MIN_WINDOW_SECS ({})",
-        MIN_WINDOW_SECS
-    );
+pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> Option<u128> {
+    // Reject sub-minimum windows — not enough data to be manipulation-resistant.
+    if window_secs < MIN_WINDOW_SECS {
+        return None;
+    }
 
     let now: u64 = env.ledger().timestamp();
     let target_start = now.saturating_sub(window_secs);
 
-    // Load current accumulator state.
+    // Load current accumulator state.  Return None when the pool has never
+    // been initialised (no TwapPoolState in storage).
     let state_key = twap_state_key(asset);
-    let current_state: TwapPoolState = env
-        .storage()
-        .persistent()
-        .get(&state_key)
-        .expect("TwapPoolState: no observations for asset");
+    let current_state: TwapPoolState = match env.storage().persistent().get(&state_key) {
+        Some(s) => s,
+        None => return None,
+    };
 
     // Extrapolate the cumulative price to the current ledger timestamp.
     // The stored state may lag if no swap happened in this ledger, so we
@@ -351,9 +372,16 @@ pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> u128 {
     let elapsed_since_stored = now.saturating_sub(current_state.last_timestamp);
     let mut cumulative_now = current_state.price0_cumulative;
     if elapsed_since_stored > 0 && current_state.last_reserve0 > 0 {
-        let extrapolation = (current_state.last_reserve1 * PRICE_SCALE
-            / current_state.last_reserve0)
-            * elapsed_since_stored as u128;
+        let scaled_reserve1 = current_state
+            .last_reserve1
+            .checked_mul(PRICE_SCALE)
+            .expect("TWAP extrapolation overflow: last_reserve1 * PRICE_SCALE");
+        let ratio = scaled_reserve1
+            .checked_div(current_state.last_reserve0)
+            .expect("TWAP extrapolation overflow: last_reserve1 * PRICE_SCALE / last_reserve0");
+        let extrapolation = ratio
+            .checked_mul(elapsed_since_stored as u128)
+            .expect("TWAP extrapolation overflow: reserve ratio * elapsed_since_stored");
         cumulative_now = cumulative_now.wrapping_add(extrapolation);
     }
 
@@ -378,22 +406,27 @@ pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> u128 {
             });
 
             let actual_window = now.saturating_sub(earliest_snap.timestamp);
-            assert!(
-                actual_window >= MIN_WINDOW_SECS,
-                "insufficient TWAP history ({}s < {}s minimum)",
-                actual_window,
-                MIN_WINDOW_SECS
-            );
+
+            // Insufficient history: the pool hasn't accumulated MIN_WINDOW_SECS of data yet.
+            // Return None so callers can fall through to the next oracle tier.
+            if actual_window < MIN_WINDOW_SECS {
+                return None;
+            }
 
             let delta = cumulative_now.wrapping_sub(earliest_snap.price0_cumulative);
-            delta / actual_window as u128
+            Some(delta / actual_window as u128)
         }
         Some(start_snap) => {
             let actual_window = now.saturating_sub(start_snap.timestamp);
-            assert!(actual_window > 0, "zero-length TWAP window");
+
+            // Zero-length window: start anchor is at the current timestamp.
+            // Return None rather than dividing by zero.
+            if actual_window == 0 {
+                return None;
+            }
 
             let delta = cumulative_now.wrapping_sub(start_snap.price0_cumulative);
-            delta / actual_window as u128
+            Some(delta / actual_window as u128)
         }
     }
 }
@@ -413,9 +446,21 @@ pub fn get_twap(env: &Env, asset: &Address, window_secs: u64) -> u128 {
 /// # Complexity
 /// O(log n) comparisons via binary search, where n ≤ [`MAX_SNAPSHOTS`].
 fn find_snapshot_at_or_before(snaps: &Vec<TwapSnapshot>, target_ts: u64) -> Option<TwapSnapshot> {
+    find_snapshot_at_or_before_with_steps(snaps, target_ts).0
+}
+
+/// Binary-search implementation shared by `get_twap` and the max-buffer tests.
+///
+/// The returned comparison count lets tests enforce a hard upper bound on the
+/// full-buffer lookup cost without changing any externally observable TWAP
+/// behavior.
+fn find_snapshot_at_or_before_with_steps(
+    snaps: &Vec<TwapSnapshot>,
+    target_ts: u64,
+) -> (Option<TwapSnapshot>, u32) {
     let len = snaps.len();
     if len == 0 {
-        return None;
+        return (None, 0);
     }
 
     // Binary search: maintain an invariant window [lo, hi).
@@ -423,10 +468,12 @@ fn find_snapshot_at_or_before(snaps: &Vec<TwapSnapshot>, target_ts: u64) -> Opti
     let mut lo: u32 = 0;
     let mut hi: u32 = len;
     let mut result: Option<TwapSnapshot> = None;
+    let mut comparisons: u32 = 0;
 
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         let snap: TwapSnapshot = snaps.get(mid).unwrap();
+        comparisons = comparisons.saturating_add(1);
         if snap.timestamp <= target_ts {
             // mid is a valid candidate; try to find a later one.
             result = Some(snap);
@@ -437,7 +484,17 @@ fn find_snapshot_at_or_before(snaps: &Vec<TwapSnapshot>, target_ts: u64) -> Opti
         }
     }
 
-    result
+    (result, comparisons)
+}
+
+/// Returns the snapshot lookup result and comparison count used by the
+/// `find_snapshot_at_or_before` binary search.
+#[cfg(test)]
+pub(crate) fn snapshot_search_metrics_for_test(
+    snaps: &Vec<TwapSnapshot>,
+    target_ts: u64,
+) -> (Option<TwapSnapshot>, u32) {
+    find_snapshot_at_or_before_with_steps(snaps, target_ts)
 }
 
 // ---------------------------------------------------------------------------
@@ -459,11 +516,11 @@ pub fn get_snapshots(env: &Env, asset: &Address) -> Vec<TwapSnapshot> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
-/// Returns `true` if `get_twap(env, asset, window_secs)` would succeed
-/// (i.e. not panic) for the given window, without performing the actual
-/// TWAP calculation.
+/// Returns `true` if `get_twap(env, asset, window_secs)` would return `Some(_)`
+/// for the given window (i.e. the pool has sufficient accumulated history),
+/// or `false` when `get_twap` would return `None`.
 ///
-/// This mirrors every panic/assert precondition inside `get_twap` exactly,
+/// This mirrors every `None`-return condition inside `get_twap` exactly,
 /// so callers that need a non-panicking sentinel (e.g. a read-only view
 /// intended for monitoring/integration, rather than a settlement path that
 /// is fine with hard-aborting) can check coverage first and only call
@@ -490,9 +547,9 @@ pub fn has_window_coverage(env: &Env, asset: &Address, window_secs: u64) -> bool
         .unwrap_or_else(|| Vec::new(env));
 
     match find_snapshot_at_or_before(&snaps, target_start) {
-        // Mirrors: assert!(actual_window > 0, "zero-length TWAP window");
+        // Mirrors: if actual_window == 0 { return None }
         Some(start_snap) => now.saturating_sub(start_snap.timestamp) > 0,
-        // Mirrors: assert!(actual_window >= MIN_WINDOW_SECS, "insufficient TWAP history ...");
+        // Mirrors: if actual_window < MIN_WINDOW_SECS { return None }
         // get_twap falls back to current_state.last_timestamp (not `now`) when
         // there's no snapshot at all yet -- match that exactly.
         None => {

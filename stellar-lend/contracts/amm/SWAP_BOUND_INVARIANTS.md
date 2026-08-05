@@ -2,6 +2,10 @@
 
 Property-based invariants proven by `swap_bounds_proptest.rs` (issue #1132).
 
+> **Related:** The k-monotonicity invariant I-4 below is also enforced by the
+> flash-swap repay path. See [FLASH_SWAP_PROTOCOL.md §Verify-K Repay Invariant](./FLASH_SWAP_PROTOCOL.md)
+> for the full derivation and rollback semantics.
+
 ## Formula
 
 Uniswap-v2 constant-product swap (A → B):

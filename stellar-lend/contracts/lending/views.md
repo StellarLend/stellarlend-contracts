@@ -6,9 +6,12 @@ This document describes the view functions for user collateral value, debt value
 
 | Function | Description |
 |----------|-------------|
-| `get_position` | Returns full position summary (collateral, effective debt, health factor). |
+| Function | Description |
+|----------|-------------|
+| `get_position` | Returns full position summary (collateral, effective debt, health factor). Thin alias: `get_user_position`. |
 | `get_health_factor` | Health factor (scaled 10000 = 1.0). |
 | `get_debt_position` | Returns debt position struct (principal + last_update). |
+| `get_liquidation_incentive_bps` | Returns configured liquidation incentive in basis points (e.g. 1000 = 10%). |
 
 ---
 
@@ -17,6 +20,7 @@ This document describes the view functions for user collateral value, debt value
 - **Purpose:** Returns the user's position summary: raw collateral balance, effective debt (principal + accrued interest), and health factor.
 - **Read-only:** Yes. Extends TTL for active positions.
 - **Returns:** `PositionSummary { collateral: i128, debt: i128, health_factor: i128 }`. Zero-valued fields if the user has no position.
+- **Alias:** `get_user_position(user: Address)` is available as a thin alias for API and frontend compatibility.
 - **Health factor formula:** `(collateral * LIQUIDATION_THRESHOLD_BPS) / debt` with `LIQUIDATION_THRESHOLD_BPS = 8000` (80%).
 - **Special health factor values:**
   - No debt: returns `HEALTH_FACTOR_NO_DEBT` (100_000_000), meaning "healthy".
@@ -59,6 +63,14 @@ The `health_factor_edge_test` suite pins both `get_position().health_factor` and
 
 ---
 
+## 4. `get_liquidation_incentive_bps() -> i128`
+
+- **Purpose:** Returns the configured liquidation incentive in basis points applied during liquidations.
+- **Read-only:** Yes.
+- **Returns:** Configured basis points (`i128`), defaulting to `1000` (10%) when unset.
+
+---
+
 ## Security Assumptions
 
 1. **No state change:** All view functions only read storage. They do not modify protocol or user state beyond TTL extension.
@@ -83,7 +95,7 @@ weakened without an explicit, audited change.
 
 ### G1. Summary–getter consistency
 
-`get_user_position(user)` must return field-for-field exactly what the
+`get_position(user)` (or alias `get_user_position(user)`) must return field-for-field exactly what the
 individual getters return for the same `user` at the same ledger height:
 
 - `summary.collateral_balance == get_collateral_balance(user)`
@@ -122,9 +134,8 @@ ceiling rounding or float math will break the invariant suite.
 
 ### G6. Liquidation-incentive monotonicity
 
-`get_liquidation_incentive_amount(repay)` is monotonic non-decreasing in
-`repay`. Negative or zero `repay` always yields `0`. This forbids a future
-incentive curve that liquidators could game by splitting repayments.
+`get_liquidation_incentive_bps()` returns non-negative liquidation incentive basis points.
+Configured incentive rates produce non-decreasing bonus collateral in liquidation calculations.
 
 ### G7. Independence across users
 
