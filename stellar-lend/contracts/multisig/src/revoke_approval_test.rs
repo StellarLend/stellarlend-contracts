@@ -130,4 +130,66 @@ mod revoke_approval_tests {
         let approvals = client.get_proposal_approvals(&proposal_id).unwrap();
         assert!(approvals.contains(&signer_b));
     }
+
+    #[test]
+    fn test_revoke_uninitialized_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MultisigContract);
+        let client = MultisigContractClient::new(&env, &contract_id);
+        let signer = Address::generate(&env);
+
+        assert_eq!(
+            client.try_revoke_approval(&signer, &1),
+            Err(Ok(MultisigError::NotInitialized))
+        );
+    }
+
+    #[test]
+    fn test_revoke_missing_proposal_returns_error() {
+        let (env, _admin, contract_id, signers) = setup_with_signers(1, 1);
+        let client = MultisigContractClient::new(&env, &contract_id);
+        let signer_a = signers.get(0).unwrap();
+
+        assert_eq!(
+            client.try_revoke_approval(&signer_a, &999),
+            Err(Ok(MultisigError::ProposalNotFound))
+        );
+    }
+
+    #[test]
+    fn test_revoke_by_not_a_signer_returns_error() {
+        let (env, _admin, contract_id, signers) = setup_with_signers(1, 1);
+        let client = MultisigContractClient::new(&env, &contract_id);
+
+        let non_signer = Address::generate(&env);
+        let current_ledger = env.ledger().sequence();
+        let proposal_id = client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+
+        assert_eq!(
+            client.try_revoke_approval(&non_signer, &proposal_id),
+            Err(Ok(MultisigError::NotASigner))
+        );
+    }
+
+    #[test]
+    fn test_revoke_fallback_admin_signer() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, MultisigContract);
+        let client = MultisigContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &1);
+
+        let current_ledger = env.ledger().sequence();
+        let proposal_id = client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+
+        // Admin is the default approver on creation
+        let approvals = client.get_proposal_approvals(&proposal_id).unwrap();
+        assert!(approvals.contains(&admin));
+
+        client.revoke_approval(&admin, &proposal_id);
+        let approvals_after = client.get_proposal_approvals(&proposal_id).unwrap();
+        assert!(!approvals_after.contains(&admin));
+    }
 }
