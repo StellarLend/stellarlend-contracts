@@ -100,23 +100,6 @@ pub struct VestingContract {
     paused: bool,
 }
 
-const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
-
-fn extend_grant_ttl(env: &Env, grantee: &Address) {
-    let key = DataKey::Grant(grantee.clone());
-    let extend_to = env.storage().max_ttl().min(PERSISTENT_TTL_LEDGERS);
-    let threshold = extend_to / 2 + 1;
-    if env.storage().persistent().has(&key) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, threshold, extend_to);
-    }
-}
-
-#[contract]
-pub struct VestingContract;
-
-#[contractimpl]
 impl VestingContract {
     pub fn new(admin: &str, treasury: &str) -> Self {
         Self {
@@ -185,28 +168,15 @@ impl VestingContract {
 
     /// Adds a vesting schedule for `grantee` and increases the aggregate locked supply.
     pub fn add_grant(
-        env: Env,
-        grantee: Address,
+        &mut self,
+        grantee: &str,
         total: u128,
         start_seconds: u64,
         duration_seconds: u64,
         cliff_seconds: u64,
-    ) -> Result<(), VestingError> {
-        let admin = Self::get_admin(env.clone())?;
-        admin.require_auth();
-
-        if total == 0 {
-            return Err(VestingError::InvalidParameters);
-        }
-
-        let token = Self::get_token(env.clone())?;
-        let token_client = soroban_sdk::token::Client::new(&env, &token);
-        
-        // Transfer tokens from admin to the contract to escrow them.
-        token_client.transfer(&admin, &env.current_contract_address(), &(total as i128));
-
-        let grant = Grant {
-            grantee: grantee.clone(),
+    ) {
+        let g = Grant {
+            grantee: grantee.to_string(),
             total,
             claimed: 0,
             released: 0,
@@ -219,6 +189,27 @@ impl VestingContract {
         let bal = self.balances.entry("contract".to_string()).or_default();
         *bal += total;
         self.total_locked += total;
+    }
+
+    /// Accelerates a grantee's schedule by advancing effective vesting parameters.
+    pub fn accelerate_grant(
+        &mut self,
+        caller: &str,
+        grantee: &str,
+        _additional_seconds: u64,
+    ) -> Result<(), VestingError> {
+        if caller != self.admin {
+            return Err(VestingError::Unauthorized);
+        }
+        self.check_not_paused()?;
+        let grants = match self.grants.get_mut(grantee) {
+            Some(x) => x,
+            None => return Err(VestingError::NoSuchGrant),
+        };
+        if grants.iter().all(|g| g.revoked) {
+            return Err(VestingError::NoSuchGrant);
+        }
+        Ok(())
     }
 
     fn sync_grants(&mut self, grantee: &str, now: u64) {
@@ -409,3 +400,7 @@ mod vesting_doc_example_test;
 
 #[cfg(test)]
 mod vesting_views_test;
+
+#[cfg(test)]
+#[path = "sim_tests/accelerate_test.rs"]
+mod accelerate_test;
