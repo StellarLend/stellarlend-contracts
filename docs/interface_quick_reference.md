@@ -40,6 +40,7 @@
 | `borrow` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — debt principal |
 | `repay` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — remaining debt principal |
 | `liquidate` | `(liquidator: Address, borrower: Address, amount: i128)` | `liquidator` | `Result<i128, LendingError>` — debt actually repaid |
+| `receive` | `(from: Address, amount: i128, payload: Bytes)` | `from` | `Result<(), LendingError>` — token receiver callback |
 
 ### Flash Loans
 

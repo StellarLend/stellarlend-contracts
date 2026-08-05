@@ -853,6 +853,21 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
+
+    /// Token receiver callback entrypoint. Routes incoming token transfer callbacks
+    /// into internal deposit logic.
+    pub fn receive(env: Env, from: Address, amount: i128, _payload: Bytes) -> Result<(), LendingError> {
+        check_pause_status(&env, ProtocolAction::Deposit);
+        check_emergency_status(&env, ProtocolAction::Deposit);
+        require_no_active_flash_loan(&env);
+        from.require_auth();
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        let _ = Self::deposit(env, from, amount)?;
+        Ok(())
+    }
+
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         check_pause_status(&env, ProtocolAction::Deposit);
         check_emergency_status(&env, ProtocolAction::Deposit);

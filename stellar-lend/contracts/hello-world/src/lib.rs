@@ -2,7 +2,6 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use core::convert::{Into, TryFrom, TryInto};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
 
 #[contracterror]
@@ -77,21 +76,7 @@ mod twap_view_test;
 // #[cfg(test)]
 // mod tests;
 
-use crate::oracle::FullOracleConfig;
-fn require_admin(env: &Env, caller: &Address) -> Result<(), RiskManagementError> {
-    caller.require_auth();
-    let admin_key = DepositDataKey::Admin;
-    let admin = env
-        .storage()
-        .persistent()
-        .get::<DepositDataKey, Address>(&admin_key)
-        .ok_or(RiskManagementError::Unauthorized)?;
-
-    if caller != &admin {
-        return Err(RiskManagementError::Unauthorized);
-    }
-    Ok(())
-}
+#[allow(unused_imports)]
 
 use borrow::borrow_asset;
 use deposit::deposit_collateral;

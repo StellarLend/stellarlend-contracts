@@ -45,6 +45,7 @@ DOCUMENTED_FUNCTIONS=(
   "get_position"
   "get_health_factor"
   "get_protocol_metrics"
+  "receive"
 )
 
 # ----------------------------------------------------------------------------
