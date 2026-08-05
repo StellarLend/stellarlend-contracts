@@ -703,6 +703,19 @@ impl MultisigContract {
     /// removes the signer from the stored approval list and emits an event for
     /// off-chain tracking. A revocation that targets a missing approval is a typed
     /// error rather than a silent no-op.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `signer` - Address of the signer revoking approval
+    /// * `id` - Proposal id to revoke approval from
+    ///
+    /// # Errors
+    /// * `NotInitialized` - Contract not initialized
+    /// * `ProposalNotFound` - Proposal id does not exist
+    /// * `ProposalAlreadyExecuted` - Proposal has already been executed
+    /// * `ProposalExpired` - Proposal expiry ledger has passed
+    /// * `NotASigner` - Caller is not a registered signer
+    /// * `ApprovalNotFound` - Caller has not approved this proposal
     pub fn revoke_approval(env: Env, signer: Address, id: u64) -> Result<(), MultisigError> {
         signer.require_auth();
 
