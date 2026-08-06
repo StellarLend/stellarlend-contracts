@@ -386,7 +386,7 @@ pub fn register_bridge(
     };
     env.storage().persistent().set(&key, &cfg);
     add_to_index(env, network_id);
-    emit_register_event(env, network_id, &bridge, fee_bps);
+    emit_register_event(env, network_id, &cfg.bridge, fee_bps);
     Ok(())
 }
 
