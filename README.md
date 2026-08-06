@@ -266,10 +266,13 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `set_guardian`                | Configure shutdown guardian                      |
 | `get_guardian`                | Read shutdown guardian                           |
 | `set_emergency_state`         | Set protocol emergency state                     |
+| `get_emergency_state`         | Read protocol emergency state                    |
 | `set_min_borrow`              | Configure minimum borrow amount                  |
 | `get_min_borrow`              | Read minimum borrow amount                       |
 | `set_debt_ceiling`            | Configure debt ceiling                           |
+| `get_debt_ceiling`            | Read debt ceiling                                |
 | `set_flash_fee`               | Configure flash loan fee                         |
+| `get_flash_fee`               | Read flash loan fee                              |
 | `set_oracle_pubkey`           | Configure signed price oracle public key         |
 | `get_oracle_pubkey`           | Read oracle public key                           |
 | `set_price`                   | Store a signed oracle price update               |

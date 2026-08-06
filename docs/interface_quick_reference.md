@@ -74,8 +74,11 @@
 |---|---|---|---|
 | `set_min_borrow` | `(min_borrow: i128)` | admin | `Result<(), LendingError>` |
 | `set_debt_ceiling` | `(ceiling: i128)` | admin | `Result<(), LendingError>` |
+| `get_debt_ceiling` | `()` | — | `i128` — `0` means no global limit |
 | `set_flash_fee` | `(fee_bps: i128)` | admin | `Result<(), LendingError>` |
+| `get_flash_fee` | `()` | — | `i128` — defaults to `5` bps when unset |
 | `set_emergency_state` | `(new_state: EmergencyState)` | admin; guardian may set `Shutdown` | `()` |
+| `get_emergency_state` | `()` | — | `EmergencyState` — defaults to `Normal` |
 | `set_pause` | `(pause_type: PauseType, paused: bool, ttl_ledgers: u32)` | admin or guardian | `Result<(), LendingError>` |
 | `get_pause_state` | `(pause_type: PauseType)` | — | `bool` |
 | `set_asset_params` | `(admin: Address, asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128, borrow_cap: i128, supply_cap: i128)` | admin | `Result<(), LendingError>` |
