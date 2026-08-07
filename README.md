@@ -255,6 +255,7 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `repay`                       | Repay borrowed assets                            |
 | `withdraw`                    | Withdraw collateral                              |
 | `liquidate`                   | Liquidate undercollateralized positions          |
+| `receive`                     | Token receiver callback to route incoming deposits/repays |
 
 ### Oracle, Admin, and Emergency Controls
 

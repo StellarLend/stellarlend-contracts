@@ -61,6 +61,7 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `borrow` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Updated debt principal | Increases user debt; enforces `min_borrow`, post-borrow health factor (`>= 1.0`), and protocol debt ceiling. Blocked during Shutdown/Recovery. |
 | `repay` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Remaining debt principal | Reduces user debt with interest accrued up to the current timestamp. Allowed in Normal and Recovery. |
 | `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) → Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to 50% of an undercollateralized borrower's debt and seizes proportional collateral (+ 10% bonus). Reverts if position is healthy (`hf >= 10000`). |
+| `receive` | `(env, from: Address, amount: i128, payload: Bytes) → Result<(), LendingError>` | `from` | Result | Token receiver callback entrypoint; routes incoming token transfer callbacks into internal deposit logic. |
 
 ### Flash Loans
 
