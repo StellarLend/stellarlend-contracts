@@ -532,5 +532,3 @@ fn test_add_liquidity_toggle_lifecycle() {
         assert_eq!(amm::get_reserves(&env, &asset).reserve0, 1_050_000);
     });
 }
-
-``
