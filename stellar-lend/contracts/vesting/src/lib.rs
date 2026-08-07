@@ -69,6 +69,7 @@ pub enum VestingKey {
     Grant(Address),
 }
 
+<<<<<<< HEAD
 // ── Vesting schedule ─────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -85,6 +86,11 @@ pub enum VestingSchedule {
 /// Field naming follows the original convention used by `vested_at_overflow_test.rs`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
+=======
+pub type Address = String;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+>>>>>>> 5095dcd5 (fix(vesting): recreate missing claimable_consistency_test in sim_tests)
 pub struct Grant {
     pub grantee: Address,
     pub total_amount: i128,
@@ -1059,3 +1065,4 @@ mod milestone_schedule_test;
 // mod pause_offset_test;
 // #[cfg(all(test, feature = "legacy-tests"))]
 // mod vested_at_overflow_test;
+
