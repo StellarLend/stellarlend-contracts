@@ -105,8 +105,13 @@ fn test_swap_succeeds_after_unpause() {
             true,
         )
         .unwrap();
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_swap"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_swap"),
+            false,
+        )
+        .unwrap();
 
         // Swap must succeed.
         amm::swap(&env, &asset, 10_000, true);
@@ -205,8 +210,13 @@ fn test_add_liquidity_succeeds_after_unpause() {
             true,
         )
         .unwrap();
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_add_liquidity"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_add_liquidity"),
+            false,
+        )
+        .unwrap();
 
         amm::add_liquidity(&env, &asset, 50_000, 50_000);
         let r = amm::get_reserves(&env, &asset);

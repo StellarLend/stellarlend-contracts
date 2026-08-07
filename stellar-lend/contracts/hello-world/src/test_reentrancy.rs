@@ -33,19 +33,35 @@ impl MaliciousToken {
             
             // Try deposit
             let res = client.try_deposit_collateral(user, &token_opt, &100);
-            assert!(res.is_err(), "Expected Reentrancy error on deposit, got {:?}", res);
+            assert!(
+                res.is_err(),
+                "Expected Reentrancy error on deposit, got {:?}",
+                res
+            );
 
             // Try withdraw
             let res = client.try_withdraw_collateral(user, &token_opt, &100);
-            assert!(res.is_err(), "Expected Reentrancy error on withdraw, got {:?}", res);
-            
+            assert!(
+                res.is_err(),
+                "Expected Reentrancy error on withdraw, got {:?}",
+                res
+            );
+
             // Try borrow
             let res = client.try_borrow_asset(user, &token_opt, &100);
-            assert!(res.is_err(), "Expected Reentrancy error on borrow, got {:?}", res);
+            assert!(
+                res.is_err(),
+                "Expected Reentrancy error on borrow, got {:?}",
+                res
+            );
 
             // Try repay
             let res = client.try_repay_debt(user, &token_opt, &100);
-            assert!(res.is_err(), "Expected Reentrancy error on repay, got {:?}", res);
+            assert!(
+                res.is_err(),
+                "Expected Reentrancy error on repay, got {:?}",
+                res
+            );
         }
     }
 }
