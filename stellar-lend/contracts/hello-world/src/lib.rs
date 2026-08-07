@@ -114,7 +114,7 @@ use crate::risk_params::{
 };
 use crate::storage::GuardianConfig;
 use crate::types::{
-    GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalType, RecoveryRequest,
+    DataKey, GovernanceConfig, MultisigConfig, Proposal, ProposalOutcome, ProposalType, RecoveryRequest,
     VoteInfo, VoteType,
 };
 
@@ -380,7 +380,7 @@ impl HelloContract {
         collateral_asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, crate::liquidate::LiquidationError> {
-        let (repaid, _seized, _fee) = liquidate(&env, caller, borrower, asset, None, amount)?;
+        let (repaid, _seized, _fee) = crate::liquidate::liquidate(&env, liquidator, borrower, debt_asset, collateral_asset, amount)?;
         Ok(repaid)
     }
 
@@ -465,11 +465,6 @@ impl HelloContract {
         interest_rate::calculate_supply_rate(&env).unwrap_or(0)
     }
 
-    /// Get protocol utilization in basis points.
-    pub fn get_utilization(env: Env) -> i128 {
-        analytics::get_protocol_utilization(&env).unwrap_or(0)
-    }
-
     /// Configure flash-loan parameters (admin only).
     pub fn configure_flash_loan(
         env: Env,
@@ -523,25 +518,6 @@ impl HelloContract {
             spread,
         )
         .map_err(|_| RiskManagementError::InvalidParameter)
-    }
-
-    /// Get current protocol utilization in basis points (0–10 000).
-    pub fn get_utilization(env: Env) -> i128 {
-        interest_rate::calculate_utilization(&env).unwrap_or(0)
-    }
-
-    /// Set an emergency rate adjustment (admin only).
-    ///
-    /// The adjustment is added to the calculated borrow rate.
-    /// Bounded to ±10 000 bps (±100%).
-    pub fn set_emergency_rate_adjustment(
-        env: Env,
-        admin: Address,
-        adjustment_bps: i128,
-    ) -> Result<(), RiskManagementError> {
-        require_admin(&env, &admin)?;
-        interest_rate::set_emergency_rate_adjustment(&env, admin, adjustment_bps)
-            .map_err(|_| RiskManagementError::InvalidParameter)
     }
 
     /// Get the current interest rate configuration.
