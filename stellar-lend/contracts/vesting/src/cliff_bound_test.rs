@@ -10,9 +10,7 @@ use super::{VestingContract, VestingError};
 #[test]
 fn rejects_zero_principal() {
     let mut c = VestingContract::new("admin", "treasury");
-    let err = c
-        .add_grant("admin", "alice", 0, 0, 1_000, 0)
-        .unwrap_err();
+    let err = c.add_grant("admin", "alice", 0, 0, 1_000, 0).unwrap_err();
     assert_eq!(err, VestingError::ZeroPrincipal);
     assert_eq!(c.total_locked(), 0, "no state mutated on error");
 }
@@ -21,9 +19,7 @@ fn rejects_zero_principal() {
 #[test]
 fn rejects_zero_duration() {
     let mut c = VestingContract::new("admin", "treasury");
-    let err = c
-        .add_grant("admin", "alice", 1_000, 0, 0, 0)
-        .unwrap_err();
+    let err = c.add_grant("admin", "alice", 1_000, 0, 0, 0).unwrap_err();
     assert_eq!(err, VestingError::ZeroDuration);
     assert_eq!(c.total_locked(), 0, "no state mutated on error");
 }
@@ -32,9 +28,7 @@ fn rejects_zero_duration() {
 #[test]
 fn rejects_cliff_greater_than_duration() {
     let mut c = VestingContract::new("admin", "treasury");
-    let err = c
-        .add_grant("admin", "alice", 1_000, 0, 100, 101)
-        .unwrap_err();
+    let err = c.add_grant("admin", "alice", 1_000, 0, 100, 101).unwrap_err();
     assert_eq!(err, VestingError::CliffExceedsDuration);
     assert_eq!(c.total_locked(), 0, "no state mutated on error");
 }
@@ -43,9 +37,7 @@ fn rejects_cliff_greater_than_duration() {
 #[test]
 fn rejects_non_admin_caller() {
     let mut c = VestingContract::new("admin", "treasury");
-    let err = c
-        .add_grant("attacker", "alice", 1_000, 0, 1_000, 0)
-        .unwrap_err();
+    let err = c.add_grant("attacker", "alice", 1_000, 0, 1_000, 0).unwrap_err();
     assert_eq!(err, VestingError::Unauthorized);
     assert_eq!(c.total_locked(), 0, "no state mutated on error");
 }

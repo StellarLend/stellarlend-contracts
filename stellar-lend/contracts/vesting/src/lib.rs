@@ -23,8 +23,7 @@
 extern crate std;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror,
-    token, Address, Env, Vec, IntoVal, Val,
+    contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Val, Vec,
 };
 
 // ── Error codes ──────────────────────────────────────────────────────────────

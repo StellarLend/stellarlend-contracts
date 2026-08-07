@@ -535,8 +535,13 @@ fn test_set_pause_switch_idempotent() {
             false,
         )
         .unwrap();
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_swap"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_swap"),
+            false,
+        )
+        .unwrap();
     });
 }
 
@@ -578,8 +583,13 @@ fn test_swap_toggle_lifecycle() {
         assert_eq!(r2_reserves.reserve0, 1_010_000);
 
         // --- Phase 3: unpause — swap succeeds again ---
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_swap"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_swap"),
+            false,
+        )
+        .unwrap();
         amm::swap(&env, &asset, 10_000, true);
         let r3 = amm::get_reserves(&env, &asset);
         assert_eq!(r3.reserve0, 1_020_000);
