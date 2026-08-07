@@ -72,8 +72,13 @@ fn test_swap_rejected_when_amm_swap_paused() {
         init_risk(&env, &admin);
 
         // Pause the amm_swap operation.
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_swap"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_swap"),
+            true,
+        )
+        .unwrap();
 
         // Swap must panic.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -100,8 +105,13 @@ fn test_swap_succeeds_after_unpause() {
             true,
         )
         .unwrap();
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_swap"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_swap"),
+            false,
+        )
+        .unwrap();
 
         // Swap must succeed.
         amm::swap(&env, &asset, 10_000, true);
@@ -121,8 +131,13 @@ fn test_swap_not_blocked_by_other_pause() {
         init_risk(&env, &admin);
 
         // Pause a different operation.
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_add_liquidity"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_add_liquidity"),
+            true,
+        )
+        .unwrap();
 
         // Swap must still succeed.
         amm::swap(&env, &asset, 10_000, true);
@@ -161,8 +176,13 @@ fn test_add_liquidity_rejected_when_paused() {
         let asset = init_pool(&env);
         init_risk(&env, &admin);
 
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_add_liquidity"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_add_liquidity"),
+            true,
+        )
+        .unwrap();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             amm::add_liquidity(&env, &asset, 50_000, 50_000);
@@ -183,10 +203,20 @@ fn test_add_liquidity_succeeds_after_unpause() {
         let asset = init_pool(&env);
         init_risk(&env, &admin);
 
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_add_liquidity"), true)
-            .unwrap();
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_add_liquidity"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_add_liquidity"),
+            true,
+        )
+        .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_add_liquidity"),
+            false,
+        )
+        .unwrap();
 
         amm::add_liquidity(&env, &asset, 50_000, 50_000);
         let r = amm::get_reserves(&env, &asset);
@@ -203,8 +233,13 @@ fn test_add_liquidity_not_blocked_by_other_pause() {
         let asset = init_pool(&env);
         init_risk(&env, &admin);
 
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_swap"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_swap"),
+            true,
+        )
+        .unwrap();
 
         amm::add_liquidity(&env, &asset, 50_000, 50_000);
         let r = amm::get_reserves(&env, &asset);
@@ -242,8 +277,13 @@ fn test_remove_liquidity_rejected_when_paused() {
         let asset = init_pool(&env);
         init_risk(&env, &admin);
 
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_remove_liquidity"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_remove_liquidity"),
+            true,
+        )
+        .unwrap();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             amm::remove_liquidity(&env, &asset, 100_000, 100_000);
@@ -264,10 +304,20 @@ fn test_remove_liquidity_succeeds_after_unpause() {
         let asset = init_pool(&env);
         init_risk(&env, &admin);
 
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_remove_liquidity"), true)
-            .unwrap();
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_remove_liquidity"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_remove_liquidity"),
+            true,
+        )
+        .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_remove_liquidity"),
+            false,
+        )
+        .unwrap();
 
         amm::remove_liquidity(&env, &asset, 100_000, 100_000);
         let r = amm::get_reserves(&env, &asset);
@@ -363,8 +413,13 @@ fn test_non_admin_cannot_pause_amm_swap() {
         let attacker = Address::generate(&env);
         init_risk(&env, &admin);
 
-        let err = risk_management::set_pause_switch(&env, attacker.clone(), Symbol::new(&env, "amm_swap"), true)
-            .unwrap_err();
+        let err = risk_management::set_pause_switch(
+            &env,
+            attacker.clone(),
+            Symbol::new(&env, "amm_swap"),
+            true,
+        )
+        .unwrap_err();
         assert_eq!(
             err,
             RiskManagementError::Unauthorized,
@@ -388,7 +443,13 @@ fn test_non_admin_cannot_unpause() {
         init_risk(&env, &admin);
 
         // Admin pauses first.
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_swap"), true).unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_swap"),
+            true,
+        )
+        .unwrap();
 
         // attacker cannot unpause.
         let err = risk_management::set_pause_switch(
@@ -445,10 +506,20 @@ fn test_set_pause_switch_idempotent() {
         init_risk(&env, &admin);
 
         // Pause twice.
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_swap"), true)
-            .unwrap();
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_swap"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_swap"),
+            true,
+        )
+        .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_swap"),
+            true,
+        )
+        .unwrap();
 
         // Still paused.
         assert!(
@@ -457,9 +528,20 @@ fn test_set_pause_switch_idempotent() {
         );
 
         // Unpause twice.
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_swap"), false)
-            .unwrap();
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_swap"), false).unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_swap"),
+            false,
+        )
+        .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_swap"),
+            false,
+        )
+        .unwrap();
     });
 }
 
@@ -484,8 +566,13 @@ fn test_swap_toggle_lifecycle() {
         assert_eq!(r1.reserve0, 1_010_000);
 
         // --- Phase 2: pause — swap panics ---
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_swap"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_swap"),
+            true,
+        )
+        .unwrap();
         let r2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             amm::swap(&env, &asset, 10_000, true);
         }));
@@ -496,7 +583,13 @@ fn test_swap_toggle_lifecycle() {
         assert_eq!(r2_reserves.reserve0, 1_010_000);
 
         // --- Phase 3: unpause — swap succeeds again ---
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_swap"), false).unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_swap"),
+            false,
+        )
+        .unwrap();
         amm::swap(&env, &asset, 10_000, true);
         let r3 = amm::get_reserves(&env, &asset);
         assert_eq!(r3.reserve0, 1_020_000);
@@ -517,8 +610,13 @@ fn test_add_liquidity_toggle_lifecycle() {
         assert_eq!(amm::get_reserves(&env, &asset).reserve0, 1_025_000);
 
         // Phase 2: paused.
-        risk_management::set_pause_switch(&env, admin.clone(), Symbol::new(&env, "amm_add_liquidity"), true)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin.clone(),
+            Symbol::new(&env, "amm_add_liquidity"),
+            true,
+        )
+        .unwrap();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             amm::add_liquidity(&env, &asset, 25_000, 25_000);
         }));
@@ -526,8 +624,13 @@ fn test_add_liquidity_toggle_lifecycle() {
         assert_eq!(amm::get_reserves(&env, &asset).reserve0, 1_025_000);
 
         // Phase 3: unpaused.
-        risk_management::set_pause_switch(&env, admin, Symbol::new(&env, "amm_add_liquidity"), false)
-            .unwrap();
+        risk_management::set_pause_switch(
+            &env,
+            admin,
+            Symbol::new(&env, "amm_add_liquidity"),
+            false,
+        )
+        .unwrap();
         amm::add_liquidity(&env, &asset, 25_000, 25_000);
         assert_eq!(amm::get_reserves(&env, &asset).reserve0, 1_050_000);
     });
