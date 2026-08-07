@@ -2,18 +2,15 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, Map, Symbol, Vec,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HelloError {
     InvalidAmount = 1,
 }
-
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Env, Map, Symbol, Vec,
-};
-use soroban_sdk::{contract, contractimpl, Address, Env, Map, Symbol, Vec};
 
 pub mod admin;
 pub mod amm;
@@ -79,26 +76,18 @@ mod twap_view_test;
 #[allow(unused_imports)]
 
 use borrow::borrow_asset;
-use deposit::deposit_collateral;
+use deposit::{deposit_collateral, DepositDataKey, ProtocolAnalytics};
 use repay::repay_debt;
-
-use risk_management::{
-    check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
-};
-
-use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
-use crate::deposit::{DepositDataKey, ProtocolAnalytics};
-use risk_params::{
-    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
-    initialize_risk_params, require_min_collateral_ratio, RiskParamsError,
-};
 use withdraw::withdraw_collateral;
 
 use crate::analytics::{
     generate_protocol_report, generate_user_report, get_recent_activity, get_user_activity_feed,
     AnalyticsError, ProtocolReport, UserReport,
 };
-use crate::bridge::{BridgeConfig, BridgeError};
+use crate::bridge::{
+    bridge_deposit, bridge_withdraw, get_bridge_config, list_bridges, register_bridge,
+    set_bridge_fee, BridgeConfig, BridgeError,
+};
 use crate::config::{config_backup, config_get, config_restore, config_set, ConfigError};
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
 use crate::cross_asset::{
@@ -106,18 +95,9 @@ use crate::cross_asset::{
     get_user_asset_position, get_user_debt_assets, get_user_position_summary, initialize_asset, update_asset_config,
     update_asset_price, AssetConfig, AssetKey, AssetPosition, CrossAssetError, UserPositionSummary,
 };
-use crate::deposit::{DepositDataKey, ProtocolAnalytics};
 use crate::flash_loan::{
     configure_flash_loan, execute_flash_loan, repay_flash_loan, set_flash_loan_fee, FlashLoanConfig,
 };
-
-#[allow(unused_imports)]
-use bridge::{
-    bridge_deposit, bridge_withdraw, get_bridge_config, list_bridges, register_bridge,
-    set_bridge_fee, BridgeConfig, BridgeError,
-};
-
-#[allow(unused_imports)]
 use crate::interest_rate::{
     initialize_interest_rate_config, update_interest_rate_config, InterestRateConfig,
     InterestRateError,
@@ -158,8 +138,6 @@ pub enum AmmError {
     InsufficientLiquidity = 2,
     SlippageExceeded = 3,
 }
-
-pub mod reentrancy;
 
 /// The StellarLend core contract.
 #[contract]
@@ -1337,8 +1315,8 @@ impl HelloContract {
     }
 }
 
-mod flash_loan_test;
 #[cfg(test)]
+mod flash_loan_test;
 #[cfg(test)]
 mod test_reentrancy;
 
