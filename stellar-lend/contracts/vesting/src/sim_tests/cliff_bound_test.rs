@@ -4,7 +4,7 @@
 
 use super::{VestingContract, VestingError};
 
-// ── Rejection cases ───────────────────────────────────────────────────────────
+// ── Rejection cases ─────────────────────────────────────────────────────────[...]
 
 /// `total == 0` must be rejected with `ZeroPrincipal`.
 #[test]
@@ -28,7 +28,9 @@ fn rejects_zero_duration() {
 #[test]
 fn rejects_cliff_greater_than_duration() {
     let mut c = VestingContract::new("admin", "treasury");
-    let err = c.add_grant("admin", "alice", 1_000, 0, 100, 101).unwrap_err();
+    let err = c
+        .add_grant("admin", "alice", 1_000, 0, 100, 101)
+        .unwrap_err();
     assert_eq!(err, VestingError::CliffExceedsDuration);
     assert_eq!(c.total_locked(), 0, "no state mutated on error");
 }
@@ -37,12 +39,14 @@ fn rejects_cliff_greater_than_duration() {
 #[test]
 fn rejects_non_admin_caller() {
     let mut c = VestingContract::new("admin", "treasury");
-    let err = c.add_grant("attacker", "alice", 1_000, 0, 1_000, 0).unwrap_err();
+    let err = c
+        .add_grant("attacker", "alice", 1_000, 0, 1_000, 0)
+        .unwrap_err();
     assert_eq!(err, VestingError::Unauthorized);
     assert_eq!(c.total_locked(), 0, "no state mutated on error");
 }
 
-// ── Acceptance cases ──────────────────────────────────────────────────────────
+// ── Acceptance cases ────────────────────────────────────────────────────────�[...]
 
 /// `cliff_seconds == duration_seconds` is the boundary and must be accepted.
 /// The grant vests fully at the end of the cliff (i.e. at `start + duration`).
@@ -97,7 +101,9 @@ fn rejected_grant_leaves_no_state() {
     assert_eq!(c.total_locked(), 1_000);
 
     // Now try to add an invalid second grant for the same grantee.
-    let err = c.add_grant("admin", "dan", 500, 0, 0, 0).unwrap_err();
+    let err = c
+        .add_grant("admin", "dan", 500, 0, 0, 0)
+        .unwrap_err();
     assert_eq!(err, VestingError::ZeroDuration);
 
     // total_locked must not have changed.
