@@ -831,3 +831,22 @@ pub fn cross_asset_repay(
 
     Ok(pos)
 }
+
+/// Return the list of distinct debt assets currently tracked for `user`.
+pub fn get_user_debt_assets(env: &Env, user: &Address) -> Vec<Option<Address>> {
+    let list = load_asset_list(env);
+    let mut debt_assets = Vec::new(env);
+    for i in 0..list.len() {
+        let key = list.get(i).unwrap();
+        let pos = load_user_position(env, &key, user);
+        if pos.borrowed > 0 {
+            let addr = match key {
+                AssetKey::Token(a) => Some(a),
+                AssetKey::Native => None,
+            };
+            debt_assets.push_back(addr);
+        }
+    }
+    debt_assets
+}
+

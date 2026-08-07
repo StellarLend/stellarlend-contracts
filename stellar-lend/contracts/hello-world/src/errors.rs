@@ -1,7 +1,8 @@
-//! Centralised error re-exports.
-//!
-//! `lib.rs` references `errors::GovernanceError` throughout its entrypoint
-//! signatures.  The canonical definition lives in `governance.rs`; this module
-//! re-exports it so the short path resolves.
+use soroban_sdk::contracterror;
 
-pub use crate::governance::GovernanceError;
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum GovernanceError {
+    Unauthorized = 1,
+}
