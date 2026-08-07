@@ -134,20 +134,13 @@ pub enum MultisigError {
     DuplicateProposalId = 15,
     AlreadyInitialized = 16,
     ProposalIdOverflow = 17,
+    ApprovalNotFound = 18,
 }
 
 /// Maximum number of proposals that can be executed in a single
 /// `batch_execute` call. This bounds loop iterations and storage
 /// churn in a single contract invocation.
 pub const MAX_BATCH_SIZE: u32 = 32;
-
-/// Emitted when a signer revokes a previous approval from an open proposal.
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ApprovalRevokedEvent {
-    pub proposal_id: u64,
-    pub signer: Address,
-}
 
 /// Emitted when a signer revokes a previous approval from an open proposal.
 #[contractevent]
@@ -584,6 +577,63 @@ impl MultisigContract {
         Ok(())
     }
 
+    /// Revoke a previously recorded approval from an open proposal.
+    ///
+    /// # Arguments
+    /// * `caller` – Signer revoking their approval.
+    /// * `id`     – ID of the proposal to revoke approval from.
+    pub fn revoke_approval(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
+        caller.require_auth();
+        Self::require_signer(&env, &caller)?;
+
+        let mut proposal = Self::fetch_proposal(&env, id)?;
+
+        if env.ledger().sequence() as u64 > proposal.expires_at {
+            proposal.status = ProposalStatus::Expired;
+            Self::save_proposal(&env, &proposal);
+            return Err(MultisigError::ProposalExpired);
+        }
+        if proposal.status == ProposalStatus::Expired {
+            return Err(MultisigError::ProposalExpired);
+        }
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
+        }
+
+        let mut idx_opt = None;
+        for i in 0..proposal.approvals.len() {
+            if proposal.approvals.get(i).unwrap() == caller {
+                idx_opt = Some(i);
+                break;
+            }
+        }
+
+        let idx = idx_opt.ok_or(MultisigError::ApprovalNotFound)?;
+        proposal.approvals.remove(idx);
+
+        env.storage()
+            .persistent()
+            .remove(&MultisigDataKey::ApprovalBinding(id, caller.clone()));
+
+        let threshold = Self::fetch_threshold(&env) as usize;
+        if (proposal.approvals.len() as usize) < threshold && proposal.status == ProposalStatus::Passed {
+            proposal.status = ProposalStatus::Active;
+        }
+
+        Self::save_proposal(&env, &proposal);
+
+        ApprovalRevokedEvent {
+            proposal_id: id,
+            signer: caller,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Return the current approval threshold.
     pub fn get_threshold(env: Env) -> u32 {
         Self::fetch_threshold(&env)
@@ -776,14 +826,6 @@ impl MultisigContract {
 // mod action_allowlist_test;
 // #[cfg(test)]
 // mod upgrade_e2e_test;
-
-// revoke_approval_test is from an older API version: it imports
-// MIN_THRESHOLD_DELAY_LEDGERS, calls set_signers / revoke_approval /
-// get_proposal_approvals, and expects error variants (InsufficientApprovals,
-// ApprovalNotFound, ProposalAlreadyExecuted) that do not exist in the current
-// contract. Commented out until rewritten against the proposal-based API.
-// #[cfg(test)]
-// mod revoke_approval_test;
 
 #[cfg(test)]
 mod revoke_approval_test;

@@ -23,6 +23,9 @@ This allows a signer to withdraw support before the proposal reaches execution, 
 ## Edge cases
 
 - Revoking a non-existent approval returns `ApprovalNotFound` instead of silently succeeding.
-- Revoking from an executed proposal returns `ProposalAlreadyExecuted`.
+- Revoking by a non-signer returns `Unauthorized`.
+- Revoking from an executed proposal returns `AlreadyExecuted`.
+- Revoking from a cancelled proposal returns `AlreadyCancelled`.
 - Revoking from an expired proposal returns `ProposalExpired`.
-- Revoking an approval can reduce the effective approval count below the live threshold, which prevents execution until quorum is restored.
+- Revoking an approval can reduce the effective approval count below the live threshold, reverting proposal status to `Active` and preventing execution until quorum is restored.
+

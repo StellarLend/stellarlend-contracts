@@ -1,142 +1,230 @@
-#[cfg(test)]
-mod revoke_approval_tests {
-    use crate::{
-        MultisigContract, MultisigContractClient, MultisigError, MIN_THRESHOLD_DELAY_LEDGERS,
-    };
-    use soroban_sdk::testutils::{Address as _, Ledger};
-    use soroban_sdk::{Address, Env, Vec};
+#![cfg(test)]
 
-    fn setup_with_signers(
-        threshold: u32,
-        signer_count: usize,
-    ) -> (Env, Address, Address, Vec<Address>) {
-        let env = Env::default();
-        env.mock_all_auths();
+use crate::{
+    MultisigContract, MultisigContractClient, MultisigError, ProposalAction, ProposalStatus,
+};
+use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::{Address, Bytes, Env, Vec};
 
-        let admin = Address::generate(&env);
-        let contract_id = env.register_contract(None, MultisigContract);
-        let client = MultisigContractClient::new(&env, &contract_id);
+fn make_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
+}
 
-        client.initialize(&admin, &threshold);
+fn make_bytes(env: &Env, data: &[u8]) -> Bytes {
+    Bytes::from_slice(env, data)
+}
 
-        let mut signers = Vec::new(&env);
-        for _ in 0..signer_count {
-            signers.push_back(Address::generate(&env));
-        }
-        client.set_signers(&signers);
+fn setup_multisig(env: &Env, threshold: u32, signer_count: usize) -> (Address, Vec<Address>) {
+    let contract_id = env.register(MultisigContract, ());
+    let client = MultisigContractClient::new(env, &contract_id);
 
-        (env, admin, contract_id, signers)
+    let mut signers = Vec::new(env);
+    for _ in 0..signer_count {
+        signers.push_back(Address::generate(env));
     }
 
-    #[test]
-    fn test_revoke_approval_removes_signer_and_reduces_quorum() {
-        let (env, _admin, contract_id, signers) = setup_with_signers(2, 2);
-        let client = MultisigContractClient::new(&env, &contract_id);
+    client.initialize(&signers, &threshold);
+    (contract_id, signers)
+}
 
-        let signer_a = signers.get(0).unwrap();
-        let signer_b = signers.get(1).unwrap();
+#[test]
+fn test_revoke_approval_removes_signer_and_reduces_quorum() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env, 2, 2);
+    let client = MultisigContractClient::new(&env, &contract_id);
 
-        let current_ledger = env.ledger().sequence();
-        let proposal_id =
-            client.create_proposal(&3, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+    let signer_a = signers.get(0).unwrap();
+    let signer_b = signers.get(1).unwrap();
+    let hash = make_bytes(&env, b"payload_hash");
 
-        client.approve_proposal(&signer_a, &proposal_id);
-        client.approve_proposal(&signer_b, &proposal_id);
+    let proposal_id = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(2),
+        &hash,
+        &500u64,
+    );
 
-        client.revoke_approval(&signer_b, &proposal_id);
+    client.approve_proposal(&signer_a, &proposal_id);
+    let proposal_mid = client.get_proposal(&proposal_id);
+    assert_eq!(proposal_mid.status, ProposalStatus::Active);
 
-        let approvals = client.get_proposal_approvals(&proposal_id).unwrap();
-        assert!(!approvals.contains(&signer_b));
-        assert_eq!(approvals.iter().filter(|a| *a == signer_a).count(), 1);
+    client.approve_proposal(&signer_b, &proposal_id);
+    let proposal_passed = client.get_proposal(&proposal_id);
+    assert_eq!(proposal_passed.status, ProposalStatus::Passed);
 
-        env.ledger()
-            .set_sequence_number(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 1);
-        assert_eq!(
-            client.try_execute_proposal(&proposal_id),
-            Err(Ok(MultisigError::InsufficientApprovals))
-        );
-    }
+    client.revoke_approval(&signer_b, &proposal_id);
 
-    #[test]
-    fn test_revoke_nonexistent_approval_returns_error() {
-        let (env, _admin, contract_id, signers) = setup_with_signers(1, 1);
-        let client = MultisigContractClient::new(&env, &contract_id);
+    let proposal_after = client.get_proposal(&proposal_id);
+    assert!(!proposal_after.approvals.contains(&signer_b));
+    assert!(proposal_after.approvals.contains(&signer_a));
+    assert_eq!(proposal_after.approvals.len(), 1);
+    assert_eq!(proposal_after.status, ProposalStatus::Active);
 
-        let signer_a = signers.get(0).unwrap();
-        let current_ledger = env.ledger().sequence();
-        let proposal_id =
-            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+    // Attempting execution fails because status returned to Active (QuorumNotReached)
+    assert_eq!(
+        client.try_execute_proposal(&signer_a, &proposal_id, &hash),
+        Err(Ok(MultisigError::QuorumNotReached))
+    );
+}
 
-        assert_eq!(
-            client.try_revoke_approval(&signer_a, &proposal_id),
-            Err(Ok(MultisigError::ApprovalNotFound))
-        );
-    }
+#[test]
+fn test_revoke_nonexistent_approval_returns_error() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env, 1, 1);
+    let client = MultisigContractClient::new(&env, &contract_id);
 
-    #[test]
-    fn test_revoke_by_non_approver_is_rejected() {
-        let (env, _admin, contract_id, signers) = setup_with_signers(1, 2);
-        let client = MultisigContractClient::new(&env, &contract_id);
+    let signer_a = signers.get(0).unwrap();
+    let hash = make_bytes(&env, b"payload_hash");
 
-        let signer_a = signers.get(0).unwrap();
-        let signer_b = signers.get(1).unwrap();
-        let current_ledger = env.ledger().sequence();
-        let proposal_id =
-            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+    let proposal_id = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(1),
+        &hash,
+        &500u64,
+    );
 
-        client.approve_proposal(&signer_a, &proposal_id);
+    assert_eq!(
+        client.try_revoke_approval(&signer_a, &proposal_id),
+        Err(Ok(MultisigError::ApprovalNotFound))
+    );
+}
 
-        assert_eq!(
-            client.try_revoke_approval(&signer_b, &proposal_id),
-            Err(Ok(MultisigError::ApprovalNotFound))
-        );
-    }
+#[test]
+fn test_revoke_by_non_approver_is_rejected() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env, 1, 2);
+    let client = MultisigContractClient::new(&env, &contract_id);
 
-    #[test]
-    fn test_revoke_on_expired_or_executed_proposal_is_rejected() {
-        let (env, _admin, contract_id, signers) = setup_with_signers(1, 1);
-        let client = MultisigContractClient::new(&env, &contract_id);
+    let signer_a = signers.get(0).unwrap();
+    let signer_b = signers.get(1).unwrap();
+    let hash = make_bytes(&env, b"payload_hash");
 
-        let signer_a = signers.get(0).unwrap();
-        let current_ledger = env.ledger().sequence();
-        let proposal_id =
-            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 10));
-        client.approve_proposal(&signer_a, &proposal_id);
+    let proposal_id = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(1),
+        &hash,
+        &500u64,
+    );
 
-        env.ledger()
-            .set_sequence_number(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 20);
-        assert_eq!(
-            client.try_revoke_approval(&signer_a, &proposal_id),
-            Err(Ok(MultisigError::ProposalExpired))
-        );
+    client.approve_proposal(&signer_a, &proposal_id);
 
-        let proposal_id_2 =
-            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
-        client.approve_proposal(&signer_a, &proposal_id_2);
-        client.execute_proposal(&proposal_id_2);
-        assert_eq!(
-            client.try_revoke_approval(&signer_a, &proposal_id_2),
-            Err(Ok(MultisigError::ProposalAlreadyExecuted))
-        );
-    }
+    assert_eq!(
+        client.try_revoke_approval(&signer_b, &proposal_id),
+        Err(Ok(MultisigError::ApprovalNotFound))
+    );
+}
 
-    #[test]
-    fn test_revoke_then_reapprove_restores_quorum() {
-        let (env, _admin, contract_id, signers) = setup_with_signers(2, 2);
-        let client = MultisigContractClient::new(&env, &contract_id);
+#[test]
+fn test_revoke_by_unauthorized_non_signer_is_rejected() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env, 1, 1);
+    let client = MultisigContractClient::new(&env, &contract_id);
 
-        let signer_a = signers.get(0).unwrap();
-        let signer_b = signers.get(1).unwrap();
-        let current_ledger = env.ledger().sequence();
-        let proposal_id =
-            client.create_proposal(&2, &(current_ledger + MIN_THRESHOLD_DELAY_LEDGERS + 100));
+    let signer_a = signers.get(0).unwrap();
+    let outsider = Address::generate(&env);
+    let hash = make_bytes(&env, b"payload_hash");
 
-        client.approve_proposal(&signer_a, &proposal_id);
-        client.approve_proposal(&signer_b, &proposal_id);
-        client.revoke_approval(&signer_b, &proposal_id);
-        client.approve_proposal(&signer_b, &proposal_id);
+    let proposal_id = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(1),
+        &hash,
+        &500u64,
+    );
 
-        let approvals = client.get_proposal_approvals(&proposal_id).unwrap();
-        assert!(approvals.contains(&signer_b));
-    }
+    client.approve_proposal(&signer_a, &proposal_id);
+
+    assert_eq!(
+        client.try_revoke_approval(&outsider, &proposal_id),
+        Err(Ok(MultisigError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_revoke_on_expired_cancelled_executed_proposal_is_rejected() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env, 1, 1);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let signer_a = signers.get(0).unwrap();
+    let hash = make_bytes(&env, b"payload_hash");
+
+    // 1. Expired proposal test
+    let proposal_id = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(1),
+        &hash,
+        &10u64,
+    );
+    client.approve_proposal(&signer_a, &proposal_id);
+
+    env.ledger().set_sequence_number(env.ledger().sequence() + 20);
+    assert_eq!(
+        client.try_revoke_approval(&signer_a, &proposal_id),
+        Err(Ok(MultisigError::ProposalExpired))
+    );
+
+    // 2. Executed proposal test
+    let proposal_id_2 = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(1),
+        &hash,
+        &500u64,
+    );
+    client.approve_proposal(&signer_a, &proposal_id_2);
+    client.execute_proposal(&signer_a, &proposal_id_2, &hash);
+
+    assert_eq!(
+        client.try_revoke_approval(&signer_a, &proposal_id_2),
+        Err(Ok(MultisigError::AlreadyExecuted))
+    );
+
+    // 3. Cancelled proposal test
+    let proposal_id_3 = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(1),
+        &hash,
+        &500u64,
+    );
+    client.approve_proposal(&signer_a, &proposal_id_3);
+    client.cancel_proposal(&signer_a, &proposal_id_3);
+
+    assert_eq!(
+        client.try_revoke_approval(&signer_a, &proposal_id_3),
+        Err(Ok(MultisigError::AlreadyCancelled))
+    );
+}
+
+#[test]
+fn test_revoke_then_reapprove_restores_quorum() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env, 2, 2);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let signer_a = signers.get(0).unwrap();
+    let signer_b = signers.get(1).unwrap();
+    let hash = make_bytes(&env, b"payload_hash");
+
+    let proposal_id = client.create_proposal(
+        &signer_a,
+        &ProposalAction::SetThreshold(2),
+        &hash,
+        &500u64,
+    );
+
+    client.approve_proposal(&signer_a, &proposal_id);
+    client.approve_proposal(&signer_b, &proposal_id);
+    let prop_passed = client.get_proposal(&proposal_id);
+    assert_eq!(prop_passed.status, ProposalStatus::Passed);
+
+    client.revoke_approval(&signer_b, &proposal_id);
+    let prop_active = client.get_proposal(&proposal_id);
+    assert_eq!(prop_active.status, ProposalStatus::Active);
+
+    client.approve_proposal(&signer_b, &proposal_id);
+
+    let prop_restored = client.get_proposal(&proposal_id);
+    assert!(prop_restored.approvals.contains(&signer_b));
+    assert_eq!(prop_restored.status, ProposalStatus::Passed);
 }
