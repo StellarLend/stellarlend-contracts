@@ -8,28 +8,36 @@
 
 ## Problem
 
-`Vesting` stores a `Vec<Grant>` per grantee and iterates the whole vector on
-every state-touching call:
+`VestingContract` stores a `Vec<Grant>` per grantee under
+`VestingKey::Grants(grantee)` and iterates the whole vector on every
+state-touching call:
 
-- `claim` calls `sync_grants` (full pass) then sums `Grant::claimable_at` over all
-  grants, then `claim_partial_internal` does another full pass.
-- `claim_partial`, `total_locked`, `balance_of`, and `claimable_total` each scan
-  the grantee's grants.
+- `claim` (`src/lib.rs:276`) makes **one** pass: per grant it recomputes
+  `Grant::vested_at`, settles `claimed_amount` and writes the grant back. It
+  inlines the very expression that `Grant::claimable_at` (`src/lib.rs:128`,
+  `vested_at(now) - claimed_amount`) encapsulates, rather than calling it.
+- `claim_partial` (`src/lib.rs:321`) makes **two** passes: one to total the
+  claimable amount, one to draw `amount` down across grants.
+- `claimable_total` (`src/lib.rs:558`) is the public view and is the **only**
+  caller of `Grant::claimable_at` (`src/lib.rs:567`); one pass.
+- `total_locked` (`src/lib.rs:591`) is **not** O(n): it is a single
+  `VestingKey::TotalLocked` storage read that the writers above keep in sync.
 
-So a single `claim` is **O(n)** in the grantee's grant count `n`, with roughly
-three passes over the vector. As one grantee accumulates many grants, claim cost
-grows linearly and is unbounded — there is no cap on grants-per-grantee and no
-documented ceiling beyond which `claim` becomes uneconomic.
+So a single `claim` is **O(n)** in the grantee's grant count `n`, with one pass
+over the vector (`claim_partial` costs two). As one grantee accumulates many
+grants, claim cost grows linearly and is unbounded — there is no cap on
+grants-per-grantee and no documented ceiling beyond which `claim` becomes
+uneconomic.
 
 ## Cost Model
 
 Let `n` = number of grants held by a grantee. Per `claim`:
 
-| Phase                     | Passes | Work per grant                          |
-|---------------------------|:------:|-----------------------------------------|
-| `sync_grants`             |   1    | vested-at recompute, `released` update  |
-| claimable summation       |   1    | `Grant::claimable_at` + `saturating_add` (exposed via `claimable_total`) |
-| `claim_partial_internal`  |   1    | `min`, `checked_add`, `saturating_sub`  |
+| Entrypoint                        | Passes | Work per grant                                              |
+|-----------------------------------|:------:|-------------------------------------------------------------|
+| `claim` (`src/lib.rs:276`)        |   1    | `vested_at`, `saturating_sub`, `saturating_add`, `Vec::set`  |
+| `claim_partial` (`src/lib.rs:321`)|   2    | pass 1 totals claimable; pass 2 draws `amount` down          |
+| `claimable_total` (`src/lib.rs:558`) | 1   | `Grant::claimable_at` + `saturating_add` (read-only view)    |
 
 Total per-grant work is a small constant `c` (no nested loops, no allocation per
 grant), so:
@@ -74,12 +82,13 @@ via `#[cfg(test)] mod claim_cost_bench_test;` in `lib.rs`.
 
 Each benchmark helper carries NatSpec-style `///` doc comments.
 
-1. **Harness** — `fn measure_claim(n: usize) -> u64` (proposed benchmark helper; not an existing function): build a `Vesting`, fund the
-   contract, create `n` grants for one grantee with partially-elapsed schedules,
-   advance `now`, call `claim`, and return a deterministic cost proxy (iteration
-   count or, on-chain, the metered CPU instructions / budget).
+1. **Harness** — a test-local helper introduced by that file (no such helper
+   exists in the crate today): build a `VestingContract`, fund the contract,
+   create `n` grants for one grantee with partially-elapsed schedules, advance
+   `now`, call `claim`, and return a deterministic cost proxy (iteration count
+   or, on-chain, the metered CPU instructions / budget).
 2. **Linearity assertion** — measure at `n ∈ {1, 8, 32, 128, 256}` and assert
-   `measure_claim(2n) <= 2.2 * measure_claim(n)` between adjacent doublings.
+   `cost(2n) <= 2.2 * cost(n)` between adjacent doublings.
 3. **Edge cases:**
    - *Single grant* — establishes the baseline.
    - *Many grants* — at the soft cap (256); must stay within budget.
