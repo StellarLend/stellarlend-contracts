@@ -266,7 +266,6 @@ The following functions are **not** present in `src/lib.rs` and should not be ca
 
 | Feature | Tracking |
 |---|---|
-| `get_emergency_state()` | Planned public view (state visible via events today) |
 | `set_oracle(admin, oracle)` | Planned external oracle contract adapter |
 | `get_max_liquidatable_amount(user)` | Planned convenience helper |
 | `data_*` functions | Planned persistent data-store management |
