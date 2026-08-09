@@ -40,6 +40,7 @@
 | `borrow` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — debt principal |
 | `repay` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — remaining debt principal |
 | `liquidate` | `(liquidator: Address, borrower: Address, amount: i128)` | `liquidator` | `Result<i128, LendingError>` — debt actually repaid |
+| `receive` | `(token_asset: Address, from: Address, amount: i128, payload: Vec<Val>)` | `from` | `Result<(), LendingError>` — token transfer hook; routes to `deposit` / `repay` |
 
 ### Flash Loans
 

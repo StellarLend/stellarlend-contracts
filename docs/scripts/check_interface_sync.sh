@@ -82,6 +82,7 @@ DOCUMENTED_FUNCTIONS=(
   "initialize"
   "liquidate"
   "propose_admin"
+  "receive"
   "repay"
   "repay_against_collateral"
   "repay_asset"
