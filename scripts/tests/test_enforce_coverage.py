@@ -62,13 +62,14 @@ class TestLoadThresholds(unittest.TestCase):
 
 
 class TestThresholdConfig(unittest.TestCase):
-    def test_config_includes_vesting_and_matches_flat_threshold(self):
+    def test_config_omits_excluded_legacy_crates(self):
         config_path = Path(__file__).resolve().parents[1] / "coverage_thresholds.json"
         with config_path.open() as handle:
             thresholds = json.load(handle)
 
-        self.assertEqual(thresholds["flat_threshold"], 95.0)
-        self.assertEqual(thresholds["per_crate"]["contracts/vesting/src"], 95.0)
+        self.assertEqual(thresholds["flat_threshold"], 70.0)
+        self.assertNotIn("contracts/vesting/src", thresholds["per_crate"])
+        self.assertNotIn("contracts/hello-world/src", thresholds["per_crate"])
 
 
 class TestGetThreshold(unittest.TestCase):
