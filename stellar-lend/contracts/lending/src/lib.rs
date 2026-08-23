@@ -1,5 +1,6 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::duplicated_attributes)]
 
 mod audit_log;
 mod cross_asset;
@@ -150,7 +151,7 @@ use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
-    Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
+    Bytes, BytesN, Env, IntoVal, String, Symbol, TryIntoVal, Val, Vec,
 };
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
@@ -433,6 +434,7 @@ pub enum LendingError {
     NotInitialized = 1009,
     AlreadyInitialized = 1010,
     PositionHealthy = 1011,
+    RepayAmountTooHigh = 1012,
     SelfLiquidation = 2008,
     DebtCeilingExceeded = 2001,
     DepositCapExceeded = 2002,
@@ -443,6 +445,7 @@ pub enum LendingError {
     InvalidFlashUtilizationBps = 2006,
     InsufficientCollateral = 2007,
     IsolationCeilingExceeded = 2009,
+    InvalidIsolationCeiling = 2010,
     InvalidLiquidationParams = 2011,
     InvalidOracleSignature = 5001,
     PriceOutOfBounds = 3004,
@@ -483,6 +486,8 @@ pub enum LendingError {
     InvalidDepositCap = 7005,
     /// `set_rate_params` called with an internally inconsistent `RateParams`.
     InvalidRateParams = 7006,
+    InvalidLiquidationGracePeriod = 7007,
+    BackupNotFound = 8001,
     /// `receive` called with a payload version other than `1`.
     InvalidPayloadVersion = 1013,
     /// `receive` called with a payload that is too short, too long, or
@@ -1394,8 +1399,8 @@ impl LendingContract {
 
         // Validate that token_asset matches the configured valuation
         // collateral asset so deposit/repay accounting stays consistent.
-        let configured_asset = Self::get_collateral_asset(env.clone())
-            .ok_or(LendingError::AssetNotSupported)?;
+        let configured_asset =
+            Self::get_collateral_asset(env.clone()).ok_or(LendingError::AssetNotSupported)?;
         if token_asset != configured_asset {
             return Err(LendingError::AssetNotSupported);
         }
@@ -1420,7 +1425,7 @@ impl LendingContract {
         let version: u32 = payload
             .get(0)
             .unwrap()
-            .try_into_val()
+            .try_into_val(&env)
             .map_err(|_| LendingError::MalformedPayload)?;
         if version != SCHEMA_VERSION_V1 {
             return Err(LendingError::InvalidPayloadVersion);
@@ -1429,19 +1434,14 @@ impl LendingContract {
         let action_sym: Symbol = payload
             .get(1)
             .unwrap()
-            .try_into_val()
+            .try_into_val(&env)
             .map_err(|_| LendingError::MalformedPayload)?;
 
         // Pull tokens from the user into the contract via transfer_from.
         // The user must have previously called token_client.approve() to
         // authorize the lending contract as a spender.
         let token_client = TokenClient::new(&env, &token_asset);
-        token_client.transfer_from(
-            &contract_address,
-            &from,
-            &contract_address,
-            &amount,
-        );
+        token_client.transfer_from(&contract_address, &from, &contract_address, &amount);
 
         if action_sym == symbol_short!("deposit") {
             // Defence-in-depth: deposit() also calls require_initialized
@@ -3971,7 +3971,6 @@ pub(crate) mod test {
         client.set_min_borrow(&100);
         assert_eq!(client.get_min_borrow(), 100);
     }
-
 
     #[test]
     #[should_panic]

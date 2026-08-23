@@ -46,11 +46,7 @@ fn test_below_surcharge_kink() {
     };
     // At 89% util → below surcharge kink, same as without surcharge
     let rate = compute_borrow_rate(8_900, &params).unwrap();
-    let expected_no_surcharge = compute_borrow_rate(
-        8_900,
-        &RateParams::default(),
-    )
-    .unwrap();
+    let expected_no_surcharge = compute_borrow_rate(8_900, &RateParams::default()).unwrap();
     assert_eq!(rate, expected_no_surcharge);
 }
 
@@ -140,10 +136,7 @@ fn test_ceiling_clamps_surcharge() {
     // At 91%: surcharge_excess = 100, surcharge = 100 * 2_000_000 / 10000 = 20_000
     //   raw ≈ 2000ish, raw + surcharge ≈ 22_000 → clamped to 5_000
     let rate = compute_borrow_rate(9_100, &params).unwrap();
-    assert_eq!(
-        rate, 5_000,
-        "surcharged rate should be clamped by ceiling"
-    );
+    assert_eq!(rate, 5_000, "surcharged rate should be clamped by ceiling");
 
     // Even at 100%, ceiling still applies
     let rate = compute_borrow_rate(10_000, &params).unwrap();

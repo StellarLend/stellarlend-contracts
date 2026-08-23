@@ -5,7 +5,14 @@ use soroban_sdk::{token, Address, Env};
 
 use crate::{Grant, VestingContract, VestingContractClient, VestingError};
 
-fn setup() -> (Env, VestingContractClient<'static>, Address, Address, token::StellarAssetClient<'static>, Address) {
+fn setup() -> (
+    Env,
+    VestingContractClient<'static>,
+    Address,
+    Address,
+    token::StellarAssetClient<'static>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -49,14 +56,29 @@ fn non_admin_caller_rejected() {
     let grantee = Address::generate(&env);
     let attacker = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     // Non-admin call should not change state
     let g_before: Grant = client.get_grant(&grantee).unwrap();
     let r = client.try_accelerate_grant(&attacker, &grantee);
-    assert!(r.is_err() || r.unwrap().is_err(), "non-admin must be rejected");
+    assert!(
+        r.is_err() || r.unwrap().is_err(),
+        "non-admin must be rejected"
+    );
     let g_after: Grant = client.get_grant(&grantee).unwrap();
-    assert_eq!(g_before, g_after, "state must not change on unauthorized call");
+    assert_eq!(
+        g_before, g_after,
+        "state must not change on unauthorized call"
+    );
 }
 
 #[test]
@@ -65,12 +87,24 @@ fn auth_checked_before_pause() {
     let grantee = Address::generate(&env);
     let attacker = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
     client.pause(&admin);
 
     // Non-admin should not get info about pause state — they should just fail
     let r = client.try_accelerate_grant(&attacker, &grantee);
-    assert!(r.is_err() || r.unwrap().is_err(), "non-admin must be rejected even when paused");
+    assert!(
+        r.is_err() || r.unwrap().is_err(),
+        "non-admin must be rejected even when paused"
+    );
 }
 
 // ── Pause gate ─────────────────────────────────────────────────────────
@@ -80,13 +114,28 @@ fn blocked_while_paused() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
     client.pause(&admin);
 
     let r = client.try_accelerate_grant(&admin, &grantee);
-    assert!(r.is_err() || r.unwrap().is_err(), "admin must be blocked while paused");
+    assert!(
+        r.is_err() || r.unwrap().is_err(),
+        "admin must be blocked while paused"
+    );
     let g: Grant = client.get_grant(&grantee).unwrap();
-    assert_eq!(g.released_amount, 0, "released must be unchanged when blocked");
+    assert_eq!(
+        g.released_amount, 0,
+        "released must be unchanged when blocked"
+    );
 }
 
 // ── Missing grantee ────────────────────────────────────────────────────
@@ -97,7 +146,10 @@ fn missing_grantee_rejected() {
     let nobody = Address::generate(&env);
 
     let r = client.try_accelerate_grant(&admin, &nobody);
-    assert!(r.is_err() || r.unwrap().is_err(), "missing grantee must be rejected");
+    assert!(
+        r.is_err() || r.unwrap().is_err(),
+        "missing grantee must be rejected"
+    );
 }
 
 // ── Core acceleration semantics ───────────────────────────────────────
@@ -107,7 +159,16 @@ fn claimable_equals_remainder_after_accelerate() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     advance(&env, 300);
     let claimed = client.claim(&grantee);
@@ -127,7 +188,16 @@ fn claim_after_accelerate_drains_exactly() {
     let token_client = token::Client::new(&env, &token_addr);
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     advance(&env, 200);
     let claimed = client.claim(&grantee);
@@ -143,7 +213,11 @@ fn claim_after_accelerate_drains_exactly() {
 
     // Second claim must yield NothingToClaim.
     let second = c.claim("alice", 200).unwrap_err();
-    assert_eq!(second, VestingError::NothingToClaim, "nothing left to claim");
+    assert_eq!(
+        second,
+        VestingError::NothingToClaim,
+        "nothing left to claim"
+    );
 }
 
 #[test]
@@ -151,13 +225,26 @@ fn total_locked_decremented_correctly() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     assert_eq!(client.total_locked(), 1_000);
 
     client.accelerate_grant(&admin, &grantee);
 
-    assert_eq!(client.total_locked(), 0, "all 1_000 tokens should now be unlocked");
+    assert_eq!(
+        client.total_locked(),
+        0,
+        "all 1_000 tokens should now be unlocked"
+    );
 }
 
 #[test]
@@ -165,7 +252,16 @@ fn total_locked_decremented_by_remaining_only() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     advance(&env, 400);
     client.claim(&grantee);
@@ -173,7 +269,11 @@ fn total_locked_decremented_by_remaining_only() {
 
     client.accelerate_grant(&admin, &grantee);
 
-    assert_eq!(client.total_locked(), 0, "remaining 600 should now be unlocked");
+    assert_eq!(
+        client.total_locked(),
+        0,
+        "remaining 600 should now be unlocked"
+    );
 }
 
 // ── Idempotency ────────────────────────────────────────────────────────
@@ -183,7 +283,16 @@ fn idempotent_double_accelerate() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     client.accelerate_grant(&admin, &grantee);
     let locked_after_first = client.total_locked();
@@ -203,12 +312,25 @@ fn event_emitted_on_state_change() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     client.accelerate_grant(&admin, &grantee);
 
     let events = env.events().all();
-    assert_eq!(events.events().len(), 1, "exactly one event must be emitted");
+    assert_eq!(
+        events.events().len(),
+        1,
+        "exactly one event must be emitted"
+    );
 }
 
 /// When all active grants are already fully released, no `GrantAccelerated`
@@ -230,12 +352,20 @@ fn no_event_on_noop() {
     // First accelerate changes state → event emitted
     client.accelerate_grant(&admin, &grantee);
     let events_first = env.events().all();
-    assert_eq!(events_first.events().len(), 1, "first accelerate must emit an event");
+    assert_eq!(
+        events_first.events().len(),
+        1,
+        "first accelerate must emit an event"
+    );
 
     // Second accelerate is a no-op → no new event
     client.accelerate_grant(&admin, &grantee);
     let events_second = env.events().all();
-    assert_eq!(events_second.events().len(), 0, "second accelerate (no-op) must not emit an event");
+    assert_eq!(
+        events_second.events().len(),
+        0,
+        "second accelerate (no-op) must not emit an event"
+    );
 }
 
 // ── Revoked grants skipped ────────────────────────────────────────────
@@ -245,7 +375,16 @@ fn revoked_grants_skipped() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
 
-    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+    add_grant(
+        &env,
+        &client,
+        &admin,
+        &grantee,
+        1_000,
+        1_000,
+        0,
+        &token_asset,
+    );
 
     advance(&env, 500);
     client.revoke(&admin, &grantee);
@@ -254,7 +393,11 @@ fn revoked_grants_skipped() {
 
     client.accelerate_grant(&admin, &grantee);
 
-    assert_eq!(client.total_locked(), locked_before, "total_locked must not change");
+    assert_eq!(
+        client.total_locked(),
+        locked_before,
+        "total_locked must not change"
+    );
 
     let events = env.events().all();
     assert!(
