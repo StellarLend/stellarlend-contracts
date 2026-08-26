@@ -6,6 +6,7 @@ pub mod math;
 pub mod rate_model;
 pub mod rounding_strategy;
 pub mod upgrade;
+pub mod invariants;
 
 #[cfg(test)]
 mod admin_handover_test;
@@ -71,6 +72,8 @@ mod bad_debt_ledger_test;
 mod supply_rate_split_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
+#[cfg(test)]
+mod invariant_integration_test;
 
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
@@ -716,7 +719,10 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
-    pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+    pub fn deposit(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Deposit);
         check_emergency_status(&env, ProtocolAction::Deposit);
         if amount <= 0 {
@@ -758,11 +764,18 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(new_balance)
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
-    pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+    pub fn withdraw(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Withdraw);
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
@@ -797,6 +810,10 @@ impl LendingContract {
                 .expect("withdraw: total deposits underflow"),
         );
         extend_collateral_ttl(&env, &user);
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(new_balance)
     }
 
@@ -806,7 +823,10 @@ impl LendingContract {
     /// and rejects the borrow when the post-borrow health factor would fall below
     /// 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
     /// `DataKey::DebtCeiling`.
-    pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+    pub fn borrow(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         if amount <= 0 {
@@ -847,6 +867,10 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(updated.principal)
     }
 
@@ -872,6 +896,9 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         if amount <= 0 {
@@ -919,6 +946,9 @@ impl LendingContract {
             increment_isolation_debt(&env, &collateral_asset, delta);
         }
 
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &collateral_asset);
+
         Ok(updated.principal)
     }
 
@@ -936,6 +966,9 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
         if amount <= 0 {
@@ -980,6 +1013,9 @@ impl LendingContract {
             decrement_isolation_debt(&env, &collateral_asset, repaid);
         }
 
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &collateral_asset);
+
         Ok(updated.principal)
     }
 
@@ -1016,6 +1052,10 @@ impl LendingContract {
         collateral_asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        // Check invariants BEFORE state change for both assets
+        invariants::check_invariant_before(&env, &debt_asset);
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
         liquidator.require_auth();
         if liquidator == borrower {
             return Err(LendingError::SelfLiquidation);
@@ -1159,10 +1199,17 @@ impl LendingContract {
         }
         .publish(&env);
 
+        // Check invariants AFTER state change for both assets
+        invariants::check_invariant_after(&env, &debt_asset);
+        invariants::check_invariant_after(&env, &collateral_asset);
+
         Ok(actual_repay)
     }
 
-    pub fn repay(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+    pub fn repay(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
 
@@ -1200,6 +1247,10 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(updated.principal)
     }
 
