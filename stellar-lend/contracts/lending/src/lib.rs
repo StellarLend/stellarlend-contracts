@@ -71,6 +71,8 @@ mod initialize_auth_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
+mod isolation_invariants_test;
+#[cfg(test)]
 mod isolation_mode_test;
 #[cfg(test)]
 mod liquidate_accrual_test;
@@ -447,6 +449,8 @@ pub enum LendingError {
     IsolationCeilingExceeded = 2009,
     InvalidIsolationCeiling = 2010,
     InvalidLiquidationParams = 2011,
+    IsolationCeilingBelowDebt = 2012,
+    IsolationDebtInvariant = 2013,
     InvalidOracleSignature = 5001,
     PriceOutOfBounds = 3004,
     PriceUnavailable = 3005,
@@ -1278,8 +1282,12 @@ impl LendingContract {
             .ok_or(LendingError::NotInitialized)?;
         admin.require_auth();
 
-        if isolated && isolation_debt_ceiling <= 0 {
+        if isolation_debt_ceiling < 0 || (isolated && isolation_debt_ceiling == 0) {
             return Err(LendingError::InvalidIsolationCeiling);
+        }
+        let current_debt = Self::get_isolation_debt(env.clone(), asset.clone());
+        if isolated && isolation_debt_ceiling < current_debt {
+            return Err(LendingError::IsolationCeilingBelowDebt);
         }
         let config = IsolationConfig {
             isolated,
@@ -1696,9 +1704,6 @@ impl LendingContract {
             return Err(LendingError::BelowMinimumBorrow);
         }
 
-        // Isolation-mode check: verify ceiling before mutating any state.
-        check_isolation_ceiling_internal(&env, &collateral_asset, amount)?;
-
         let now = env.ledger().timestamp();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
@@ -1724,6 +1729,9 @@ impl LendingContract {
         let new_total_debt = total_debt
             .checked_add(delta)
             .ok_or(LendingError::Overflow)?;
+        // Check the actual principal delta, not the requested amount. This
+        // keeps the ceiling aligned with the value written to the position.
+        check_isolation_ceiling_internal(&env, &collateral_asset, delta)?;
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
@@ -1731,7 +1739,7 @@ impl LendingContract {
         // Update the per-asset isolation debt tracker only when the asset is
         // actually configured as isolated.  Non-isolated assets are not tracked.
         if is_asset_isolated(&env, &collateral_asset) {
-            increment_isolation_debt(&env, &collateral_asset, delta);
+            increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
 
         Ok(updated.principal)
@@ -1791,8 +1799,8 @@ impl LendingContract {
 
         // Decrement the per-asset isolation debt tracker only when the asset is
         // actually configured as isolated.
-        if is_asset_isolated(&env, &collateral_asset) {
-            decrement_isolation_debt(&env, &collateral_asset, repaid);
+        if should_release_isolation_debt(&env, &collateral_asset) {
+            decrement_isolation_debt(&env, &collateral_asset, repaid)?;
         }
 
         check_and_clear_unhealthy_timestamp(&env, &user);
@@ -1966,6 +1974,13 @@ impl LendingContract {
             };
             save_debt(&env, &borrower, &updated_position);
             env.storage().persistent().set(&col_key, &new_col);
+
+            // A liquidation repays the same principal that is removed from
+            // the position. Release that amount exactly once from any
+            // isolation bucket attributed to the collateral asset.
+            if should_release_isolation_debt(&env, &collateral_asset) {
+                decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
+            }
 
             // Recompute health factor after liquidation and clear unhealthy timestamp if healthy
             let hf_after = if new_debt > 0 {
@@ -3376,6 +3391,18 @@ fn is_asset_isolated(env: &Env, asset: &Address) -> bool {
         .unwrap_or(false)
 }
 
+/// Return whether a debt reduction should release an isolation bucket.
+///
+/// The tracker is retained when governance disables isolation so historical
+/// debt remains auditable. Repayments and liquidations must still release that
+/// retained capacity. A positive tracker is therefore sufficient to identify
+/// this legacy/disabled case, while an empty unconfigured asset remains
+/// unaffected by ordinary debt operations.
+fn should_release_isolation_debt(env: &Env, asset: &Address) -> bool {
+    is_asset_isolated(env, asset)
+        || LendingContract::get_isolation_debt(env.clone(), asset.clone()) > 0
+}
+
 /// Check whether a borrow of `amount` against `collateral_asset` would breach
 /// the isolation debt ceiling.  Returns `Ok(())` when the asset is not
 /// isolated or when the ceiling would not be exceeded.
@@ -3384,6 +3411,9 @@ fn check_isolation_ceiling_internal(
     collateral_asset: &Address,
     amount: i128,
 ) -> Result<(), LendingError> {
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
     let config: Option<IsolationConfig> = env
         .storage()
         .persistent()
@@ -3415,26 +3445,41 @@ fn check_isolation_ceiling_internal(
 /// Increment the running isolation-debt counter for `collateral_asset` by `delta`.
 ///
 /// Called after a successful `borrow_against_collateral` to keep the ceiling
-/// tracker in sync with actual outstanding debt.  Uses saturating addition so
-/// a single bad call cannot permanently break the counter — the ceiling check
-/// that precedes every borrow is the authoritative guard.
-fn increment_isolation_debt(env: &Env, collateral_asset: &Address, delta: i128) {
+/// tracker in sync with actual outstanding debt. Overflow is an invariant
+/// violation rather than an opportunity to wrap the counter.
+fn increment_isolation_debt(
+    env: &Env,
+    collateral_asset: &Address,
+    delta: i128,
+) -> Result<(), LendingError> {
     let key = DataKey::IsolationDebt(collateral_asset.clone());
     let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-    let updated = current.saturating_add(delta);
+    let updated = current
+        .checked_add(delta)
+        .ok_or(LendingError::IsolationDebtInvariant)?;
     env.storage().persistent().set(&key, &updated);
+    Ok(())
 }
 
 /// Decrement the running isolation-debt counter for `collateral_asset` by `amount`.
 ///
-/// Called after a successful `repay_against_collateral`.  Uses saturating
-/// subtraction so over-repayment (e.g., interest rounding) cannot make the
-/// counter go negative.
-fn decrement_isolation_debt(env: &Env, collateral_asset: &Address, amount: i128) {
+/// Called after a successful `repay_against_collateral`.  Rejects a release
+/// larger than the bucket instead of saturating to zero and hiding corruption.
+fn decrement_isolation_debt(
+    env: &Env,
+    collateral_asset: &Address,
+    amount: i128,
+) -> Result<(), LendingError> {
     let key = DataKey::IsolationDebt(collateral_asset.clone());
     let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-    let updated = current.saturating_sub(amount);
+    if amount < 0 || amount > current {
+        return Err(LendingError::IsolationDebtInvariant);
+    }
+    let updated = current
+        .checked_sub(amount)
+        .ok_or(LendingError::IsolationDebtInvariant)?;
     env.storage().persistent().set(&key, &updated);
+    Ok(())
 }
 
 fn extend_collateral_ttl(env: &Env, user: &Address) {
