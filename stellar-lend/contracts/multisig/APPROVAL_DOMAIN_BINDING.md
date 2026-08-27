@@ -14,7 +14,7 @@ in principle be replayed to satisfy quorum on a different proposal `B` created
 in the same context (same contract, same signer set).
 
 The fix makes each approval **cryptographically scoped** to exactly one
-`(contract, proposal_id, approver)` triple.
+`(contract, proposal_id, signer_set_hash, approver)` tuple.
 
 ## Payload layout
 
@@ -26,6 +26,7 @@ sha256(
     DOMAIN_SEPARATOR
     || contract_id_xdr
     || proposal_id (8-byte big-endian)
+    || signer_set_hash (32 bytes)
     || approver_xdr
 )
 ```
@@ -35,6 +36,7 @@ sha256(
 | `DOMAIN_SEPARATOR` | `APPROVAL_DOMAIN_SEPARATOR` = `b"STELLARLEND_MULTISIG_APPROVAL_V1"` | Purpose tag. Prevents an approval signature from being reinterpreted for another contract feature. Bump the `_V1` suffix on any breaking layout change. |
 | `contract_id_xdr` | `env.current_contract_address().to_xdr(env)` | Scopes the approval to this multisig instance. |
 | `proposal_id` | `u64` big-endian | Scopes the approval to exactly one proposal (anti-replay across ids). |
+| `signer_set_hash` | `sha256(SIGNER_SET_DOMAIN_SEPARATOR || ordered signer XDR)` | Prevents an approval from surviving signer-set rotation. |
 | `approver_xdr` | `approver.to_xdr(env)` | Binds the hash to the signing address. |
 
 The constant is exported as:
@@ -46,15 +48,16 @@ pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V1"
 ## Enforcement
 
 1. **Auth-layer binding (primary).** `approve_proposal` computes the domain-
-   separated hash and calls:
+   and signer-set-separated hash and calls:
 
    ```rust
    caller.require_auth_for_args((binding_hash,).into_val(&env));
    ```
 
    The host therefore requires an authorization entry whose args equal the
-   hash for **this** `(contract, proposal_id, approver)`. An auth entry built
-   for a different `proposal_id` produces a different hash and is rejected.
+   hash for **this** `(contract, proposal_id, signer_set_hash, approver)`. An
+   auth entry built for a different proposal or signer set produces a different
+   hash and is rejected.
 
 2. **Storage binding (audit / off-chain).** On successful approval the same
    hash is persisted under
@@ -80,9 +83,25 @@ pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V1"
 | Signer reuses the id=1 auth entry to call `approve_proposal(id=2)` | **Rejected** — `require_auth_for_args` expects hash(…, id=2, …) |
 | Approver list for id=1 inspected via `verify_approval_binding(id=2, …)` | **false** — no binding stored under id=2 |
 
-Because the domain separator and contract id are also folded in, the same
-bytes cannot be reinterpreted as an approval for a different purpose or a
-different multisig deployment.
+Because the domain separator, contract id, proposal id, and signer-set hash
+are folded in, the same bytes cannot be reinterpreted as an approval for a
+different purpose, proposal, signer set, or multisig deployment.
+
+## Execution nonce and migration
+
+Every new proposal receives a monotonic execution nonce. The nonce is marked
+consumed only after its action dispatch succeeds, in the same transaction as
+the proposal status transition. A failed cross-contract execution therefore
+does not burn a nonce, while a successful retry is rejected by both the
+consumed marker and `ProposalStatus::Executed`.
+
+Replay metadata is stored under new `MultisigDataKey` variants rather than by
+changing the serialized `Proposal` layout. Older records remain readable. A
+legacy active or passed proposal must be explicitly passed through
+`migrate_proposal_security`; migration is accepted only while the proposer and
+all recorded approvers remain current signers. If that cannot be proven, the
+contract blocks the legacy proposal instead of guessing its original signer
+set.
 
 ## Tests
 
