@@ -76,7 +76,7 @@ automatically advanced to `Passed`.
 
 > **Auth:** `caller` must be a registered signer **and** must authorize the
 > domain-separated approval payload
-> `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || approver)` via
+> `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || signer_set_hash || approver)` via
 > `require_auth_for_args`. This binds the approval to exactly one proposal so
 > it cannot be replayed across ids. See
 > [`stellar-lend/contracts/multisig/APPROVAL_DOMAIN_BINDING.md`](../stellar-lend/contracts/multisig/APPROVAL_DOMAIN_BINDING.md).
@@ -272,6 +272,8 @@ The following functions live inside `#[cfg(test)] mod tests` and are
 | Single signer key compromise       | m-of-n threshold; one compromised key cannot execute proposals alone                         |
 | Replay of executed proposals       | `ProposalStatus::Executed` checked; `"AlreadyExecuted"` returned on any second attempt       |
 | Action swap between approval and execution | `payload_hash` bound at creation and re-verified at execution                        |
+| Signer-set rotation replay         | Signer-set hash captured per proposal and included in approval authorization              |
+| Execution retry / partial dispatch | Monotonic nonce marker is consumed only after successful dispatch in the same transaction |
 | Old proposal ID reuse              | Monotonic `ProposalCount` counter — IDs never repeat                                         |
 | Stale proposal execution           | `expires_at` stored on every proposal; both `approve_proposal` and `execute_proposal` enforce it |
 | Rushed execution                   | Caller controls `ttl_ledgers`; integrators should set a TTL that enforces a review period    |
