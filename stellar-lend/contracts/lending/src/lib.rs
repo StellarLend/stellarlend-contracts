@@ -129,6 +129,8 @@ mod rounding_drift_test;
 #[cfg(test)]
 mod self_liquidation_test;
 #[cfg(test)]
+mod stateful_lifecycle_invariant_test;
+#[cfg(test)]
 mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
