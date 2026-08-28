@@ -86,12 +86,12 @@ exercised across configurations rather than only at defaults.
 
 Operation sequences are plain proptest strategies, so a failing case
 **shrinks to a minimal sequence**. The `TestRunner` is configured with a
-bounded `max_shrink_iters`; on failure, proptest prints the minimized input
-and writes a regression file under `proptest-regressions/` containing the
-seed. Replay a failure with:
+bounded `max_shrink_iters`; the test failure includes both the exact seed
+and proptest's minimized sequence. Replay a failure with the seed printed in
+that message:
 
 ```bash
-STELLARLEND_STATE_SEED="$(grep -o 'seed = 0x[0-9a-f]*' proptest-regressions/stateful_lifecycle_invariant_test.txt | head -1 | cut -d' ' -f3)" \
+STELLARLEND_STATE_SEED=0x<seed-from-failure> \
   cargo test -p stellarlend-lending --lib stateful_lifecycle
 ```
 
@@ -128,10 +128,10 @@ STELLARLEND_STATE_SEED="$(grep -o 'seed = 0x[0-9a-f]*' proptest-regressions/stat
    - Utilization (`total_borrow * 10000 / total_supply`) matches the model.
    - Every governable parameter reads back equal to the model.
 6. **Failure semantics** — invalid operations return the *typed* error the
-   contract defines (never a host trap), and the position the caller asked
-   to change is not partially mutated. The model replicates the contract's
-   legitimate settlement side-effects on failure paths, so any *extra*
-   mutation is caught as a divergence.
+   contract defines (never a host trap), and the position and global
+   accumulators are not partially mutated. The reference model snapshots its
+   state before each mutating call and restores it when the invocation fails,
+   matching Soroban's transaction-level rollback semantics.
 
 ---
 
@@ -157,9 +157,10 @@ than being silently absorbed:
   stays put; the difference accumulates in the protocol reserve
   (`Model::reserve`), which is exactly the "`TotalDeposits` surplus" the
   governed `write_off_bad_debt` consumes.
-* **`liquidate` settles and saves the borrower's position before its health
-  check**, so even a `PositionHealthy` rejection accrues interest into the
-  stored position.
+* **Failed lifecycle calls are atomic.** Although `borrow`, `repay`, and
+  `liquidate` perform settlement work before later validation, a returned
+  error rolls back that work with the rest of the Soroban invocation. The
+  model therefore commits settlement effects only after a successful call.
 * **Borrow solvency uses the constant `LIQUIDATION_THRESHOLD_BPS` (8000)**,
   while liquidation eligibility and the `get_position` health-factor view use
   the *governable* threshold — an intentional asymmetry the model preserves.
@@ -202,7 +203,8 @@ cargo test -p stellarlend-lending --lib stateful_lifecycle
 Coverage: the generated suite exercises every lifecycle entrypoint, both
 success and typed-failure paths, multi-actor interleavings, interest
 accrual windows, liquidation with and without shortfalls (insurance draw +
-bad debt), and mid-sequence governance changes. The deterministic tests in
+bad debt), and mid-sequence governance changes. Failed calls are checked as
+atomic at the model boundary. The deterministic tests in
 the same module pin authorization and no-partial-mutation behaviour without
 randomness.
 
@@ -242,6 +244,6 @@ randomness.
 | --- | --- |
 | Generated sequences preserve debt, collateral, reserve, authorization invariants | Invariants 1–5 above, checked after every operation |
 | Invalid operations fail without partial mutation | Invariant 6 + `invalid_operations_fail_without_partial_mutation` |
-| Failures provide a reproducible minimized seed and sequence | Fixed `STATE_SEED`, proptest shrinking, `proptest-regressions/`, `STELLARLEND_STATE_SEED` replay |
+| Failures provide a reproducible minimized seed and sequence | Fixed `STATE_SEED`, bounded proptest shrinking, failure output containing the seed and minimized input, and `STELLARLEND_STATE_SEED` replay |
 | Suite runs reliably in CI, complements targeted tests | Bounded budget (table above); runs under the existing `cargo test --lib` step; no CI changes needed |
 | Existing CI/CD checks remain green | No production code changed; only a new `#[cfg(test)]` module and its registration |

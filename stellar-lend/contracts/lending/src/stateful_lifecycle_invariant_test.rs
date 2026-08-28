@@ -27,16 +27,15 @@
 //!   same `debt::effective_debt` formula.
 //! * **Failure semantics.** Invalid operations must fail with the *typed*
 //!   error the contract defines, never a host trap, and must not partially
-//!   mutate the position the caller asked to change. The model replicates
-//!   even the contract's settlement side-effects on failure paths (the
-//!   borrow index and insurance fund advance; `liquidate` settles and saves
-//!   the borrower's position before its health check), so any divergence is
-//!   caught as an invariant break.
+//!   mutate the position the caller asked to change. The model snapshots its
+//!   state before each mutating operation and restores that snapshot whenever
+//!   the contract invocation returns an error, matching Soroban's atomic
+//!   transaction rollback semantics.
 //! * **Shrinking & determinism.** Sequences are generated with proptest
 //!   strategies, so a failing case shrinks to a minimal sequence. A fixed
-//!   ChaCha seed makes every CI run deterministic; failures replay with
-//!   `STELLARLEND_STATE_SEED` and proptest writes regression files under
-//!   `proptest-regressions/`.
+//!   ChaCha seed makes every CI run deterministic; the failure report includes
+//!   the exact seed and minimized sequence, and failures replay with
+//!   `STELLARLEND_STATE_SEED`.
 //! * **CI runtime limits.** The suite is bounded by [`STATE_CASES`]
 //!   sequences of at most [`MAX_OPS`] operations, with bounded amounts and
 //!   bounded time steps. `STELLARLEND_STATE_CASES` and
@@ -81,10 +80,9 @@
 //!   rules and asserts the contract's `total_borrow` matches it; it does not
 //!   assert the (false) identity `TotalDebt == Σ principal`. See
 //!   `STATE_LIFECYCLE_INVARIANT_TESTING.md`.
-//! * `liquidate` settles and saves the borrower's position before its health
-//!   check, so even a `PositionHealthy` rejection accrues interest; it also
-//!   does **not** reduce `TotalDeposits` when collateral is seized — that
-//!   surplus is tracked as the model's reserve.
+//! * On a successful `liquidate`, collateral seizure does **not** reduce
+//!   `TotalDeposits`; that surplus is tracked as the model's reserve. Failed
+//!   liquidations are fully rolled back with the rest of the transaction.
 
 extern crate alloc;
 extern crate std;
@@ -95,9 +93,10 @@ use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
 use alloc::format;
 use alloc::vec::Vec;
 use proptest::prelude::*;
+
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
-use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::IntoVal;
 
 // ---------------------------------------------------------------------------
@@ -163,27 +162,44 @@ enum Operation {
 }
 
 fn operation_strategy() -> impl Strategy<Value = Operation> {
-    prop_oneof![
-        5 => (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Deposit(u, a)),
-        5 => (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Withdraw(u, a)),
-        5 => (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Borrow(u, a)),
-        5 => (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Repay(u, a)),
-        // Liquidator and borrower are drawn independently, so self-
-        // liquidations occur naturally and exercise the SelfLiquidation path.
-        4 => (0usize..NUM_USERS, 0usize..NUM_USERS, 1u32..=1_000)
-            .prop_map(|(l, b, a)| Operation::Liquidate(l, b, a)),
-        // Short time steps (same-day) plus long steps (up to a year) so both
-        // no-accrual and multi-accrual windows are exercised.
-        3 => (0u32..=86_400).prop_map(Operation::AdvanceTime),
-        2 => (86_400u32..=31_536_000).prop_map(Operation::AdvanceTime),
-        1 => prop::sample::select(&[0i128, 1, 50, 250]).prop_map(Operation::SetMinBorrow),
-        1 => prop::sample::select(&[500i128, 5_000, 50_000]).prop_map(Operation::SetDepositCap),
-        1 => prop::sample::select(&[10_000i128, 100_000]).prop_map(Operation::SetDebtCeiling),
-        1 => prop::sample::select(&[2_500i128, 5_000, 7_500]).prop_map(Operation::SetCloseFactor),
-        1 => prop::sample::select(&[0i128, 1_000, 2_000]).prop_map(Operation::SetIncentive),
-        1 => prop::sample::select(&[5_000i128, 8_000, 10_000]).prop_map(Operation::SetThreshold),
-        1 => prop::sample::select(&[0i128, 1_000, 5_000]).prop_map(Operation::SetInsuranceShare),
-    ]
+    let deposit = (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Deposit(u, a));
+    let withdraw = (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Withdraw(u, a));
+    let borrow = (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Borrow(u, a));
+    let repay = (0usize..NUM_USERS, 1u32..=1_000).prop_map(|(u, a)| Operation::Repay(u, a));
+    let liquidate = (0usize..NUM_USERS, 0usize..NUM_USERS, 1u32..=1_000)
+        .prop_map(|(l, b, a)| Operation::Liquidate(l, b, a));
+    let short_time = (0u32..=86_400).prop_map(Operation::AdvanceTime);
+    let long_time = (86_400u32..=31_536_000).prop_map(Operation::AdvanceTime);
+    let min_borrow =
+        prop::sample::select(&[0i128, 1, 50, 250]).prop_map(|v| Operation::SetMinBorrow(v));
+    let deposit_cap =
+        prop::sample::select(&[500i128, 5_000, 50_000]).prop_map(|v| Operation::SetDepositCap(v));
+    let debt_ceiling =
+        prop::sample::select(&[10_000i128, 100_000]).prop_map(|v| Operation::SetDebtCeiling(v));
+    let close_factor =
+        prop::sample::select(&[2_500i128, 5_000, 7_500]).prop_map(|v| Operation::SetCloseFactor(v));
+    let incentive =
+        prop::sample::select(&[0i128, 1_000, 2_000]).prop_map(|v| Operation::SetIncentive(v));
+    let threshold =
+        prop::sample::select(&[5_000i128, 8_000, 10_000]).prop_map(|v| Operation::SetThreshold(v));
+    let insurance =
+        prop::sample::select(&[0i128, 1_000, 5_000]).prop_map(|v| Operation::SetInsuranceShare(v));
+    prop::strategy::Union::new_weighted(alloc::vec![
+        (5, deposit.boxed()),
+        (5, withdraw.boxed()),
+        (5, borrow.boxed()),
+        (5, repay.boxed()),
+        (4, liquidate.boxed()),
+        (3, short_time.boxed()),
+        (2, long_time.boxed()),
+        (1, min_borrow.boxed()),
+        (1, deposit_cap.boxed()),
+        (1, debt_ceiling.boxed()),
+        (1, close_factor.boxed()),
+        (1, incentive.boxed()),
+        (1, threshold.boxed()),
+        (1, insurance.boxed()),
+    ])
 }
 
 fn operation_sequence_strategy() -> impl Strategy<Value = Vec<Operation>> {
@@ -288,8 +304,7 @@ impl Model {
 
     /// Settle `user`'s position to the current index and credit the insurance
     /// fund with the configured share of the interest, mirroring
-    /// `settle_and_accrue_insurance` (which runs on every borrow/repay/
-    /// liquidate attempt, including attempts that later fail).
+    /// `settle_and_accrue_insurance` on a successful mutating operation.
     fn settle_user(&mut self, user: usize) -> DebtPosition {
         let prev = &self.users[user].position;
         let settled = debt::settle_position(prev, self.index, self.now)
@@ -359,20 +374,29 @@ impl Model {
             }
             Operation::SetDepositCap(v) => {
                 let res = client.try_set_deposit_cap(v);
-                prop_assert!(res.is_ok(), "set_deposit_cap({v}) must succeed, got {res:?}");
+                prop_assert!(
+                    res.is_ok(),
+                    "set_deposit_cap({v}) must succeed, got {res:?}"
+                );
                 self.deposit_cap = *v;
                 prop_assert_eq!(client.get_deposit_cap(), *v);
                 Ok(())
             }
             Operation::SetDebtCeiling(v) => {
                 let res = client.try_set_debt_ceiling(v);
-                prop_assert!(res.is_ok(), "set_debt_ceiling({v}) must succeed, got {res:?}");
+                prop_assert!(
+                    res.is_ok(),
+                    "set_debt_ceiling({v}) must succeed, got {res:?}"
+                );
                 self.debt_ceiling = Some(*v);
                 Ok(())
             }
             Operation::SetCloseFactor(v) => {
                 let res = client.try_set_close_factor_bps(v);
-                prop_assert!(res.is_ok(), "set_close_factor_bps({v}) must succeed, got {res:?}");
+                prop_assert!(
+                    res.is_ok(),
+                    "set_close_factor_bps({v}) must succeed, got {res:?}"
+                );
                 self.close_factor_bps = *v;
                 prop_assert_eq!(client.get_close_factor_bps(), *v);
                 Ok(())
@@ -399,7 +423,10 @@ impl Model {
             }
             Operation::SetInsuranceShare(v) => {
                 let res = client.try_set_insurance_share(v);
-                prop_assert!(res.is_ok(), "set_insurance_share({v}) must succeed, got {res:?}");
+                prop_assert!(
+                    res.is_ok(),
+                    "set_insurance_share({v}) must succeed, got {res:?}"
+                );
                 self.insurance_share_bps = *v;
                 prop_assert_eq!(client.get_insurance_share(), *v);
                 Ok(())
@@ -497,6 +524,8 @@ impl Model {
         client: &LendingContractClient<'static>,
         users: &[Address],
     ) -> Result<(), TestCaseError> {
+        let before = self.clone();
+
         // The minimum-borrow gate runs before interest settlement, so it must
         // not touch the borrow index or insurance fund.
         if amount < self.min_borrow {
@@ -531,6 +560,7 @@ impl Model {
                 matches!(res, Err(Ok(LendingError::InsufficientCollateral))),
                 "insolvent borrow must fail with InsufficientCollateral, got {res:?}"
             );
+            *self = before;
             return Ok(());
         }
         if ceiling_exceeded {
@@ -538,6 +568,7 @@ impl Model {
                 matches!(res, Err(Ok(LendingError::DebtCeilingExceeded))),
                 "ceiling-exceeding borrow must fail with DebtCeilingExceeded, got {res:?}"
             );
+            *self = before;
             return Ok(());
         }
         let new_balance = match res {
@@ -569,6 +600,7 @@ impl Model {
         client: &LendingContractClient<'static>,
         users: &[Address],
     ) -> Result<(), TestCaseError> {
+        let before = self.clone();
         let prev_principal = self.users[user].position.principal;
         self.touch(self.now);
         let settled = self.settle_user(user);
@@ -580,6 +612,7 @@ impl Model {
                 matches!(res, Err(Ok(LendingError::RepayAmountTooHigh))),
                 "over-repayment must fail with RepayAmountTooHigh, got {res:?}"
             );
+            *self = before;
             return Ok(());
         }
         let new_balance = match res {
@@ -619,6 +652,7 @@ impl Model {
         debt_asset: &Address,
         collateral_asset: &Address,
     ) -> Result<(), TestCaseError> {
+        let before = self.clone();
         let res = client.try_liquidate(
             &users[liquidator],
             &users[borrower],
@@ -649,6 +683,7 @@ impl Model {
                 matches!(res, Err(Ok(LendingError::PositionHealthy))),
                 "zero-debt liquidation must fail with PositionHealthy, got {res:?}"
             );
+            *self = before;
             return Ok(());
         }
 
@@ -660,6 +695,7 @@ impl Model {
                 matches!(res, Err(Ok(LendingError::PositionHealthy))),
                 "healthy liquidation must fail with PositionHealthy, got {res:?}"
             );
+            *self = before;
             return Ok(());
         }
 
@@ -670,6 +706,7 @@ impl Model {
                 matches!(res, Err(Ok(LendingError::InvalidAmount))),
                 "non-positive liquidation amount must fail with InvalidAmount, got {res:?}"
             );
+            *self = before;
             return Ok(());
         }
 
@@ -695,7 +732,9 @@ impl Model {
                 )))
             }
             Err(Err(invoke)) => {
-                return Err(TestCaseError::fail(format!("liquidate trapped: {invoke:?}")))
+                return Err(TestCaseError::fail(format!(
+                    "liquidate trapped: {invoke:?}"
+                )))
             }
         };
         prop_assert_eq!(repaid, actual_repay, "liquidate repaid amount");
@@ -726,34 +765,51 @@ fn check_invariants(
         let mu = &model.users[i];
         let pos = client.get_position(user);
 
-        prop_assert!(pos.collateral >= 0, "user {i}: negative collateral {}", pos.collateral);
+        prop_assert!(
+            pos.collateral >= 0,
+            "user {i}: negative collateral {}",
+            pos.collateral
+        );
         prop_assert!(pos.debt >= 0, "user {i}: negative debt {}", pos.debt);
-        prop_assert_eq!(pos.collateral, mu.collateral, "user {i} collateral");
+        prop_assert_eq!(pos.collateral, mu.collateral, "user {} collateral", i);
         let expected_debt = debt::effective_debt(&mu.position, model.now, BORROW_RATE_BPS)
             .unwrap_or(mu.position.principal)
             .max(0);
-        prop_assert_eq!(pos.debt, expected_debt, "user {i} debt");
+        prop_assert_eq!(pos.debt, expected_debt, "user {} debt", i);
 
         let stored = client.get_debt_position(user);
         if mu.has_stored_debt {
-            prop_assert_eq!(stored.principal, mu.position.principal, "user {i} stored principal");
+            prop_assert_eq!(
+                stored.principal,
+                mu.position.principal,
+                "user {} stored principal",
+                i
+            );
             prop_assert_eq!(
                 stored.borrow_index_snapshot,
                 mu.position.borrow_index_snapshot,
-                "user {i} stored index snapshot"
+                "user {} stored index snapshot",
+                i
             );
             prop_assert_eq!(
                 stored.last_update,
                 mu.position.last_update,
-                "user {i} stored last_update"
+                "user {} stored last_update",
+                i
             );
         } else {
-            prop_assert_eq!(stored.principal, 0, "user {i} default principal");
-            prop_assert_eq!(stored.borrow_index_snapshot, INDEX_SCALE, "user {i} default snapshot");
+            prop_assert_eq!(stored.principal, 0, "user {} default principal", i);
+            prop_assert_eq!(
+                stored.borrow_index_snapshot,
+                INDEX_SCALE,
+                "user {} default snapshot",
+                i
+            );
             prop_assert_eq!(
                 stored.last_update,
                 env.ledger().timestamp(),
-                "user {i} default last_update equals read time"
+                "user {} default last_update equals read time",
+                i
             );
         }
 
@@ -762,29 +818,52 @@ fn check_invariants(
         } else {
             HEALTH_FACTOR_NO_DEBT
         };
-        prop_assert_eq!(pos.health_factor, expected_hf, "user {i} health factor");
+        prop_assert_eq!(pos.health_factor, expected_hf, "user {} health factor", i);
     }
 
     let metrics = client.get_protocol_metrics();
-    prop_assert_eq!(metrics.total_borrow, model.total_debt, "protocol total debt");
-    prop_assert_eq!(metrics.total_supply, model.total_deposits, "protocol total deposits");
+    prop_assert_eq!(
+        metrics.total_borrow,
+        model.total_debt,
+        "protocol total debt"
+    );
+    prop_assert_eq!(
+        metrics.total_supply,
+        model.total_deposits,
+        "protocol total deposits"
+    );
     let expected_util = if model.total_deposits > 0 {
         model.total_debt.saturating_mul(BPS_DENOM) / model.total_deposits
     } else {
         0
     };
-    prop_assert_eq!(metrics.utilization_bps, expected_util, "protocol utilization");
+    prop_assert_eq!(
+        metrics.utilization_bps,
+        expected_util,
+        "protocol utilization"
+    );
 
-    prop_assert_eq!(client.get_borrow_index(), model.index, "global borrow index");
+    prop_assert_eq!(
+        client.get_borrow_index(),
+        model.index,
+        "global borrow index"
+    );
     prop_assert_eq!(client.get_bad_debt(), model.bad_debt, "bad debt");
-    prop_assert_eq!(client.get_insurance_fund(), model.insurance_fund, "insurance fund");
+    prop_assert_eq!(
+        client.get_insurance_fund(),
+        model.insurance_fund,
+        "insurance fund"
+    );
 
     prop_assert_eq!(
         model.total_deposits - model.sum_collateral,
         model.reserve,
         "TotalDeposits surplus equals accumulated liquidation seizures"
     );
-    prop_assert!(model.reserve >= 0, "protocol reserve must never go negative");
+    prop_assert!(
+        model.reserve >= 0,
+        "protocol reserve must never go negative"
+    );
     prop_assert!(
         model.total_deposits >= 0
             && model.total_debt >= 0
@@ -830,6 +909,14 @@ fn parse_hex_seed(s: &str) -> Option<[u8; 32]> {
         out[i] = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
     }
     Some(out)
+}
+
+fn format_seed(seed: &[u8; 32]) -> alloc::string::String {
+    let mut output = alloc::string::String::from("0x");
+    for byte in seed {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
 }
 
 // ---------------------------------------------------------------------------
@@ -887,17 +974,23 @@ fn stateful_lifecycle_invariants_hold_across_generated_sequences() {
     );
 
     let strategy = operation_sequence_strategy();
-    runner
-        .run(&strategy, |ops| {
-            let (env, client, users, debt_asset, collateral_asset) = setup_case();
-            let mut model = Model::new(NUM_USERS, START_TS);
-            for op in ops {
-                model.apply(&op, &client, &env, &users, &debt_asset, &collateral_asset)?;
-                check_invariants(&model, &client, &env, &users)?;
-            }
-            Ok(())
-        })
-        .unwrap();
+    let result = runner.run(&strategy, |ops| {
+        let (env, client, users, debt_asset, collateral_asset) = setup_case();
+        let mut model = Model::new(NUM_USERS, START_TS);
+        for op in ops {
+            model.apply(&op, &client, &env, &users, &debt_asset, &collateral_asset)?;
+            check_invariants(&model, &client, &env, &users)?;
+        }
+        Ok(())
+    });
+
+    if let Err(error) = result {
+        panic!(
+            "stateful lifecycle failure; replay with STELLARLEND_STATE_SEED={}; proptest minimized input follows: {}",
+            format_seed(&seed),
+            error
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
