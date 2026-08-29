@@ -54,7 +54,11 @@ mod interest_rate_regression {
         assert_eq!(p.jump_multiplier_bps, 10_000, "jump_multiplier_bps");
         assert_eq!(p.rate_floor_bps, 50, "rate_floor_bps");
         assert_eq!(p.rate_ceiling_bps, 10_000, "rate_ceiling_bps");
-        assert_eq!(p.max_rate_change_per_ledger_bps, i128::MAX, "max_rate_change");
+        assert_eq!(
+            p.max_rate_change_per_ledger_bps,
+            i128::MAX,
+            "max_rate_change"
+        );
         assert_eq!(p.hysteresis_bps, 0, "hysteresis_bps");
         assert_eq!(p.surcharge_kink_bps, 10_000, "surcharge_kink_bps");
         assert_eq!(p.surcharge_slope, 0, "surcharge_slope");
@@ -399,10 +403,7 @@ mod interest_rate_regression {
     /// Negative utilization returns an error.
     #[test]
     fn supply_rate_negative_utilization_errors() {
-        assert_eq!(
-            effective_supply_rate(500, -1, 0),
-            Err(DebtError::Overflow)
-        );
+        assert_eq!(effective_supply_rate(500, -1, 0), Err(DebtError::Overflow));
     }
 
     /// Reserve factor above 10 000 returns an error.
@@ -572,10 +573,7 @@ mod interest_rate_regression {
         };
         for util in [0i128, 5_000, 8_000, 10_000] {
             let rate = compute_borrow_rate(util, &p).unwrap();
-            assert!(
-                rate >= 75,
-                "floor not enforced at util={util}: rate={rate}"
-            );
+            assert!(rate >= 75, "floor not enforced at util={util}: rate={rate}");
         }
     }
 }

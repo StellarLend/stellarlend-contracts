@@ -128,7 +128,12 @@ mod utilization_math_boundary {
             env.ledger().set_sequence_number(6);
             // Any debt > i128::MAX / 10_000 will overflow the checked_mul.
             let overflow_debt = i128::MAX / BPS_DENOM + 1;
-            set_rate_inputs(&env, overflow_debt, overflow_debt, Some(RateParams::default()));
+            set_rate_inputs(
+                &env,
+                overflow_debt,
+                overflow_debt,
+                Some(RateParams::default()),
+            );
             let snapshot = load_rate_snapshot(&env);
             let result = try_compute_borrow_rate_from_snapshot(&env, &snapshot);
             assert_eq!(
@@ -223,7 +228,10 @@ mod utilization_math_boundary {
         for (value, rate) in [(1_000_000i128, 500i128), (10_000, 1_000), (50_000, 10_000)] {
             let scaled = scale_bps(value, rate).unwrap();
             let unscaled = unscale_bps(scaled, rate).unwrap();
-            assert_eq!(unscaled, value, "round-trip failed for value={value} rate={rate}");
+            assert_eq!(
+                unscaled, value,
+                "round-trip failed for value={value} rate={rate}"
+            );
         }
     }
 
