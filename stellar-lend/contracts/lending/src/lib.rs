@@ -140,7 +140,11 @@ mod supply_rate_split_test;
 #[cfg(test)]
 mod config_roundtrip_test;
 #[cfg(test)]
+mod interest_rate_regression_test;
+#[cfg(test)]
 mod utilization_history_test;
+#[cfg(test)]
+mod utilization_math_boundary_test;
 #[cfg(test)]
 mod withdraw_overflow_test;
 use debt::{
