@@ -27,10 +27,24 @@ The upgrade path is governed by the following contract, which MUST be preserved 
 - **Timelock enforcement**: No execution can occur before `timelock_seconds` has elapsed from proposal creation.
 - **Rollback safety**: Rollback restores the exact previous version/hash and leaves all data intact. Repeated rollback is idempotent and guarded by proposal state.
 - **Error atomicity**: Any failed operation leaves all storage unchanged; no partial writes occur.
+- **State and data invariants**: Proposal state is stored as a single record keyed by nonce/ID and can transition only from `Pending` to `Executed` or `Pending` to `RolledBack`. Current version and WASM hash are committed in the same atomic operation as the proposal transition.
+- **Failure invariants**: Invalid callers, unknown or inactive proposals, duplicate approvals, insufficient thresholds, and premature execution revert before any state mutation, leaving all data and version/hash values unchanged.
 
 ### Compatibility Guarantee
 
 The public function signatures and event names listed above are the supported API contract. Consumers must not rely on internal storage keys or non-public fields. The contract keeps all existing export names and adds new functionality without removing prior exports. The contract is non-interactive; therefore, keyboard, focus, screen-reader, responsive, and reduced-motion accessibility considerations do not apply.
+
+### Regression Coverage
+
+The following behavior MUST be covered by focused tests in `src/upgrade_governance_test.rs` and `scripts/tests/test_preflight_upgrade.sh`:
+
+- **Success paths**: propose, approve, timelock wait, execute, and rollback. Verify version/hash updates and event emission.
+- **Failure paths**: non-admin propose, invalid approver, duplicate approval, premature execution, insufficient threshold, invalid version, and unknown proposal ID.
+- **Boundary paths**: zero timelock, zero required approvals, duplicate approvers, empty approver set, and version equality.
+- **Retry paths**: failed calls leave state unchanged and a subsequent corrected call succeeds; rollback is guarded for already executed proposals.
+- **Permission paths**: admin-only operations, approver-only operations, and threshold boundary (`required_approvals` vs approval count).
+- **Loading/empty paths**: the contract has no async loading or UI empty states; equivalents are absent proposal rows and empty signer-set rejection.
+- **Accessibility paths**: non-interactive contract has no keyboard/focus/screen-reader/responsive/reduced-motion surface; accessibility compatibility is preserved by the absence of interactive UI.
 
 ## Pre-Upgrade Checklist
 
@@ -120,6 +134,7 @@ The preflight script has comprehensive test coverage in `scripts/tests/test_pref
 - Edge cases: missing files, hash mismatches, threshold boundaries
 - Override flag testing
 - Multi-network support
+The governance regression tests in `src/upgrade_governance_test.rs` cover the success, failure, boundary, retry, permission, and loading/empty states defined in "Regression Coverage" above.
 
 Run tests with:
 ```bash
@@ -357,6 +372,15 @@ cargo test -p stellarlend-lending upgrade_migration_safety --lib -- --nocapture
 - Document any issues and resolutions
 - Schedule follow-up review
 
+## Design Tradeoffs and Limitations
+
+- **Timelock vs responsiveness**: Mandatory timelock reduces upgrade speed to protect users; it cannot be bypassed by a single approver.
+- **Immutable signer set**: The approver set is fixed at initialization while proposals are pending; this simplifies nonce-bound approvals but requires a new initialization for key rotation.
+- **Rollback scope**: Rollback restores version and WASM hash only; it does not revert data migrations performed after execution. Migration actions remain separate data operations.
+- **Preflight baseline**: The preflight script compares against `scripts/deployed/<network>/checksums.txt`; if the baseline is missing or stale, `--force` must be used only with explicit governance approval and manual verification.
+- **Non-interactive contract**: Because the contract has no UI, accessibility is limited to preserving the non-UI contract surface; keyboard, focus, screen-reader, responsive, and reduced-motion behavior are not applicable.
+- **Validation commands**: Run `cargo test -p stellarlend-lending upgrade_migration_safety --lib` and `bash scripts/tests/test_preflight_upgrade.sh` before any upgrade to validate governance and preflight behavior.
+
 ## Appendix
 
 ### Related Documentation
@@ -374,6 +398,7 @@ The upgrade safety suite provides 45 tests covering:
 - Storage schema migration (3 tests)
 - Authorization and security (3 tests)
 - Edge cases (5 tests)
+- Governance regression tests cover success, failure, boundary, retry, permission, and non-interactive accessibility-equivalent states.
 
 ### Contact and Escalation
 - Technical issues: Contact development team
