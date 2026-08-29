@@ -603,24 +603,43 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
     compute_borrow_rate_from_snapshot(env, &snapshot).rate_bps
 }
 
+/// Compute utilization (bps) from an aggregate snapshot, bounded to
+/// `[0, BPS_DENOM]` (0 %..100 %).
+///
+/// # Boundedness invariant
+///
+/// When debt transiently exceeds supply (e.g. during bad-debt, partial
+/// write-off, or a supply draw-down that outpaces debt), the raw `debt / supply`
+/// ratio can exceed 100 %. The rate model is only well-defined on `[0, 100 %]`,
+/// so the value is capped at 100 % before it reaches
+/// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
+/// bounded and deterministic at maximum utilization instead of feeding an
+/// out-of-range utilization to the model.
+pub(crate) fn compute_utilization_bps(
+    snapshot: &RateSnapshot,
+) -> Result<i128, DebtError> {
+    if snapshot.total_supply <= 0 {
+        return Ok(0);
+    }
+    snapshot
+        .total_debt
+        .checked_mul(BPS_DENOM)
+        .ok_or(DebtError::Overflow)?
+        .checked_div(snapshot.total_supply)
+        .ok_or(DebtError::Overflow)
+        .map(|raw| raw.min(BPS_DENOM))
+}
+
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.
 ///
 /// Utilization uses checked arithmetic and falls back to zero when supply is
 /// non-positive. Overflow in `debt * 10_000` returns [`DebtError::Overflow`].
+/// Utilization is bounded to `[0, BPS_DENOM]`; see [`compute_utilization_bps`].
 pub(crate) fn try_compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
 ) -> Result<BorrowRateComputation, DebtError> {
-    let utilization_bps = if snapshot.total_supply > 0 {
-        snapshot
-            .total_debt
-            .checked_mul(BPS_DENOM)
-            .ok_or(DebtError::Overflow)?
-            .checked_div(snapshot.total_supply)
-            .ok_or(DebtError::Overflow)?
-    } else {
-        0
-    };
+    let utilization_bps = compute_utilization_bps(snapshot)?;
 
     let rate_bps = match &snapshot.params {
         Some(p) => {

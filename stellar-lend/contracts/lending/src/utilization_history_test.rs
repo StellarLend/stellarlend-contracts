@@ -1,5 +1,8 @@
 use crate::{
-    debt::{cached_borrow_rate, try_compute_borrow_rate_from_snapshot, RateSnapshot},
+    debt::{
+        cached_borrow_rate, compute_utilization_bps, try_compute_borrow_rate_from_snapshot,
+        RateSnapshot,
+    },
     rate_model::RateParams,
     write_utilization_sample, DataKey, LendingContract, LendingContractClient, UtilizationSample,
 };
@@ -177,4 +180,112 @@ fn utilization_history_rate_math_reports_overflow() {
         };
         assert!(try_compute_borrow_rate_from_snapshot(&env, &snapshot).is_err());
     });
+}
+
+/// When debt transiently exceeds supply (e.g. bad debt or a supply draw-down),
+/// the raw `debt / supply` ratio is above 100 %. The borrow-rate computation
+/// must clamp utilization to `BPS_DENOM` (100 %) so the rate-model input stays
+/// bounded at maximum utilization instead of feeding an out-of-range value.
+#[test]
+fn utilization_is_clamped_to_100_percent_when_debt_exceeds_supply() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    env.as_contract(&contract_id, || {
+        // 200 % raw utilization (debt = 2x supply). Must be clamped to 100 %.
+        let snapshot = RateSnapshot {
+            total_debt: 2_000_000,
+            total_supply: 1_000_000,
+            params: Some(RateParams::default()),
+        };
+        let computation =
+            try_compute_borrow_rate_from_snapshot(&env, &snapshot).expect("no overflow expected");
+        assert_eq!(
+            computation.utilization_bps,
+            10_000,
+            "utilization above 100 % must be clamped to BPS_DENOM"
+        );
+
+        // 500 % raw utilization. Still clamped to 100 %.
+        let snapshot = RateSnapshot {
+            total_debt: 5_000_000,
+            total_supply: 1_000_000,
+            params: Some(RateParams::default()),
+        };
+        let computation =
+            try_compute_borrow_rate_from_snapshot(&env, &snapshot).expect("no overflow expected");
+        assert_eq!(computation.utilization_bps, 10_000);
+    });
+}
+
+/// At exactly 100 % utilization the value must be passed through unchanged
+/// (no spurious clamping of an already-in-range value).
+#[test]
+fn utilization_at_exactly_100_percent_is_not_clamped_down() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    env.as_contract(&contract_id, || {
+        let snapshot = RateSnapshot {
+            total_debt: 1_000_000,
+            total_supply: 1_000_000,
+            params: Some(RateParams::default()),
+        };
+        let computation =
+            try_compute_borrow_rate_from_snapshot(&env, &snapshot).expect("no overflow expected");
+        assert_eq!(computation.utilization_bps, 10_000);
+    });
+}
+
+/// `compute_utilization_bps` is a read-only, bounded helper: it clamps at 100 %,
+/// returns zero for non-positive supply, and never overflows.
+#[test]
+fn compute_utilization_bps_is_bounded_and_read_only() {
+    let util = |debt: i128, supply: i128| {
+        let snapshot = RateSnapshot {
+            total_debt: debt,
+            total_supply: supply,
+            params: None,
+        };
+        compute_utilization_bps(&snapshot).unwrap()
+    };
+
+    assert_eq!(util(0, 1_000_000), 0);
+    assert_eq!(util(500_000, 1_000_000), 5_000);
+    assert_eq!(util(1_000_000, 1_000_000), 10_000);
+    // debt > supply → clamped to 100 %, never past BPS_DENOM.
+    assert_eq!(util(5_000_000, 1_000_000), 10_000);
+    // Non-positive supply → 0 utilization (no division by zero).
+    assert_eq!(util(1, 0), 0);
+    assert_eq!(util(1, -1), 0);
+}
+
+/// The read-only diagnostics view reports bounded utilization and rate state
+/// without mutating storage, and remains stable when debt exceeds supply.
+#[test]
+fn get_rate_model_diagnostics_reports_bounded_utilization() {
+    let (env, contract_id, client) = setup();
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDebt, &2_000_000i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &1_000_000i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::RateParams, &RateParams::default());
+    });
+
+    let diagnostics = client.get_rate_model_diagnostics();
+    assert_eq!(
+        diagnostics.utilization_bps, 10_000,
+        "diagnostics must report bounded (clamped) utilization"
+    );
+    assert!(diagnostics.rate_model_active);
+    assert!(diagnostics.target_rate_bps >= 0);
+    assert!(diagnostics.applied_rate_bps >= 0);
+    // No rate update has been written yet, so there is no latency signal.
+    assert_eq!(diagnostics.last_update_ledger, 0);
+    assert_eq!(diagnostics.elapsed_ledgers, 0);
 }
