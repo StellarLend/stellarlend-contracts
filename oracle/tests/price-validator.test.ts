@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { PriceValidator, createValidator } from '../src/services/price-validator.js';
 import { DEFAULT_PRICE_BOUNDS } from '../src/config.js';
 import type { RawPriceData } from '../src/types/index.js';
+import { Keypair } from '@stellar/stellar-sdk';
 
 describe('PriceValidator', () => {
     let validator: PriceValidator;
@@ -182,6 +183,83 @@ describe('PriceValidator', () => {
 
             expect(result.isValid).toBe(false);
             expect(result.errors.some((e) => e.code === 'PRICE_BELOW_MIN')).toBe(true);
+        });
+
+        it('should accept a signed price from a trusted signer', () => {
+            const kp = Keypair.random();
+            const publicKey = kp.publicKey();
+
+            // Create validator that trusts this signer for the 'coingecko' source
+            validator = createValidator(
+                { maxDeviationPercent: 10, maxStalenessSeconds: 300, minPrice: 0.0001, maxPrice: 1000000 },
+                DEFAULT_PRICE_BOUNDS,
+            );
+
+            // Recreate validator with trusted signer by calling PriceValidator constructor directly
+            // (tests may directly use the class for configuration)
+            const signedValidator = new PriceValidator({ maxDeviationPercent: 10, maxStalenessSeconds: 300, minPrice: 0.0001, maxPrice: 1000000 }, DEFAULT_PRICE_BOUNDS, { coingecko: [publicKey] });
+
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+                signer: publicKey,
+                signature: '',
+            };
+
+            // Sign canonical message used by validator: domain|asset|price|timestamp|source
+            const msg = `StellarLendOracle|${rawPrice.asset.toUpperCase()}|${rawPrice.price}|${rawPrice.timestamp}|${rawPrice.source}`;
+            const sig = kp.sign(Buffer.from(msg, 'utf8'));
+            rawPrice.signature = sig.toString('base64');
+
+            const result = signedValidator.validate(rawPrice);
+
+            expect(result.isValid).toBe(true);
+            expect(result.errors).toHaveLength(0);
+        });
+
+        it('should reject a price with invalid signature', () => {
+            const kp = Keypair.random();
+            const other = Keypair.random();
+
+            const signedValidator = new PriceValidator({ maxDeviationPercent: 10, maxStalenessSeconds: 300, minPrice: 0.0001, maxPrice: 1000000 }, DEFAULT_PRICE_BOUNDS, { coingecko: [kp.publicKey()] });
+
+            const ts = Math.floor(Date.now() / 1000);
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: ts,
+                source: 'coingecko',
+                signer: kp.publicKey(),
+                signature: other
+                    .sign(Buffer.from(`StellarLendOracle|${'XLM'}|${0.15}|${ts}|coingecko`, 'utf8'))
+                    .toString('base64'),
+            };
+
+            const result = signedValidator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.errors.some(e => e.message && e.message.includes('Invalid signature'))).toBe(true);
+        });
+
+        it('should reject a signed-required price missing signature', () => {
+            const kp = Keypair.random();
+            const signedValidator = new PriceValidator({ maxDeviationPercent: 10, maxStalenessSeconds: 300, minPrice: 0.0001, maxPrice: 1000000 }, DEFAULT_PRICE_BOUNDS, { coingecko: [kp.publicKey()] });
+
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+                // signer provided but signature missing
+                signer: kp.publicKey(),
+            };
+
+            const result = signedValidator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.errors.some(e => e.message && e.message.includes('Missing signature'))).toBe(true);
         });
     });
 
