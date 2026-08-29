@@ -1,14 +1,35 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Bytes, BytesN, Env, Map, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes,
+    BytesN, Env, Map, Vec,
 };
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
 const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
 const UNPAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_UNPAUSE:";
 
+/// Domain separator for inbound message IDs (issue #1901).
+///
+/// Every inbound message is identified by hashing:
+///
+/// ```text
+/// SHA-256( INBOUND_MSG_DOMAIN
+///          || source_domain_hash (32 bytes)
+///          || nonce (8 bytes LE) )
+/// ```
+///
+/// This prevents replay across chains, networks, and contracts.
+pub const INBOUND_MSG_DOMAIN: &[u8] = b"stellarlend::bridge::inbound_msg::v1";
+
+/// Domain separator for source-domain hashing.
+pub const SOURCE_DOMAIN_SEPARATOR: &[u8] = b"stellarlend::bridge::source_domain::v1";
+
 const MIN_VALIDATORS: u32 = 1;
 const MAX_VALIDATORS: u32 = 64;
+
+/// Maximum number of registered source domains.  This bounds storage
+/// growth and iteration cost for administrative queries.
+pub const MAX_SOURCE_DOMAINS: u32 = 256;
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,6 +56,34 @@ pub enum BridgeError {
     InvalidWindowSize = 20,
     WindowTotalOverflow = 21,
     ChurnLimitExceeded = 22,
+    /// The source domain is not registered; rejected at admission.
+    UnregisteredSource = 23,
+    /// The inbound message has already been consumed (replay detected).
+    MessageAlreadyConsumed = 24,
+    /// The nonce does not match the expected next nonce for this source
+    /// (out-of-order or gap detected).  The message is rejected without
+    /// mutating balances or burning the message.
+    UnexpectedNonce = 25,
+    /// The admin has not been initialised or the caller is not the admin.
+    NotAdmin = 26,
+    /// Too many source domains registered (storage limit).
+    SourceDomainLimitReached = 27,
+}
+
+/// Identifies the origin of an inbound bridge message.
+///
+/// Composed of three domain fields so that messages from different chains,
+/// network passphrases, or contracts cannot be confused:
+///
+/// - `chain_id`            – numeric identifier of the source chain.
+/// - `network_passphrase`  – network passphrase of the source deployment.
+/// - `contract_id`         – address of the source-side bridge contract.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceDomain {
+    pub chain_id: u32,
+    pub network_passphrase: Bytes,
+    pub contract_id: Bytes,
 }
 
 #[contracttype]
@@ -54,12 +103,39 @@ pub enum BridgeDataKey {
     OutboundWindowSize,
     OutboundWindowStart,
     WindowOutboundTotal,
+    /// Admin address for privileged operations (source domain management).
+    Admin,
+    /// Whether a source domain is registered.  The key carries the
+    /// SHA-256 hash of the source domain fields.
+    SourceRegistered(BytesN<32>),
+    /// Per-source-domain inbound nonce.  Stores the next expected
+    /// nonce value for a given source domain.
+    InboundNonce(BytesN<32>),
+    /// Marker written after an inbound message has been consumed.
+    /// The key is the domain-separated message ID.
+    ConsumedInboundMessage(BytesN<32>),
+    /// `Vec<u32>` count of registered source domains (bounds iteration).
+    SourceDomainCount,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundMessageEvent {
     pub dest: u32,
+    pub nonce: u64,
+}
+
+/// Event emitted when an inbound message is successfully consumed.
+///
+/// Topics: `("inbound_msg", "consumed")`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InboundMessageConsumedEvent {
+    /// Domain-separated message ID that was consumed.
+    pub message_id: BytesN<32>,
+    /// The source domain that sent the message.
+    pub source: SourceDomain,
+    /// The nonce consumed from that source.
     pub nonce: u64,
 }
 
@@ -189,6 +265,77 @@ impl Bridge {
             .get::<BridgeDataKey, i128>(&BridgeDataKey::WindowOutboundTotal)
             .unwrap_or(0)
     }
+
+    // -----------------------------------------------------------------------
+    // Admin helpers (issue #1901)
+    // -----------------------------------------------------------------------
+
+    fn load_admin(env: &Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, Address>(&BridgeDataKey::Admin)
+    }
+
+    fn save_admin(env: &Env, admin: &Address) {
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::Admin, admin);
+    }
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<(), BridgeError> {
+        caller.require_auth();
+        let admin = Self::load_admin(env).ok_or(BridgeError::NotAdmin)?;
+        if *caller != admin {
+            return Err(BridgeError::NotAdmin);
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Source-domain hashing (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Compute a deterministic hash of a [`SourceDomain`].
+    ///
+    /// ```text
+    /// SHA-256( SOURCE_DOMAIN_SEPARATOR
+    ///          || chain_id (4 bytes LE)
+    ///          || network_passphrase_len (4 bytes LE)
+    ///          || network_passphrase
+    ///          || contract_id_len (4 bytes LE)
+    ///          || contract_id )
+    /// ```
+    fn source_domain_hash(env: &Env, domain: &SourceDomain) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.extend_from_slice(SOURCE_DOMAIN_SEPARATOR);
+        data.extend_from_slice(&domain.chain_id.to_le_bytes());
+        let np_len = domain.network_passphrase.len() as u32;
+        data.extend_from_slice(&np_len.to_le_bytes());
+        data.append(&domain.network_passphrase);
+        let cid_len = domain.contract_id.len() as u32;
+        data.extend_from_slice(&cid_len.to_le_bytes());
+        data.append(&domain.contract_id);
+        env.crypto().sha256(&data).into()
+    }
+
+    /// Compute the domain-separated inbound message ID.
+    ///
+    /// ```text
+    /// SHA-256( INBOUND_MSG_DOMAIN
+    ///          || source_domain_hash (32 bytes)
+    ///          || nonce (8 bytes LE) )
+    /// ```
+    fn inbound_message_id(
+        env: &Env,
+        source_hash: &BytesN<32>,
+        nonce: u64,
+    ) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.extend_from_slice(INBOUND_MSG_DOMAIN);
+        data.extend_from_slice(&source_hash.to_bytes());
+        data.extend_from_slice(&nonce.to_le_bytes());
+        env.crypto().sha256(&data).into()
+    }
 }
 
 #[contractimpl]
@@ -239,6 +386,241 @@ impl Bridge {
         } else {
             Self::save_max_churn(&env, max_churn);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin management (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Set the admin address for privileged operations.
+    ///
+    /// The admin is authorised to register and unregister source domains.
+    /// Can only be called once; subsequent calls are rejected to prevent
+    /// unauthorised admin rotation.
+    pub fn set_admin(env: Env, admin: Address) -> Result<(), BridgeError> {
+        if Self::load_admin(&env).is_some() {
+            return Err(BridgeError::NotAdmin);
+        }
+        Self::save_admin(&env, &admin);
+        Ok(())
+    }
+
+    /// Return the current admin address, if set.
+    pub fn get_admin(env: Env) -> Option<Address> {
+        Self::load_admin(&env)
+    }
+
+    // -----------------------------------------------------------------------
+    // Source-domain registration (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Register a source domain for inbound message validation.
+    ///
+    /// Only the admin may call this function.  A source domain identifies
+    /// the chain, network passphrase, and contract address that are
+    /// authorised to send inbound bridge messages.
+    ///
+    /// # Errors
+    /// - [`BridgeError::NotAdmin`] if the caller is not the admin.
+    /// - [`BridgeError::SourceDomainLimitReached`] if the storage limit
+    ///   has been reached.
+    pub fn register_source_domain(
+        env: Env,
+        caller: Address,
+        source: SourceDomain,
+    ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
+        let hash = Self::source_domain_hash(&env, &source);
+        if env
+            .storage()
+            .persistent()
+            .has(&BridgeDataKey::SourceRegistered(hash))
+        {
+            // Already registered — idempotent, return Ok.
+            return Ok(());
+        }
+        // Enforce storage limit.
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, u32>(&BridgeDataKey::SourceDomainCount)
+            .unwrap_or(0);
+        if count >= MAX_SOURCE_DOMAINS {
+            return Err(BridgeError::SourceDomainLimitReached);
+        }
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::SourceRegistered(hash), &true);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::SourceDomainCount, &(count + 1));
+        Ok(())
+    }
+
+    /// Unregister a previously registered source domain.
+    ///
+    /// Only the admin may call this function.  After unregistration,
+    /// inbound messages from this source will be rejected.
+    pub fn unregister_source_domain(
+        env: Env,
+        caller: Address,
+        source: SourceDomain,
+    ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
+        let hash = Self::source_domain_hash(&env, &source);
+        if !env
+            .storage()
+            .persistent()
+            .has(&BridgeDataKey::SourceRegistered(hash))
+        {
+            // Not registered — idempotent, return Ok.
+            return Ok(());
+        }
+        env.storage()
+            .persistent()
+            .remove(&BridgeDataKey::SourceRegistered(hash));
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, u32>(&BridgeDataKey::SourceDomainCount)
+            .unwrap_or(0);
+        if count > 0 {
+            env.storage()
+                .persistent()
+                .set(&BridgeDataKey::SourceDomainCount, &(count - 1));
+        }
+        Ok(())
+    }
+
+    /// Check whether a source domain is currently registered.
+    pub fn is_source_registered(env: Env, source: SourceDomain) -> bool {
+        let hash = Self::source_domain_hash(&env, &source);
+        env.storage()
+            .persistent()
+            .has(&BridgeDataKey::SourceRegistered(hash))
+    }
+
+    // -----------------------------------------------------------------------
+    // Inbound message consumption (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Consume an inbound bridge message, enforcing domain separation,
+    /// source validation, nonce ordering, and replay protection.
+    ///
+    /// The function:
+    /// 1. Validates `source` is registered.
+    /// 2. Checks `nonce` equals the next expected nonce for that source.
+    /// 3. Computes the domain-separated message ID.
+    /// 4. Checks the message has not already been consumed.
+    /// 5. Marks the message as consumed and increments the per-source nonce.
+    /// 6. Emits an [`InboundMessageConsumedEvent`].
+    ///
+    /// Failed validation does **not** burn the message or mutate balances.
+    ///
+    /// # Arguments
+    /// * `source` – The [`SourceDomain`] identifying the sender.
+    /// * `nonce`  – The message nonce from the source (must equal next expected).
+    ///
+    /// # Returns
+    /// The domain-separated message ID on success.
+    ///
+    /// # Errors
+    /// - [`BridgeError::UnregisteredSource`] if the source domain is not registered.
+    /// - [`BridgeError::UnexpectedNonce`] if the nonce does not match.
+    /// - [`BridgeError::MessageAlreadyConsumed`] if the message was already consumed.
+    pub fn consume_inbound_message(
+        env: Env,
+        source: SourceDomain,
+        nonce: u64,
+    ) -> Result<BytesN<32>, BridgeError> {
+        // 1. Validate source is registered.
+        let source_hash = Self::source_domain_hash(&env, &source);
+        if !env
+            .storage()
+            .persistent()
+            .has(&BridgeDataKey::SourceRegistered(source_hash))
+        {
+            return Err(BridgeError::UnregisteredSource);
+        }
+
+        // 2. Check nonce ordering.
+        let expected_nonce: u64 = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash))
+            .unwrap_or(0);
+        if nonce != expected_nonce {
+            return Err(BridgeError::UnexpectedNonce);
+        }
+
+        // 3. Compute domain-separated message ID.
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+
+        // 4. Check not already consumed.
+        if env
+            .storage()
+            .persistent()
+            .has(&BridgeDataKey::ConsumedInboundMessage(message_id))
+        {
+            return Err(BridgeError::MessageAlreadyConsumed);
+        }
+
+        // 5. Mark consumed and advance nonce.
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::ConsumedInboundMessage(message_id), &true);
+        let next_nonce = nonce
+            .checked_add(1)
+            .ok_or(BridgeError::NonceOverflow)?;
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::InboundNonce(source_hash), &next_nonce);
+
+        // 6. Emit event.
+        env.events().publish(
+            (symbol_short!("inbound_msg"), symbol_short!("consumed")),
+            InboundMessageConsumedEvent {
+                message_id,
+                source,
+                nonce,
+            },
+        );
+
+        Ok(message_id)
+    }
+
+    /// Check whether an inbound message has already been consumed.
+    ///
+    /// Computes the domain-separated message ID from `source` and `nonce`
+    /// and checks the storage marker.
+    pub fn is_message_consumed(
+        env: Env,
+        source: SourceDomain,
+        nonce: u64,
+    ) -> bool {
+        let source_hash = Self::source_domain_hash(&env, &source);
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+        env.storage()
+            .persistent()
+            .has(&BridgeDataKey::ConsumedInboundMessage(message_id))
+    }
+
+    /// Return the next expected nonce for a given source domain.
+    ///
+    /// Returns 0 if no messages have been consumed from this source yet.
+    pub fn next_inbound_nonce(env: Env, source: SourceDomain) -> u64 {
+        let source_hash = Self::source_domain_hash(&env, &source);
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash))
+            .unwrap_or(0)
+    }
+
+    /// Compute the domain-separated message ID for a given source and nonce
+    /// without consuming it.  Useful for off-chain verification.
+    pub fn compute_message_id(env: Env, source: SourceDomain, nonce: u64) -> BytesN<32> {
+        let source_hash = Self::source_domain_hash(&env, &source);
+        Self::inbound_message_id(&env, &source_hash, nonce)
     }
 
     // -----------------------------------------------------------------------
@@ -871,5 +1253,379 @@ mod tests {
         assert!(client
             .try_set_outbound_cap(&1000i128, &0u64, &0u64)
             .is_err());
+    }
+}
+
+// -----------------------------------------------------------------------
+// Inbound message replay protection & domain confusion tests (issue #1901)
+// -----------------------------------------------------------------------
+
+#[cfg(test)]
+mod replay_protection_test {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    /// Helper: spin up a fresh bridge, set an admin, and return the client.
+    fn setup_bridge() -> (Env, BridgeClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, Bridge);
+        let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.set_admin(&admin);
+        (env, client, admin)
+    }
+
+    /// Helper: build a source domain with the given chain_id.
+    fn source(env: &Env, chain_id: u32) -> SourceDomain {
+        SourceDomain {
+            chain_id,
+            network_passphrase: Bytes::from_slice(env, b"testnet"),
+            contract_id: Bytes::from_slice(env, b"bridge_contract_v1"),
+        }
+    }
+
+    /// Helper: build a source domain with a different contract_id.
+    fn source_different_contract(env: &Env, chain_id: u32) -> SourceDomain {
+        SourceDomain {
+            chain_id,
+            network_passphrase: Bytes::from_slice(env, b"testnet"),
+            contract_id: Bytes::from_slice(env, b"other_contract_v2"),
+        }
+    }
+
+    /// Helper: build a source domain with a different network passphrase.
+    fn source_different_network(env: &Env, chain_id: u32) -> SourceDomain {
+        SourceDomain {
+            chain_id,
+            network_passphrase: Bytes::from_slice(env, b"mainnet"),
+            contract_id: Bytes::from_slice(env, b"bridge_contract_v1"),
+        }
+    }
+
+    // ---- AC: A message is consumed at most once ----
+
+    #[test]
+    fn duplicate_delivery_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // First consumption succeeds.
+        let _id = client.consume_inbound_message(&src, &0u64);
+        assert!(client.is_message_consumed(&src, &0u64));
+
+        // Second consumption of the same nonce is rejected.
+        let err = client.try_consume_inbound_message(&src, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::MessageAlreadyConsumed))),
+            "expected MessageAlreadyConsumed on duplicate, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn sequential_nonces_accepted() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Consume nonces 0..4 in order.
+        for i in 0..5u64 {
+            let id = client.consume_inbound_message(&src, &i);
+            assert!(!id.is_empty());
+            assert!(client.is_message_consumed(&src, &i));
+        }
+        // Next expected nonce is 5.
+        assert_eq!(client.next_inbound_nonce(&src), 5u64);
+    }
+
+    // ---- AC: A message for another network or contract is rejected ----
+
+    #[test]
+    fn wrong_domain_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // A source with a different contract_id is unregistered.
+        let other = source_different_contract(&env, 1);
+        let err = client.try_consume_inbound_message(&other, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
+            "expected UnregisteredSource for different contract, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn wrong_network_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // A source with a different network passphrase is unregistered.
+        let other = source_different_network(&env, 1);
+        let err = client.try_consume_inbound_message(&other, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
+            "expected UnregisteredSource for different network, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn different_chain_id_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        let other = source(&env, 999);
+        let err = client.try_consume_inbound_message(&other, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
+            "expected UnregisteredSource for different chain_id, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn cross_domain_message_ids_differ() {
+        let env = Env::default();
+        let src_a = source(&env, 1);
+        let src_b = source_different_contract(&env, 1);
+        let id_a = Bridge::compute_message_id(env.clone(), src_a, 0);
+        let id_b = Bridge::compute_message_id(env, src_b, 0);
+        assert_ne!(id_a, id_b, "domain-separated IDs must differ");
+    }
+
+    // ---- AC: Failed validation does not burn the message or mutate balances ----
+
+    #[test]
+    fn failed_validation_no_state_change() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Wrong nonce: nonce 1 when expected is 0.
+        let err = client.try_consume_inbound_message(&src, &1u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnexpectedNonce))));
+
+        // Nonce 0 is still available for consumption.
+        let _id = client.consume_inbound_message(&src, &0u64);
+        assert!(client.is_message_consumed(&src, &0u64));
+        assert_eq!(client.next_inbound_nonce(&src), 1u64);
+    }
+
+    #[test]
+    fn unregistered_source_no_state_change() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        // Do NOT register src.
+
+        let err = client.try_consume_inbound_message(&src, &0u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnregisteredSource))));
+
+        // Nonce is still 0 (no mutation).
+        assert_eq!(client.next_inbound_nonce(&src), 0u64);
+        assert!(!client.is_message_consumed(&src, &0u64));
+    }
+
+    // ---- AC: Out-of-order messages ----
+
+    #[test]
+    fn out_of_order_nonce_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Consume nonce 0.
+        client.consume_inbound_message(&src, &0u64);
+
+        // Skip nonce 1, try nonce 2.
+        let err = client.try_consume_inbound_message(&src, &2u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnexpectedNonce))));
+
+        // Nonce 1 is still consumable.
+        client.consume_inbound_message(&src, &1u64);
+        assert_eq!(client.next_inbound_nonce(&src), 2u64);
+    }
+
+    // ---- AC: Storage limits ----
+
+    #[test]
+    fn source_domain_limit_enforced() {
+        let (env, client, admin) = setup_bridge();
+
+        // Register up to the limit.
+        for i in 0..MAX_SOURCE_DOMAINS {
+            let src = SourceDomain {
+                chain_id: i,
+                network_passphrase: Bytes::from_slice(&env, b"net"),
+                contract_id: Bytes::from_slice(&env, b"ctr"),
+            };
+            client.register_source_domain(&admin, &src);
+        }
+
+        // One more should fail.
+        let over_limit = SourceDomain {
+            chain_id: MAX_SOURCE_DOMAINS,
+            network_passphrase: Bytes::from_slice(&env, b"net"),
+            contract_id: Bytes::from_slice(&env, b"ctr"),
+        };
+        let err = client.try_register_source_domain(&admin, &over_limit);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::SourceDomainLimitReached))),
+            "expected SourceDomainLimitReached, got {:?}",
+            err
+        );
+    }
+
+    // ---- Admin gating ----
+
+    #[test]
+    fn non_admin_cannot_register_source() {
+        let (env, _client, _admin) = setup_bridge();
+        let contract_id = env.register_contract(None, Bridge);
+        let client = BridgeClient::new(&env, &contract_id);
+        let non_admin = Address::generate(&env);
+        let src = source(&env, 1);
+        let err = client.try_register_source_domain(&non_admin, &src);
+        assert!(matches!(err, Err(Ok(BridgeError::NotAdmin))));
+    }
+
+    #[test]
+    fn admin_setup_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, Bridge);
+        let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        // First call succeeds.
+        client.set_admin(&admin);
+        assert_eq!(client.get_admin(), Some(admin.clone()));
+
+        // Second call fails (admin already set).
+        let other = Address::generate(&env);
+        let err = client.try_set_admin(&other);
+        assert!(matches!(err, Err(Ok(BridgeError::NotAdmin))));
+
+        // Original admin is unchanged.
+        assert_eq!(client.get_admin(), Some(admin));
+    }
+
+    // ---- Idempotent registration/unregistration ----
+
+    #[test]
+    fn register_source_is_idempotent() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+
+        client.register_source_domain(&admin, &src);
+        // Second registration is a no-op.
+        client.register_source_domain(&admin, &src);
+        assert!(client.is_source_registered(&src));
+    }
+
+    #[test]
+    fn unregister_source_is_idempotent() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+
+        client.register_source_domain(&admin, &src);
+        client.unregister_source_domain(&admin, &src);
+        assert!(!client.is_source_registered(&src));
+
+        // Second unregister is a no-op.
+        client.unregister_source_domain(&admin, &src);
+        assert!(!client.is_source_registered(&src));
+    }
+
+    #[test]
+    fn unregistered_source_cannot_consume() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+
+        client.register_source_domain(&admin, &src);
+        client.unregister_source_domain(&admin, &src);
+
+        let err = client.try_consume_inbound_message(&src, &0u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnregisteredSource))));
+    }
+
+    // ---- Multiple independent sources ----
+
+    #[test]
+    fn independent_sources_have_independent_nonces() {
+        let (env, client, admin) = setup_bridge();
+        let src_a = source(&env, 1);
+        let src_b = source(&env, 2);
+        client.register_source_domain(&admin, &src_a);
+        client.register_source_domain(&admin, &src_b);
+
+        // Consume nonce 0 from source A.
+        client.consume_inbound_message(&src_a, &0u64);
+
+        // Source B still starts at nonce 0.
+        assert_eq!(client.next_inbound_nonce(&src_b), 0u64);
+        client.consume_inbound_message(&src_b, &0u64);
+
+        // Source A nonce 0 is consumed; source B nonce 0 is also consumed.
+        assert!(client.is_message_consumed(&src_a, &0u64));
+        assert!(client.is_message_consumed(&src_b, &0u64));
+
+        // Source A nonce 1 is next; source B nonce 1 is next.
+        assert_eq!(client.next_inbound_nonce(&src_a), 1u64);
+        assert_eq!(client.next_inbound_nonce(&src_b), 1u64);
+    }
+
+    // ---- Message ID computation ----
+
+    #[test]
+    fn compute_message_id_matches_consume() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Pre-compute the message ID.
+        let precomputed = client.compute_message_id(&src, &0u64);
+
+        // Consume the message.
+        let consumed = client.consume_inbound_message(&src, &0u64);
+
+        assert_eq!(precomputed, consumed);
+    }
+
+    #[test]
+    fn different_nonces_produce_different_ids() {
+        let env = Env::default();
+        let src = source(&env, 1);
+        let id_0 = Bridge::compute_message_id(env.clone(), src.clone(), 0);
+        let id_1 = Bridge::compute_message_id(env.clone(), src.clone(), 1);
+        let id_max = Bridge::compute_message_id(env, src, u64::MAX);
+        assert_ne!(id_0, id_1, "different nonces must differ");
+        assert_ne!(id_0, id_max, "different nonces must differ");
+        assert_ne!(id_1, id_max, "different nonces must differ");
+    }
+
+    // ---- Domain separator constant pinning ----
+
+    #[test]
+    fn inbound_msg_domain_separator_is_pinned() {
+        // Pin the domain tag so a silent rename would break this test
+        // and force a deliberate version bump.
+        assert_eq!(
+            INBOUND_MSG_DOMAIN,
+            b"stellarlend::bridge::inbound_msg::v1"
+        );
+    }
+
+    #[test]
+    fn source_domain_separator_is_pinned() {
+        assert_eq!(
+            SOURCE_DOMAIN_SEPARATOR,
+            b"stellarlend::bridge::source_domain::v1"
+        );
     }
 }
