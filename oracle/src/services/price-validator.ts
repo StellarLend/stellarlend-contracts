@@ -39,9 +39,20 @@ const DEFAULT_CONFIG: ValidatorConfig = {
 /**
  * Price Validator
  */
+interface CachedPrice {
+    price: number;
+    timestamp: number;
+}
+
+interface PendingPrice {
+    price: number;
+    timestamp: number;
+}
+
 export class PriceValidator {
     private config: ValidatorConfig;
-    private cachedPrices: Map<string, number> = new Map();
+    private cachedPrices: Map<string, CachedPrice> = new Map();
+    private pendingPrices: Map<string, PendingPrice> = new Map();
     private assetBounds: Record<string, AssetPriceBounds>;
 
     constructor(
@@ -88,6 +99,14 @@ export class PriceValidator {
         const now = Math.floor(Date.now() / 1000);
         const age = now - raw.timestamp;
 
+        if (age < 0) {
+            errors.push({
+                code: 'PRICE_STALE' as ValidationErrorCode,
+                message: `Price timestamp ${raw.timestamp} is in the future`,
+                details: { timestamp: raw.timestamp, now },
+            });
+        }
+
         if (age > this.config.maxStalenessSeconds) {
             errors.push({
                 code: 'PRICE_STALE' as ValidationErrorCode,
@@ -121,9 +140,63 @@ export class PriceValidator {
             });
         }
 
-        const cachedPrice = this.cachedPrices.get(asset);
-        if (cachedPrice !== undefined) {
-            const deviation = Math.abs((raw.price - cachedPrice) / cachedPrice) * 100;
+        const pending = this.pendingPrices.get(asset);
+        const cached = this.cachedPrices.get(asset);
+        const cachedPrice = cached?.price;
+
+        if (pending !== undefined) {
+            if (pending.price === raw.price && pending.timestamp === raw.timestamp) {
+                errors.push({
+                    code: 'PRICE_STALE' as ValidationErrorCode,
+                    message: `Duplicate price submission for ${asset} is already pending; commit or rollback before retrying`,
+                    details: { asset, price: raw.price, timestamp: raw.timestamp },
+                });
+            } else {
+                errors.push({
+                    code: 'PRICE_STALE' as ValidationErrorCode,
+                    message: `Conflicting price submission for ${asset}; a different price is already pending`,
+                    details: {
+                        asset,
+                        pendingPrice: pending.price,
+                        pendingTimestamp: pending.timestamp,
+                        newPrice: raw.price,
+                        newTimestamp: raw.timestamp,
+                    },
+                });
+            }
+        }
+
+        if (cached !== undefined) {
+            if (raw.timestamp < cached.timestamp) {
+                errors.push({
+                    code: 'PRICE_STALE' as ValidationErrorCode,
+                    message: `Price timestamp ${raw.timestamp} is older than last accepted timestamp ${cached.timestamp} for ${asset}`,
+                    details: {
+                        asset,
+                        timestamp: raw.timestamp,
+                        lastTimestamp: cached.timestamp,
+                    },
+                });
+            } else if (raw.timestamp === cached.timestamp && raw.price === cached.price) {
+                errors.push({
+                    code: 'PRICE_STALE' as ValidationErrorCode,
+                    message: `Price for ${asset} at timestamp ${raw.timestamp} is already committed`,
+                    details: { asset, timestamp: raw.timestamp, price: raw.price },
+                });
+            } else if (raw.timestamp === cached.timestamp) {
+                errors.push({
+                    code: 'PRICE_STALE' as ValidationErrorCode,
+                    message: `Price for timestamp ${raw.timestamp} conflicts with last accepted price ${cached.price} for ${asset}`,
+                    details: {
+                        asset,
+                        timestamp: raw.timestamp,
+                        cachedPrice: cached.price,
+                        price: raw.price,
+                    },
+                });
+            }
+
+            const deviation = Math.abs((raw.price - cached.price) / cached.price) * 100;
 
             if (deviation > this.config.maxDeviationPercent) {
                 errors.push({
@@ -131,7 +204,7 @@ export class PriceValidator {
                     message: `Price deviation ${deviation.toFixed(2)}% exceeds max ${this.config.maxDeviationPercent}%`,
                     details: {
                         newPrice: raw.price,
-                        cachedPrice,
+                        cachedPrice: cached.price,
                         deviationPercent: deviation,
                     },
                 });
@@ -148,7 +221,7 @@ export class PriceValidator {
                 volume24h: raw.volume24h,
             };
 
-            this.cachedPrices.set(asset, raw.price);
+            this.pendingPrices.set(asset, { price: raw.price, timestamp: raw.timestamp });
 
             return {
                 isValid: true,
@@ -163,6 +236,37 @@ export class PriceValidator {
             isValid: false,
             errors,
         };
+    }
+
+    /**
+     * Commit a pending validated price after the on-chain update succeeds.
+     */
+    commit(asset: string): void {
+        const normalizedAsset = asset.toUpperCase();
+        const pending = this.pendingPrices.get(normalizedAsset);
+
+        if (pending === undefined) {
+            logger.warn(`Commit requested without pending price for ${normalizedAsset}`);
+            return;
+        }
+
+        this.cachedPrices.set(normalizedAsset, {
+            price: pending.price,
+            timestamp: pending.timestamp,
+        });
+        this.pendingPrices.delete(normalizedAsset);
+    }
+
+    /**
+     * Rollback a pending validated price after the on-chain update fails.
+     */
+    rollback(asset: string): void {
+        const normalizedAsset = asset.toUpperCase();
+        const didRollback = this.pendingPrices.delete(normalizedAsset);
+
+        if (!didRollback) {
+            logger.warn(`Rollback requested without pending price for ${normalizedAsset}`);
+        }
     }
 
     /**
@@ -206,8 +310,18 @@ export class PriceValidator {
     /**
      * Update cached price manually (e.g., after successful contract update)
      */
-    updateCache(asset: string, price: number): void {
-        this.cachedPrices.set(asset.toUpperCase(), price);
+    updateCache(asset: string, price: number, timestamp?: number): void {
+        const normalizedAsset = asset.toUpperCase();
+        const lastTimestamp = this.cachedPrices.get(normalizedAsset)?.timestamp ?? -Infinity;
+        const nextTimestamp = timestamp ?? Math.floor(Date.now() / 1000);
+
+        if (nextTimestamp < lastTimestamp) {
+            logger.warn(`Ignoring cache update for ${normalizedAsset}: timestamp ${nextTimestamp} older than last accepted ${lastTimestamp}`);
+            return;
+        }
+
+        this.cachedPrices.set(normalizedAsset, { price, timestamp: nextTimestamp });
+        this.pendingPrices.delete(normalizedAsset);
     }
 
     /**
@@ -235,9 +349,12 @@ export class PriceValidator {
      */
     clearCache(asset?: string): void {
         if (asset) {
-            this.cachedPrices.delete(asset.toUpperCase());
+            const normalizedAsset = asset.toUpperCase();
+            this.cachedPrices.delete(normalizedAsset);
+            this.pendingPrices.delete(normalizedAsset);
         } else {
             this.cachedPrices.clear();
+            this.pendingPrices.clear();
         }
     }
 
@@ -245,7 +362,9 @@ export class PriceValidator {
      * Get current cache state (for debugging)
      */
     getCacheState(): Record<string, number> {
-        return Object.fromEntries(this.cachedPrices);
+        return Object.fromEntries(
+            Array.from(this.cachedPrices.entries()).map(([asset, state]) => [asset, state.price]),
+        );
     }
 
     private getBounds(asset: string): AssetPriceBounds {
