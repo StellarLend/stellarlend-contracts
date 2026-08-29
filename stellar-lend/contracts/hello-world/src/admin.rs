@@ -121,6 +121,11 @@ pub fn get_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&AdminDataKey::Admin)
 }
 
+/// Return `true` if `address` is the current admin.
+pub fn is_admin(env: &Env, address: &Address) -> bool {
+    get_admin(env).map_or(false, |admin| admin == *address)
+}
+
 /// Return the pending admin address, or `None` if no proposal is active.
 pub fn get_pending_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&AdminDataKey::PendingAdmin)
@@ -335,7 +340,7 @@ mod tests {
             crate::admin::get_pending_admin(&env)
         }
 
-        pub fn has_admin(env: Env) -> bool {
+        pub fn has_admin(env: Env) -> bool { crate::admin::has_admin(&env) }) -> bool {
             crate::admin::has_admin(&env)
         }
     }
