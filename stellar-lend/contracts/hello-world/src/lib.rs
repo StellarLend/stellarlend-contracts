@@ -202,6 +202,9 @@ pub struct UpgradeProposal {
     pub executed: bool,
 }
 
+/// Invariants for the multisig upgrade flow.
+///
+/// - Proposal ids are monotonic nonces; approvals are bound to one proposal id.
 const UPGRADE_TIMELOCK_SECS: u64 = 3 * 24 * 60 * 60;
 
 fn upgrade_multisig_config(env: &Env) -> Option<(soroban_sdk::Vec<Address>, u32)> {
@@ -462,6 +465,7 @@ impl HelloContract {
         caller: Address,
         wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<u64, UpgradeError> {
+        caller.require_auth();
         if !is_upgrade_signer(&env, &caller) {
             return Err(UpgradeError::Unauthorized);
         }
@@ -501,6 +505,7 @@ impl HelloContract {
         approver: Address,
         proposal_id: u64,
     ) -> Result<(), UpgradeError> {
+        approver.require_auth();
         if !is_upgrade_signer(&env, &approver) {
             return Err(UpgradeError::Unauthorized);
         }
@@ -536,6 +541,7 @@ impl HelloContract {
         executor: Address,
         proposal_id: u64,
     ) -> Result<(), UpgradeError> {
+        executor.require_auth();
         if !is_upgrade_signer(&env, &executor) {
             return Err(UpgradeError::Unauthorized);
         }
@@ -552,12 +558,12 @@ impl HelloContract {
         if threshold == 0 {
             return Err(UpgradeError::NotApproved);
         }
-        if count_upgrade_approvals(&env, proposal_id, &admins) < threshold {
-            return Err(UpgradeError::NotApproved);
-        }
         let now = env.ledger().timestamp();
         if now < proposal.created_at + proposal.timelock_secs {
             return Err(UpgradeError::TimelockPending);
+        }
+        if count_upgrade_approvals(&env, proposal_id, &admins) < threshold {
+            return Err(UpgradeError::NotApproved);
         }
         let wasm_hash = proposal.wasm_hash.clone();
         proposal.executed = true;
@@ -1682,6 +1688,83 @@ mod multisig_upgrade_test {
             Err(UpgradeError::AlreadyExecuted)
         );
         assert!(client.upgrade_get_proposal(&proposal_id).unwrap().executed);
+    }
+
+    #[test]
+    fn upgrade_approve_and_execute_reject_unknown_proposal() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, HelloContract);
+        let client = HelloContractClient::new(&env, &contract_id);
+        assert!(client.initialize(&admin).is_ok());
+        let admins = soroban_sdk::Vec::from_array(&env, &[admin.clone()]);
+        assert!(client.ms_set_admins(&admin, &admins, &1).is_ok());
+        assert_eq!(
+            client.upgrade_approve(&admin, &1),
+            Err(UpgradeError::UnknownProposal)
+        );
+        assert_eq!(
+            client.upgrade_execute(&admin, &1),
+            Err(UpgradeError::UnknownProposal)
+        );
+    }
+
+    #[test]
+    fn upgrade_execute_uses_current_signer_set_and_retries_after_failed_execution() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let signer = Address::generate(&env);
+        let replacement = Address::generate(&env);
+        let contract_id = env.register_contract(None, HelloContract);
+        let client = HelloContractClient::new(&env, &contract_id);
+        assert!(client.initialize(&admin).is_ok());
+
+        let admins = soroban_sdk::Vec::from_array(&env, &[admin.clone(), signer.clone()]);
+        assert!(client.ms_set_admins(&admin, &admins, &2).is_ok());
+
+        let hash = soroban_sdk::BytesN::<32>::from_array(&env, &[11u8; 32]);
+        let proposal_id = client.upgrade_propose(&admin, &hash).unwrap();
+        assert_eq!(client.upgrade_approve(&admin, &proposal_id), Ok(()));
+        assert_eq!(client.upgrade_approve(&signer, &proposal_id), Ok(()));
+
+        let now = env.ledger().timestamp();
+        env.ledger().set_timestamp(now + UPGRADE_TIMELOCK_SECS + 1);
+
+        let current = soroban_sdk::Vec::from_array(&env, &[admin.clone(), replacement.clone()]);
+        assert!(client.ms_set_admins(&admin, &current, &2).is_ok());
+        assert_eq!(
+            client.upgrade_execute(&admin, &proposal_id),
+            Err(UpgradeError::NotApproved)
+        );
+
+        assert_eq!(client.upgrade_approve(&replacement, &proposal_id), Ok(()));
+        assert_eq!(client.upgrade_execute(&admin, &proposal_id), Ok(()));
+        assert_eq!(
+            client.upgrade_execute(&admin, &proposal_id),
+            Err(UpgradeError::AlreadyExecuted)
+        );
+    }
+
+    #[test]
+    fn upgrade_execute_allows_exactly_at_timelock_deadline() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let signer = Address::generate(&env);
+        let contract_id = env.register_contract(None, HelloContract);
+        let client = HelloContractClient::new(&env, &contract_id);
+        assert!(client.initialize(&admin).is_ok());
+        let admins = soroban_sdk::Vec::from_array(&env, &[admin.clone(), signer.clone()]);
+        assert!(client.ms_set_admins(&admin, &admins, &2).is_ok());
+        let hash = soroban_sdk::BytesN::<32>::from_array(&env, &[12u8; 32]);
+        let proposal_id = client.upgrade_propose(&admin, &hash).unwrap();
+        assert_eq!(client.upgrade_approve(&admin, &proposal_id), Ok(()));
+        assert_eq!(client.upgrade_approve(&signer, &proposal_id), Ok(()));
+        let created = client.upgrade_get_proposal(&proposal_id).unwrap().created_at;
+        env.ledger().set_timestamp(created + UPGRADE_TIMELOCK_SECS);
+        assert_eq!(client.upgrade_execute(&admin, &proposal_id), Ok(()));
     }
 }
 
