@@ -1,0 +1,1 @@
+use soroban_sdk::*;pub fn withdraw(e:Env,u:Address,a:i128,p:Symbol){u.require_auth();if a<=0{panic_with_error!(e,"bad")}let k=(u,"pool");let d:i128=e.storage().persistent().get(&k).unwrap_or(0);if d<a{panic_with_error!(e,"bad")}e.storage().persistent().set(&k,&(d-a));}
