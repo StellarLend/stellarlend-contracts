@@ -8,6 +8,30 @@ The canonical lending contract (`stellar-lend/contracts/lending/src/upgrade.rs`)
 
 This playbook provides a practical guide for safely upgrading StellarLend contracts, including preflight checks, execution procedures, post-upgrade monitoring, and rollback criteria. It aligns with the upgrade authorization model documented in `docs/UPGRADE_AUTHORIZATION.md`.
 
+## API Contract and Invariants
+
+### Upgrade Functions
+
+The upgrade path is governed by the following contract, which MUST be preserved to avoid breaking governance and upgrade execution:
+
+- `upgrade_init(admin, approvers, required_approvals, timelock_seconds)`: Initializes the multisig governor. Reverts if `admin` is invalid, `required_approvals` is zero, or `approvers` contains duplicates or invalid signers. Enforces a monotonic nonce for all subsequent proposals.
+- `upgrade_propose(admin, wasm_hash, new_version)`: Creates a proposal with a unique nonce. Reverts if called by non-admin, if `new_version` is not greater than the current version, or if there is already a pending proposal with the same nonce. A timelock starts when the proposal is created.
+- `upgrade_approve(approver, proposal_id)`: Records approval from a validated signer. Reverts if the approver is not in the initial signer set, if the proposal is not pending, or if the approval would exceed the required threshold. Each signer can approve only once.
+- `upgrade_execute(approver, proposal_id)`: Enables execution only after the timelock has elapsed and the required approval threshold has been reached. Reverts if called too early, with insufficient approvals, or after the proposal has been executed/rolled back. The current WASM hash and version are atomically updated, and a `up_exec` event is emitted.
+- `upgrade_rollback(admin, proposal_id)`: Reverts state to the pre-proposal version and WASM hash. Only callable by admin and only for proposals that have not been executed. Emits `up_rollback`.
+
+### Invariants
+
+- **Nonce-bound approvals**: Each proposal is tied to a monotonically increasing nonce; approvals and executions reference the exact proposal ID. No replay of approvals across proposals is possible.
+- **Signer-set validation**: Approvals are accepted only from addresses present in the initial `approvers` set. The set cannot be mutated while proposals are pending.
+- **Timelock enforcement**: No execution can occur before `timelock_seconds` has elapsed from proposal creation.
+- **Rollback safety**: Rollback restores the exact previous version/hash and leaves all data intact. Repeated rollback is idempotent and guarded by proposal state.
+- **Error atomicity**: Any failed operation leaves all storage unchanged; no partial writes occur.
+
+### Compatibility Guarantee
+
+The public function signatures and event names listed above are the supported API contract. Consumers must not rely on internal storage keys or non-public fields. The contract keeps all existing export names and adds new functionality without removing prior exports. The contract is non-interactive; therefore, keyboard, focus, screen-reader, responsive, and reduced-motion accessibility considerations do not apply.
+
 ## Pre-Upgrade Checklist
 
 ### 1. Authorization Verification
