@@ -583,6 +583,30 @@ pub struct UtilizationSample {
     pub utilization_bps: i128,
 }
 
+/// Structured, read-only diagnostics for the borrow-rate pipeline.
+///
+/// Returned by [`LendingContract::get_rate_model_diagnostics`]. Exposes the
+/// current utilization, the target (raw two-slope) rate, the applied (smoothed
+/// and clamped) borrow rate, and the timing of the last update so off-chain
+/// monitoring and tuning tools can observe rate latency, smoothing convergence,
+/// and recovery behaviour without leaking any secrets or mutating state.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateModelDiagnostics {
+    /// Whether a rate model is configured; `false` means the default APR fallback applies.
+    pub rate_model_active: bool,
+    /// Current utilization in basis points, bounded to `[0, 10_000]` (0 %..100 %).
+    pub utilization_bps: i128,
+    /// Target (raw) borrow rate from the two-slope model, in basis points.
+    pub target_rate_bps: i128,
+    /// Applied borrow rate after smoothing and floor/ceiling clamping, in basis points.
+    pub applied_rate_bps: i128,
+    /// Ledger sequence of the last rate update.
+    pub last_update_ledger: u32,
+    /// Ledgers elapsed since the last rate update (latency signal).
+    pub elapsed_ledgers: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PositionSummary {
@@ -2567,6 +2591,57 @@ impl LendingContract {
     /// utilization observed in basis points.
     pub fn get_utilization_history(env: Env) -> Vec<UtilizationSample> {
         utilization_history_newest_first(&env)
+    }
+
+    /// Return structured, read-only diagnostics for the borrow-rate pipeline.
+    ///
+    /// This view never mutates storage and never panics on adversarial
+    /// utilization (it reports the bounded `[0, 10_000]` utilization). It exposes
+    /// the current utilization, the target (raw two-slope) rate, the applied
+    /// (smoothed/clamped) rate, and the timing of the last update so off-chain
+    /// monitoring can observe rate latency, smoothing convergence, and recovery
+    /// behaviour. It leaks no secrets.
+    pub fn get_rate_model_diagnostics(env: Env) -> RateModelDiagnostics {
+        let snapshot = debt::load_rate_snapshot(&env);
+        let utilization_bps =
+            debt::compute_utilization_bps(&snapshot).unwrap_or(0);
+
+        let current_ledger = env.ledger().sequence();
+        let last_update_ledger = env
+            .storage()
+            .instance()
+            .get(&rate_model::RateModelKey::LastRateLedger)
+            .unwrap_or(0);
+
+        let (rate_model_active, target_rate_bps, applied_rate_bps) =
+            match &snapshot.params {
+                Some(p) => {
+                    let target_rate =
+                        rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
+                    let applied_rate = env
+                        .storage()
+                        .instance()
+                        .get(&rate_model::RateModelKey::LastRate)
+                        .unwrap_or(target_rate);
+                    (true, target_rate, applied_rate)
+                }
+                None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
+            };
+
+        let elapsed_ledgers = if last_update_ledger == 0 {
+            0
+        } else {
+            current_ledger.saturating_sub(last_update_ledger)
+        };
+
+        RateModelDiagnostics {
+            rate_model_active,
+            utilization_bps,
+            target_rate_bps,
+            applied_rate_bps,
+            last_update_ledger,
+            elapsed_ledgers,
+        }
     }
 
     // ════════════════════════════════════════════════════════════════

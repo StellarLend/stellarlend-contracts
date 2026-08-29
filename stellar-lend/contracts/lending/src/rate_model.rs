@@ -115,6 +115,12 @@ impl Default for RateParams {
 pub enum RateModelError {
     /// An intermediate arithmetic operation overflowed.
     Overflow,
+    /// An input violated a documented invariant: utilization outside
+    /// `[0, BPS_DENOM]` or a non-positive/negative model coefficient.
+    ///
+    /// This keeps the pure math bounded and deterministic for adversarial
+    /// callers instead of silently producing a non-monotonic or negative rate.
+    OutOfRange,
 }
 
 /// Computes the target borrow rate given utilization and rate model parameters.
@@ -161,6 +167,15 @@ pub enum RateModelError {
 /// The function is **monotonic non-decreasing** in utilization: every segment
 /// has a non-negative slope, and the surcharge only adds to the rate.
 ///
+/// # Invariants (enforced)
+///
+/// - `utilization_bps` must be in `[0, BPS_DENOM]`. Values outside this range
+///   return [`RateModelError::OutOfRange`] instead of being silently clamped,
+///   so callers cannot push the model past 100 % utilization.
+/// - Every coefficient in `params` must be non-negative. A negative slope or
+///   base rate would destroy the monotonicity guarantee and is rejected with
+///   [`RateModelError::OutOfRange`].
+///
 /// # Arguments
 ///
 /// * `utilization_bps` — The protocol utilization as a basis point (0 to 10,000).
@@ -174,6 +189,9 @@ pub enum RateModelError {
 /// `Err(RateModelError::Overflow)` — if any intermediate arithmetic product
 /// overflows `i128`.  Callers should propagate this as a typed error rather
 /// than allowing the transaction to abort.
+///
+/// `Err(RateModelError::OutOfRange)` — if `utilization_bps` is outside
+/// `[0, BPS_DENOM]` or any model coefficient is negative.
 ///
 /// # Examples
 ///
@@ -196,6 +214,22 @@ pub fn compute_borrow_rate(
     utilization_bps: i128,
     params: &RateParams,
 ) -> Result<i128, RateModelError> {
+    if !(0..=BPS_DENOM).contains(&utilization_bps) {
+        return Err(RateModelError::OutOfRange);
+    }
+    if params.base_rate_bps < 0
+        || params.kink_utilization_bps < 0
+        || params.multiplier_bps < 0
+        || params.jump_multiplier_bps < 0
+        || params.rate_floor_bps < 0
+        || params.rate_ceiling_bps < 0
+        || params.max_rate_change_per_ledger_bps < 0
+        || params.hysteresis_bps < 0
+        || params.surcharge_kink_bps < 0
+        || params.surcharge_slope < 0
+    {
+        return Err(RateModelError::OutOfRange);
+    }
     let pre_kink_rate = params
         .base_rate_bps
         .checked_add(
@@ -341,9 +375,18 @@ pub fn update_and_get_rate(env: &Env, target_rate: i128, params: &RateParams) ->
     let clamped_rate = new_rate
         .max(params.rate_floor_bps)
         .min(params.rate_ceiling_bps);
-    env.storage()
-        .instance()
-        .set(&RateModelKey::LastRate, &clamped_rate);
+
+    // Persist the latest smoothing state regardless of whether the applied rate
+    // moved, but only rewrite the applied rate when it actually changed — this
+    // avoids a redundant storage write during rapid, no-op calls (e.g. repeated
+    // read/compute invocations in the same ledger) while keeping the smoothing
+    // state current. The very first call (bootstrap, `last_ledger == 0`) always
+    // writes so the initialised rate is actually persisted.
+    if last_ledger == 0 || clamped_rate != last_rate {
+        env.storage()
+            .instance()
+            .set(&RateModelKey::LastRate, &clamped_rate);
+    }
     env.storage()
         .instance()
         .set(&RateModelKey::LastTargetRate, &target_rate);
@@ -367,23 +410,69 @@ mod tests {
         assert_eq!(rate, 1_700);
     }
 
-    /// An extremely large multiplier_bps combined with a large utilization_bps
-    /// causes an i128 overflow in the intermediate product.  The function must
-    /// return Err(RateModelError::Overflow) instead of panicking.
+    /// An extremely large multiplier_bps combined with a valid (in-range)
+    /// utilization causes an i128 overflow in the intermediate product.  The
+    /// function must return Err(RateModelError::Overflow) instead of panicking.
     #[test]
     fn test_compute_borrow_rate_overflow_returns_error() {
         let params = RateParams {
             // Large multiplier × large utilization overflows the intermediate product.
-            multiplier_bps: i128::MAX / 2,
-            kink_utilization_bps: i128::MAX / 2,
+            multiplier_bps: i128::MAX,
             ..RateParams::default()
         };
-        let result = compute_borrow_rate(i128::MAX / 2, &params);
+        let result = compute_borrow_rate(10_000, &params);
         assert_eq!(
             result,
             Err(RateModelError::Overflow),
             "Expected Overflow error for out-of-range params, got {:?}",
             result
+        );
+    }
+
+    /// Utilization above 100 % is out of range and must be rejected, never
+    /// silently clamped, so the model stays bounded at maximum utilization.
+    #[test]
+    fn test_compute_borrow_rate_out_of_range_utilization() {
+        let params = RateParams::default();
+        assert_eq!(
+            compute_borrow_rate(10_001, &params),
+            Err(RateModelError::OutOfRange)
+        );
+        assert_eq!(
+            compute_borrow_rate(-1, &params),
+            Err(RateModelError::OutOfRange)
+        );
+    }
+
+    /// Negative model coefficients would destroy monotonicity; they must be
+    /// rejected as out of range at the pure-math layer.
+    #[test]
+    fn test_compute_borrow_rate_rejects_negative_coefficients() {
+        let negative_slope = RateParams {
+            multiplier_bps: -1,
+            ..RateParams::default()
+        };
+        assert_eq!(
+            compute_borrow_rate(5_000, &negative_slope),
+            Err(RateModelError::OutOfRange)
+        );
+
+        let negative_jump = RateParams {
+            jump_multiplier_bps: -5,
+            ..RateParams::default()
+        };
+        assert_eq!(
+            compute_borrow_rate(9_000, &negative_jump),
+            Err(RateModelError::OutOfRange)
+        );
+
+        let negative_base = RateParams {
+            base_rate_bps: -100,
+            ..RateParams::default()
+        };
+        assert_eq!(
+            compute_borrow_rate(0, &negative_base),
+            Err(RateModelError::OutOfRange)
         );
     }
 
