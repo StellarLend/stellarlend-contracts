@@ -609,16 +609,7 @@ pub fn borrow_asset_internal(
     let hf = compute_aggregate_health_factor(env, user)?;
 
     if hf < HEALTH_FACTOR_SCALE {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
+        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
             remove_from_user_debt_list(env, user, asset);
         }
@@ -638,16 +629,7 @@ pub fn borrow_asset_internal(
         .checked_add(delta)
         .ok_or(LendingError::Overflow)?;
     if new_total_debt > params.debt_ceiling {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
+        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
             remove_from_user_debt_list(env, user, asset);
         }
@@ -655,16 +637,7 @@ pub fn borrow_asset_internal(
     }
     // Enforce optional per-asset borrow cap: 0 means uncapped.
     if params.borrow_cap != 0 && new_total_debt > params.borrow_cap {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
+        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
             remove_from_user_debt_list(env, user, asset);
         }
@@ -791,7 +764,16 @@ pub fn repay_asset_internal(
         .persistent()
         .get(&DataKey::TotalDebtAsset(asset.clone()))
         .unwrap_or(0);
-    let new_total_debt_asset = total_debt_asset.saturating_sub(repaid);
+    let debt_delta = updated
+        .principal
+        .checked_sub(prev_principal)
+        .ok_or(LendingError::Overflow)?;
+    let new_total_debt_asset = total_debt_asset
+        .checked_add(debt_delta)
+        .ok_or(LendingError::Overflow)?;
+    if new_total_debt_asset < 0 {
+        return Err(LendingError::Overflow);
+    }
     env.storage().persistent().set(
         &DataKey::TotalDebtAsset(asset.clone()),
         &new_total_debt_asset,
@@ -802,7 +784,12 @@ pub fn repay_asset_internal(
         .persistent()
         .get(&DataKey::TotalDebt)
         .unwrap_or(0);
-    let new_total_protocol = total_debt_protocol.saturating_sub(repaid);
+    let new_total_protocol = total_debt_protocol
+        .checked_add(debt_delta)
+        .ok_or(LendingError::Overflow)?;
+    if new_total_protocol < 0 {
+        return Err(LendingError::Overflow);
+    }
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_protocol);
