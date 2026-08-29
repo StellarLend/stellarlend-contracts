@@ -61,6 +61,7 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `borrow` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Updated debt principal | Increases user debt; enforces `min_borrow`, post-borrow health factor (`>= 1.0`), and protocol debt ceiling. Blocked during Shutdown/Recovery. |
 | `repay` | `(env, user: Address, amount: i128) → Result<i128, LendingError>` | `user` | Remaining debt principal | Reduces user debt with interest accrued up to the current timestamp. Allowed in Normal and Recovery. |
 | `liquidate` | `(env, liquidator: Address, borrower: Address, amount: i128) → Result<i128, LendingError>` | `liquidator` | Actual debt repaid | Repays up to 50% of an undercollateralized borrower's debt and seizes proportional collateral (+ 10% bonus). Reverts if position is healthy (`hf >= 10000`). |
+| `receive` | `(env, token_asset: Address, from: Address, amount: i128, payload: Vec<Val>) → Result<(), LendingError>` | `from` | — | Pulls approved tokens and dispatches a versioned `deposit` or `repay` payload. |
 
 ### Flash Loans
 
@@ -108,6 +109,22 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `set_emergency_state` | `(env, new_state: EmergencyState)` | admin or guardian | Transitions between `Normal`, `Shutdown`, and `Recovery`. Emits `EmergencyStateChanged` event. |
 | `set_pause` | `(env, pause_type: PauseType, paused: bool, ttl_ledgers: u32)` | admin or guardian | Sets or clears a granular pause flag. `ttl_ledgers` is added to the current ledger to compute expiry. `ttl_ledgers = 0` means the pause expires immediately. `paused = false` is a valid unpause. Emits `PauseStateChangedEvent`. |
 | `get_pause_state` | `(env, pause_type: PauseType) → bool` | — | Returns `true` if the operation is paused (own flag or `All` override). |
+
+### Config Store
+
+| Function | Signature | Auth | Description |
+|---|---|---|---|
+| `config_set` | `(env, key: Symbol, value: Bytes) → Result<(), LendingError>` | admin | Upserts a config entry; replaces existing value for the same key. |
+| `config_get` | `(env, key: Symbol) → Option<Bytes>` | — | Returns the raw value for a config key, or `None` if unset. |
+| `config_backup` | `(env, name: Symbol) → Result<(), LendingError>` | admin | Snapshots all current config entries under `ConfigBackup(name)`. Reverts with `BackupNotFound` if no entries exist. |
+| `config_restore` | `(env, name: Symbol) → Result<(), LendingError>` | admin | Replaces all current config entries with the snapshot stored under `ConfigBackup(name)`. Reverts with `BackupNotFound` if the backup is missing. |
+
+### Governance Audit
+
+| Function | Signature | Auth | Description |
+|---|---|---|---|
+| `get_governance_audit_count` | `(env) → u64` | — | Returns the total number of governance audit entries recorded. |
+| `get_governance_audit_entries` | `(env, limit: u64) → Vec<AuditLogEntry>` | — | Returns up to `limit` audit entries from newest to oldest. |
 
 ### Emergency State Machine
 
@@ -158,17 +175,9 @@ Normal ──► Shutdown ──► Recovery ──► Normal
 
 The functions listed below appear in older documentation but are **not yet implemented** in `src/lib.rs`. They are tracked for future milestones.
 
-| Function | Notes |
+| Function | Description |
 |---|---|
-| `set_oracle(env, admin, oracle)` | External oracle contract adapter; signed `set_oracle_pubkey` / `set_price` flow is implemented today. |
-| `set_liquidation_threshold_bps(env, admin, bps)` | Configurable liquidation threshold (currently hardcoded at 8000 BPS). |
-| `set_close_factor_bps(env, admin, bps)` | Configurable close factor (currently hardcoded at 5000 BPS). |
-| `get_collateral_value(env, user)` | USD-denominated collateral value (requires oracle). |
-| `get_debt_value(env, user)` | USD-denominated debt value (requires oracle). |
-| `get_max_liquidatable_amount(env, user)` | Convenience helper for liquidators. |
-| `get_emergency_state(env)` | Public view for current lifecycle state (today exposed only via events). |
 | `deposit_collateral(env, user, asset, amount)` | Multi-asset collateral support. |
-| `data_store_init / data_save / data_load / data_backup / data_restore` | Persistent data-store management helpers. |
 
 ---
 
@@ -296,6 +305,7 @@ sequenceDiagram
 - [Storage Layout](../../../../docs/storage.md) — persistent key schema and TTL policy.
 - [Developer Glossary](../../../../docs/glossary.md) — key protocol terms and numeric scales.
 - [Interest Rate Kink Model](RATE_MODEL.md) — borrow rate curve formula, parameters, and worked examples.
+- [Debt Accrual State Machine](DEBT_ACCRUAL_STATE_MACHINE.md) — borrow, accrue, settle, repay, and rate-cache ordering rules.
 - [Liquidation Accrual Notes](LIQUIDATE_ACCRUAL_NOTES.md) — details the settle-then-liquidate ordering guarantee and worked numeric examples.
 - [Liquidation Mechanics](../LIQUIDATION_MECHANICS.md) — detailed liquidation formulas and examples.
 

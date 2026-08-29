@@ -143,23 +143,37 @@ rotation must be authorized by that new current set for epoch `9`.
 
 Inbound processing calls `validate_inbound_epoch(signed_epoch)` to prevent
 messages from a retired validator-set epoch from being replayed after a
-rotation.
+rotation (#1147).
 
 ```text
-signed_epoch < bridge.epoch  => reject as a retired validator set
-signed_epoch == bridge.epoch => pass this retired-set check
+signed_epoch < bridge.epoch                                   => reject (retired validator set)
+signed_epoch > bridge.epoch + INBOUND_EPOCH_TOLERANCE         => reject (not-yet-active validator set)
+otherwise                                                     => accept the inbound message at this narrow guard
 ```
 
-In the worked example, once epoch `8` is installed, inbound messages carrying
-epoch `7` or earlier are rejected. Messages carrying epoch `8` pass this
-check. Signatures from set `S` also cannot authorize a later rotation because
-proof signers must belong to the current set, which is now the proposed set.
+The upper bound is just as important as the lower bound. Without it, an
+attacker who knows a future not-yet-rotated validator set can pre-collect a
+message, hold it, and replay it once the future epoch actually arrives. By
+rejecting such messages now, the bridge ensures any inbound under a future
+epoch must be resubmitted through the new active set rather than replayed
+from out-of-band storage.
 
-`validate_inbound_epoch` is deliberately a retired-set guard, not a complete
-inbound authentication routine: the current implementation also returns
-success for a future epoch. Callers must still verify the message signature,
-bridge/domain binding, and any policy that requires the inbound epoch to equal
-the current epoch.
+In the worked example, once epoch `8` is installed, inbound messages carrying
+epoch `7` or earlier are rejected (`retired validator set`); messages carrying
+epoch `9` or later are rejected (`not-yet-active`); only epoch `8` is admitted
+at this guard. Signatures from set `S` also cannot authorize a later rotation
+because proof signers must belong to the current set, which is now the
+proposed set.
+
+`INBOUND_EPOCH_TOLERANCE` is a module-level constant in `src/lib.rs`. Its
+default value is `0` (strict equality); epochs are discrete sequence
+numbers, not timestamps, so there is no clock-skew justification for a
+positive value. Raising the tolerance is a security-sensitive change.
+
+`validate_inbound_epoch` is deliberately a narrow active-epoch guard, not a
+complete inbound authentication routine. Callers must still verify the
+message signature, bridge/domain binding, and any policy that requires
+the inbound epoch to equal the current epoch.
 
 ## Operator checklist
 

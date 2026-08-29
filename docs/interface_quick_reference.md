@@ -40,6 +40,7 @@
 | `borrow` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — debt principal |
 | `repay` | `(user: Address, amount: i128)` | `user` | `Result<i128, LendingError>` — remaining debt principal |
 | `liquidate` | `(liquidator: Address, borrower: Address, amount: i128)` | `liquidator` | `Result<i128, LendingError>` — debt actually repaid |
+| `receive` | `(token_asset: Address, from: Address, amount: i128, payload: Vec<Val>)` | `from` | `Result<(), LendingError>` — pull-based deposit or repay dispatch |
 
 ### Flash Loans
 
@@ -76,8 +77,31 @@
 | `set_debt_ceiling` | `(ceiling: i128)` | admin | `Result<(), LendingError>` |
 | `set_flash_fee` | `(fee_bps: i128)` | admin | `Result<(), LendingError>` |
 | `set_emergency_state` | `(new_state: EmergencyState)` | admin; guardian may set `Shutdown` | `()` |
-| `set_asset_params` | `(admin: Address, asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128)` | admin | `Result<(), LendingError>` |
+| `set_pause` | `(pause_type: PauseType, paused: bool, ttl_ledgers: u32)` | admin or guardian | `Result<(), LendingError>` |
+| `get_pause_state` | `(pause_type: PauseType)` | — | `bool` |
+| `set_asset_params` | `(admin: Address, asset: Address, ltv_bps: i128, liquidation_threshold_bps: i128, debt_ceiling: i128, borrow_cap: i128, supply_cap: i128)` | admin | `Result<(), LendingError>` |
 | `get_asset_params` | `(asset: Address)` | — | `Option<AssetParams>` |
+| `set_close_factor_bps` | `(close_factor_bps: i128)` | admin | `Result<(), LendingError>` |
+| `get_close_factor_bps` | `()` | — | `i128` |
+| `set_liquidation_incentive_bps` | `(incentive_bps: i128)` | admin | `Result<(), LendingError>` |
+| `get_liquidation_incentive_bps` | `()` | — | `i128` |
+| `set_liquidation_threshold_bps` | `(threshold_bps: i128)` | admin | `Result<(), LendingError>` |
+
+### Config Store
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `config_set` | `(key: Symbol, value: Bytes)` | admin | `Result<(), LendingError>` |
+| `config_get` | `(key: Symbol)` | — | `Option<Bytes>` |
+| `config_backup` | `(name: Symbol)` | admin | `Result<(), LendingError>` |
+| `config_restore` | `(name: Symbol)` | admin | `Result<(), LendingError>` |
+
+### Governance Audit
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `get_governance_audit_count` | `()` | — | `u64` |
+| `get_governance_audit_entries` | `(limit: u64)` | — | `Vec<AuditLogEntry>` |
 
 ### Cross-Asset User Operations
 
@@ -241,12 +265,8 @@ The following functions are **not** present in `src/lib.rs` and should not be ca
 |---|---|
 | `get_emergency_state()` | Planned public view (state visible via events today) |
 | `set_oracle(admin, oracle)` | Planned external oracle contract adapter |
-| `set_liquidation_threshold_bps(admin, bps)` | Planned — currently hardcoded 8000 BPS |
-| `set_close_factor_bps(admin, bps)` | Planned — currently hardcoded 5000 BPS |
 | `get_max_liquidatable_amount(user)` | Planned convenience helper |
-| `upgrade_*` functions | Planned multisig upgrade governance |
 | `data_*` functions | Planned persistent data-store management |
-| `BorrowEvent`, `RepayEvent`, `LiquidationEvent` | Planned contract events |
 
 ---
 

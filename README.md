@@ -70,7 +70,7 @@ cargo install --locked soroban-cli
 
 2. **Navigate to the contract directory**:
    ```bash
-   cd stellar-lend/contracts/hello-world
+   cd stellar-lend/contracts/lending
    ```
 
 3. **Verify your setup**:
@@ -99,7 +99,7 @@ For deployment to networks, you may need:
 Build the contract using the Soroban CLI:
 
 ```bash
-# From stellar-lend/contracts/hello-world/
+# From stellar-lend/contracts/lending/
 stellar contract build
 
 # Or using Cargo directly
@@ -111,7 +111,7 @@ make build
 
 The compiled WASM file will be located at:
 ```
-target/wasm32-unknown-unknown/release/hello_world.wasm
+target/wasm32-unknown-unknown/release/stellarlend_lending.wasm
 ```
 
 ### Testing
@@ -119,7 +119,7 @@ target/wasm32-unknown-unknown/release/hello_world.wasm
 Run the test suite:
 
 ```bash
-# From stellar-lend/contracts/hello-world/
+# From stellar-lend/contracts/lending/
 cargo test
 
 # Run with verbose output
@@ -160,7 +160,7 @@ stellar contract build
 
 # Deploy to testnet (requires testnet account)
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/hello_world.wasm \
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending.wasm \
   --network testnet \
   --source <your-testnet-keypair>
 
@@ -179,11 +179,11 @@ stellar contract invoke \
 # Build and optimize
 stellar contract build
 stellar contract optimize \
-  --wasm target/wasm32-unknown-unknown/release/hello_world.wasm
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending.wasm
 
 # Deploy (use optimized WASM)
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/hello_world-optimized.wasm \
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending-optimized.wasm \
   --network mainnet \
   --source <your-mainnet-keypair>
 ```
@@ -206,29 +206,22 @@ stellarlend-contracts/
 └── stellar-lend/            # Main contract workspace
     ├── Cargo.toml           # Workspace configuration
     └── contracts/
-        ├── lending/         # Main StellarLend contract (Single Canonical Tree)
-        │   ├── Cargo.toml
-        │   ├── Makefile     # Build/test shortcuts
-        │   ├── README.md    # Contract-specific docs
-        │   └── src/
-        │       ├── lib.rs   # Main contract entry point
-        │       ├── rounding_strategy.rs # Mathematical utilities
-        │       └── interest_drift_regression_test.rs # Regression tests
-        └── hello-world/     # Minimal placeholder contract
+        └── lending/         # Canonical StellarLend contract (79 .rs files)
             ├── Cargo.toml
-            ├── Makefile
-            ├── README.md
+            ├── Makefile     # Build/test shortcuts
+            ├── README.md    # Contract-specific docs
             └── src/
-                └── lib.rs
+                ├── lib.rs, debt.rs, cross_asset.rs, rate_model.rs,
+                ├── math.rs, events.rs, upgrade.rs,
+                ├── rounding_strategy.rs,
+                └── 71 test/*_test.rs files
 ```
 
 ---
 
 ## Contract Modules
 
-This workspace contains two separate contract crates whose module layouts should not be
-conflated: the canonical `lending` contract, and the `hello-world` contract, which is a
-larger, mostly-independent parallel implementation, not a "minimal placeholder" for `lending`.
+The canonical contract lives at `stellar-lend/contracts/lending/`. Its module layout:
 
 ### `lending` (`stellar-lend/contracts/lending/src/`) — the canonical contract
 
@@ -246,28 +239,7 @@ files in this crate. The supporting modules that do exist are:
 - **`events.rs`**: Versioned event structs/emitters for deposit/withdraw/borrow/repay/liquidate.
 - **`upgrade.rs`**: Self-contained timelocked multisig upgrade governance (propose/approve/execute).
 
-### `hello-world` (`stellar-lend/contracts/hello-world/src/`) — a separate, parallel contract
-
-Despite its name, this is a large, independently-evolving contract with its own
-deposit/borrow/repay/withdraw/liquidate/oracle/governance/AMM/bridge logic. It shares no
-Cargo dependency and no code with `lending`, and several of its files are still one-line
-stubs rather than real implementations:
-
-- **Implemented**: `oracle.rs` (primary/fallback oracle + AMM-TWAP fallback), `governance.rs`
-  (DAO-style proposal/vote/queue/execute + guardian recovery), `amm.rs` / `amm_twap.rs`
-  (AMM reserve and TWAP bookkeeping), `bridge.rs` (guardian-gated freeze switch),
-  `cross_asset.rs` (multi-asset lending), `risk_management.rs` / `risk_params.rs`
-  (collateral ratio, liquidation threshold, close factor config), `interest_rate.rs`,
-  `admin.rs`, `withdraw.rs`, `repay.rs`, `flash_loan.rs`.
-- **Stubs, not yet implemented**: `deposit.rs`, `borrow.rs`, `liquidate.rs`, `analytics.rs`,
-  `multisig.rs`, `recovery.rs` (one-line `// Stub module` placeholders), plus `reentrancy.rs`
-  and `reserve.rs`, which are currently empty files. The crate's own
-  bare-bones `deposit`/`withdraw`/`borrow`/`repay` demo entrypoints (used by its basic test
-  suite) are implemented directly in `hello-world`'s own `lib.rs`, independently of these stub
-  files.
-
-If you're integrating with StellarLend, `lending` is the contract you want — see its own
-[README](stellar-lend/contracts/lending/README.md) for the full, accurate interface.
+See the contract's own [README](stellar-lend/contracts/lending/README.md) for the full, accurate interface.
 
 ---
 
@@ -333,7 +305,7 @@ For exact signatures and planned-but-not-shipping names, see
 - **[Storage Layout and Migration](docs/storage.md)**: Detailed documentation of the contract's persistent storage structure, keys, types, and upgrade/migration strategies
 - **[Cross-Asset Rules](docs/CROSS_ASSET_RULES.md)**: Borrowing/repay rules, view guarantees (G-1..G-10), and invariants for multi-asset positions
 - **[Repay Semantics](stellar-lend/docs/REPAY_SEMANTICS.md)**: Both repay paths (single-asset vs cross-asset), overpay behaviour, interest ordering, and dust prevention
-- **[Contract README](stellar-lend/contracts/hello-world/README.md)**: Contract-specific documentation and entrypoint reference
+- **[Contract README](stellar-lend/contracts/lending/README.md)**: Contract-specific documentation and entrypoint reference
 - **[CI/CD Overview](docs/CI_OVERVIEW.md)**: Continuous integration setup and local reproduction guide
 - **[Example Reports](docs/examples/)**: Example JSON outputs for protocol and user analytics
 

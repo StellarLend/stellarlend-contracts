@@ -7,6 +7,16 @@ use stellar_lend_common::BPS_DENOM;
 
 pub const DEFAULT_APR_BPS: i128 = 500;
 
+/// Fixed-point scale for the global borrow index (10^7 = 7 decimal places).
+///
+/// The index starts at `INDEX_SCALE` (representing 1.0) and grows
+/// monotonically as interest accrues.  A position's current debt is:
+///
+/// ```text
+/// current_debt = principal × current_index / borrow_index_snapshot
+/// ```
+pub const INDEX_SCALE: i128 = 10_000_000;
+
 /// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
 pub const DEFAULT_RESERVE_FACTOR_BPS: u32 = 0;
 
@@ -21,16 +31,6 @@ pub struct InterestSplit {
 }
 
 // ─── Core position type ───────────────────────────────────────────────────────
-
-/// Fixed-point scale for the global borrow index (10^7 = 7 decimal places).
-///
-/// The index starts at `INDEX_SCALE` (representing 1.0) and grows
-/// monotonically as interest accrues.  A position's current debt is:
-///
-/// ```text
-/// current_debt = principal × current_index / borrow_index_snapshot
-/// ```
-pub const INDEX_SCALE: i128 = 10_000_000; // 10^7
 
 /// Seconds in a 365-day year, shared with rounding_strategy.
 const SECONDS_PER_YEAR: u64 = 365 * 24 * 60 * 60; // 31_536_000
@@ -329,10 +329,53 @@ pub fn settle_position(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Legacy per-position elapsed-time helpers (kept for backward compatibility
-// with existing tests and the rounding_strategy module)
-// ---------------------------------------------------------------------------
+/// Computes utilization and borrow rate from a preloaded aggregate snapshot.
+///
+/// Panics on arithmetic overflow, matching the existing borrow-rate API shape
+/// while keeping the underlying arithmetic checked.
+pub(crate) fn compute_borrow_rate_from_snapshot(
+    env: &Env,
+    snapshot: &RateSnapshot,
+) -> BorrowRateComputation {
+    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
+}
+
+fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
+    let snapshot = load_rate_snapshot(env);
+    compute_borrow_rate_from_snapshot(env, &snapshot)
+}
+
+/// Returns the global borrow rate, computing it at most once per ledger.
+///
+/// The temporary-storage key includes `env.ledger().sequence()`, so advancing
+/// the ledger naturally misses the previous cache entry and recomputes from a
+/// fresh `RateSnapshot`. Each cache miss also writes one utilization sample for
+/// the current ledger into the bounded utilization-history ring buffer.
+pub fn cached_borrow_rate(env: &Env) -> i128 {
+    let ledger_sequence = env.ledger().sequence();
+    let key = DataKey::BorrowRateCache(ledger_sequence);
+
+    if let Some(cache) = env
+        .storage()
+        .temporary()
+        .get::<DataKey, BorrowRateCache>(&key)
+    {
+        if cache.ledger_sequence == ledger_sequence {
+            return cache.rate_bps;
+        }
+    }
+
+    let computation = uncached_borrow_rate_computation(env);
+    write_utilization_sample(env, computation.utilization_bps);
+    let cache = BorrowRateCache {
+        ledger_sequence,
+        rate_bps: computation.rate_bps,
+    };
+    env.storage().temporary().set(&key, &cache);
+    computation.rate_bps
+}
+
+// ─── Time helpers ─────────────────────────────────────────────────────────────
 
 /// Compute elapsed seconds between two timestamps (saturating).
 pub fn elapsed_seconds(now: u64, last_update: u64) -> u64 {
@@ -560,24 +603,43 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
     compute_borrow_rate_from_snapshot(env, &snapshot).rate_bps
 }
 
+/// Compute utilization (bps) from an aggregate snapshot, bounded to
+/// `[0, BPS_DENOM]` (0 %..100 %).
+///
+/// # Boundedness invariant
+///
+/// When debt transiently exceeds supply (e.g. during bad-debt, partial
+/// write-off, or a supply draw-down that outpaces debt), the raw `debt / supply`
+/// ratio can exceed 100 %. The rate model is only well-defined on `[0, 100 %]`,
+/// so the value is capped at 100 % before it reaches
+/// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
+/// bounded and deterministic at maximum utilization instead of feeding an
+/// out-of-range utilization to the model.
+pub(crate) fn compute_utilization_bps(
+    snapshot: &RateSnapshot,
+) -> Result<i128, DebtError> {
+    if snapshot.total_supply <= 0 {
+        return Ok(0);
+    }
+    snapshot
+        .total_debt
+        .checked_mul(BPS_DENOM)
+        .ok_or(DebtError::Overflow)?
+        .checked_div(snapshot.total_supply)
+        .ok_or(DebtError::Overflow)
+        .map(|raw| raw.min(BPS_DENOM))
+}
+
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.
 ///
 /// Utilization uses checked arithmetic and falls back to zero when supply is
 /// non-positive. Overflow in `debt * 10_000` returns [`DebtError::Overflow`].
+/// Utilization is bounded to `[0, BPS_DENOM]`; see [`compute_utilization_bps`].
 pub(crate) fn try_compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
 ) -> Result<BorrowRateComputation, DebtError> {
-    let utilization_bps = if snapshot.total_supply > 0 {
-        snapshot
-            .total_debt
-            .checked_mul(BPS_DENOM)
-            .ok_or(DebtError::Overflow)?
-            .checked_div(snapshot.total_supply)
-            .ok_or(DebtError::Overflow)?
-    } else {
-        0
-    };
+    let utilization_bps = compute_utilization_bps(snapshot)?;
 
     let rate_bps = match &snapshot.params {
         Some(p) => {
@@ -591,52 +653,6 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
         utilization_bps,
         rate_bps,
     })
-}
-
-/// Computes utilization and borrow rate from a preloaded aggregate snapshot.
-///
-/// Panics on arithmetic overflow, matching the existing borrow-rate API shape
-/// while keeping the underlying arithmetic checked.
-pub(crate) fn compute_borrow_rate_from_snapshot(
-    env: &Env,
-    snapshot: &RateSnapshot,
-) -> BorrowRateComputation {
-    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
-}
-
-fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
-    let snapshot = load_rate_snapshot(env);
-    compute_borrow_rate_from_snapshot(env, &snapshot)
-}
-
-/// Returns the global borrow rate, computing it at most once per ledger.
-///
-/// The temporary-storage key includes `env.ledger().sequence()`, so advancing
-/// the ledger naturally misses the previous cache entry and recomputes from a
-/// fresh `RateSnapshot`. Each cache miss also writes one utilization sample for
-/// the current ledger into the bounded utilization-history ring buffer.
-pub fn cached_borrow_rate(env: &Env) -> i128 {
-    let ledger_sequence = env.ledger().sequence();
-    let key = DataKey::BorrowRateCache(ledger_sequence);
-
-    if let Some(cache) = env
-        .storage()
-        .temporary()
-        .get::<DataKey, BorrowRateCache>(&key)
-    {
-        if cache.ledger_sequence == ledger_sequence {
-            return cache.rate_bps;
-        }
-    }
-
-    let computation = uncached_borrow_rate_computation(env);
-    write_utilization_sample(env, computation.utilization_bps);
-    let cache = BorrowRateCache {
-        ledger_sequence,
-        rate_bps: computation.rate_bps,
-    };
-    env.storage().temporary().set(&key, &cache);
-    computation.rate_bps
 }
 
 /// Settle accrued interest and return both the updated `DebtPosition` **and**

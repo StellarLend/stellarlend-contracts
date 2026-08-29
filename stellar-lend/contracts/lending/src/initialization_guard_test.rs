@@ -574,6 +574,8 @@ fn test_normal_operations_succeed_after_initialize() {
     let remaining = client.repay(&user, &20);
     assert_eq!(remaining, 30);
 
-    let after_withdraw = client.withdraw(&user, &10);
+    let after_withdraw = client
+        .withdraw(&user, &10)
+        .expect("withdraw should succeed");
     assert_eq!(after_withdraw, 190);
 }

@@ -4,12 +4,24 @@ members = [
   "contracts/amm",
   "contracts/bridge",
   "contracts/common",
-  "contracts/hello-world",
   "contracts/lending",
   "contracts/vesting",
   "contracts/multisig",
   "cross_asset_test",
 ]
+# NOTE: `contracts/hello-world` was removed from the workspace (and deleted
+# outright) rather than fixed. It was a stale, unmaintained near-duplicate of
+# `contracts/lending` (its own `src/lib.rs` diverges from
+# `contracts/lending/src/lib.rs` by ~5,400 lines and most files under its
+# `src/` mirror lending's borrow/repay/liquidate/governance/oracle modules
+# almost verbatim, complete with its own accompanying docs), left over from
+# an earlier repo layout. It did not compile (e.g. a literal unmatched-brace
+# syntax error in `repay.rs`, the same bad-merge corruption pattern found and
+# fixed elsewhere in this PR) and, given the size of the divergence, properly
+# reconciling it with `contracts/lending` was not a cheap fix -- the real,
+# actively-maintained lending contract already lives at `contracts/lending`
+# with full test coverage. Removed entirely per the "delete rather than
+# deep-fix" policy for this CI-green pass.
 
 [workspace.dependencies]
 # Keep shared Soroban and test dependency versions pinned in one place.

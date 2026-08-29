@@ -16,7 +16,7 @@
 
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, IntoVal};
 
 const INIT_A: i128 = 1_000_000;
 const INIT_B: i128 = 2_000_000;
@@ -161,6 +161,12 @@ fn test_remove_liquidity_below_floor_a_rejected() {
     }]);
     client.set_min_liquidity(&admin, &2_000_001_i128);
 
+    // `mock_auths` above narrowed authorization to just the
+    // `set_min_liquidity` invocation; restore blanket auth mocking so the
+    // `lp.require_auth()` inside `remove_liquidity` below succeeds and we
+    // actually reach the floor check.
+    env.mock_all_auths();
+
     let balance = client.get_lp_balance(&lp);
     let err = client.try_remove_liquidity(&lp, &balance);
     assert!(
@@ -179,8 +185,14 @@ fn test_remove_liquidity_floor_zero_still_works() {
     let balance = client.get_lp_balance(&lp);
     client.remove_liquidity(&lp, &balance);
     let (ra1, rb1) = client.get_reserves();
-    assert!(ra1 < ra0, "reserve A should decrease after burning LP shares");
-    assert!(rb1 < rb0, "reserve B should decrease after burning LP shares");
+    assert!(
+        ra1 < ra0,
+        "reserve A should decrease after burning LP shares"
+    );
+    assert!(
+        rb1 < rb0,
+        "reserve B should decrease after burning LP shares"
+    );
     let k1 = ra1.checked_mul(rb1).unwrap();
     assert!(k1 <= k0, "k must not increase on removal");
 }
@@ -239,7 +251,11 @@ fn test_swap_a_for_b_above_floor_b_allowed() {
     // amount_in = 1_000 → amount_out ≈ 1_500 → new_rb above floor.
     assert!(client.swap_a_for_b(&1_000_i128) > 0);
     let (_ra, rb) = client.get_reserves();
-    assert!(rb >= 2_500_000, "reserve B should remain >= floor: rb={}", rb);
+    assert!(
+        rb >= 2_500_000,
+        "reserve B should remain >= floor: rb={}",
+        rb
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +306,11 @@ fn test_swap_b_for_a_above_floor_a_allowed() {
     // amount_in = 1_000 → amount_out ≈ 333 → new_ra above floor.
     assert!(client.swap_b_for_a(&1_000_i128) > 0);
     let (ra, _rb) = client.get_reserves();
-    assert!(ra >= 1_500_000, "reserve A should remain >= floor: ra={}", ra);
+    assert!(
+        ra >= 1_500_000,
+        "reserve A should remain >= floor: ra={}",
+        ra
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -305,5 +325,10 @@ fn test_k_invariant_non_decreasing_on_swap() {
     let _ = client.swap_a_for_b(&10_000_i128);
     let (ra1, rb1) = client.get_reserves();
     let k1 = ra1.checked_mul(rb1).unwrap();
-    assert!(k1 >= k0, "k must not decrease on a permitted swap: {} -> {}", k0, k1);
+    assert!(
+        k1 >= k0,
+        "k must not decrease on a permitted swap: {} -> {}",
+        k0,
+        k1
+    );
 }

@@ -17,6 +17,8 @@ fn test_error_codes_stability() {
     assert_eq!(AmmPoolError::InvalidBurnAmount as u32, 12);
     assert_eq!(AmmPoolError::ZeroReserve as u32, 13);
     assert_eq!(AmmPoolError::InsufficientLpBalance as u32, 14);
+    assert_eq!(AmmPoolError::ZeroOutput as u32, 15);
+    assert_eq!(AmmPoolError::AmountBelowMinSwapIn as u32, 16);
 }
 
 #[test]
@@ -37,25 +39,29 @@ fn test_error_paths() {
     let res = client.try_swap_a_for_b(&100);
     assert_eq!(res, Err(Ok(AmmPoolError::EmptyPool)));
 
-    // Test InsufficientReserves in remove_liquidity (burns shares with no balance)
-    client.init_pool(&1000_i128, &1000_i128, &ta, &tb);
-    let res = client.try_remove_liquidity(&caller, &2000_i128);
+    client.init_pool(&1000, &1000, &ta, &tb);
+
+    // Test InsufficientLpBalance in remove_liquidity: `caller` never
+    // deposited, so any positive burn exceeds their (zero) LP balance.
+    let res = client.try_remove_liquidity(&caller, &2000);
     assert_eq!(res, Err(Ok(AmmPoolError::InsufficientLpBalance)));
 
-    // Test InvalidBurnAmount in remove_liquidity (zero shares)
-    let res = client.try_remove_liquidity(&caller, &0_i128);
-    assert_eq!(res, Err(Ok(AmmPoolError::InvalidBurnAmount)));
+    // Test Overflow in add_liquidity (hits checked_add before token transfer).
+    // reserve_b = 0 keeps init_pool on the b==0 branch (no a*b product, so
+    // no overflow there); reserve_a = i128::MAX then overflows the very
+    // first checked_add in add_liquidity once a nonzero add_a is applied.
+    client.init_pool(&i128::MAX, &0, &ta, &tb);
+    let res = client.try_add_liquidity(&caller, &2000, &2000);
+    assert_eq!(res, Err(Ok(AmmPoolError::Overflow)));
 
-    // Test InsufficientLiquidityMinted in add_liquidity (tiny deposit to seeded pool)
-    // Init pool with small reserves and zero LP supply, then try a micro deposit.
-    // sqrt(1*1)=1 < MINIMUM_LIQUIDITY, so first-deposit path rejects it.
-    client.init_pool(&0_i128, &0_i128, &ta, &tb);
-    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128);
-    assert_eq!(res, Err(Ok(AmmPoolError::InsufficientLiquidityMinted)));
+    // Test InvariantViolation in add_liquidity (hits assert_k_monotonic before token transfer)
+    client.init_pool(&1000, &1000, &ta, &tb);
+    let res = client.try_add_liquidity(&caller, &-1, &0);
+    assert_eq!(res, Err(Ok(AmmPoolError::InvariantViolation)));
 
     // Test ReentrantFlashSwap
-    client.init_pool(&1000_i128, &1000_i128, &ta, &tb);
-    client.flash_swap_a_for_b(&100_i128, &Bytes::new(&env));
-    let res = client.try_swap_a_for_b(&100_i128);
+    client.init_pool(&1000, &1000, &ta, &tb);
+    client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
+    let res = client.try_swap_a_for_b(&100);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }

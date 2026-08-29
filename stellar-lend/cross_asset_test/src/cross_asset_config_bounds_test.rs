@@ -7,10 +7,8 @@
 //! - `price_decimals` must not be zero.
 //! - Valid updates are applied and a `ConfigUpdatedEvent` is emitted.
 
-#![cfg(test)]
-
 use soroban_sdk::{
-    testutils::{Address as _, Events as _},
+    testutils::{Address as _, Events},
     Address, Env,
 };
 
@@ -46,6 +44,7 @@ fn default_config() -> AssetConfig {
         can_borrow: true,
         price: 1_000_000,
         price_decimals: 6,
+        last_update_ts: 0,
     }
 }
 
@@ -237,7 +236,16 @@ fn test_update_rejects_negative_factor() {
         initialize_asset(&env, None, default_config()).unwrap();
 
         let r = update_asset_config(
-            &env, &admin, None, Some(-1), None, None, None, None, None, None,
+            &env,
+            &admin,
+            None,
+            Some(-1),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert_eq!(r, Err(CrossAssetError::InvalidCollateralFactor));
     });
@@ -259,7 +267,16 @@ fn test_update_rejects_zero_decimals() {
         initialize_asset(&env, None, default_config()).unwrap();
 
         let r = update_asset_config(
-            &env, &admin, None, None, None, None, None, None, None, Some(0),
+            &env,
+            &admin,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(0),
         );
         assert_eq!(r, Err(CrossAssetError::ZeroDecimals));
     });
@@ -277,7 +294,16 @@ fn test_update_rejects_decimals_above_38() {
         initialize_asset(&env, None, default_config()).unwrap();
 
         let r = update_asset_config(
-            &env, &admin, None, None, None, None, None, None, None, Some(39),
+            &env,
+            &admin,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(39),
         );
         assert_eq!(r, Err(CrossAssetError::InvalidDecimals));
     });
@@ -333,10 +359,7 @@ fn test_update_all_none_is_noop() {
         set_admin(&env, &admin);
         initialize_asset(&env, None, default_config()).unwrap();
 
-        update_asset_config(
-            &env, &admin, None, None, None, None, None, None, None, None,
-        )
-        .unwrap();
+        update_asset_config(&env, &admin, None, None, None, None, None, None, None, None).unwrap();
 
         let cfg = get_asset_config_by_address(&env, None).unwrap();
         assert_eq!(cfg.collateral_factor_bps, 7_500);
@@ -359,6 +382,13 @@ fn test_update_emits_config_updated_event() {
         set_admin(&env, &admin);
         initialize_asset(&env, None, default_config()).unwrap();
 
+        // `initialize_asset` itself publishes an `AssetInitializedEvent`, so
+        // the baseline must be captured *after* it -- events accumulate
+        // across calls within the same `env.as_contract()` frame (there is
+        // no separate top-level-invocation boundary here to reset the
+        // buffer), unlike, say, a fresh `Client::try_x()` call.
+        let events_before = env.events().all().events().len();
+
         update_asset_config(
             &env,
             &admin,
@@ -373,8 +403,10 @@ fn test_update_emits_config_updated_event() {
         )
         .unwrap();
 
-        // The SDK test harness collects published events; assert one was emitted.
-        assert_eq!(env.events().all().events().len(), 1);
+        // The SDK test harness collects published events; assert exactly one
+        // new event was emitted by this update call.
+        // Soroban SDK 25: Events::all() returns ContractEvents (use .events().len()).
+        assert_eq!(env.events().all().events().len(), events_before + 1);
     });
 }
 
@@ -387,6 +419,12 @@ fn test_failed_update_emits_no_event() {
         let admin = Address::generate(&env);
         set_admin(&env, &admin);
         initialize_asset(&env, None, default_config()).unwrap();
+
+        // `initialize_asset` itself publishes an event; capture the
+        // baseline after it (see the comment in
+        // `test_update_emits_config_updated_event`) so this test only
+        // checks that the *rejected* update below adds no new event.
+        let events_before = env.events().all().events().len();
 
         // Attempt rejected update (LTV > threshold).
         let _ = update_asset_config(
@@ -402,7 +440,7 @@ fn test_failed_update_emits_no_event() {
             None,
         );
 
-        assert_eq!(env.events().all().events().len(), 0);
+        assert_eq!(env.events().all().events().len(), events_before);
     });
 }
 

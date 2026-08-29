@@ -7,10 +7,8 @@
 //! - Large amount near pool depletion behaves correctly (no panic, sensible output).
 //! - Quoted fee matches `compute_fee` output directly.
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient, AmmPoolError, DEFAULT_FEE_BPS};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, Env};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -246,9 +244,12 @@ fn test_quoted_fee_zero_bps() {
     let amount_in: i128 = 5_000;
     let (_env, client) = setup(100_000, 100_000);
 
-    let quote = client.get_swap_quote(&amount_in, &0_i128, &true);
+    let quote = client.get_swap_quote(&amount_in, &0, &true);
     assert_eq!(quote.fee, 0, "zero fee_bps must yield fee=0 in quote");
-    assert!(quote.amount_out > 0, "zero-fee quote must still produce output");
+    assert!(
+        quote.amount_out > 0,
+        "zero-fee quote must still produce output"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +290,7 @@ fn test_quote_does_not_mutate_reserves() {
     let (_env, client) = setup(ra, rb);
     let fee_bps = client.get_fee_bps();
 
-    let _quote = client.get_swap_quote(&50_000_i128, &fee_bps, &true);
+    let _quote = client.get_swap_quote(&50_000, &fee_bps, &true);
 
     let (ra_after, rb_after) = client.get_reserves();
     assert_eq!(ra_after, ra, "get_swap_quote must not mutate reserve_a");

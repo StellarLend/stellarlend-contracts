@@ -11,6 +11,7 @@ minting, and flash swaps.
 | Document | Description |
 |---|---|
 | [AMM_MATH.md](./AMM_MATH.md) | Constant-product formula derivation, fee model, and worked examples |
+| [INVERSE_SWAP_MATH.md](./INVERSE_SWAP_MATH.md) | Inverse swap (`inverse_swap_in`) derivation, rounding direction, and fee-independence with code-verified examples |
 | [FLASH_SWAP_PROTOCOL.md](./FLASH_SWAP_PROTOCOL.md) | **Flash-swap call sequence, verify-k invariant, reentrancy guard, rollback semantics** |
 | [SWAP_BOUND_INVARIANTS.md](./SWAP_BOUND_INVARIANTS.md) | Output-bound and k-monotonicity invariants proven by property tests |
 | [SWAP_SYMMETRY.md](./SWAP_SYMMETRY.md) | Forward/backward swap symmetry proofs |

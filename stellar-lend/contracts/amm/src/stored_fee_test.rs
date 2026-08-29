@@ -18,8 +18,6 @@
 //! | Swap reads stored fee (not caller-supplied)          | `test_swap_uses_stored_fee`           |
 //! | Fee accrual correct after admin sets non-default fee | `test_fee_accrual_with_stored_fee`    |
 
-#![cfg(test)]
-
 use crate::{AmmContract, AmmContractClient, AmmPoolError, DEFAULT_FEE_BPS, MAX_FEE_BPS};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -30,8 +28,8 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     let client = AmmContractClient::new(&env, &id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    let admin = Address::generate(&env);
     client.init_pool(&ra, &rb, &token_a, &token_b);
+    let admin = Address::generate(&env);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
@@ -73,7 +71,7 @@ fn test_set_and_get_fee_bps() {
 #[test]
 fn test_fee_bps_zero() {
     let (_env, client, admin) = setup_pool(10_000, 10_000);
-    client.set_fee_bps(&admin, &0_i128);
+    client.set_fee_bps(&admin, &0);
     assert_eq!(client.get_fee_bps(), 0);
 
     // A swap with zero fee should accrue nothing.

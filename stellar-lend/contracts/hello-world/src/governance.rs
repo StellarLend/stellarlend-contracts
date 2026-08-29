@@ -48,6 +48,17 @@ pub enum GovernanceError {
     InvalidConfig = 9,
     /// Total participation (yes + no votes) is below the configured quorum.
     QuorumNotMet = 10,
+    /// A recovery is currently in progress; threshold or guardian changes are
+    /// blocked until the recovery completes or is cancelled.
+    RecoveryInProgress = 11,
+    /// The requested guardian configuration would be invalid (e.g. threshold
+    /// of zero, threshold exceeding the guardian count, or a removal that
+    /// would make the current threshold unreachable).
+    InvalidGuardianConfig = 12,
+    /// The recovery request's `old_admin` no longer matches the current admin,
+    /// meaning the admin was changed after the recovery was started.  The
+    /// recovery must be restarted against the current admin.
+    RecoveryAdminMismatch = 13,
 }
 
 // ---------------------------------------------------------------------------
@@ -79,17 +90,21 @@ pub fn initialize(
     let config = GovernanceConfig {
         admin,
         vote_token: _vote_token,
-        voting_period: _voting_period.unwrap_or(604800),       // 7 days
-        execution_delay: _execution_delay.unwrap_or(86400),     // 1 day
-        quorum_bps: _quorum_bps.unwrap_or(5000),                // 50%
+        voting_period: _voting_period.unwrap_or(604800), // 7 days
+        execution_delay: _execution_delay.unwrap_or(86400), // 1 day
+        quorum_bps: _quorum_bps.unwrap_or(5000),         // 50%
         proposal_threshold: _proposal_threshold.unwrap_or(1000),
         timelock_duration: _timelock_duration.unwrap_or(86400), // 1 day
         default_voting_threshold: _default_voting_threshold.unwrap_or(5000), // 50%
         voters,
     };
 
-    env.storage().instance().set(&GovernanceDataKey::Config, &config);
-    env.storage().instance().set(&GovernanceDataKey::ProposalCounter, &0u64);
+    env.storage()
+        .instance()
+        .set(&GovernanceDataKey::Config, &config);
+    env.storage()
+        .instance()
+        .set(&GovernanceDataKey::ProposalCounter, &0u64);
 
     Ok(())
 }
@@ -151,8 +166,12 @@ pub fn create_proposal(
         no_votes: 0,
     };
 
-    env.storage().instance().set(&GovernanceDataKey::ProposalCounter, &new_id);
-    env.storage().instance().set(&GovernanceDataKey::Proposal(new_id), &proposal);
+    env.storage()
+        .instance()
+        .set(&GovernanceDataKey::ProposalCounter, &new_id);
+    env.storage()
+        .instance()
+        .set(&GovernanceDataKey::Proposal(new_id), &proposal);
 
     Ok(new_id)
 }
@@ -247,10 +266,7 @@ pub fn vote(
         .ok_or(GovernanceError::NotInitialized)?;
 
     // Eligibility check: admin, configured voter, or guardian.
-    if voter != config.admin
-        && !config.voters.contains(&voter)
-        && !is_guardian(env, &voter)
-    {
+    if voter != config.admin && !config.voters.contains(&voter) && !is_guardian(env, &voter) {
         return Err(GovernanceError::Unauthorized);
     }
 
@@ -385,10 +401,7 @@ pub fn get_config(env: &Env) -> Option<GovernanceConfig> {
 
 /// Return the governance admin address, or `None`.
 pub fn get_admin(env: &Env) -> Option<Address> {
-    let config: GovernanceConfig = env
-        .storage()
-        .instance()
-        .get(&GovernanceDataKey::Config)?;
+    let config: GovernanceConfig = env.storage().instance().get(&GovernanceDataKey::Config)?;
     Some(config.admin)
 }
 
@@ -436,11 +449,7 @@ pub fn set_multisig_config(
 // ---------------------------------------------------------------------------
 
 /// Add a guardian (admin only).
-pub fn add_guardian(
-    env: &Env,
-    caller: Address,
-    guardian: Address,
-) -> Result<(), GovernanceError> {
+pub fn add_guardian(env: &Env, caller: Address, guardian: Address) -> Result<(), GovernanceError> {
     caller.require_auth();
     let config: GovernanceConfig = env
         .storage()
@@ -472,6 +481,15 @@ pub fn add_guardian(
 }
 
 /// Remove a guardian (admin only).
+///
+/// # Safety guardrails
+///
+/// - Blocked while a recovery is in progress (`RecoveryInProgress`): removing
+///   a guardian mid-recovery could drop the approval count below the threshold
+///   and permanently stall the recovery.
+/// - Blocked if the removal would leave fewer guardians than the current
+///   threshold (`InvalidGuardianConfig`): this would make the threshold
+///   unreachable and brick future recoveries.
 pub fn remove_guardian(
     env: &Env,
     caller: Address,
@@ -488,17 +506,22 @@ pub fn remove_guardian(
         return Err(GovernanceError::Unauthorized);
     }
 
+    // Block removal while a recovery is in progress.
+    if env
+        .storage()
+        .instance()
+        .has(&GovernanceDataKey::RecoveryRequest)
+    {
+        return Err(GovernanceError::RecoveryInProgress);
+    }
+
     let mut gc: crate::storage::GuardianConfig = env
         .storage()
         .instance()
         .get(&GovernanceDataKey::GuardianConfig)
         .ok_or(GovernanceError::Unauthorized)?;
 
-    let new_guardians: Vec<Address> = gc
-        .guardians
-        .iter()
-        .filter(|g| g != guardian)
-        .collect();
+    let new_guardians: Vec<Address> = gc.guardians.iter().filter(|g| g != guardian).collect();
 
     gc.guardians = new_guardians;
     env.storage()
@@ -508,6 +531,14 @@ pub fn remove_guardian(
 }
 
 /// Set the guardian threshold (admin only).
+///
+/// # Safety guardrails
+///
+/// - Blocked while a recovery is in progress (`RecoveryInProgress`): changing
+///   the threshold mid-recovery could retroactively invalidate existing
+///   approvals or raise the bar high enough to brick the recovery.
+/// - `threshold` must be ≥ 1 (`InvalidGuardianConfig`).
+/// - `threshold` must not exceed the current guardian count (`InvalidGuardianConfig`).
 pub fn set_guardian_threshold(
     env: &Env,
     caller: Address,
@@ -524,6 +555,15 @@ pub fn set_guardian_threshold(
         return Err(GovernanceError::Unauthorized);
     }
 
+    // Block threshold changes while a recovery is in progress.
+    if env
+        .storage()
+        .instance()
+        .has(&GovernanceDataKey::RecoveryRequest)
+    {
+        return Err(GovernanceError::RecoveryInProgress);
+    }
+
     let mut gc: crate::storage::GuardianConfig = env
         .storage()
         .instance()
@@ -532,6 +572,12 @@ pub fn set_guardian_threshold(
             guardians: Vec::new(env),
             threshold: 1,
         });
+
+    // threshold = 0 is always invalid; threshold > guardian count is unreachable.
+    if threshold == 0 || threshold > gc.guardians.len() as u32 {
+        return Err(GovernanceError::InvalidGuardianConfig);
+    }
+
     gc.threshold = threshold;
     env.storage()
         .instance()
@@ -641,21 +687,31 @@ pub fn execute_recovery(env: &Env, executor: Address) -> Result<(), GovernanceEr
         .get(&GovernanceDataKey::Config)
         .ok_or(GovernanceError::NotInitialized)?;
 
+    if config.admin != request.old_admin {
+        return Err(GovernanceError::RecoveryAdminMismatch);
+    }
+
     config.admin = request.new_admin;
     env.storage()
         .instance()
         .set(&GovernanceDataKey::Config, &config);
 
     // Clean up recovery state.
-    env.storage().instance().remove(&GovernanceDataKey::RecoveryRequest);
-    env.storage().instance().remove(&GovernanceDataKey::RecoveryApprovals);
+    env.storage()
+        .instance()
+        .remove(&GovernanceDataKey::RecoveryRequest);
+    env.storage()
+        .instance()
+        .remove(&GovernanceDataKey::RecoveryApprovals);
 
     Ok(())
 }
 
 /// Return the current recovery request, or `None`.
 pub fn get_recovery_request(env: &Env) -> Option<RecoveryRequest> {
-    env.storage().instance().get(&GovernanceDataKey::RecoveryRequest)
+    env.storage()
+        .instance()
+        .get(&GovernanceDataKey::RecoveryRequest)
 }
 
 /// Return the current recovery approvals.
@@ -724,10 +780,7 @@ pub fn queue_proposal(
 
     // Mark as approved.
     proposal.outcome = Some(ProposalOutcome::Approved);
-    proposal.eta_ledger = env
-        .ledger()
-        .sequence()
-        .saturating_add(100); // Minimal timelock.
+    proposal.eta_ledger = env.ledger().sequence().saturating_add(100); // Minimal timelock.
 
     env.storage()
         .instance()

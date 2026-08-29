@@ -2,7 +2,7 @@
 
 StellarLend's lending contract enforces strict access control for all
 privileged operations. This document describes the initialisation boundary,
-the `require_admin` helper, and the two-step admin rotation pattern.
+the `assert_admin` helper, and the two-step admin rotation pattern.
 
 ---
 
@@ -23,30 +23,36 @@ initialize(env, admin)  →  Result<(), LendingError>
 after deployment could call `initialize` again with their own address and
 seize admin rights over the protocol.
 
-`initialize` does **not** call `require_auth` on the supplied `admin` address.
-This matches the conventional Soroban contract pattern where the deployer is
-trusted at construction time.
+`initialize` calls `admin.require_auth()` as its very first statement to
+prevent front-running: without it, any account that submits a transaction
+before the legitimate deployer could claim the admin role permanently.
 
 ---
 
-## `require_admin` helper
+## `assert_admin` helper
 
 ```rust
-fn require_admin(env: &Env) -> Result<Address, LendingError>
+pub(crate) fn assert_admin(env: &Env) -> Result<(), LendingError>
 ```
 
-This private helper is the single authoritative auth check for all privileged
-operations:
+This crate-private helper performs the canonical admin auth check:
 
 1. Load `DataKey::Admin` from instance storage.
-   - If missing → `Err(LendingError::NotInitialized)`.
+   - If missing → `Err(LendingError::NotInitialized)` (via `ok_or`, not a panic).
 2. Call `admin.require_auth()`.
    - Soroban will surface an auth failure if the transaction was not signed by
      the admin.
-3. Return `Ok(admin)` so callers can use the address if needed.
+3. Return `Ok(())`.
 
-Every privileged setter **must** call `require_admin` as its first statement,
-before reading or writing any protocol state.
+Note that `assert_admin` returns `Ok(())` — it does **not** return the admin
+`Address`. Callers that need the address (e.g., for audit logging) must load
+it from storage themselves.
+
+Several privileged entrypoints call `assert_admin` directly (e.g.,
+`set_oracle_pubkey`). Most other setters instead perform the same check
+**inline** — calling `require_initialized` and then loading the admin address
+and calling `require_auth` — because they need the address for audit-log
+records. Both patterns are equivalent in their auth guarantees.
 
 ---
 
@@ -54,13 +60,18 @@ before reading or writing any protocol state.
 
 | Entrypoint | Auth requirement |
 |---|---|
-| `set_min_borrow` | Admin only (`require_admin`) |
-| `set_debt_ceiling` | Admin only (`require_admin`) |
-| `set_flash_fee` | Admin only (`require_admin`) |
-| `set_guardian` | Admin only (`require_admin`) |
-| `propose_admin` | Admin only (`require_admin`) |
+| `set_min_borrow` | Admin only (inline `require_auth`) |
+| `set_debt_ceiling` | Admin only (inline `require_auth`) |
+| `set_flash_fee` | Admin only (inline `require_auth`) |
+| `set_guardian` | Admin only (inline `require_auth`) |
+| `propose_admin` | Admin only (inline `require_auth`) |
 | `accept_admin` | Pending admin (explicit `require_auth`) |
 | `set_emergency_state` | Admin **or** guardian (`require_auth` on guardian) |
+
+Most admin-only setters perform the auth check inline (loading the admin
+address and calling `require_auth`) rather than calling `assert_admin`
+directly, because they need the address for audit-log records. The auth
+guarantee is identical.
 
 ---
 
@@ -71,8 +82,9 @@ The protocol has a single super-admin whose address is stored under
 above.
 
 `get_admin()` returns `Address` and panics if `initialize` has not been called.
-Callers should use `try_get_admin()` if the contract may be uninitialized,
-which returns `Option<Address>`.
+Callers should use `get_admin_optional()` if the contract may be uninitialized,
+which returns `Option<Address>`. (Named to avoid colliding with the Soroban
+client-generated `try_get_admin` wrapper around `get_admin`.)
 
 ---
 
@@ -83,7 +95,7 @@ uncontrolled address:
 
 1. **Propose**: current admin calls `propose_admin(new_admin)`.
    - Stores `new_admin` under `DataKey::PendingAdmin`.
-   - Guarded by `require_admin`, so only the current admin can nominate a
+   - Guarded by `assert_admin`, so only the current admin can nominate a
      successor.
    - Re-proposing replaces any previously pending admin.
 2. **Accept**: `new_admin` calls `accept_admin()`.
@@ -175,12 +187,12 @@ private key in a hot path.
 ```
 initialize          ── no auth (deployer trusted)
 ─── already-initialized guard prevents re-init ───────────────────────────
-propose_admin       ── require_admin()
+propose_admin       ── assert_admin()
 accept_admin        ── PendingAdminNotSet if empty, else pending_admin.require_auth()
-set_min_borrow      ── require_admin()
-set_debt_ceiling    ── require_admin()
-set_flash_fee       ── require_admin()
-set_guardian        ── require_admin()
+set_min_borrow      ── assert_admin()
+set_debt_ceiling    ── assert_admin()
+set_flash_fee       ── assert_admin()
+set_guardian        ── assert_admin()
 set_emergency_state ── guardian.require_auth()  (guardian defaults to admin)
 ```
 

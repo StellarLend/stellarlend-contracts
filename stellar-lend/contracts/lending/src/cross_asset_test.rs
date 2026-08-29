@@ -427,7 +427,7 @@ fn test_set_asset_params_rejects_unauthorized() {
 #[test]
 #[should_panic(expected = "OperationPaused")]
 fn test_deposit_collateral_asset_paused() {
-    let (_env, client, _id, admin, user, asset_a, _asset_b) = setup();
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
     client.set_pause(&PauseType::Deposit, &true, &u32::MAX);
     client.deposit_collateral_asset(&user, &asset_a, &100i128);
 }
@@ -435,7 +435,7 @@ fn test_deposit_collateral_asset_paused() {
 #[test]
 #[should_panic(expected = "OperationPaused")]
 fn test_borrow_asset_paused() {
-    let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
+    let (_env, client, _id, _admin, user, asset_a, asset_b) = setup();
     client.deposit_collateral_asset(&user, &asset_b, &2i128);
     client.set_pause(&PauseType::Borrow, &true, &u32::MAX);
     client.borrow_asset(&user, &asset_a, &100i128);
@@ -444,7 +444,7 @@ fn test_borrow_asset_paused() {
 #[test]
 #[should_panic(expected = "OperationPaused")]
 fn test_repay_asset_paused() {
-    let (_env, client, _id, admin, user, asset_a, asset_b) = setup();
+    let (_env, client, _id, _admin, user, asset_a, asset_b) = setup();
     client.deposit_collateral_asset(&user, &asset_b, &2i128);
     client.borrow_asset(&user, &asset_a, &100i128);
     client.set_pause(&PauseType::Repay, &true, &u32::MAX);
@@ -454,7 +454,7 @@ fn test_repay_asset_paused() {
 #[test]
 #[should_panic(expected = "OperationPaused")]
 fn test_withdraw_asset_paused() {
-    let (_env, client, _id, admin, user, asset_a, _asset_b) = setup();
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
     client.deposit_collateral_asset(&user, &asset_a, &100i128);
     client.set_pause(&PauseType::Withdraw, &true, &u32::MAX);
     client.withdraw_asset(&user, &asset_a, &10i128);
@@ -463,7 +463,7 @@ fn test_withdraw_asset_paused() {
 #[test]
 #[should_panic(expected = "OperationPaused")]
 fn test_all_pause_blocks_deposit() {
-    let (_env, client, _id, admin, user, asset_a, _asset_b) = setup();
+    let (_env, client, _id, _admin, user, asset_a, _asset_b) = setup();
     client.set_pause(&PauseType::All, &true, &u32::MAX);
     client.deposit_collateral_asset(&user, &asset_a, &100i128);
 }

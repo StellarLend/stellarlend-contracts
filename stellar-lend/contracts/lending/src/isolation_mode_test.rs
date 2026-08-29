@@ -20,7 +20,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::{DataKey, IsolationConfig, LendingContract, LendingContractClient, LendingError};
+    use crate::{DataKey, LendingContract, LendingContractClient, LendingError};
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     // -----------------------------------------------------------------------
@@ -268,8 +268,10 @@ mod tests {
         client.borrow_against_collateral(&user, &5_000i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 5_000);
 
-        // Repay more than owed — should be capped at outstanding debt.
-        client.repay_against_collateral(&user, &10_000i128, &tok);
+        // Repay exactly what's owed — isolation debt must reset to zero.
+        // (Overpaying is rejected outright with `RepayAmountTooHigh` rather
+        // than silently clamping -- see `repay_overpay_test.rs`.)
+        client.repay_against_collateral(&user, &5_000i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 0);
     }
 
@@ -478,16 +480,20 @@ mod tests {
         client.set_asset_isolation(&tok, &true, &5_000i128);
 
         client.borrow_against_collateral(&user, &1_000i128, &tok);
-        // Repay far more than owed.
-        client.repay_against_collateral(&user, &999_999i128, &tok);
-
-        let debt = client.get_isolation_debt(&tok);
+        // Repaying far more than owed must be rejected outright with
+        // `RepayAmountTooHigh` (not silently clamped) -- see
+        // `repay_overpay_test.rs` for the dedicated coverage of this
+        // invariant at the `debt` module level.
+        let res = client.try_repay_against_collateral(&user, &999_999i128, &tok);
         assert!(
-            debt >= 0,
-            "isolation debt must not be negative; got {}",
-            debt
+            matches!(res, Err(Ok(LendingError::RepayAmountTooHigh))),
+            "expected RepayAmountTooHigh, got {:?}",
+            res
         );
-        assert_eq!(debt, 0);
+
+        // Isolation debt is unaffected since the repay never applied.
+        let debt = client.get_isolation_debt(&tok);
+        assert_eq!(debt, 1_000);
     }
 
     // -----------------------------------------------------------------------
@@ -547,7 +553,9 @@ mod tests {
 
         let tok = asset(&env);
         env.as_contract(&contract_id, || {
-            env.storage().persistent().set(&DataKey::TotalDebt, &(i128::MAX - 1));
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDebt, &(i128::MAX - 1));
         });
 
         let res = client.try_borrow_against_collateral(&user, &2i128, &tok);

@@ -7,10 +7,9 @@ proposal–approve–execute governance pattern for critical StellarLend protoco
 It is a standalone Soroban smart contract (`MultisigContract`) that enforces an
 m-of-n signature threshold before any governed action takes effect.
 
-> **Scope note:** This document describes the real `stellarlend-multisig` crate found at
-> `stellar-lend/contracts/multisig/src/lib.rs`. The `hello-world` contract contains a
-> one-line placeholder stub (`// Stub module`) in `src/multisig.rs` and does **not**
-> expose any multisig entrypoints.
+> **Scope note:** This document describes the authoritative `stellarlend-multisig` crate found at
+> `stellar-lend/contracts/multisig/src/lib.rs`. The now-deleted `hello-world` contract previously
+> contained a one-line placeholder stub; the canonical multisig implementation is this crate.
 
 ---
 
@@ -75,7 +74,12 @@ Adds a signer's approval to an active proposal. When the number of distinct
 approvals meets or exceeds the current threshold the proposal status is
 automatically advanced to `Passed`.
 
-> **Auth:** `caller` must be a registered signer.
+> **Auth:** `caller` must be a registered signer **and** must authorize the
+> domain-separated approval payload
+> `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || signer_set_hash || approver)` via
+> `require_auth_for_args`. This binds the approval to exactly one proposal so
+> it cannot be replayed across ids. See
+> [`stellar-lend/contracts/multisig/APPROVAL_DOMAIN_BINDING.md`](../stellar-lend/contracts/multisig/APPROVAL_DOMAIN_BINDING.md).
 
 | Parameter | Type      | Description                     |
 |-----------|-----------|---------------------------------|
@@ -83,6 +87,7 @@ automatically advanced to `Passed`.
 | `id`      | `u64`     | ID of the proposal to approve   |
 
 **Panics:**
+- `"Unauthorized"` — caller is not a registered signer, or the domain-bound auth does not match this proposal
 - `"ProposalExpired"` — current ledger has passed `expires_at`
 - `"ProposalNotPassed"` — proposal is not in `Active` status
 - `"AlreadyApproved"` — `caller` has already approved this proposal
@@ -267,6 +272,8 @@ The following functions live inside `#[cfg(test)] mod tests` and are
 | Single signer key compromise       | m-of-n threshold; one compromised key cannot execute proposals alone                         |
 | Replay of executed proposals       | `ProposalStatus::Executed` checked; `"AlreadyExecuted"` returned on any second attempt       |
 | Action swap between approval and execution | `payload_hash` bound at creation and re-verified at execution                        |
+| Signer-set rotation replay         | Signer-set hash captured per proposal and included in approval authorization              |
+| Execution retry / partial dispatch | Monotonic nonce marker is consumed only after successful dispatch in the same transaction |
 | Old proposal ID reuse              | Monotonic `ProposalCount` counter — IDs never repeat                                         |
 | Stale proposal execution           | `expires_at` stored on every proposal; both `approve_proposal` and `execute_proposal` enforce it |
 | Rushed execution                   | Caller controls `ttl_ledgers`; integrators should set a TTL that enforces a review period    |

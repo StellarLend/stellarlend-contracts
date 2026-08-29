@@ -1,12 +1,7 @@
-#![cfg(test)]
-
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env, Vec};
 
-use crate::cross_asset::{
-    compute_aggregate_health_factor, get_cross_debt_value, get_cross_position_value,
-    HEALTH_FACTOR_NO_DEBT, HEALTH_FACTOR_SCALE,
-};
+use crate::cross_asset::{compute_aggregate_health_factor, get_cross_position_value};
 use crate::cross_asset_health_perf_test::assert_hf_within_budget_with_overlap;
 use crate::debt::DebtPosition;
 use crate::{AssetParams, DataKey, LendingContract, PriceRecord};
@@ -79,7 +74,7 @@ fn overlapping_asset_triggers_single_read_and_identical_hf() {
             &asset,
             &DebtPosition {
                 principal: 100i128,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -92,9 +87,10 @@ fn overlapping_asset_triggers_single_read_and_identical_hf() {
     // (c) Numeric health-factor result is identical
     // We calculate the naive way to verify
     let naive_hf = env.as_contract(&id, || {
-        let col_val = get_cross_position_value(&env, &user).unwrap();
-        // Since we scale by 8000 (0.8) and then by BPS_DENOM... wait, we need the raw calculation.
-        // Let's just run it to see if it succeeds.
+        // Just run it to confirm it succeeds; the raw value isn't needed here
+        // (the actual assertion is against `compute_aggregate_health_factor`
+        // below).
+        let _ = get_cross_position_value(&env, &user).unwrap();
         compute_aggregate_health_factor(&env, &user).expect("must not error")
     });
 
@@ -124,7 +120,7 @@ fn single_sided_asset_unaffected() {
             &debt_asset,
             &DebtPosition {
                 principal: 100i128,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -163,7 +159,7 @@ fn no_persistent_or_instance_storage_write_happens_as_side_effect() {
             &asset,
             &DebtPosition {
                 principal: 100i128,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
