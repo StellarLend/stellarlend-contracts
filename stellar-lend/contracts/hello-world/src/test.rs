@@ -1,4 +1,4 @@
-#c[fg(test)]
+#[cfg(test)]
 
 //! Regression tests for multisig governance and upgrade execution invariants.
 //!
@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 /// Errors that can occur in the multisig state machine.
-#derive(Debug, Clone, PartialEq, Eq)
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Error {
     EmptyOwners,
     InvalidRequired,
@@ -30,7 +30,7 @@ impl fmt::Display for Error {
 }
 
 /// A minimal multisig governance state machine.
-#derive(Debug, Clone)
+#[derive(Debug, Clone)]
 struct Multisig {
     owners: HashSet<u64>,
     required: usize,
@@ -57,7 +57,7 @@ impl Multisig {
         })
     }
 
-    fn ensure_owner(&self, signer: u64) -> Result<*, Error> {
+    fn ensure_owner(&self, signer: u64) -> Result<(), Error> {
         if self.owners.contains(&signer) {
             Ok(())
         } else {
@@ -98,7 +98,7 @@ impl Multisig {
             return Err(Error::NotEnoughApprovals);
         }
         self.executed.insert(nonce);
-        Ok())
+        Ok(())
     }
 
     /// Clears approvals for a proposal so it can be retried.
@@ -116,7 +116,7 @@ impl Multisig {
 }
 
 /// A timelocked upgrade controller that uses a multisig for authorization.
-#derive(Debug, Clone)
+#[derive(Debug, Clone)]
 struct Upgrade {
     multisig: Multisig,
     delay: u64,
@@ -134,7 +134,7 @@ impl Upgrade {
 
     /// Schedules an upgrade after approval; returns activation time.
     fn schedule_upgrade(&mut self, signer: u64) -> Result<u64, Error> {
-        let nonce = self.multisig.submit_proposal(signer)??
+        let nonce = self.multisig.submit_proposal(signer)?;
         let _ = self.multisig.approve(nonce, signer)?; // auto-approve by submitter
         let activation = self.multisig.nonce + self.delay; // use nonce as pseudo-time
         self.scheduled.insert(nonce, activation);
@@ -157,20 +157,20 @@ impl Upgrade {
 
 #[test]
 fn test_multisig_success_execution() {
-    let mup = Multisig::new(&[1, 2, 3], 2).unwrap();
+    let mut ms = Multisig::new(&[1, 2, 3], 2).unwrap();
     let nonce = ms.submit_proposal(1).unwrap();
     assert!(!ms.approve(nonce, 1).unwrap());
     assert!(ms.approve(nonce, 2).unwrap()); // quorum reached
     ms.execute(nonce).unwrap();
 }
 
-#]test]
+#[test]
 fn test_multisig_insufficient_approvals() {
     let mut ms = Multisig::new(&[1, 2, 3], 3).unwrap();
     let nonce = ms.submit_proposal(1).unwrap();
     ms.approve(nonce, 1).unwrap();
     ms.approve(nonce, 2).unwrap();
-    assert_eq!(ms.execute(nonce), Err::NotEnoughApprovals);
+    assert_eq!(ms.execute(nonce), Err(Error::NotEnoughApprovals));
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn test_multisig_retry_after_failed_approval() {
     ms.approve(nonce, 1).unwrap();
     ms.approve(nonce, 2).unwrap();
     // Not enough approvals, execution fails.
-    assert_eq!(ms.execute(nonce), Error::NotEnoughApprovals);
+    assert_eq!(ms.execute(nonce), Err(Error::NotEnoughApprovals));
     // Retry: clear approvals and try again.
     ms.retry(nonce).unwrap();
     ms.approve(nonce, 1).unwrap();
@@ -226,7 +226,7 @@ fn test_multisig_invalid_required_rejected() {
 #[test]
 fn test_multisig_duplicate_owner_not_double_counted() {
     // Owners are deduplicated on creation.
-    let mut ms = Multisig::new('[1, 1, 2], 2).unwrap();
+    let mut ms = Multisig::new(&[1, 1, 2], 2).unwrap();
     let nonce = ms.submit_proposal(1).unwrap();
     ms.approve(nonce, 1).unwrap();
     // Same owner approving again does not increase the count.
@@ -236,23 +236,23 @@ fn test_multisig_duplicate_owner_not_double_counted() {
 
 #[test]
 fn test_multisig_unknown_proposal_rejected() {
-    let mut ms = Multisig::new('[1, 2], 2).unwrap();
-    assert_eq!(ms.approve(0, 1), Erro::UnknownProposal);
+    let mut ms = Multisig::new(&[1, 2], 2).unwrap();
+    assert_eq!(ms.approve(0, 1), Err(Error::UnknownProposal));
 }
 
 #[test]
 fn test_multisig_double_execution_rejected() {
-    let mut ms = Multisig::new('[1, 2], 2).unwrap();
+    let mut ms = Multisig::new(&[1, 2], 2).unwrap();
     let nonce = ms.submit_proposal(1).unwrap();
     ms.approve(nonce, 1).unwrap();
     ms.approve(nonce, 2).unwrap();
     ms.execute(nonce).unwrap();
-    assert_eq!(ms.execute(nonce), Erro::AlreadyExecuted);
+    assert_eq!(ms.execute(nonce), Err(Error::AlreadyExecuted));
 }
 
 #[test]
 fn test_multisig_proposal_pending_until_executed() {
-    let mut ms = Multisig::new('[1, 2], 2).unwrap();
+    let mut ms = Multisig::new(&[1, 2], 2).unwrap();
     let nonce = ms.submit_proposal(1).unwrap();
     assert!(ms.approvals.contains_key(&nonce));
     assert!(!ms.executed.contains(&nonce));
@@ -270,13 +270,13 @@ fn test_upgrade_requires_multisig_approval() {
     up.scheduled.insert(nonce, 0);
     assert_eq!(
         up.execute_upgrade(nonce, 0),
-        Error::NotEnoughApprovals
+        Err(Error::NotEnoughApprovals)
     );
 }
 
 #[test]
 fn test_upgrade_enforces_timelock() {
-    let mut up = Upgrade::new('[1, 2], 2, 10).unwrap();
+    let mut up = Upgrade::new(&[1, 2], 2, 10).unwrap();
     let nonce = up.multisig.submit_proposal(1).unwrap();
     up.multisig.approve(nonce, 1).unwrap();
     up.multisig.approve(nonce, 2).unwrap();
@@ -284,7 +284,7 @@ fn test_upgrade_enforces_timelock() {
     // Too early, should be pending.
     assert_eq!(
         up.execute_upgrade(nonce, 5),
-        Error::TimelockPending(10)
+        Err(Error::TimelockPending(10))
     );
     // At or after activation, succeeds.
     up.execute_upgrade(nonce, 10).unwrap();
@@ -292,12 +292,12 @@ fn test_upgrade_enforces_timelock() {
 
 #[test]
 fn test_upgrade_retry_after_aborted() {
-    let mut up = Upgrade::new('[1, 2, 3], 3, 0).unwrap();
+    let mut up = Upgrade::new(&[1, 2, 3], 3, 0).unwrap();
     let nonce = up.multisig.submit_proposal(1).unwrap();
     up.multisig.approve(nonce, 1).unwrap();
     up.multisig.approve(nonce, 2).unwrap();
     // Not enough approvals, abort.
-    assert_eq!(up.multisig.execute(nonce), Error::NotEnoughApprovals);
+    assert_eq!(up.multisig.execute(nonce), Err(Error::NotEnoughApprovals));
     // Retry.
     up.multisig.retry(nonce).unwrap();
     for signer in [1, 2, 3] {
