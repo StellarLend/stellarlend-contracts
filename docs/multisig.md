@@ -274,7 +274,13 @@ The following functions live inside `#[cfg(test)] mod tests` and are
 | Action swap between approval and execution | `payload_hash` bound at creation and re-verified at execution                        |
 | Signer-set rotation replay         | Signer-set hash captured per proposal and included in approval authorization              |
 | Execution retry / partial dispatch | Monotonic nonce marker is consumed only after successful dispatch in the same transaction |
-| Old proposal ID reuse              | Monotonic `ProposalCount` counter — IDs never repeat                                         |
+| Upgrade execution compatibility | Contract upgrades are only possible through a passed proposal; upgraded contracts must preserve the documented API and event topics |
+
+---
+
+## Accessibility and Compatibility
+
+This module is a Soroban smart contract and has no interactive UI; keyboard, focus, screen-reader, responsive, and reduced-motion considerations do not apply. The public API documented above is stable and existing consumers are protected from accidental breaking changes. proposal ID reuse              | Monotonic `ProposalCount` counter — IDs never repeat                                         |
 | Stale proposal execution           | `expires_at` stored on every proposal; both `approve_proposal` and `execute_proposal` enforce it |
 | Rushed execution                   | Caller controls `ttl_ledgers`; integrators should set a TTL that enforces a review period    |
 | Signer-set instant takeover        | `RotateSigners` is a governed `ProposalAction` requiring threshold approvals                 |
