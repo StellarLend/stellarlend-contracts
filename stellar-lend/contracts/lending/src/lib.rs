@@ -833,13 +833,20 @@ impl LendingContract {
         if timestamp > now || now > timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
             return Err(LendingError::StaleOracleTimestamp);
         }
-        // Monotonic timestamp enforcement
-        if let Some(last) = env
+        // Load the existing record once. The freshness and retry policy is:
+        // 1. A strictly older timestamp can never overwrite a newer record.
+        // 2. Two different prices can never share the same timestamp.
+        // 3. Replaying the exact current (price, timestamp) is an idempotent
+        //    retry: it is not an error, but it also does not mutate state.
+        let existing_record: Option<PriceRecord> = env
             .storage()
             .persistent()
-            .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-        {
-            if timestamp <= last.timestamp {
+            .get(&DataKey::OraclePrice(asset.clone()));
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp < last.timestamp {
+                return Err(LendingError::OracleReplay);
+            }
+            if timestamp == last.timestamp && price != last.price {
                 return Err(LendingError::OracleReplay);
             }
         }
@@ -851,9 +858,20 @@ impl LendingContract {
             .ok_or(LendingError::OraclePubkeyNotSet)?;
 
         let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
-        // ed25519_verify traps (panics) on bad signature in soroban-sdk 25.x
-        env.crypto()
-            .ed25519_verify(&oracle_pubkey, &payload, &signature);
+        if !env
+            .crypto()
+            .ed25519_verify(&oracle_pubkey, &payload, &signature)
+        {
+            return Err(LendingError::InvalidOracleSignature);
+        }
+
+        // A retry of an already-applied update is a successful no-op. The
+        // signature above proves the caller is authoritative for this payload.
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp == last.timestamp && price == last.price {
+                return Ok(());
+            }
+        }
 
         // Per-update move-cap circuit breaker.
         // If max_move_bps is configured and a prior price record exists, reject
@@ -863,11 +881,7 @@ impl LendingContract {
             .instance()
             .get::<DataKey, i128>(&DataKey::MaxMoveBps)
         {
-            if let Some(last) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-            {
+            if let Some(last) = existing_record.as_ref() {
                 let last_price = last.price;
                 // delta = |price - last_price| * 10_000 / last_price
                 let delta_abs = if price >= last_price {
@@ -4240,6 +4254,96 @@ pub(crate) mod test {
         assert!(
             matches!(res, Err(Ok(LendingError::StaleOracleTimestamp))),
             "expected StaleOracleTimestamp, got {:?}",
+            res
+        );
+    }
+ 
+    #[test]
+    fn test_set_price_retry_exact_update_is_idempotent() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+
+        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        let retry = client.try_set_price(&admin, &asset, &price, &timestamp, &signature);
+        assert!(
+            retry.is_ok(),
+            "exact retry must be treated as an idempotent success, got {:?}",
+            retry
+        );
+        let record = client.get_price_record(&asset).expect("price record exists");
+        assert_eq!(record.price, price);
+        assert_eq!(record.timestamp, timestamp);
+    }
+
+    #[test]
+    fn test_set_price_rejects_same_timestamp_different_price() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let timestamp = env.ledger().timestamp();
+        let price1 = 1_000_000_000i128;
+        let price2 = 1_500_000_000i128;
+        let signature1 = sign_oracle_update(&env, &keypair, &asset, price1, timestamp);
+        let signature2 = sign_oracle_update(&env, &keypair, &asset, price2, timestamp);
+
+        client.set_price(&admin, &asset, &price1, &timestamp, &signature1);
+        let res = client.try_set_price(&admin, &asset, &price2, &timestamp, &signature2);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_rejects_older_timestamp_after_update() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+
+        let old_timestamp = timestamp.saturating_sub(1);
+        let old_signature = sign_oracle_update(&env, &keypair, &asset, price, old_timestamp);
+        let res = client.try_set_price(&admin, &asset, &price, &old_timestamp, &old_signature);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_requires_admin() {
+        let (env, client, _admin, _user) = setup();
+        let attacker = Address::generate(&env);
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_000_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let res = client.try_set_price(&attacker, &asset, &price, &timestamp, &signature);
+        assert!(
+            matches!(res, Err(Ok(LendingError::Unauthorized))),
+            "expected Unauthorized, got {:?}",
             res
         );
     }
