@@ -3,6 +3,27 @@
 //! Provides functions to read, propose, accept, and initialise the protocol
 //! admin authority.
 //!
+//! ## Supported API contract
+//!
+//! - `get_admin`, `get_pending_admin`, and `has_admin` are read-only and do
+//!   not require authentication.
+//! - `set_admin(env, admin, None)` is the one-time initialization path; it is
+//!   the only unauthenticated write and returns
+//!   [`AdminError::AlreadyInitialized`] after initialization.
+//! - `propose_admin` requires the current admin; `accept_admin` requires the
+//!   pending admin.
+//! - `require_admin` is the shared authorization gate for admin-gated modules.
+//!
+//! ## Invariants
+//!
+//! * The active admin can only be changed by `accept_admin` after a matching
+//!   `propose_admin` call.
+//! * A pending proposal can be replaced by the current admin before acceptance,
+//!   but never accepted by a non-matching address.
+//! * `set_admin` may not overwrite an existing admin.
+//! * This module has no interactive UI, so keyboard, focus, screen-reader,
+//!   responsive, and reduced-motion behavior is not applicable.
+//!
 //! ## Two-step handover
 //!
 //! Admin transfer is intentionally two-phased to ensure the incoming admin
@@ -54,6 +75,8 @@ pub enum AdminError {
     NotInitialized = 4,
     /// `accept_admin` was called but no admin has been proposed.
     PendingAdminNotSet = 5,
+    /// `set_admin` was called a second time after an admin already exists.
+    AlreadyInitialized = 6,
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +149,8 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
 ///
 /// This is the only path that bypasses authentication. It must only be called
 /// once, during `initialize`, before any admin is stored.
+/// Calling the `None`-caller initialization path again after initialization
+/// returns [`AdminError::AlreadyInitialized`].
 pub fn set_admin(env: &Env, new_admin: Address, caller: Option<Address>) -> Result<(), AdminError> {
     if let Some(caller) = caller {
         // Delegate to the two-step propose path for post-init transfers.
@@ -133,7 +158,12 @@ pub fn set_admin(env: &Env, new_admin: Address, caller: Option<Address>) -> Resu
         // should migrate to propose_admin + accept_admin.
         propose_admin(env, new_admin, caller)
     } else {
-        // Initialisation path: no validation needed, just store.
+        // Initialisation path: allowed only before an admin exists. Rejecting
+        // repeated initialization prevents an unauthenticated overwrite of the
+        // active admin after the contract has been initialized.
+        if has_admin(env) {
+            return Err(AdminError::AlreadyInitialized);
+        }
         env.storage()
             .instance()
             .set(&AdminDataKey::Admin, &new_admin);
@@ -271,6 +301,16 @@ mod tests {
         /// Initialise the contract with the given admin (no auth required).
         pub fn initialize(env: Env, admin: Address) {
             crate::admin::set_admin(&env, admin, None).unwrap();
+        }
+
+        /// Initialise with explicit result propagation for guard tests.
+        pub fn initialize_checked(env: Env, admin: Address) -> Result<(), AdminError> {
+            crate::admin::set_admin(&env, admin, None)
+        }
+
+        /// Shared authorization gate, exposed for tests.
+        pub fn require_admin(env: Env, caller: Address) -> Result<(), AdminError> {
+            crate::admin::require_admin(&env, &caller)
         }
 
         /// Step 1: propose a new admin (current admin only).
@@ -563,6 +603,61 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // require_admin shared guard
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_require_admin_succeeds_for_current_admin() {
+        let (_env, client, admin, _new_admin) = setup();
+        let result = client.try_require_admin(&admin);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_require_admin_rejects_non_admin() {
+        let (env, client, _admin, _new_admin) = setup();
+        let attacker = Address::generate(&env);
+        let result = client.try_require_admin(&attacker);
+        assert!(
+            matches!(result, Err(Ok(AdminError::Unauthorized))),
+            "non-admin should be rejected by require_admin, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_require_admin_rejects_uninitialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(TestHost, ());
+        let client = TestHostClient::new(&env, &contract_id);
+        let caller = Address::generate(&env);
+        let result = client.try_require_admin(&caller);
+        assert!(
+            matches!(result, Err(Ok(AdminError::NotInitialized))),
+            "uninitialized require_admin should be rejected, got {:?}",
+            result
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Initialization guard
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_set_admin_after_initialization_rejected() {
+        let (env, client, admin, new_admin) = setup();
+        let result = client.try_initialize_checked(&new_admin);
+        assert!(
+            matches!(result, Err(Ok(AdminError::AlreadyInitialized))),
+            "second initialize should be rejected, got {:?}",
+            result
+        );
+        assert_eq!(client.get_admin(), Some(admin));
+        assert_eq!(client.get_pending_admin(), None);
+    }
+
+    // -----------------------------------------------------------------------
     // Error code stability
     // -----------------------------------------------------------------------
 
@@ -573,5 +668,6 @@ mod tests {
         assert_eq!(AdminError::Unauthorized as u32, 3);
         assert_eq!(AdminError::NotInitialized as u32, 4);
         assert_eq!(AdminError::PendingAdminNotSet as u32, 5);
+        assert_eq!(AdminError::AlreadyInitialized as u32, 6);
     }
 }
