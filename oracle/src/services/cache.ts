@@ -14,6 +14,8 @@ import { logger } from '../utils/logger.js';
 export interface CacheConfig {
     defaultTtlSeconds: number;
     maxEntries: number;
+    /** Stale data fallback TTL (seconds) */
+    staleTtlSeconds: number;
     /** Redis URL (optional) */
     redisUrl?: string;
 }
@@ -24,6 +26,7 @@ export interface CacheConfig {
 const DEFAULT_CONFIG: CacheConfig = {
     defaultTtlSeconds: 30,
     maxEntries: 1000,
+    staleTtlSeconds: 60,
 };
 
 /**
@@ -41,6 +44,7 @@ export class Cache {
         logger.info('Cache initialized', {
             defaultTtlSeconds: this.config.defaultTtlSeconds,
             maxEntries: this.config.maxEntries,
+            staleTtlSeconds: this.config.staleTtlSeconds,
         });
     }
 
@@ -67,11 +71,40 @@ export class Cache {
     }
 
     /**
-     * Set a value in cache with optional TTL
+     * Get a value from cache, allowing stale fallback.
+     * Returns the value along with whether it is stale.
      */
-    set<T>(key: string, value: T, ttlSeconds?: number): void {
-        const ttl = ttlSeconds ?? this.config.defaultTtlSeconds;
+    getStale<T>(key: string): { data: T; isStale: boolean } | undefined {
+        const entry = this.store.get(key) as CacheEntry<T> | undefined;
+
+        if (!entry) {
+            this.misses++;
+            return undefined;
+        }
+
         const now = Date.now();
+        if (now > entry.expiresAt) {
+            // Expired: check stale window
+            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
+            if (now > staleExpiresAt) {
+                this.store.delete(key);
+                this.misses++;
+                return undefined;
+            }
+            this.hits++;
+            return { data: entry.data, isStale: true };
+        }
+
+        this.hits++;
+        return { data: entry.data, isStale: false };
+    }
+
+    /**
+     * Set a value in cache with optional TTL and explicit timestamp.
+     */
+    set<T>(key: string, value: T, ttlSeconds?: number, cachedAt?: number): void {
+        const ttl = ttlSeconds ?? this.config.defaultTtlSeconds;
+        const now = cachedAt ?? Date.now();
 
         // Evict oldest entries if at capacity
         if (this.store.size >= this.config.maxEntries) {
@@ -112,9 +145,14 @@ export class Cache {
             return false;
         }
 
-        if (Date.now() > entry.expiresAt) {
-            this.store.delete(key);
-            return false;
+        const now = Date.now();
+        if (now > entry.expiresAt) {
+            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
+            if (now > staleExpiresAt) {
+                this.store.delete(key);
+                return false;
+            }
+            return true;
         }
 
         return true;
@@ -166,14 +204,15 @@ export class Cache {
         let cleaned = 0;
 
         for (const [key, entry] of this.store) {
-            if (now > entry.expiresAt) {
+            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
+            if (now > staleExpiresAt) {
                 this.store.delete(key);
                 cleaned++;
             }
         }
 
         if (cleaned > 0) {
-            logger.debug(`Cleaned up ${cleaned} expired cache entries`);
+            logger.debug(`Cleaned up ${cleaned} stale cache entries`);
         }
 
         return cleaned;
@@ -181,7 +220,15 @@ export class Cache {
 }
 
 /**
- * Price-specific cache wrapper
+ * Price value stored in cache
+ */
+interface PriceValue {
+    price: bigint;
+    updatedAt: number;
+}
+
+/**
+ * Price-specific cache wrapper with freshness and fallback support.
  */
 export class PriceCache {
     private cache: Cache;
@@ -191,28 +238,74 @@ export class PriceCache {
         this.cache = new Cache({
             defaultTtlSeconds: ttlSeconds,
             maxEntries: 100,
+            staleTtlSeconds: 60,
         });
     }
 
     /**
-     * Get cached price for an asset
+     * Get cached price, falling back to stale data within the stale TTL.
+     * Returns undefined if no usable data exists.
      */
     getPrice(asset: string): bigint | undefined {
-        return this.cache.get<bigint>(`${this.keyPrefix}${asset.toUpperCase()}`);
+        const result = this.cache.getStale<PriceValue>(`${this.keyPrefix}${asset.toUpperCase()}`);
+        return result?.data.price;
     }
 
     /**
-     * Cache a price for an asset
+     * Get cached price with freshness metadata.
      */
-    setPrice(asset: string, price: bigint, ttlSeconds?: number): void {
-        this.cache.set(`${this.keyPrefix}${asset.toUpperCase()}`, price, ttlSeconds);
+    getPriceWithState(asset: string): { price: bigint; isStale: boolean; updatedAt: number } | undefined {
+        const result = this.cache.getStale<PriceValue>(`${this.keyPrefix}${asset.toUpperCase()}`);
+        if (!result) return undefined;
+        return {
+            price: result.data.price,
+            isStale: result.isStale,
+            updatedAt: result.data.updatedAt,
+        };
     }
 
     /**
-     * Check if we have a cached price
+     * Cache a price for an asset with an optional update timestamp.
+     */
+    setPrice(asset: string, price: bigint, ttlSeconds?: number, updatedAt?: number): void {
+        const value: PriceValue = {
+            price,
+            updatedAt: updatedAt ?? Date.now(),
+        };
+        this.cache.set(
+            `${this.keyPrefix}${asset.toUpperCase()}`,
+            value,
+            ttlSeconds,
+            value.updatedAt
+        );
+    }
+
+    /**
+     * Atomically set a price only if the provided updatedAt is newer
+     * than the currently cached price. Returns true if updated.
+     */
+    setPriceIfNewer(asset: string, price: bigint, updatedAt: number, ttlSeconds?: number): boolean {
+        const key = `${this.keyPrefix}${asset.toUpperCase()}`;
+        const existing = this.cache.getStale<PriceValue>(key);
+        if (existing && existing.data.updatedAt >= updatedAt) {
+            return false;
+        }
+        this.setPrice(asset, price, ttlSeconds, updatedAt);
+        return true;
+    }
+
+    /**
+     * Check if we have a usable cached price (fresh or within stale TTL).
      */
     hasPrice(asset: string): boolean {
         return this.cache.has(`${this.keyPrefix}${asset.toUpperCase()}`);
+    }
+
+    /**
+     * Recover by purging entries that are older than the stale TTL.
+     */
+    recover(): number {
+        return this.cache.cleanup();
     }
 
     /**
