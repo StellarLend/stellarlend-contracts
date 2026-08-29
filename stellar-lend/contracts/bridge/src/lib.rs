@@ -86,6 +86,25 @@ pub struct SourceDomain {
     pub contract_id: Bytes,
 }
 
+/// Maximum `signed_epoch` value an inbound message may carry, expressed as
+/// an offset above the bridge's current `epoch`.
+///
+/// With a value of `0` the bridge requires **strict equality**: only an
+/// inbound message bearing exactly [`Bridge::epoch`] is admitted.
+///
+/// Epochs are monotonically incremented discrete sequence numbers, not
+/// physical timestamps, so there is no realistic "clock skew" to absorb.
+/// A positive tolerance is a security regression because it would admit
+/// messages supposedly signed by a not-yet-rotated validator set — and
+/// once that future epoch arrives, those messages could be replayed.
+///
+/// This constant is `pub` so that tests, off-chain tooling, and audit
+/// reviewers can refer to the exact value the binary encodes; changing
+/// it is a security-sensitive decision and must be paired with a test
+/// update.
+pub const INBOUND_EPOCH_TOLERANCE: u64 = 0;
+
+/// Ledger storage key for the outbound nonce map.
 #[contracttype]
 pub enum BridgeDataKey {
     OutboundNonces,
@@ -967,19 +986,128 @@ impl Bridge {
             return Err(BridgeError::UnknownValidator);
         }
 
-        let mut paused = Self::load_paused(&env);
-        if !paused.contains_key(validator.clone()) {
-            return Err(BridgeError::NotPaused);
+        let payload = concat_prefixed(UNPAUSE_PAYLOAD_TAG, &v_bytes);
+        guardian
+            .verify(&payload, signature)
+            .map_err(|_| BridgeError::InvalidGuardianSignature)?;
+
+        self.paused_validators.remove(&v_bytes);
+        Ok(ValidatorEvent::Unpaused {
+            validator: v_bytes,
+            epoch: self.epoch,
+        })
+    }
+
+    /// Rejects an inbound message whose `signed_epoch` is not aligned with
+    /// the bridge's currently active epoch.
+    ///
+    /// # Threat model (#1147)
+    ///
+    /// A naive `signed_epoch >= self.epoch` check accepts any far-future
+    /// epoch. A message claiming an epoch that the validator set has not
+    /// yet rotated into must NEVER be honoured on this bridge: once the
+    /// future epoch is reached, an attacker who pre-collected the message
+    /// can replay it. The defence is to accept only the active epoch,
+    /// optionally extended by a small explicit tolerance.
+    ///
+    /// With [`INBOUND_EPOCH_TOLERANCE`] set to `0` (the default and safe
+    /// choice) the bridge enforces **strict equality**: only an inbound
+    /// message carrying exactly [`Bridge::epoch`] is admitted. Epochs are
+    /// monotonically-incremented discrete sequence numbers, not physical
+    /// timestamps, so there is no "clock skew" to absorb and any positive
+    /// tolerance weakens replay resistance without justification.
+    ///
+    /// # Significance of the upper bound
+    ///
+    /// * `signed_epoch < self.epoch`
+    ///   [`Err`] — retired-validator-set replay.
+    /// * `signed_epoch == self.epoch`
+    ///   [`Ok`] — exactly the active epoch, accepted.
+    /// * `signed_epoch > self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE)`
+    ///   [`Err`] — message claims to be from a validator set that has not
+    ///   yet been rotationally authorised on this bridge.
+    ///
+    /// # Tolerance formula
+    ///
+    /// ```text
+    /// min_accepted_epoch = self.epoch
+    /// max_accepted_epoch = self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE)
+    /// accepted iff  min_accepted_epoch <= signed_epoch <= max_accepted_epoch
+    /// ```
+    ///
+    /// `saturating_add` ensures that if `self.epoch == u64::MAX` the upper
+    /// bound also equals `u64::MAX`, so the comparison cannot be defeated
+    /// by wrapping arithmetic. Bridge epoch numbers start at `0` and
+    /// increment by `1` per rotation, so reaching `u64::MAX` is
+    /// unreachable in any realistic deployment.
+    ///
+    /// # Worked example (tolerance = 0)
+    ///
+    /// Suppose the bridge is currently at epoch `5` and
+    /// `INBOUND_EPOCH_TOLERANCE == 0`:
+    ///
+    /// | `signed_epoch` | Outcome                       | Reason |
+    /// |---:|---|---|
+    /// | `3` | [`Err`] (retired validator set) | Lower than `self.epoch`. |
+    /// | `4` | [`Err`] (retired validator set) | Lower than `self.epoch`. |
+    /// | `5` | [`Ok`]                         | Exactly the active epoch. |
+    /// | `6` | [`Err`] (not yet active)        | `6 > 5 + 0` — a future epoch the validator set has not rotated into. |
+    /// | `u64::MAX` | [`Err`] (not yet active)  | `u64::MAX > 5.saturating_add(0) = 5`. |
+    ///
+    /// # Worked example (hypothetical tolerance = 1)
+    ///
+    /// If `INBOUND_EPOCH_TOLERANCE` were ever raised to `1`:
+    ///
+    /// | `signed_epoch` | Outcome | Reason |
+    /// |---:|---|---|
+    /// | `4` | [`Err`] | Lower than `self.epoch == 5`. |
+    /// | `5` | [`Ok`]  | `5 <= 5 <= 6`. |
+    /// | `6` | [`Ok`]  | `6 <= 5.saturating_add(1) = 6`. |
+    /// | `7` | [`Err`] | `7 > 6`. |
+    ///
+    /// # Errors
+    ///
+    /// Returns [`anyhow::Error`] whose string contains one of:
+    ///
+    /// * `"retired validator set"` when `signed_epoch < self.epoch`.
+    /// * `"not-yet-active"` when `signed_epoch` lies strictly above the
+    ///   tolerance-adjusted upper bound.
+    ///
+    /// # Arguments
+    /// * `signed_epoch` — epoch number that the inbound message claims to
+    ///   have been signed under.
+    ///
+    /// # Returns
+    /// `Ok(())` iff `signed_epoch` is the bridge's currently active epoch
+    /// (within the explicit tolerance).
+    pub fn validate_inbound_epoch(&self, signed_epoch: u64) -> Result<()> {
+        // Lower bound: retire any signed_epoch that pre-dates the current set,
+        // so a retired validator set cannot have its messages replayed.
+        if signed_epoch < self.epoch {
+            return Err(anyhow!(
+                "message signed by retired validator set (epoch too old): \
+                 signed_epoch={} < self.epoch={}",
+                signed_epoch,
+                self.epoch
+            ));
         }
 
-        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
-        let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
-        let payload_hash = env.crypto().sha256(&payload);
-        env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
+        // Upper bound: refuse signed_epoch that points at a future validator
+        // set the bridge has not yet rotated into. saturating_add prevents
+        // u64 overflow from being weaponised into a comparison that always
+        // either panics or — worse — passes by wrapping to a small value.
+        let max_accepted_epoch = self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE);
+        if signed_epoch > max_accepted_epoch {
+            return Err(anyhow!(
+                "message signed by not-yet-active validator set (epoch too far in the future): \
+                 signed_epoch={} > max_accepted_epoch={} (= self.epoch={} + INBOUND_EPOCH_TOLERANCE={})",
+                signed_epoch,
+                max_accepted_epoch,
+                self.epoch,
+                INBOUND_EPOCH_TOLERANCE
+            ));
+        }
 
-        paused.remove(validator);
-        Self::save_paused(&env, &paused);
         Ok(())
     }
 
@@ -1153,6 +1281,73 @@ impl Bridge {
     }
 }
 
+/// Helper: build a payload of the form `prefix || suffix` without an
+/// intermediate allocation beyond the result vector.
+fn concat_prefixed(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(prefix.len() + suffix.len());
+    out.extend_from_slice(prefix);
+    out.extend_from_slice(suffix);
+    out
+}
+
+/// Lowercase hex encoder for the `Display` impl of `ValidatorEvent`. Inlined
+/// here (rather than pulling in the `hex` crate as a runtime dependency)
+/// because event formatting is the only consumer and the format is trivial.
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+#[cfg(test)]
+mod rotation_test;
+
+#[cfg(test)]
+mod rotation_doc_test;
+
+#[cfg(test)]
+mod domain_separation_test;
+
+#[cfg(test)]
+mod quorum_proof_bound_test;
+
+#[cfg(test)]
+mod inbound_cap_test;
+
+#[cfg(test)]
+mod inbound_epoch_test;
+
+#[cfg(test)]
+mod window_rollover_test;
+
+#[cfg(test)]
+mod validator_bounds_test;
+
+#[cfg(test)]
+mod epoch_monotonicity_proptest;
+
+#[cfg(test)]
+mod window_guard_test;
+
+#[cfg(test)]
+mod window_tuning_doc_test;
+
+#[cfg(test)]
+mod outbound_cap_test;
+
+#[cfg(test)]
+mod validatorset_proptest;
+
+#[cfg(test)]
+mod validator_pause_test;
+
+#[cfg(test)]
+mod rotation_churn_test;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1172,11 +1367,37 @@ mod tests {
         let contract_id = env.register_contract(None, Bridge);
         let client = BridgeClient::new(&env, &contract_id);
 
-        // Client methods that return Result unwrap on success; value is plain u64.
-        assert_eq!(client.next_outbound_nonce(&1u32), 0u64);
-        assert_eq!(client.next_outbound_nonce(&1u32), 1u64);
-        assert_eq!(client.peek_outbound_nonce(&1u32), 2u64);
-        assert_eq!(client.next_outbound_nonce(&2u32), 0u64);
+        // new set B: 3 validators
+        let kp_b = make_keypairs(3);
+        let b_pks: Vec<PublicKey> = kp_b.iter().map(|k| k.public).collect();
+        let new_set = ValidatorSet { validators: b_pks.iter().map(|p| p.to_bytes().to_vec()).collect() };
+
+        // proofs: have >2/3 of A sign the (new_set, epoch=1) payload
+        let epoch = 1u64;
+        let payload = Bridge::quorum_proof_payload(&bridge.bridge_id, &new_set, epoch).unwrap();
+
+        // need threshold of A: (4*2)/3+1 = 3
+        let mut proofs = vec![];
+        for i in 0..3 {
+            let sig = kp_a[i].sign(&payload);
+            proofs.push((kp_a[i].public, sig));
+        }
+
+        // rotate should succeed
+        bridge.rotate_validators(new_set.clone(), epoch, proofs).expect("rotation failed");
+        assert_eq!(bridge.epoch, 1);
+
+        // messages signed with epoch 0 should be rejected
+        assert!(bridge.validate_inbound_epoch(0).is_err());
+        // messages signed with the *current* epoch 1 are accepted
+        assert!(bridge.validate_inbound_epoch(1).is_ok());
+        // messages signed with a far-future epoch 2 are rejected (not yet
+        // actively rotated into by the validator set — see #1147 / INBOUND_EPOCH_TOLERANCE)
+        let err = bridge.validate_inbound_epoch(2).unwrap_err();
+        assert!(
+            err.to_string().contains("not-yet-active"),
+            "future epoch must be rejected with a 'not-yet-active' error, got: {err}"
+        );
     }
 
     #[test]
