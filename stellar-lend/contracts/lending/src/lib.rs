@@ -2607,8 +2607,7 @@ impl LendingContract {
     /// behaviour. It leaks no secrets.
     pub fn get_rate_model_diagnostics(env: Env) -> RateModelDiagnostics {
         let snapshot = debt::load_rate_snapshot(&env);
-        let utilization_bps =
-            debt::compute_utilization_bps(&snapshot).unwrap_or(0);
+        let utilization_bps = debt::compute_utilization_bps(&snapshot).unwrap_or(0);
 
         let current_ledger = env.ledger().sequence();
         let last_update_ledger = env
@@ -2617,20 +2616,18 @@ impl LendingContract {
             .get(&rate_model::RateModelKey::LastRateLedger)
             .unwrap_or(0);
 
-        let (rate_model_active, target_rate_bps, applied_rate_bps) =
-            match &snapshot.params {
-                Some(p) => {
-                    let target_rate =
-                        rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
-                    let applied_rate = env
-                        .storage()
-                        .instance()
-                        .get(&rate_model::RateModelKey::LastRate)
-                        .unwrap_or(target_rate);
-                    (true, target_rate, applied_rate)
-                }
-                None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
-            };
+        let (rate_model_active, target_rate_bps, applied_rate_bps) = match &snapshot.params {
+            Some(p) => {
+                let target_rate = rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
+                let applied_rate = env
+                    .storage()
+                    .instance()
+                    .get(&rate_model::RateModelKey::LastRate)
+                    .unwrap_or(target_rate);
+                (true, target_rate, applied_rate)
+            }
+            None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
+        };
 
         let elapsed_ledgers = if last_update_ledger == 0 {
             0

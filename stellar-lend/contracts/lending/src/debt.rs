@@ -615,9 +615,7 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
 /// bounded and deterministic at maximum utilization instead of feeding an
 /// out-of-range utilization to the model.
-pub(crate) fn compute_utilization_bps(
-    snapshot: &RateSnapshot,
-) -> Result<i128, DebtError> {
+pub(crate) fn compute_utilization_bps(snapshot: &RateSnapshot) -> Result<i128, DebtError> {
     if snapshot.total_supply <= 0 {
         return Ok(0);
     }

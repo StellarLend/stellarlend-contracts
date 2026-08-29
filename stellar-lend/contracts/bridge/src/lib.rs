@@ -1358,7 +1358,9 @@ mod tests {
         // new set B: 3 validators
         let kp_b = make_keypairs(3);
         let b_pks: Vec<PublicKey> = kp_b.iter().map(|k| k.public).collect();
-        let new_set = ValidatorSet { validators: b_pks.iter().map(|p| p.to_bytes().to_vec()).collect() };
+        let new_set = ValidatorSet {
+            validators: b_pks.iter().map(|p| p.to_bytes().to_vec()).collect(),
+        };
 
         // proofs: have >2/3 of A sign the (new_set, epoch=1) payload
         let epoch = 1u64;
@@ -1372,7 +1374,9 @@ mod tests {
         }
 
         // rotate should succeed
-        bridge.rotate_validators(new_set.clone(), epoch, proofs).expect("rotation failed");
+        bridge
+            .rotate_validators(new_set.clone(), epoch, proofs)
+            .expect("rotation failed");
         assert_eq!(bridge.epoch, 1);
 
         // messages signed with epoch 0 should be rejected
