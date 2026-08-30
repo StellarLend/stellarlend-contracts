@@ -13,6 +13,7 @@ import type {
     ValidationErrorCode,
     AssetPriceBounds,
 } from '../types/index.js';
+import { Keypair } from '@stellar/stellar-sdk';
 import { scalePrice } from '../config.js';
 import { logger } from '../utils/logger.js';
 
@@ -58,10 +59,14 @@ export class PriceValidator {
     private config: ValidatorConfig;
     private cachedPrices: Map<string, CachedPrice> = new Map();
     private assetBounds: Record<string, AssetPriceBounds>;
+    private trustedSigners: Record<string, string[]>;
+    private signatureDomain: string;
 
     constructor(
         config: Partial<ValidatorConfig> = {},
         assetBounds: Record<string, AssetPriceBounds> = {},
+        trustedSigners: Record<string, string[]> = {},
+        signatureDomain: string = 'StellarLendOracle',
     ) {
         const mergedConfig = { ...DEFAULT_CONFIG, ...config };
         const maxStalenessSeconds = mergedConfig.maxStalenessSeconds;
@@ -72,6 +77,8 @@ export class PriceValidator {
         };
         this.validateConfig(this.config);
         this.assetBounds = this.normalizeBounds(assetBounds);
+        this.trustedSigners = trustedSigners;
+        this.signatureDomain = signatureDomain;
 
         logger.info('Price validator initialized', {
             maxDeviationPercent: this.config.maxDeviationPercent,
@@ -188,13 +195,23 @@ export class PriceValidator {
                 source: raw.source,
                 confidence: this.calculateConfidence(raw, cachedPrice),
                 volume24h: raw.volume24h,
+                signer: raw.signer,
+                signature: raw.signature,
             };
 
-            this.cachedPrices.set(asset, {
-                price: raw.price,
-                timestamp: raw.timestamp,
-                volume24h: raw.volume24h,
-            });
+            // If configured, verify signature for this source
+            const trusted = this.trustedSigners[raw.source];
+            if (trusted && trusted.length > 0) {
+                const sigErr = this.verifySignatureIfPresent(raw, trusted);
+                if (sigErr) {
+                    return {
+                        isValid: false,
+                        errors: [sigErr],
+                    };
+                }
+            }
+
+            this.cachedPrices.set(asset, raw.price);
 
             return {
                 isValid: true,
@@ -209,6 +226,54 @@ export class PriceValidator {
             isValid: false,
             errors,
         };
+    }
+
+    /**
+     * Verify provider signature when trusted signers are configured for a source.
+     * Returns a ValidationError when verification fails, otherwise undefined.
+     */
+    private verifySignatureIfPresent(raw: RawPriceData, trusted: string[]): ValidationError | undefined {
+        if (!raw.signature || !raw.signer) {
+            return {
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                message: `Missing signature or signer for trusted source ${raw.source}`,
+            };
+        }
+
+        // Ensure signer is in trusted list
+        if (!trusted.includes(raw.signer)) {
+            return {
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                message: `Untrusted signer ${raw.signer} for source ${raw.source}`,
+            };
+        }
+
+        try {
+            const kp = Keypair.fromPublicKey(raw.signer);
+
+            // Canonical message: asset|price|timestamp|source
+            const msg = `${this.signatureDomain}|${raw.asset.toUpperCase()}|${raw.price}|${raw.timestamp}|${raw.source}`;
+            const msgBuf = Buffer.from(msg, 'utf8');
+
+            const sigBuf = Buffer.from(raw.signature, 'base64');
+
+            const verified = kp.verify(msgBuf, sigBuf);
+
+            if (!verified) {
+                return {
+                    code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                    message: `Invalid signature for source ${raw.source}`,
+                };
+            }
+        } catch (err) {
+            logger.error('Signature verification error', { error: err });
+            return {
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                message: `Signature verification failed for ${raw.source}`,
+            };
+        }
+
+        return undefined;
     }
 
     /**
@@ -495,6 +560,8 @@ export class PriceValidator {
 export function createValidator(
     config?: Partial<ValidatorConfig>,
     assetBounds: Record<string, AssetPriceBounds> = {},
+    trustedSigners: Record<string, string[]> = {},
+    signatureDomain: string = 'StellarLendOracle',
 ): PriceValidator {
-    return new PriceValidator(config, assetBounds);
+    return new PriceValidator(config, assetBounds, trustedSigners, signatureDomain);
 }
