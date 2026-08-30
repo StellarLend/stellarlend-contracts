@@ -67,14 +67,31 @@ export class Cache {
     }
 
     /**
+     * Get a value from cache with staleness information.
+     * Returns undefined if key not found. Stale entries are not removed.
+     */
+    getWithState<T>(key: string): { data: T; stale: boolean } | undefined {
+        const entry = this.store.get(key) as CacheEntry<T> | undefined;
+
+        if (!entry) {
+            this.misses++;
+            return undefined;
+        }
+
+        const stale = Date.now() > entry.expiresAt;
+        this.hits++;
+        return { data: entry.data, stale };
+    }
+
+    /**
      * Set a value in cache with optional TTL
      */
     set<T>(key: string, value: T, ttlSeconds?: number): void {
         const ttl = ttlSeconds ?? this.config.defaultTtlSeconds;
         const now = Date.now();
 
-        // Evict oldest entries if at capacity
-        if (this.store.size >= this.config.maxEntries) {
+        // Evict oldest entries only when adding a new key (not overwriting)
+        if (!this.store.has(key) && this.store.size >= this.config.maxEntries) {
             this.evictOldest();
         }
 
@@ -199,6 +216,18 @@ export class PriceCache {
      */
     getPrice(asset: string): bigint | undefined {
         return this.cache.get<bigint>(`${this.keyPrefix}${asset.toUpperCase()}`);
+    }
+
+    /**
+     * Get cached price with fallback to stale data.
+     * Returns undefined if no price has ever been cached.
+     */
+    getPriceWithFallback(asset: string): { price: bigint; stale: boolean } | undefined {
+        const state = this.cache.getWithState<bigint>(`${this.keyPrefix}${asset.toUpperCase()}`);
+        if (state) {
+            return { price: state.data, stale: state.stale };
+        }
+        return undefined;
     }
 
     /**
