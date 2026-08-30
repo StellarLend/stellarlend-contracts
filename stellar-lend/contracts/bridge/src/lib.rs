@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes,
-    BytesN, Env, Map, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    Map, Vec,
 };
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
@@ -296,9 +296,7 @@ impl Bridge {
     }
 
     fn save_admin(env: &Env, admin: &Address) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Admin, admin);
+        env.storage().persistent().set(&BridgeDataKey::Admin, admin);
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), BridgeError> {
@@ -344,11 +342,7 @@ impl Bridge {
     ///          || source_domain_hash (32 bytes)
     ///          || nonce (8 bytes LE) )
     /// ```
-    fn inbound_message_id(
-        env: &Env,
-        source_hash: &BytesN<32>,
-        nonce: u64,
-    ) -> BytesN<32> {
+    fn inbound_message_id(env: &Env, source_hash: &BytesN<32>, nonce: u64) -> BytesN<32> {
         let mut data = Bytes::new(env);
         data.extend_from_slice(INBOUND_MSG_DOMAIN);
         data.extend_from_slice(&source_hash.to_bytes());
@@ -588,9 +582,7 @@ impl Bridge {
         env.storage()
             .persistent()
             .set(&BridgeDataKey::ConsumedInboundMessage(message_id), &true);
-        let next_nonce = nonce
-            .checked_add(1)
-            .ok_or(BridgeError::NonceOverflow)?;
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
         env.storage()
             .persistent()
             .set(&BridgeDataKey::InboundNonce(source_hash), &next_nonce);
@@ -612,11 +604,7 @@ impl Bridge {
     ///
     /// Computes the domain-separated message ID from `source` and `nonce`
     /// and checks the storage marker.
-    pub fn is_message_consumed(
-        env: Env,
-        source: SourceDomain,
-        nonce: u64,
-    ) -> bool {
+    pub fn is_message_consumed(env: Env, source: SourceDomain, nonce: u64) -> bool {
         let source_hash = Self::source_domain_hash(&env, &source);
         let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
         env.storage()
@@ -1370,7 +1358,9 @@ mod tests {
         // new set B: 3 validators
         let kp_b = make_keypairs(3);
         let b_pks: Vec<PublicKey> = kp_b.iter().map(|k| k.public).collect();
-        let new_set = ValidatorSet { validators: b_pks.iter().map(|p| p.to_bytes().to_vec()).collect() };
+        let new_set = ValidatorSet {
+            validators: b_pks.iter().map(|p| p.to_bytes().to_vec()).collect(),
+        };
 
         // proofs: have >2/3 of A sign the (new_set, epoch=1) payload
         let epoch = 1u64;
@@ -1384,7 +1374,9 @@ mod tests {
         }
 
         // rotate should succeed
-        bridge.rotate_validators(new_set.clone(), epoch, proofs).expect("rotation failed");
+        bridge
+            .rotate_validators(new_set.clone(), epoch, proofs)
+            .expect("rotation failed");
         assert_eq!(bridge.epoch, 1);
 
         // messages signed with epoch 0 should be rejected
@@ -1836,10 +1828,7 @@ mod replay_protection_test {
     fn inbound_msg_domain_separator_is_pinned() {
         // Pin the domain tag so a silent rename would break this test
         // and force a deliberate version bump.
-        assert_eq!(
-            INBOUND_MSG_DOMAIN,
-            b"stellarlend::bridge::inbound_msg::v1"
-        );
+        assert_eq!(INBOUND_MSG_DOMAIN, b"stellarlend::bridge::inbound_msg::v1");
     }
 
     #[test]
