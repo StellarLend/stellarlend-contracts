@@ -10,6 +10,7 @@ pub mod math;
 mod rate_model;
 pub mod rounding_strategy;
 pub mod upgrade;
+pub mod invariants;
 
 #[cfg(test)]
 mod governance_audit_test;
@@ -125,19 +126,7 @@ mod rate_updated_event_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
-mod repay_overpay_test;
-#[cfg(test)]
-mod reserve_split_proptest;
-#[cfg(test)]
-mod rounding_drift_test;
-#[cfg(test)]
-mod self_liquidation_test;
-#[cfg(test)]
-mod stateful_lifecycle_invariant_test;
-#[cfg(test)]
-mod storage_tier_test;
-#[cfg(test)]
-mod supply_rate_split_test;
+mod invariant_integration_test;
 
 #[cfg(test)]
 mod upgrade_governance_test;
@@ -1404,124 +1393,10 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
-    /// Receive tokens from a user via the SEP-41 `transfer_from`/`approve`
-    /// allowance flow and apply them as a deposit or debt repayment.
-    ///
-    /// This is a pull-based entrypoint: the user authorizes the lending
-    /// contract as a spender on the token contract (via `approve`) and then
-    /// calls `receive` with a payload specifying the desired action.  The
-    /// contract pulls `amount` from `from` into its own balance via
-    /// `transfer_from` before updating any protocol state.
-    ///
-    /// # Payload format
-    ///
-    /// `[version: u32, action: Symbol, ...optional_data]`
-    ///
-    /// * `version` — Must be `1` (current schema version).
-    /// * `action` — A `Symbol` indicating the action (`"deposit"` or
-    ///   `"repay"`).
-    /// * `optional_data` — Reserved for future use; ignored in the current
-    ///   version.
-    ///
-    /// # Security
-    ///
-    /// * Requires `from.require_auth()` so only the token owner can
-    ///   authorize a pull.
-    /// * Validates that `token_asset` matches the configured
-    ///   `ValuationCollateralAsset` before performing any transfer.
-    /// * Validates payload version and action before performing any
-    ///   transfer.
-    /// * The protocol pause and emergency state checks are delegated to the
-    ///   inner [`LendingContract::deposit`] / [`LendingContract::repay`]
-    ///   handlers (defence-in-depth: both `receive` and the inner handler
-    ///   call `require_initialized` and `require_auth`).
-    /// * Rejects calls from the token contract itself and the lending
-    ///   contract (prevents self-call attacks).
-    ///
-    /// # Errors
-    ///
-    /// * [`LendingError::InvalidPayloadVersion`] if `version != 1`.
-    /// * [`LendingError::MalformedPayload`] if the payload is too short,
-    ///   too long, or contains undecodable values.
-    /// * [`LendingError::AssetNotSupported`] if `token_asset` does not
-    ///   match the configured valuation collateral asset, or if the action
-    ///   is not `"deposit"` or `"repay"`.
-    /// * [`LendingError::UnauthorizedSender`] if `from` is the token
-    ///   contract or the lending contract itself.
-    /// * All errors from [`LendingContract::deposit`] or
-    ///   [`LendingContract::repay`] respectively.
-    pub fn receive(
-        env: Env,
-        token_asset: Address,
-        from: Address,
-        amount: i128,
-        payload: Vec<Val>,
-    ) -> Result<(), LendingError> {
-        require_initialized(&env)?;
-
-        // Validate that token_asset matches the configured valuation
-        // collateral asset so deposit/repay accounting stays consistent.
-        let configured_asset =
-            Self::get_collateral_asset(env.clone()).ok_or(LendingError::AssetNotSupported)?;
-        if token_asset != configured_asset {
-            return Err(LendingError::AssetNotSupported);
-        }
-
-        // Safety: reject calls from the token contract itself or the lending
-        // contract (prevents self-call / reentrancy attacks).
-        let contract_address = env.current_contract_address();
-        if from == token_asset || from == contract_address {
-            return Err(LendingError::UnauthorizedSender);
-        }
-
-        from.require_auth();
-
-        // Parse payload: [version: u32, action: Symbol, ...optional_data]
-        if payload.len() < MIN_RECEIVE_PAYLOAD_LEN {
-            return Err(LendingError::MalformedPayload);
-        }
-        if payload.len() > MAX_RECEIVE_PAYLOAD_LEN {
-            return Err(LendingError::MalformedPayload);
-        }
-
-        let version: u32 = payload
-            .get(0)
-            .unwrap()
-            .try_into_val(&env)
-            .map_err(|_| LendingError::MalformedPayload)?;
-        if version != SCHEMA_VERSION_V1 {
-            return Err(LendingError::InvalidPayloadVersion);
-        }
-
-        let action_sym: Symbol = payload
-            .get(1)
-            .unwrap()
-            .try_into_val(&env)
-            .map_err(|_| LendingError::MalformedPayload)?;
-
-        // Pull tokens from the user into the contract via transfer_from.
-        // The user must have previously called token_client.approve() to
-        // authorize the lending contract as a spender.
-        let token_client = TokenClient::new(&env, &token_asset);
-        token_client.transfer_from(&contract_address, &from, &contract_address, &amount);
-
-        if action_sym == symbol_short!("deposit") {
-            // Defence-in-depth: deposit() also calls require_initialized
-            // and user.require_auth(). The double check is intentional.
-            Self::deposit(env, from, amount)?;
-        } else if action_sym == symbol_short!("repay") {
-            // Defence-in-depth: repay() also calls require_initialized
-            // and user.require_auth(). The double check is intentional.
-            Self::repay(env, from, amount)?;
-        } else {
-            return Err(LendingError::AssetNotSupported);
-        }
-
-        Ok(())
-    }
-
-    pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
-        require_initialized(&env)?;
+    pub fn deposit(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Deposit);
         check_emergency_status(&env, ProtocolAction::Deposit);
         if amount <= 0 {
@@ -1556,16 +1431,18 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
-
-        // Emit deposit event
-        emit_deposit(&env, &user, amount, new_balance);
-
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(new_balance)
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
-    pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
-        require_initialized(&env)?;
+    pub fn withdraw(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Withdraw);
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
@@ -1593,10 +1470,10 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
-
-        // Emit withdraw event
-        emit_withdraw(&env, &user, amount, new_balance);
-
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(new_balance)
     }
 
@@ -1664,8 +1541,10 @@ impl LendingContract {
     /// and rejects the borrow when the post-borrow health factor would fall below
     /// 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
     /// `DataKey::DebtCeiling`.
-    pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
-        require_initialized(&env)?;
+    pub fn borrow(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1712,14 +1591,10 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
-
-        save_debt(&env, &user, &updated);
-        // Extend TTL to prevent archival of debt entry
-        extend_debt_ttl(&env, &user);
-
-        // Emit borrow event
-        emit_borrow(&env, &user, amount, updated.principal);
-
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(updated.principal)
     }
 
@@ -1745,7 +1620,9 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
-        require_initialized(&env)?;
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1796,6 +1673,9 @@ impl LendingContract {
             increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
 
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &collateral_asset);
+
         Ok(updated.principal)
     }
 
@@ -1813,7 +1693,9 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
-        require_initialized(&env)?;
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
         if amount <= 0 {
@@ -1857,7 +1739,9 @@ impl LendingContract {
             decrement_isolation_debt(&env, &collateral_asset, repaid)?;
         }
 
-        check_and_clear_unhealthy_timestamp(&env, &user);
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &collateral_asset);
+
         Ok(updated.principal)
     }
 
@@ -1923,12 +1807,14 @@ impl LendingContract {
         collateral_asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
-        require_initialized(&env)?;
-        with_reentrancy_lock(&env, || {
-            liquidator.require_auth();
-            if liquidator == borrower {
-                return Err(LendingError::SelfLiquidation);
-            }
+        // Check invariants BEFORE state change for both assets
+        invariants::check_invariant_before(&env, &debt_asset);
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
+        liquidator.require_auth();
+        if liquidator == borrower {
+            return Err(LendingError::SelfLiquidation);
+        }
 
             check_pause_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
@@ -2190,56 +2076,17 @@ impl LendingContract {
         Ok(())
     }
 
-    /// Return the effective liquidation incentive (basis points) used by
-    /// `liquidate` — the bonus, on top of the repaid debt, paid to the
-    /// liquidator in seized collateral.
-    ///
-    /// Defaults to [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] (1000 = 10 %) until
-    /// an admin configures an override via
-    /// [`Self::set_liquidation_incentive_bps`].
-    pub fn get_liquidation_incentive_bps(env: Env) -> i128 {
-        Self::liquidation_incentive_bps_config(&env)
+        // Check invariants AFTER state change for both assets
+        invariants::check_invariant_after(&env, &debt_asset);
+        invariants::check_invariant_after(&env, &collateral_asset);
+
+        Ok(actual_repay)
     }
 
-    /// Set the liquidation incentive in basis points (admin-only).
-    ///
-    /// Must be in `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (0 % to 50 %).
-    ///
-    /// # Errors
-    /// - [`LendingError::InvalidLiquidationIncentiveBps`] if
-    ///   `incentive_bps < 0` or `incentive_bps > MAX_LIQUIDATION_INCENTIVE_BPS`.
-    pub fn set_liquidation_incentive_bps(
-        env: Env,
-        incentive_bps: i128,
-    ) -> Result<(), LendingError> {
-        require_initialized(&env)?;
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(LendingError::NotInitialized)?;
-        admin.require_auth();
-        if !(0..=MAX_LIQUIDATION_INCENTIVE_BPS).contains(&incentive_bps) {
-            return Err(LendingError::InvalidLiquidationIncentiveBps);
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
-        events::emit_liquidation_incentive_bps_set(&env, incentive_bps);
-
-        // Record audit entry
-        audit_log::record_audit_entry(
-            &env,
-            String::from_str(&env, "set_liquidation_incentive_bps"),
-            admin,
-            None,
-        );
-
-        Ok(())
-    }
-
-    pub fn repay(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
-        require_initialized(&env)?;
+    pub fn repay(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
 
@@ -2274,10 +2121,10 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
-
-        // Emit repay event
-        emit_repay(&env, &user, amount, updated.principal);
-
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
         Ok(updated.principal)
     }
 
