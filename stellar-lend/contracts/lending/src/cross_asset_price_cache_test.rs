@@ -187,3 +187,119 @@ fn multi_asset_case_asserting_reduced_read_count() {
     // expected reads: 2 + 3(5) + 2(5) - 3 = 24
     assert_hf_within_budget_with_overlap(5, 5, 3);
 }
+
+#[test]
+fn stale_oracle_price_is_rejected() {
+    let (env, id, _admin, user, assets) = setup_env(1);
+    let asset = assets.get(0).unwrap();
+
+    env.as_contract(&id, || {
+        crate::cross_asset::save_collateral_asset(&env, &user, &asset, 10_000i128);
+        let col_key = DataKey::UserCollateralAssets(user.clone());
+        let mut col_list: Vec<Address> = Vec::new(&env);
+        col_list.push_back(asset.clone());
+        env.storage().persistent().set(&col_key, &col_list);
+
+        crate::cross_asset::save_debt_asset(
+            &env,
+            &user,
+            &asset,
+            &DebtPosition {
+                principal: 100i128,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+        let debt_key = DataKey::UserDebtAssets(user.clone());
+        let mut debt_list: Vec<Address> = Vec::new(&env);
+        debt_list.push_back(asset.clone());
+        env.storage().persistent().set(&debt_key, &debt_list);
+
+        // Overwrite with a stale oracle price to ensure freshness is enforced.
+        let stale_timestamp = env.ledger().timestamp() - 3_600;
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset.clone()),
+            &PriceRecord {
+                price: 10_000_000i128,
+                timestamp: stale_timestamp,
+            },
+        );
+    });
+
+    let position_value_result =
+        env.as_contract(&id, || get_cross_position_value(&env, &user));
+    assert!(
+        position_value_result.is_err(),
+        "stale oracle price must be rejected by position value without fallback"
+    );
+
+    let stale_result = env.as_contract(&id, || compute_aggregate_health_factor(&env, &user));
+    assert!(
+        stale_result.is_err(),
+        "stale oracle price must be rejected to protect collateral safety"
+    );
+
+    // Freshen the oracle price; the next read must succeed and remain available.
+    env.as_contract(&id, || {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset.clone()),
+            &PriceRecord {
+                price: 10_000_000i128,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+    });
+
+    let fresh_hf = env.as_contract(&id, || {
+        compute_aggregate_health_factor(&env, &user).expect("fresh oracle price must be accepted")
+    });
+    assert!(fresh_hf > 0);
+}
+
+#[test]
+fn missing_oracle_price_is_rejected() {
+    let (env, id, _admin, user, assets) = setup_env(1);
+    let asset = assets.get(0).unwrap();
+
+    env.as_contract(&id, || {
+        crate::cross_asset::save_collateral_asset(&env, &user, &asset, 10_000i128);
+        let col_key = DataKey::UserCollateralAssets(user.clone());
+        let mut col_list: Vec<Address> = Vec::new(&env);
+        col_list.push_back(asset.clone());
+        env.storage().persistent().set(&col_key, &col_list);
+
+        crate::cross_asset::save_debt_asset(
+            &env,
+            &user,
+            &asset,
+            &DebtPosition {
+                principal: 100i128,
+                borrow_index_snapshot: 0,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+        let debt_key = DataKey::UserDebtAssets(user.clone());
+        let mut debt_list: Vec<Address> = Vec::new(&env);
+        debt_list.push_back(asset.clone());
+        env.storage().persistent().set(&debt_key, &debt_list);
+
+        // Simulate a missing oracle price so the fallback/error policy is exercised.
+        env.storage()
+            .persistent()
+            .remove(&DataKey::OraclePrice(asset.clone()));
+    });
+
+    let position_value_result =
+        env.as_contract(&id, || get_cross_position_value(&env, &user));
+    assert!(
+        position_value_result.is_err(),
+        "missing oracle price must be rejected by position value without fallback"
+    );
+
+    let result = env.as_contract(&id, || compute_aggregate_health_factor(&env, &user));
+    assert!(
+        result.is_err(),
+        "missing oracle price must not silently weaken collateral safety"
+    );
+}
+
