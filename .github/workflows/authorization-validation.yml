@@ -1,0 +1,241 @@
+name: Authorization Boundary Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'stellar-lend/contracts/lending/src/authorization.rs'
+      - 'stellar-lend/contracts/lending/src/validation.rs'
+      - 'stellar-lend/contracts/lending/src/adversarial_scenarios_test.rs'
+      - 'stellar-lend/contracts/lending/src/event_schema_versioning_test.rs'
+      - 'api/src/middleware/authorization.ts'
+      - 'api/src/middleware/boundaryValidation.ts'
+      - 'api/src/__tests__/boundaryValidation.test.ts'
+      - '.github/workflows/authorization-validation.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'stellar-lend/contracts/lending/src/authorization.rs'
+      - 'stellar-lend/contracts/lending/src/validation.rs'
+      - 'stellar-lend/contracts/lending/src/adversarial_scenarios_test.rs'
+      - 'stellar-lend/contracts/lending/src/event_schema_versioning_test.rs'
+      - 'api/src/middleware/authorization.ts'
+      - 'api/src/middleware/boundaryValidation.ts'
+      - 'api/src/__tests__/boundaryValidation.test.ts'
+      - '.github/workflows/authorization-validation.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  contract-authorization-tests:
+    name: Contract Authorization Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: stellar-lend/contracts/lending/target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Run authorization module tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test authorization:: --lib --verbose
+      
+      - name: Run validation module tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test validation:: --lib --verbose
+      
+      - name: Run adversarial scenario tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test adversarial_scenarios_test:: --verbose
+      
+      - name: Run event schema versioning tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test event_schema_versioning_test:: --verbose
+      
+      - name: Run clippy
+        working-directory: stellar-lend/contracts/lending
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      
+      - name: Check formatting
+        working-directory: stellar-lend/contracts/lending
+        run: cargo fmt -- --check
+  
+  api-boundary-tests:
+    name: API Boundary Validation Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: api
+        run: npm ci
+      
+      - name: Run authorization middleware tests
+        working-directory: api
+        run: npm test -- src/__tests__/auth.test.ts --passWithNoTests
+      
+      - name: Run boundary validation tests
+        working-directory: api
+        run: npm test -- src/__tests__/boundaryValidation.test.ts
+      
+      - name: Run ESLint
+        working-directory: api
+        run: npm run lint
+      
+      - name: Type check
+        working-directory: api
+        run: npm run type-check
+  
+  security-checks:
+    name: Security Vulnerability Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Run cargo audit
+        working-directory: stellar-lend/contracts/lending
+        run: |
+          cargo install cargo-audit
+          cargo audit
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: api
+        run: npm ci
+      
+      - name: Run npm audit
+        working-directory: api
+        run: npm audit --audit-level=moderate
+  
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [contract-authorization-tests, api-boundary-tests]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Run integration tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test integration --verbose
+      
+      - name: Run replay attack tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test test_replay --verbose
+      
+      - name: Run tampering prevention tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test test_cannot --verbose
+      
+      - name: Run network validation tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test test_network --verbose
+      
+      - name: Run rate limiting tests
+        working-directory: stellar-lend/contracts/lending
+        run: cargo test test_rate_limit --verbose
+  
+  documentation:
+    name: Documentation Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Build documentation
+        working-directory: stellar-lend/contracts/lending
+        run: cargo doc --no-deps --document-private-items --verbose
+      
+      - name: Check for broken links in documentation
+        working-directory: stellar-lend/contracts/lending
+        run: |
+          cargo install cargo-deadlinks
+          cargo deadlinks --check-http
+  
+  validation-summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [contract-authorization-tests, api-boundary-tests, security-checks, integration-tests, documentation]
+    if: always()
+    
+    steps:
+      - name: Check all jobs status
+        run: |
+          if [ "${{ needs.contract-authorization-tests.result }}" != "success" ] || \
+             [ "${{ needs.api-boundary-tests.result }}" != "success" ] || \
+             [ "${{ needs.security-checks.result }}" != "success" ] || \
+             [ "${{ needs.integration-tests.result }}" != "success" ] || \
+             [ "${{ needs.documentation.result }}" != "success" ]; then
+            echo "❌ Authorization boundary validation failed"
+            echo "Check the failed jobs above for details"
+            exit 1
+          else
+            echo "✅ All authorization boundary validations passed!"
+          fi
