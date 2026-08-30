@@ -106,6 +106,31 @@ pub fn load_asset_params(env: &Env, asset: &Address) -> Option<AssetParams> {
 /// Returns [`LendingError::StaleOracleTimestamp`] if the price is older than
 /// `DEFAULT_ORACLE_MAX_AGE_SECS` or carries a future timestamp.
 pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, LendingError> {
+    get_price_for_asset_with_max_age(env, asset, DEFAULT_ORACLE_MAX_AGE_SECS)
+}
+
+/// Fetch an oracle price using an explicit freshness limit.
+///
+/// This is the implementation core behind [`get_price_for_asset`]. It exists
+/// so callers that need a tighter (or a one-off fallback) staleness policy can
+/// express the limit without weakening the fail-closed invariants.
+///
+/// The fallback policy is fail-closed: a missing or stale price is never
+/// replaced with an older recorded price or a zero value.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Errors
+/// Returns [`LendingError::PriceFeedNotFound`] if no price has been stored for
+/// this asset, or if the stored price is non-positive.
+///
+/// Returns [`LendingError::StaleOracleTimestamp`] if the price is older than
+/// `max_age_secs` or carries a future timestamp.
+pub fn get_price_for_asset_with_max_age(
+    env: &Env,
+    asset: &Address,
+    max_age_secs: u64,
+) -> Result<PriceRecord, LendingError> {
     let record: PriceRecord = env
         .storage()
         .persistent()
@@ -127,10 +152,87 @@ pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, Le
         return Err(LendingError::StaleOracleTimestamp);
     }
 
-    if now.saturating_sub(record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS {
+    if now.saturating_sub(record.timestamp) > max_age_secs {
         return Err(LendingError::StaleOracleTimestamp);
     }
     Ok(record)
+}
+
+#[cfg(test)]
+mod oracle_freshness_fallback_tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn set_price(env: &Env, asset: &Address, price: i128, timestamp: u64) {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset.clone()),
+            &PriceRecord { price, timestamp },
+        );
+    }
+
+    #[test]
+    fn custom_max_age_boundary_is_fresh() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + 42);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(
+            get_price_for_asset_with_max_age(&env, &asset, 42).is_ok(),
+            "price exactly at the freshness boundary must be accepted"
+        );
+    }
+
+    #[test]
+    fn custom_max_age_one_past_is_stale() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + 43);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(matches!(
+            get_price_for_asset_with_max_age(&env, &asset, 42),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+    }
+
+    #[test]
+    fn stale_price_retry_after_fresh_update_succeeds() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let stale_timestamp = 1_000_000u64;
+        let fresh_timestamp = stale_timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 2;
+
+        env.ledger().set_timestamp(fresh_timestamp);
+        set_price(&env, &asset, 10_000_000, stale_timestamp);
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+
+        set_price(&env, &asset, 10_000_001, fresh_timestamp);
+        assert!(get_price_for_asset(&env, &asset).is_ok());
+    }
+
+    #[test]
+    fn missing_and_non_positive_feed_fail_closed() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        env.ledger().set_timestamp(1_000_000);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+
+        set_price(&env, &asset, 0, 1_000_000);
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+    }
 }
 
 fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
