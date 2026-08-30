@@ -8,7 +8,8 @@ use soroban_sdk::{testutils::Ledger, Address, Env};
 /// Registers the lending contract and runs storage setup inside its context.
 fn with_contract<R>(env: &Env, f: impl FnOnce(Address) -> R) -> R {
     let contract_id = env.register(LendingContract, ());
-    env.as_contract(&contract_id, || f(contract_id))
+    let c = contract_id.clone();
+    env.as_contract(&c, || f(contract_id))
 }
 
 /// Writes the aggregate inputs used by the borrow-rate model.
@@ -36,7 +37,7 @@ fn read_cache(env: &Env, ledger_sequence: u32) -> Option<BorrowRateCache> {
 fn cached_rate_matches_uncached_rate_and_reuses_same_ledger_entry() {
     let env = Env::default();
     with_contract(&env, |_contract_id| {
-        env.ledger().set_sequence(1061);
+        env.ledger().set_sequence_number(1061);
         set_rate_inputs(&env, 4_000, 10_000, Some(RateParams::default()));
 
         let uncached = uncached_borrow_rate(&env);
@@ -61,11 +62,11 @@ fn cached_rate_matches_uncached_rate_and_reuses_same_ledger_entry() {
 fn ledger_advance_recomputes_from_fresh_inputs() {
     let env = Env::default();
     with_contract(&env, |_contract_id| {
-        env.ledger().set_sequence(200);
+        env.ledger().set_sequence_number(200);
         set_rate_inputs(&env, 4_000, 10_000, Some(RateParams::default()));
         assert_eq!(cached_borrow_rate(&env), 900);
 
-        env.ledger().set_sequence(201);
+        env.ledger().set_sequence_number(201);
         set_rate_inputs(&env, 8_000, 10_000, Some(RateParams::default()));
 
         let uncached_after_advance = uncached_borrow_rate(&env);
@@ -92,11 +93,11 @@ fn ledger_advance_recomputes_from_fresh_inputs() {
 fn utilization_change_between_ledgers_updates_cached_rate() {
     let env = Env::default();
     with_contract(&env, |_contract_id| {
-        env.ledger().set_sequence(300);
+        env.ledger().set_sequence_number(300);
         set_rate_inputs(&env, 0, 10_000, Some(RateParams::default()));
         assert_eq!(cached_borrow_rate(&env), 100);
 
-        env.ledger().set_sequence(301);
+        env.ledger().set_sequence_number(301);
         set_rate_inputs(&env, 10_000, 10_000, Some(RateParams::default()));
 
         assert_eq!(uncached_borrow_rate(&env), 3_700);
@@ -108,13 +109,15 @@ fn utilization_change_between_ledgers_updates_cached_rate() {
 fn missing_rate_params_uses_legacy_default_and_is_cached() {
     let env = Env::default();
     with_contract(&env, |_contract_id| {
-        env.ledger().set_sequence(400);
+        env.ledger().set_sequence_number(400);
         set_rate_inputs(&env, 8_000, 10_000, None);
 
         assert_eq!(uncached_borrow_rate(&env), crate::debt::DEFAULT_APR_BPS);
         assert_eq!(cached_borrow_rate(&env), crate::debt::DEFAULT_APR_BPS);
         assert_eq!(
-            read_cache(&env, 400).expect("default rate should be cached").rate_bps,
+            read_cache(&env, 400)
+                .expect("default rate should be cached")
+                .rate_bps,
             crate::debt::DEFAULT_APR_BPS
         );
     });

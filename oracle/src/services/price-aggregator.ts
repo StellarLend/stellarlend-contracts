@@ -24,15 +24,42 @@ export interface AggregatorConfig {
     useWeightedMedian: boolean;
     /** MAD z-score threshold; prices beyond this are rejected as outliers (0 = disabled). */
     madZScoreThreshold: number;
+    /**
+     * Maximum age of a cached price in milliseconds before a fresh provider
+     * fetch is required. If omitted, defaults to 30 seconds.
+     */
+    maxCacheAgeMs?: number;
+    /**
+     * Maximum age of a stale cached price in milliseconds allowed as a
+     * last-resort fallback when live providers fail. If omitted, defaults to
+     * 5 minutes.
+     */
+    staleFallbackMaxAgeMs?: number;
+    /**
+     * Confidence value used for stale-cache fallback prices. If omitted,
+     * defaults to 0 (degraded/unknown confidence).
+     */
+    staleFallbackConfidence?: number;
+
+    /**
+     * Number of additional attempts to make for a provider after a transient
+     * failure before that provider is skipped for this read. If omitted,
+     * defaults to 0 (no retries).
+     */
+    maxRetries?: number;
 }
 
 /**
  * Default aggregator configuration
  */
-const DEFAULT_CONFIG: AggregatorConfig = {
+const DEFAULT_CONFIG: Required<AggregatorConfig> = {
     minSources: 1,
     useWeightedMedian: true,
     madZScoreThreshold: MAD_Z_SCORE_THRESHOLD,
+    maxCacheAgeMs: 30_000,
+    staleFallbackMaxAgeMs: 5 * 60_000,
+    staleFallbackConfidence: 0,
+    maxRetries: 0,
 };
 
 /**
@@ -42,7 +69,8 @@ export class PriceAggregator {
     private providers: BasePriceProvider[];
     private validator: PriceValidator;
     private cache: PriceCache;
-    private config: AggregatorConfig;
+    private config: Required<AggregatorConfig>;
+    private cacheMetadata: Map<string, { timestamp: number; confidence: number }> = new Map();
 
     constructor(
         providers: BasePriceProvider[],
@@ -56,7 +84,29 @@ export class PriceAggregator {
 
         this.validator = validator;
         this.cache = cache;
-        this.config = { ...DEFAULT_CONFIG, ...config };
+        const resolvedConfig: Required<AggregatorConfig> = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
+
+        if (resolvedConfig.minSources < 1) {
+            throw new Error('minSources must be at least 1');
+        }
+        if (resolvedConfig.maxCacheAgeMs < 0) {
+            throw new Error('maxCacheAgeMs cannot be negative');
+        }
+        if (resolvedConfig.staleFallbackMaxAgeMs < 0) {
+            throw new Error('staleFallbackMaxAgeMs cannot be negative');
+        }
+        if (
+            resolvedConfig.staleFallbackConfidence < 0 ||
+            resolvedConfig.staleFallbackConfidence > 100
+        ) {
+            throw new Error('staleFallbackConfidence must be between 0 and 100');
+        }
+
+        if (!Number.isInteger(resolvedConfig.maxRetries) || resolvedConfig.maxRetries < 0) {
+            throw new Error('maxRetries must be a non-negative integer');
+        }
+
+        this.config = resolvedConfig;
 
         logger.info('Price aggregator initialized', {
             enabledProviders: this.providers.map((p) => p.name),
@@ -70,15 +120,22 @@ export class PriceAggregator {
     async getPrice(asset: string): Promise<AggregatedPrice | null> {
         const upperAsset = asset.toUpperCase();
 
+        const now = Date.now();
         const cachedPrice = this.cache.getPrice(upperAsset);
-        if (cachedPrice !== undefined) {
+        const cachedMeta = this.cacheMetadata.get(upperAsset);
+        const cacheAgeMs =
+            cachedMeta && cachedMeta.timestamp <= now
+                ? now - cachedMeta.timestamp
+                : Number.POSITIVE_INFINITY;
+
+        if (cachedPrice !== undefined && cachedMeta !== undefined && cacheAgeMs <= this.config.maxCacheAgeMs) {
             logger.debug(`Using cached price for ${upperAsset}`);
             return {
                 asset: upperAsset,
                 price: cachedPrice,
                 sources: [],
-                timestamp: Math.floor(Date.now() / 1000),
-                confidence: 100,
+                timestamp: Math.floor(cachedMeta.timestamp / 1000),
+                confidence: cachedMeta.confidence,
             };
         }
 
@@ -89,12 +146,34 @@ export class PriceAggregator {
                 got: validPrices.length,
                 required: this.config.minSources,
             });
+
+            if (
+                cachedPrice !== undefined &&
+                cachedMeta !== undefined &&
+                cacheAgeMs <= this.config.staleFallbackMaxAgeMs
+            ) {
+                logger.warn(`Using stale cached price for ${upperAsset} as fallback`, {
+                    ageMs: cacheAgeMs,
+                });
+                return {
+                    asset: upperAsset,
+                    price: cachedPrice,
+                    sources: [],
+                    timestamp: Math.floor(cachedMeta.timestamp / 1000),
+                    confidence: this.config.staleFallbackConfidence,
+                };
+            }
+
             return null;
         }
 
         const aggregated = this.aggregate(upperAsset, validPrices);
 
         this.cache.setPrice(upperAsset, aggregated.price);
+        this.cacheMetadata.set(upperAsset, {
+            timestamp: now,
+            confidence: aggregated.confidence,
+        });
 
         return aggregated;
     }
@@ -125,27 +204,43 @@ export class PriceAggregator {
         const errors: Map<string, Error> = new Map();
 
         for (const provider of this.providers) {
-            try {
-                if (provider.isCooledDown) {
-                    logger.warn(`Skipping provider ${provider.name} due to active cooldown`);
-                    continue;
-                }
-                const rawPrice = await provider.fetchPrice(asset);
-                const validation = this.validator.validate(rawPrice);
+            if (provider.isCooledDown) {
+                logger.warn(`Skipping provider ${provider.name} due to active cooldown`);
+                continue;
+            }
 
-                if (validation.isValid && validation.price) {
-                    validPrices.push(validation.price);
-                    logger.debug(`Got valid price from ${provider.name} for ${asset}`, {
-                        price: validation.price.price.toString(),
-                    });
-                } else {
+            const maxAttempts = this.config.maxRetries + 1;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    const rawPrice = await provider.fetchPrice(asset);
+                    const validation = this.validator.validate(rawPrice);
+
+                    if (validation.isValid && validation.price) {
+                        validPrices.push(validation.price);
+                        logger.debug(`Got valid price from ${provider.name} for ${asset}`, {
+                            price: validation.price.price.toString(),
+                        });
+                        break;
+                    }
+
                     logger.warn(`Invalid price from ${provider.name} for ${asset}`, {
                         errors: validation.errors,
                     });
+
+                    if (attempt >= maxAttempts) {
+                        break;
+                    }
+
+                    logger.warn(`Retrying ${provider.name} for ${asset} after invalid price (attempt ${attempt}/${maxAttempts})`);
+                } catch (error) {
+                    if (attempt < maxAttempts) {
+                        logger.warn(`Provider ${provider.name} failed for ${asset} (attempt ${attempt}/${maxAttempts}); retrying`, { error });
+                        continue;
+                    }
+
+                    errors.set(provider.name, error instanceof Error ? error : new Error(String(error)));
+                    logger.warn(`Provider ${provider.name} failed for ${asset}`, { error });
                 }
-            } catch (error) {
-                errors.set(provider.name, error instanceof Error ? error : new Error(String(error)));
-                logger.warn(`Provider ${provider.name} failed for ${asset}`, { error });
             }
         }
 
@@ -189,20 +284,22 @@ export class PriceAggregator {
             ? this.weightedMedian(activePrices)
             : this.simpleMedian(activePrices);
 
-        const totalWeight = this.providers
-            .filter((p) => prices.some((pr) => pr.source === p.name))
-            .reduce((sum, p) => sum + p.weight, 0);
-
-        const weightedConfidence = prices.reduce((sum, p) => {
-            const provider = this.providers.find((pr) => pr.name === p.source);
-            const weight = provider?.weight ?? 0.1;
-            return sum + (p.confidence * weight);
-        }, 0) / totalWeight;
+        const totalWeight = activePrices.reduce(
+            (sum, p) => sum + this.getSourceWeight(p),
+            0,
+        );
+        const weightedConfidence =
+            totalWeight > 0 && Number.isFinite(totalWeight)
+                ? activePrices.reduce(
+                      (sum, p) => sum + p.confidence * this.getSourceWeight(p),
+                      0,
+                  ) / totalWeight
+                : activePrices.reduce((sum, p) => sum + p.confidence, 0) / activePrices.length;
 
         return {
             asset,
             price: aggregatedPrice,
-            sources: prices,
+            sources: activePrices,
             timestamp: now,
             confidence: Math.round(weightedConfidence),
         };
@@ -225,15 +322,7 @@ export class PriceAggregator {
         );
 
         // Derive a numeric weight for each price point.
-        const weights = sorted.map((p) => {
-            if (p.volume24h !== undefined && p.volume24h > 0n) {
-                // Convert bigint volume to a Number for weight arithmetic.
-                // Precision loss is acceptable here: we only need relative ordering.
-                return Number(p.volume24h);
-            }
-            const provider = this.providers.find((pr) => pr.name === p.source);
-            return provider?.weight ?? 0.1;
-        });
+        const weights = sorted.map((p) => this.getSourceWeight(p));
 
         const totalWeight = weights.reduce((a, b) => a + b, 0);
         const halfWeight = totalWeight / 2;
@@ -265,6 +354,23 @@ export class PriceAggregator {
         }
 
         return sorted[mid].price;
+    }
+
+    /**
+     * Determine the numeric weight for a price point.
+     *
+     * Uses `volume24h` when available; otherwise falls back to the provider's
+     * configured static weight. This keeps confidence weighting consistent with
+     * weighted-median price selection.
+     */
+    private getSourceWeight(price: PriceData): number {
+        if (price.volume24h !== undefined && price.volume24h > 0n) {
+            // Convert bigint volume to a Number for weight arithmetic.
+            // Precision loss is acceptable here: we only need relative ordering.
+            return Number(price.volume24h);
+        }
+        const provider = this.providers.find((pr) => pr.name === price.source);
+        return provider?.weight ?? 0.1;
     }
 
     /**

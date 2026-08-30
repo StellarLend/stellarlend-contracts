@@ -2,8 +2,8 @@
 
 ## Scope
 
-This document describes how upgrade authorization works for contracts using
-`stellarlend_common::upgrade::UpgradeManager` and how to safely rotate upgrade keys.
+This document describes how upgrade authorization works for the lending contract
+(implemented in `stellar-lend/contracts/lending/src/upgrade.rs`) and how to safely rotate upgrade keys.
 
 ## Authorization model
 
@@ -13,14 +13,35 @@ This document describes how upgrade authorization works for contracts using
 - `upgrade_remove_approver(caller, approver)` is `admin` only.
 - `upgrade_approve(caller, proposal_id)` is restricted to the configured approver set.
 - `upgrade_execute(caller, proposal_id)` is restricted to the configured approver set.
-- `upgrade_rollback(caller, proposal_id)` is `admin` only.
 
 All mutating authorization paths call `require_auth()` on the provided caller.
 
+## Public API contract
+
+The entrypoints `upgrade_init`, `upgrade_propose`, `upgrade_add_approver`,
+`upgrade_remove_approver`, `upgrade_approve`, and `upgrade_execute` form the public upgrade API.
+Their names, argument order, authorization rules, and state transitions are part of the stable
+contract. Existing consumers (governance front-ends, automation, and downstream contracts) rely on
+these exact semantics; any change that alters authorization, failure behavior, or event emission must
+be treated as a breaking change and coordinated with a migration plan.
+
+The contract also guarantees these invariants at all times:
+
+- `required_approvals` is always `> 0` and cannot exceed the current approver set size.
+- A proposal can be executed only after at least `required_approvals` distinct current approvers have
+  approved it.
+- Approvals from addresses that are not current approvers are rejected, including addresses that
+  approved the proposal before being removed.
+- `upgrade_remove_approver` refuses to remove an approver if doing so would make the current threshold
+  unsatisfiable.
+- `upgrade_execute` refuses to execute a proposal whose `new_version <= current_version`.
+
+These invariants are enforced by the contract and covered by the failure-path tests described below.
+
 ## Role separation
 
-- The stored `admin` is the governance authority for upgrade configuration: it can propose upgrades,
-  add/remove approvers, and roll back executed upgrades.
+- The stored `admin` is the governance authority for upgrade configuration: it can propose upgrades
+  and add/remove approvers.
 - The approver set is the execution authority for upgrades: only current approvers can approve or
   execute a proposal once it exists.
 - Guardian or emergency operators are not part of the upgrade trust boundary and gain no upgrade
@@ -104,8 +125,7 @@ which must be mitigated by live authorization checks before revoking the old sig
 
 ## Trust boundaries and operator powers
 
-- Upgrade authority boundary: only `admin` can propose upgrades, manage approvers, and roll back
-  executed upgrades.
+- Upgrade authority boundary: only `admin` can propose upgrades and manage approvers.
 - Execution boundary: only currently configured approvers can execute approved proposals.
 - Guardian boundary: guardian operations (pause or emergency flows) are separate from upgrade
   authority and do not grant upgrade proposal, execution, or rollback rights.
@@ -114,18 +134,17 @@ which must be mitigated by live authorization checks before revoking the old sig
 
 ## External call and token transfer safety
 
-- Upgrade entrypoints (`upgrade_propose`, `upgrade_approve`, `upgrade_execute`,
-  `upgrade_rollback`) do not perform token transfers.
+- Upgrade entrypoints (`upgrade_propose`, `upgrade_approve`, `upgrade_execute`)
+  do not perform token transfers.
 - Token transfer paths remain confined to lending operations such as deposit, withdraw, repay,
   and liquidation modules.
 - Authorization checks (`require_auth()`) are enforced on every mutating upgrade path.
 - Upgrade tests should verify both authorization and invalid-status rejection on each external
   entrypoint.
 
-## Rollback and failure-path coverage checklist
+## Failure-path coverage checklist
 
-- Rollback rejects proposals that were never executed (`InvalidStatus`).
-- Execute and rollback reject unknown proposal ids (`ProposalNotFound`).
+- Execute rejects unknown proposal ids (`ProposalNotFound`).
 - Non-monotonic version proposals are rejected after successful execution
   (`new_version <= current_version`).
 - Execution by a removed approver is rejected even if they approved earlier during proposal
