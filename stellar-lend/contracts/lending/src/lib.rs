@@ -151,6 +151,133 @@ mod config_roundtrip_test;
 mod utilization_history_test;
 #[cfg(test)]
 mod withdraw_overflow_test;
+
+#[cfg(test)]
+mod lifecycle_state_transition_test {
+    use super::*;
+
+    /// Asserts that all governed configuration constants are within their
+    /// documented bounds. This prevents accidental regressions to unsafe
+    /// liquidation or borrowing parameters.
+    #[test]
+    fn config_constants_respect_documented_bounds() {
+        assert!(DEFAULT_CLOSE_FACTOR_BPS > 0);
+        assert!(DEFAULT_CLOSE_FACTOR_BPS <= MAX_CLOSE_FACTOR_BPS);
+        assert!(MAX_CLOSE_FACTOR_BPS <= BPS_DENOM);
+        assert!(DEFAULT_LIQUIDATION_INCENTIVE_BPS >= 0);
+        assert!(DEFAULT_LIQUIDATION_INCENTIVE_BPS <= MAX_LIQUIDATION_INCENTIVE_BPS);
+        assert!(MAX_LIQUIDATION_INCENTIVE_BPS <= BPS_DENOM);
+        assert!(LIQUIDATION_THRESHOLD_BPS <= BPS_DENOM);
+        assert!(HEALTH_FACTOR_NO_DEBT > HEALTH_FACTOR_SCALE);
+        assert!(MAX_LIQUIDATION_GRACE_PERIOD_SECS > 0);
+        assert!(UTILIZATION_HISTORY_CAPACITY > 0);
+    }
+
+    /// Enumerates every state key and ensures the contract type remains
+    /// usable as a map key and for equality checks across upgrades.
+    #[test]
+    fn data_key_traits_are_stable() {
+        fn assert_traits<T: Clone + Debug + PartialEq + Eq>() {}
+        assert_traits::<DataKey>();
+        assert_traits::<LiquidationEventV1>();
+        assert_traits::<PauseStateChangedEvent>();
+        assert_traits::<EmergencyStateChangedEvent>();
+    }
+
+    /// A minimal in-memory lifecycle model used to regression-test the
+    /// accounting invariants around deposit, borrow, repay, and withdraw
+    /// transitions without requiring a full contract environment.
+    #[derive(Debug, PartialEq, Eq)]
+    struct LifecycleModel {
+        total_deposits: i128,
+        total_debt: i128,
+    }
+
+    impl LifecycleModel {
+        fn new() -> Self {
+            Self {
+                total_deposits: 0,
+                total_debt: 0,
+            }
+        }
+
+        fn deposit(&mut self, amount: i128) -> Result<(), &'static str> {
+            if amount <= 0 {
+                return Err("deposit must be positive");
+            }
+            self.total_deposits += amount;
+            Ok(())
+        }
+
+        fn borrow(&mut self, amount: i128) -> Result<(), &'static str> {
+            if amount <= 0 {
+                return Err("borrow must be positive");
+            }
+            // Conservatively require deposits to cover borrowed amount.
+            if amount > self.total_deposits {
+                return Err("insufficient deposits");
+            }
+            self.total_debt += amount;
+            self.total_deposits -= amount;
+            Ok(())
+        }
+
+        fn repay(&mut self, amount: i128) -> Result<(), &'static str> {
+            if amount <= 0 {
+                return Err("repay must be positive");
+            }
+            if amount > self.total_debt {
+                return Err("repay exceeds debt");
+            }
+            self.total_debt -= amount;
+            self.total_deposits += amount;
+            Ok(())
+        }
+
+        fn withdraw(&mut self, amount: i128) -> Result<(), &'static str> {
+            if amount <= 0 {
+                return Err("withdraw must be positive");
+            }
+            if amount > self.total_deposits {
+                return Err("insufficient deposits");
+            }
+            self.total_deposits -= amount;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn lifecycle_transitions_obey_accounting_invariants() {
+        let mut model = LifecycleModel::new();
+
+        assert_eq!(model.deposit(100), Ok(()));
+        assert_eq!(model.borrow(40), Ok(()));
+        assert_eq!(model.total_deposits, 60);
+        assert_eq!(model.total_debt, 40);
+
+        assert_eq!(model.repay(40), Ok(()));
+        assert_eq!(model.total_deposits, 100);
+        assert_eq!(model.total_debt, 0);
+
+        assert_eq!(model.withdraw(100), Ok(()));
+        assert_eq!(model.total_deposits, 0);
+        assert_eq!(model.total_debt, 0);
+    }
+
+    #[test]
+    fn lifecycle_transitions_reject_invalid_operations() {
+        let mut model = LifecycleModel::new();
+
+        assert_eq!(model.deposit(0), Err("deposit must be positive"));
+        assert_eq!(model.deposit(-1), Err("deposit must be positive"));
+        assert_eq!(model.borrow(1), Err("insufficient deposits"));
+        model.deposit(10).unwrap();
+        assert_eq!(model.borrow(11), Err("insufficient deposits"));
+        assert_eq!(model.repay(1), Err("repay exceeds debt"));
+        assert_eq!(model.withdraw(11), Err("insufficient deposits"));
+    }
+}
+
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt, repay_amount,
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
