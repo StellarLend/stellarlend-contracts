@@ -136,23 +136,15 @@ pub fn get_price_for_asset_with_max_age(
         .persistent()
         .get(&DataKey::OraclePrice(asset.clone()))
         .ok_or(LendingError::PriceFeedNotFound)?;
-
-    // A non-positive price would erase a collateral or debt leg from every
-    // downstream health calculation. Treat it the same as a missing feed so
-    // positions fail closed instead of silently valuing at zero.
     if record.price <= 0 {
+        // A non-positive price is not a valid feed; treat it as missing so a
+        // zero-priced debt leg cannot bypass health-factor checks.
         return Err(LendingError::PriceFeedNotFound);
     }
-
     let now = env.ledger().timestamp();
-
-    // Reject future-dated records so a bad update cannot make a stale price
-    // look perpetually fresh.
-    if record.timestamp > now {
-        return Err(LendingError::StaleOracleTimestamp);
-    }
-
-    if now.saturating_sub(record.timestamp) > max_age_secs {
+    if record.timestamp > now
+        || now.saturating_sub(record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS
+    {
         return Err(LendingError::StaleOracleTimestamp);
     }
     Ok(record)
@@ -754,9 +746,13 @@ pub fn borrow_asset_internal(
     };
 
     if hf < HEALTH_FACTOR_SCALE {
-        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
             remove_from_user_debt_list(env, user, asset);
+        } else {
+            save_debt_asset(env, user, asset, &position);
         }
         return Err(LendingError::HealthFactorTooLow);
     }
@@ -774,17 +770,25 @@ pub fn borrow_asset_internal(
         .checked_add(delta)
         .ok_or(LendingError::Overflow)?;
     if new_total_debt > params.debt_ceiling {
-        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
             remove_from_user_debt_list(env, user, asset);
+        } else {
+            save_debt_asset(env, user, asset, &position);
         }
         return Err(LendingError::DebtCeilingExceeded);
     }
     // Enforce optional per-asset borrow cap: 0 means uncapped.
     if params.borrow_cap != 0 && new_total_debt > params.borrow_cap {
-        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
             remove_from_user_debt_list(env, user, asset);
+        } else {
+            save_debt_asset(env, user, asset, &position);
         }
         return Err(LendingError::BorrowCapExceeded);
     }
@@ -902,19 +906,18 @@ pub fn repay_asset_internal(
         remove_from_user_debt_list(env, user, asset);
     }
 
-    let repaid = prev_principal.checked_sub(updated.principal).unwrap_or(0);
+    let principal_delta = updated
+        .principal
+        .checked_sub(prev_principal)
+        .ok_or(LendingError::Overflow)?;
 
     let total_debt_asset: i128 = env
         .storage()
         .persistent()
         .get(&DataKey::TotalDebtAsset(asset.clone()))
         .unwrap_or(0);
-    let debt_delta = updated
-        .principal
-        .checked_sub(prev_principal)
-        .ok_or(LendingError::Overflow)?;
     let new_total_debt_asset = total_debt_asset
-        .checked_add(debt_delta)
+        .checked_add(principal_delta)
         .ok_or(LendingError::Overflow)?;
     if new_total_debt_asset < 0 {
         return Err(LendingError::Overflow);
@@ -930,7 +933,7 @@ pub fn repay_asset_internal(
         .get(&DataKey::TotalDebt)
         .unwrap_or(0);
     let new_total_protocol = total_debt_protocol
-        .checked_add(debt_delta)
+        .checked_add(principal_delta)
         .ok_or(LendingError::Overflow)?;
     if new_total_protocol < 0 {
         return Err(LendingError::Overflow);

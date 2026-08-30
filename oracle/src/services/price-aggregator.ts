@@ -24,29 +24,14 @@ export interface AggregatorConfig {
     useWeightedMedian: boolean;
     /** MAD z-score threshold; prices beyond this are rejected as outliers (0 = disabled). */
     madZScoreThreshold: number;
-    /**
-     * Maximum age of a cached price in milliseconds before a fresh provider
-     * fetch is required. If omitted, defaults to 30 seconds.
-     */
-    maxCacheAgeMs?: number;
-    /**
-     * Maximum age of a stale cached price in milliseconds allowed as a
-     * last-resort fallback when live providers fail. If omitted, defaults to
-     * 5 minutes.
-     */
-    staleFallbackMaxAgeMs?: number;
-    /**
-     * Confidence value used for stale-cache fallback prices. If omitted,
-     * defaults to 0 (degraded/unknown confidence).
-     */
-    staleFallbackConfidence?: number;
-
-    /**
-     * Number of additional attempts to make for a provider after a transient
-     * failure before that provider is skipped for this read. If omitted,
-     * defaults to 0 (no retries).
-     */
-    maxRetries?: number;
+    /** Max age of a cached price in milliseconds before it is considered stale. */
+    maxStalenessMs: number;
+    /** Max age of a stale price in milliseconds that may be used if refresh fails. */
+    maxFallbackAgeMs: number;
+    /** Number of retries for transient provider failures. */
+    providerRetries: number;
+    /** Base backoff in milliseconds between provider retries. */
+    retryBackoffMs: number;
 }
 
 /**
@@ -56,10 +41,10 @@ const DEFAULT_CONFIG: Required<AggregatorConfig> = {
     minSources: 1,
     useWeightedMedian: true,
     madZScoreThreshold: MAD_Z_SCORE_THRESHOLD,
-    maxCacheAgeMs: 30_000,
-    staleFallbackMaxAgeMs: 5 * 60_000,
-    staleFallbackConfidence: 0,
-    maxRetries: 0,
+    maxStalenessMs: 30_000,
+    maxFallbackAgeMs: 300_000,
+    providerRetries: 2,
+    retryBackoffMs: 100,
 };
 
 /**
@@ -69,8 +54,9 @@ export class PriceAggregator {
     private providers: BasePriceProvider[];
     private validator: PriceValidator;
     private cache: PriceCache;
-    private config: Required<AggregatorConfig>;
-    private cacheMetadata: Map<string, { timestamp: number; confidence: number }> = new Map();
+    private config: AggregatorConfig;
+    private cacheTimestamps: Map<string, number> = new Map();
+    private pendingRequests: Map<string, Promise<AggregatedPrice | null>> = new Map();
 
     constructor(
         providers: BasePriceProvider[],
@@ -119,63 +105,95 @@ export class PriceAggregator {
      */
     async getPrice(asset: string): Promise<AggregatedPrice | null> {
         const upperAsset = asset.toUpperCase();
+        const now = Date.now();
 
         const now = Date.now();
         const cachedPrice = this.cache.getPrice(upperAsset);
-        const cachedMeta = this.cacheMetadata.get(upperAsset);
-        const cacheAgeMs =
-            cachedMeta && cachedMeta.timestamp <= now
-                ? now - cachedMeta.timestamp
-                : Number.POSITIVE_INFINITY;
+        const cachedAt = this.cacheTimestamps.get(upperAsset);
 
-        if (cachedPrice !== undefined && cachedMeta !== undefined && cacheAgeMs <= this.config.maxCacheAgeMs) {
-            logger.debug(`Using cached price for ${upperAsset}`);
-            return {
-                asset: upperAsset,
-                price: cachedPrice,
-                sources: [],
-                timestamp: Math.floor(cachedMeta.timestamp / 1000),
-                confidence: cachedMeta.confidence,
-            };
-        }
-
-        const validPrices = await this.fetchWithFallback(upperAsset);
-
-        if (validPrices.length < this.config.minSources) {
-            logger.error(`Not enough valid sources for ${upperAsset}`, {
-                got: validPrices.length,
-                required: this.config.minSources,
-            });
-
-            if (
-                cachedPrice !== undefined &&
-                cachedMeta !== undefined &&
-                cacheAgeMs <= this.config.staleFallbackMaxAgeMs
-            ) {
-                logger.warn(`Using stale cached price for ${upperAsset} as fallback`, {
-                    ageMs: cacheAgeMs,
-                });
-                return {
-                    asset: upperAsset,
-                    price: cachedPrice,
-                    sources: [],
-                    timestamp: Math.floor(cachedMeta.timestamp / 1000),
-                    confidence: this.config.staleFallbackConfidence,
-                };
+        if (cachedPrice !== undefined && cachedAt !== undefined) {
+            const ageMs = now - cachedAt;
+            if (ageMs >= 0 && ageMs < this.config.maxStalenessMs) {
+                logger.debug(`Using fresh cached price for ${upperAsset}`, { ageMs });
+                return this.formatCachedPrice(upperAsset, cachedPrice, cachedAt);
             }
-
-            return null;
         }
 
-        const aggregated = this.aggregate(upperAsset, validPrices);
+        const pending = this.pendingRequests.get(upperAsset);
+        if (pending) {
+            logger.debug(`Reusing in-flight price request for ${upperAsset}`);
+            return await pending;
+        }
 
-        this.cache.setPrice(upperAsset, aggregated.price);
-        this.cacheMetadata.set(upperAsset, {
-            timestamp: now,
-            confidence: aggregated.confidence,
+        const request = this.refreshPrice(upperAsset, cachedPrice, cachedAt);
+        this.pendingRequests.set(upperAsset, request);
+
+        try {
+            return await request;
+        } finally {
+            if (this.pendingRequests.get(upperAsset) === request) {
+                this.pendingRequests.delete(upperAsset);
+            }
+        }
+    }
+
+    /**
+     * Refresh a price and update the cache atomically from this aggregator's
+     * perspective. A failed refresh falls back to a stale cached value only
+     * when that value is known and still within the fallback age window.
+     */
+    private async refreshPrice(
+        asset: string,
+        cachedPrice: bigint | undefined,
+        cachedAt: number | undefined,
+    ): Promise<AggregatedPrice | null> {
+        const validPrices = await this.fetchWithFallback(asset);
+
+        if (validPrices.length >= this.config.minSources) {
+            const aggregated = this.aggregate(asset, validPrices);
+            this.cache.setPrice(asset, aggregated.price);
+            this.cacheTimestamps.set(asset, Date.now());
+            return aggregated;
+        }
+
+        if (cachedPrice !== undefined && cachedAt !== undefined) {
+            const ageMs = Date.now() - cachedAt;
+            if (ageMs >= 0 && ageMs < this.config.maxFallbackAgeMs) {
+                logger.warn(`Returning stale cached price for ${asset} after refresh failure`, {
+                    ageMs,
+                    validSources: validPrices.length,
+                });
+                const confidence = Math.max(
+                    0,
+                    Math.round(100 * (1 - ageMs / this.config.maxFallbackAgeMs)),
+                );
+                return this.formatCachedPrice(asset, cachedPrice, cachedAt, confidence);
+            }
+        }
+
+        logger.error(`No usable price for ${asset}`, {
+            got: validPrices.length,
+            required: this.config.minSources,
         });
+        return null;
+    }
 
-        return aggregated;
+    /**
+     * Format a cached price as an AggregatedPrice.
+     */
+    private formatCachedPrice(
+        asset: string,
+        price: bigint,
+        timestamp: number,
+        confidence = 100,
+    ): AggregatedPrice {
+        return {
+            asset,
+            price,
+            sources: [],
+            timestamp: Math.floor(timestamp / 1000),
+            confidence,
+        };
     }
 
     /**
@@ -209,7 +227,7 @@ export class PriceAggregator {
                 continue;
             }
 
-            const maxAttempts = this.config.maxRetries + 1;
+            const maxAttempts = this.config.providerRetries + 1;
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
                     const rawPrice = await provider.fetchPrice(asset);
@@ -226,20 +244,20 @@ export class PriceAggregator {
                     logger.warn(`Invalid price from ${provider.name} for ${asset}`, {
                         errors: validation.errors,
                     });
-
-                    if (attempt >= maxAttempts) {
-                        break;
-                    }
-
-                    logger.warn(`Retrying ${provider.name} for ${asset} after invalid price (attempt ${attempt}/${maxAttempts})`);
+                    break;
                 } catch (error) {
                     if (attempt < maxAttempts) {
-                        logger.warn(`Provider ${provider.name} failed for ${asset} (attempt ${attempt}/${maxAttempts}); retrying`, { error });
+                        const backoffMs = this.config.retryBackoffMs * attempt;
+                        logger.warn(
+                            `Provider ${provider.name} failed for ${asset}; retrying in ${backoffMs}ms`,
+                            { attempt, error },
+                        );
+                        await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         continue;
                     }
 
                     errors.set(provider.name, error instanceof Error ? error : new Error(String(error)));
-                    logger.warn(`Provider ${provider.name} failed for ${asset}`, { error });
+                    logger.warn(`Provider ${provider.name} failed for ${asset}`, { error, attempt });
                 }
             }
         }
