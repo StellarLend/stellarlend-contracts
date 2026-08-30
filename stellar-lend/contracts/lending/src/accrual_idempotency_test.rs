@@ -257,4 +257,79 @@ mod accrual_idempotency_tests {
             "clock rollback must not accrue any interest"
         );
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 5. Retry and duplicate-submission invariants
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// A second `settle_accrual` at the same `now` must not add interest a
+    /// second time. This is the retry-path invariant: re-submitting the same
+    /// accrual at the same ledger timestamp produces the same position.
+    #[test]
+    fn test_settle_accrual_twice_same_timestamp_is_idempotent() {
+        let last_update: u64 = 1_000_000;
+        let now: u64 = last_update + SECONDS_PER_YEAR;
+        let position = make_position(10_000, last_update);
+
+        let settled_once = settle_accrual(&position, now, DEFAULT_APR_BPS)
+            .expect("first settle_accrual should succeed");
+        let settled_twice = settle_accrual(&settled_once, now, DEFAULT_APR_BPS)
+            .expect("second settle_accrual at same timestamp should succeed");
+
+        assert_eq!(
+            settled_twice.principal,
+            settled_once.principal,
+            "settle_accrual must be idempotent at the same timestamp"
+        );
+        assert_eq!(
+            settled_twice.last_update, now,
+            "settled.last_update must remain equal to now after duplicate settle"
+        );
+    }
+
+    /// The split settlement path must also be idempotent when retried at the
+    /// same ledger timestamp: the second split sees zero elapsed time and
+    /// therefore emits no new interest.
+    #[test]
+    fn test_settle_accrual_split_twice_same_timestamp_is_idempotent() {
+        let last_update: u64 = 500_000;
+        let now: u64 = last_update + SECONDS_PER_YEAR / 2;
+        let position = make_position(20_000, last_update);
+        let reserve_factor_bps: u32 = 1_000;
+
+        let (settled_once, _) =
+            settle_accrual_split(&position, now, DEFAULT_APR_BPS, reserve_factor_bps)
+                .expect("first settle_accrual_split should succeed");
+        let (settled_twice, split_twice) =
+            settle_accrual_split(&settled_once, now, DEFAULT_APR_BPS, reserve_factor_bps)
+                .expect("second settle_accrual_split should succeed");
+
+        assert_eq!(
+            settled_twice.principal,
+            settled_once.principal,
+            "settle_accrual_split must be idempotent at the same timestamp"
+        );
+        assert_eq!(
+            split_twice.total_interest, 0,
+            "a duplicate split settlement at the same timestamp must not create new interest"
+        );
+    }
+
+    /// When a stale timestamp is presented, `settle_accrual` must not move the
+    /// position's `last_update` backwards. This keeps retries and delayed
+    /// submissions from creating a contradictory accrual timeline.
+    #[test]
+    fn test_settle_accrual_clock_rollback_preserves_last_update() {
+        let last_update: u64 = 2_000_000;
+        let now: u64 = 1_000_000;
+        let position = make_position(50_000, last_update);
+
+        let settled = settle_accrual(&position, now, DEFAULT_APR_BPS)
+            .expect("settle_accrual with rollback timestamp should not error");
+
+        assert_eq!(
+            settled.last_update, last_update,
+            "last_update must never move backwards on clock rollback"
+        );
+    }
 }

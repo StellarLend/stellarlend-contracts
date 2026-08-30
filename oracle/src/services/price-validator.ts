@@ -13,6 +13,7 @@ import type {
     ValidationErrorCode,
     AssetPriceBounds,
 } from '../types/index.js';
+import { Keypair } from '@stellar/stellar-sdk';
 import { scalePrice } from '../config.js';
 import { logger } from '../utils/logger.js';
 
@@ -24,6 +25,21 @@ export interface ValidatorConfig {
     maxStalenessSeconds: number;
     minPrice: number;
     maxPrice: number;
+    /**
+     * Maximum age in seconds for a cached price to be used as a fallback when the
+     * live price is rejected for staleness. When not configured, it defaults to
+     * three times maxStalenessSeconds.
+     */
+    maxFallbackStalenessSeconds?: number;
+}
+
+/**
+ * Cached price entry with the source timestamp used for freshness checks.
+ */
+interface CachedPrice {
+    price: number;
+    timestamp: number;
+    volume24h?: number;
 }
 
 /**
@@ -54,17 +70,31 @@ export class PriceValidator {
     private cachedPrices: Map<string, CachedPrice> = new Map();
     private pendingPrices: Map<string, PendingPrice> = new Map();
     private assetBounds: Record<string, AssetPriceBounds>;
+    private trustedSigners: Record<string, string[]>;
+    private signatureDomain: string;
 
     constructor(
         config: Partial<ValidatorConfig> = {},
         assetBounds: Record<string, AssetPriceBounds> = {},
+        trustedSigners: Record<string, string[]> = {},
+        signatureDomain: string = 'StellarLendOracle',
     ) {
-        this.config = { ...DEFAULT_CONFIG, ...config };
+        const mergedConfig = { ...DEFAULT_CONFIG, ...config };
+        const maxStalenessSeconds = mergedConfig.maxStalenessSeconds;
+        this.config = {
+            ...mergedConfig,
+            maxFallbackStalenessSeconds:
+                mergedConfig.maxFallbackStalenessSeconds ?? maxStalenessSeconds * 3,
+        };
+        this.validateConfig(this.config);
         this.assetBounds = this.normalizeBounds(assetBounds);
+        this.trustedSigners = trustedSigners;
+        this.signatureDomain = signatureDomain;
 
         logger.info('Price validator initialized', {
             maxDeviationPercent: this.config.maxDeviationPercent,
             maxStalenessSeconds: this.config.maxStalenessSeconds,
+            maxFallbackStalenessSeconds: this.getFallbackStalenessSeconds(),
             assetBounds: Object.keys(this.assetBounds).length,
         });
     }
@@ -75,21 +105,21 @@ export class PriceValidator {
     validate(raw: RawPriceData): ValidationResult {
         const errors: ValidationError[] = [];
 
-        if (raw.price <= 0) {
+        if (!Number.isFinite(raw.price) || raw.price <= 0) {
             errors.push({
                 code: 'PRICE_ZERO' as ValidationErrorCode,
-                message: `Price must be positive, got ${raw.price}`,
+                message: `Price must be a positive finite number, got ${raw.price}`,
             });
         }
 
-        if (raw.price < this.config.minPrice) {
+        if (Number.isFinite(raw.price) && raw.price < this.config.minPrice) {
             errors.push({
                 code: 'PRICE_ZERO' as ValidationErrorCode,
                 message: `Price ${raw.price} below minimum ${this.config.minPrice}`,
             });
         }
 
-        if (raw.price > this.config.maxPrice) {
+        if (Number.isFinite(raw.price) && raw.price > this.config.maxPrice) {
             errors.push({
                 code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
                 message: `Price ${raw.price} exceeds maximum ${this.config.maxPrice}`,
@@ -118,7 +148,7 @@ export class PriceValidator {
         const asset = raw.asset.toUpperCase();
         const bounds = this.getBounds(asset);
 
-        if (raw.price < bounds.minPrice) {
+        if (Number.isFinite(raw.price) && raw.price < bounds.minPrice) {
             errors.push({
                 code: 'PRICE_BELOW_MIN' as ValidationErrorCode,
                 message: `Price ${raw.price} below minimum ${bounds.minPrice} for ${asset}`,
@@ -129,7 +159,7 @@ export class PriceValidator {
             });
         }
 
-        if (raw.price > bounds.maxPrice) {
+        if (Number.isFinite(raw.price) && raw.price > bounds.maxPrice) {
             errors.push({
                 code: 'PRICE_ABOVE_MAX' as ValidationErrorCode,
                 message: `Price ${raw.price} exceeds maximum ${bounds.maxPrice} for ${asset}`,
@@ -211,14 +241,25 @@ export class PriceValidator {
             }
         }
 
+        const scaledPrice = scalePrice(raw.price);
+        if (Number.isFinite(raw.price) && !Number.isSafeInteger(scaledPrice)) {
+            errors.push({
+                code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
+                message: `Scaled price ${scaledPrice} for ${asset} is not a safe integer`,
+                details: { scaledPrice, maxSafeInteger: Number.MAX_SAFE_INTEGER },
+            });
+        }
+
         if (errors.length === 0) {
             const validatedPrice: PriceData = {
                 asset,
-                price: scalePrice(raw.price),
+                price: scaledPrice,
                 timestamp: raw.timestamp,
                 source: raw.source,
                 confidence: this.calculateConfidence(raw, cachedPrice),
                 volume24h: raw.volume24h,
+                signer: raw.signer,
+                signature: raw.signature,
             };
 
             this.pendingPrices.set(asset, { price: raw.price, timestamp: raw.timestamp });
@@ -277,6 +318,46 @@ export class PriceValidator {
     }
 
     /**
+     * Validate raw price data, falling back to the latest cached price when the
+     * live price is rejected exclusively for staleness and a safe cached price
+     * exists. This method never relaxes asset bounds, safe scaling, or hard
+     * price limits; it only provides a bounded fallback while the live source
+     * is stale.
+     */
+    validateWithFallback(raw: RawPriceData): ValidationResult {
+        const result = this.validate(raw);
+        if (result.isValid) {
+            return result;
+        }
+
+        const isStaleOnly =
+            result.errors.length > 0 &&
+            result.errors.every((error) => error.code === 'PRICE_STALE');
+        if (!isStaleOnly) {
+            return result;
+        }
+
+        const fallback = this.getFallbackPrice(raw.asset);
+        if (fallback === undefined) {
+            return result;
+        }
+
+        return {
+            isValid: true,
+            price: fallback,
+            errors: [],
+        };
+    }
+
+    /**
+     * Check whether a cached price is fresh enough to use as a reference.
+     */
+    private isFresh(cached: CachedPrice, now: number): boolean {
+        const age = now - cached.timestamp;
+        return age >= 0 && age <= this.config.maxStalenessSeconds;
+    }
+
+    /**
      * Calculate confidence score based on various factors
      */
     private calculateConfidence(raw: RawPriceData, cachedPrice?: number): number {
@@ -301,6 +382,9 @@ export class PriceValidator {
                 break;
             case 'binance':
                 confidence -= 5;
+                break;
+            case 'fallback':
+                confidence -= 25;
                 break;
         }
 
@@ -331,15 +415,19 @@ export class PriceValidator {
         config: Partial<ValidatorConfig> = {},
         assetBounds?: Record<string, AssetPriceBounds>,
     ): void {
-        this.config = { ...this.config, ...config };
+        const nextConfig = { ...this.config, ...config };
+        this.validateConfig(nextConfig);
+        const nextBounds = assetBounds ? this.normalizeBounds(assetBounds) : undefined;
 
-        if (assetBounds) {
-            this.assetBounds = this.normalizeBounds(assetBounds);
+        this.config = nextConfig;
+        if (nextBounds) {
+            this.assetBounds = nextBounds;
         }
 
         logger.info('Price validator configuration reloaded', {
             maxDeviationPercent: this.config.maxDeviationPercent,
             maxStalenessSeconds: this.config.maxStalenessSeconds,
+            maxFallbackStalenessSeconds: this.getFallbackStalenessSeconds(),
             boundsUpdated: assetBounds ? Object.keys(assetBounds).length : 0,
         });
     }
@@ -378,14 +466,55 @@ export class PriceValidator {
         bounds: Record<string, AssetPriceBounds>,
     ): Record<string, AssetPriceBounds> {
         return Object.fromEntries(
-            Object.entries(bounds).map(([asset, value]) => [
-                asset.toUpperCase(),
-                {
-                    minPrice: value.minPrice,
-                    maxPrice: value.maxPrice,
-                },
-            ]),
+            Object.entries(bounds).map(([asset, value]) => {
+                const normalizedAsset = asset.toUpperCase();
+                this.validateBounds(normalizedAsset, value);
+                return [
+                    normalizedAsset,
+                    {
+                        minPrice: value.minPrice,
+                        maxPrice: value.maxPrice,
+                    },
+                ] as [string, AssetPriceBounds];
+            }),
         );
+    }
+
+    private validateConfig(config: ValidatorConfig): void {
+        if (!Number.isFinite(config.maxDeviationPercent) || config.maxDeviationPercent <= 0) {
+            throw new Error('maxDeviationPercent must be a finite number greater than 0');
+        }
+        if (!Number.isFinite(config.maxStalenessSeconds) || config.maxStalenessSeconds <= 0) {
+            throw new Error('maxStalenessSeconds must be a finite number greater than 0');
+        }
+        if (
+            config.maxFallbackStalenessSeconds !== undefined &&
+            (!Number.isFinite(config.maxFallbackStalenessSeconds) ||
+                config.maxFallbackStalenessSeconds <= 0)
+        ) {
+            throw new Error(
+                'maxFallbackStalenessSeconds must be a finite number greater than 0',
+            );
+        }
+        if (!Number.isFinite(config.minPrice) || config.minPrice <= 0) {
+            throw new Error('minPrice must be a finite number greater than 0');
+        }
+        if (!Number.isFinite(config.maxPrice) || config.maxPrice < config.minPrice) {
+            throw new Error('maxPrice must be a finite number greater than or equal to minPrice');
+        }
+    }
+
+    private validateBounds(asset: string, bounds: AssetPriceBounds): void {
+        if (!Number.isFinite(bounds.minPrice) || bounds.minPrice <= 0) {
+            throw new Error(
+                `Invalid bounds for ${asset}: minPrice must be a finite number greater than 0`,
+            );
+        }
+        if (!Number.isFinite(bounds.maxPrice) || bounds.maxPrice < bounds.minPrice) {
+            throw new Error(
+                `Invalid bounds for ${asset}: maxPrice must be a finite number greater than or equal to minPrice`,
+            );
+        }
     }
 }
 
@@ -395,6 +524,8 @@ export class PriceValidator {
 export function createValidator(
     config?: Partial<ValidatorConfig>,
     assetBounds: Record<string, AssetPriceBounds> = {},
+    trustedSigners: Record<string, string[]> = {},
+    signatureDomain: string = 'StellarLendOracle',
 ): PriceValidator {
-    return new PriceValidator(config, assetBounds);
+    return new PriceValidator(config, assetBounds, trustedSigners, signatureDomain);
 }

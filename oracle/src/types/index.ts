@@ -16,6 +16,10 @@ export interface PriceData {
     confidence: number;
     /** 24-hour quote volume in USD, carried from the raw provider response. Used as weight in aggregation. */
     volume24h?: bigint;
+    /** Optional signer public key when providers sign payloads */
+    signer?: string;
+    /** Optional signature over the canonical payload (hex/base64) */
+    signature?: string;
 }
 
 /**
@@ -28,6 +32,10 @@ export interface RawPriceData {
     source: string;
     /** 24-hour quote volume in USD (integer, scaled to avoid floats). Used as weight in aggregation. */
     volume24h?: bigint;
+    /** Optional signer public key when providers sign payloads */
+    signer?: string;
+    /** Optional signature over the canonical payload (hex/base64) */
+    signature?: string;
 }
 
 /**

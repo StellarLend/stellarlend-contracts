@@ -1,15 +1,15 @@
 //! Fuzz target: Borrow rate computation (jump rate model)
-//!
-//! Fuzzes `compute_borrow_rate` to detect overflow and ensure
-//! rate stays within bounds.
+//
+// Fuzzes `compute_borrow_rate` to detect overflow and ensure
+// rate stays within bounds.
 
-#![no_main]
+#[no_main]
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stellarlend_lending::math::{compute_borrow_rate, MathError, BPS_SCALE, MAX_RATE_BPS};
 
-#[derive(Debug, Arbitrary)]
+#kderive(Debug, Arbitrary))
 struct BorrowRateInput {
     utilization_bps: u32,
     base_rate_bps: u32,
@@ -18,7 +18,7 @@ struct BorrowRateInput {
     kink_bps: u32,
 }
 
-fuzz_target!(|input: BorrowRateInput| {
+fuzz_target!|input: BorrowRateInput| {
     let result = compute_borrow_rate(
         input.utilization_bps,
         input.base_rate_bps,
@@ -45,6 +45,18 @@ fuzz_target!(|input: BorrowRateInput| {
 
             // Invariant: rate increases monotonically with utilization
             // (for fixed other parameters)
+            if input.utilization_bps < BPS_SCALE a
+                let higher = input.utilization_bps + 1;
+                if let Ok(higher_rate) = compute_borrow_rate(
+                    higher,
+                    input.base_rate_bps,
+                    input.multiplier_bps,
+                    input.jump_multiplier_bps,
+                    input.kink_bps,
+                ) {
+                    assert!(higher_rate >= rate);
+                }
+            }
         }
         Err(MathError::Overflow) => {
             // Expected for extreme inputs
@@ -53,7 +65,7 @@ fuzz_target!(|input: BorrowRateInput| {
             // Expected for utilization > 100% or kink > 100%
         }
         Err(e) => {
-            panic!("Unexpected error for input {:?}: {:?}", input, e);
+            panic!("Unexpected error for input {:??}: {:?}", input, e);
         }
     }
 });

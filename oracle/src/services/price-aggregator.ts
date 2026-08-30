@@ -37,7 +37,7 @@ export interface AggregatorConfig {
 /**
  * Default aggregator configuration
  */
-const DEFAULT_CONFIG: AggregatorConfig = {
+const DEFAULT_CONFIG: Required<AggregatorConfig> = {
     minSources: 1,
     useWeightedMedian: true,
     madZScoreThreshold: MAD_Z_SCORE_THRESHOLD,
@@ -70,7 +70,29 @@ export class PriceAggregator {
 
         this.validator = validator;
         this.cache = cache;
-        this.config = { ...DEFAULT_CONFIG, ...config };
+        const resolvedConfig: Required<AggregatorConfig> = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
+
+        if (resolvedConfig.minSources < 1) {
+            throw new Error('minSources must be at least 1');
+        }
+        if (resolvedConfig.maxCacheAgeMs < 0) {
+            throw new Error('maxCacheAgeMs cannot be negative');
+        }
+        if (resolvedConfig.staleFallbackMaxAgeMs < 0) {
+            throw new Error('staleFallbackMaxAgeMs cannot be negative');
+        }
+        if (
+            resolvedConfig.staleFallbackConfidence < 0 ||
+            resolvedConfig.staleFallbackConfidence > 100
+        ) {
+            throw new Error('staleFallbackConfidence must be between 0 and 100');
+        }
+
+        if (!Number.isInteger(resolvedConfig.maxRetries) || resolvedConfig.maxRetries < 0) {
+            throw new Error('maxRetries must be a non-negative integer');
+        }
+
+        this.config = resolvedConfig;
 
         logger.info('Price aggregator initialized', {
             enabledProviders: this.providers.map((p) => p.name),
@@ -85,6 +107,7 @@ export class PriceAggregator {
         const upperAsset = asset.toUpperCase();
         const now = Date.now();
 
+        const now = Date.now();
         const cachedPrice = this.cache.getPrice(upperAsset);
         const cachedAt = this.cacheTimestamps.get(upperAsset);
 
@@ -279,20 +302,22 @@ export class PriceAggregator {
             ? this.weightedMedian(activePrices)
             : this.simpleMedian(activePrices);
 
-        const totalWeight = this.providers
-            .filter((p) => prices.some((pr) => pr.source === p.name))
-            .reduce((sum, p) => sum + p.weight, 0);
-
-        const weightedConfidence = prices.reduce((sum, p) => {
-            const provider = this.providers.find((pr) => pr.name === p.source);
-            const weight = provider?.weight ?? 0.1;
-            return sum + (p.confidence * weight);
-        }, 0) / totalWeight;
+        const totalWeight = activePrices.reduce(
+            (sum, p) => sum + this.getSourceWeight(p),
+            0,
+        );
+        const weightedConfidence =
+            totalWeight > 0 && Number.isFinite(totalWeight)
+                ? activePrices.reduce(
+                      (sum, p) => sum + p.confidence * this.getSourceWeight(p),
+                      0,
+                  ) / totalWeight
+                : activePrices.reduce((sum, p) => sum + p.confidence, 0) / activePrices.length;
 
         return {
             asset,
             price: aggregatedPrice,
-            sources: prices,
+            sources: activePrices,
             timestamp: now,
             confidence: Math.round(weightedConfidence),
         };
@@ -315,15 +340,7 @@ export class PriceAggregator {
         );
 
         // Derive a numeric weight for each price point.
-        const weights = sorted.map((p) => {
-            if (p.volume24h !== undefined && p.volume24h > 0n) {
-                // Convert bigint volume to a Number for weight arithmetic.
-                // Precision loss is acceptable here: we only need relative ordering.
-                return Number(p.volume24h);
-            }
-            const provider = this.providers.find((pr) => pr.name === p.source);
-            return provider?.weight ?? 0.1;
-        });
+        const weights = sorted.map((p) => this.getSourceWeight(p));
 
         const totalWeight = weights.reduce((a, b) => a + b, 0);
         const halfWeight = totalWeight / 2;
@@ -355,6 +372,23 @@ export class PriceAggregator {
         }
 
         return sorted[mid].price;
+    }
+
+    /**
+     * Determine the numeric weight for a price point.
+     *
+     * Uses `volume24h` when available; otherwise falls back to the provider's
+     * configured static weight. This keeps confidence weighting consistent with
+     * weighted-median price selection.
+     */
+    private getSourceWeight(price: PriceData): number {
+        if (price.volume24h !== undefined && price.volume24h > 0n) {
+            // Convert bigint volume to a Number for weight arithmetic.
+            // Precision loss is acceptable here: we only need relative ordering.
+            return Number(price.volume24h);
+        }
+        const provider = this.providers.find((pr) => pr.name === price.source);
+        return provider?.weight ?? 0.1;
     }
 
     /**

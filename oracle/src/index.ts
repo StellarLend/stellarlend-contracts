@@ -46,13 +46,22 @@ export class OracleService {
         // Configure logging
         configureLogger(config.logLevel);
 
-        // Create providers
-        const providers: BasePriceProvider[] = [
-            createCoinGeckoProvider(
-                config.providers.find((p: ProviderConfig) => p.name === 'coingecko')?.apiKey,
-            ),
-            createBinanceProvider(),
-        ];
+        // Create providers from configuration
+        const providers: BasePriceProvider[] = config.providers
+            .filter((p) => p.enabled)
+            .map((p) => {
+                switch (p.name) {
+                    case 'coingecko':
+                        return new (await import('./providers/coingecko.js')).CoinGeckoProvider(p as ProviderConfig);
+                    case 'binance':
+                        return new (await import('./providers/binance.js')).BinanceProvider(p as ProviderConfig);
+                    default:
+                        logger.warn('Unknown provider in config, skipping', { provider: p.name });
+                        return null;
+                }
+            })
+            .filter((x): x is BasePriceProvider => x !== null)
+            .sort((a, b) => a.priority - b.priority);
 
 
         // Create services
