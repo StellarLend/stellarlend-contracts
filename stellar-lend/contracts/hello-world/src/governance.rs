@@ -358,21 +358,7 @@ pub fn can_vote(env: &Env, voter: Address, proposal_id: u64) -> bool {
         None => return false,
     };
 
-    let proposal: Proposal = match env.storage().instance().get(&GovernanceDataKey::Proposal(proposal_id)) {
-        Some(p) => p,
-        None => return false,
-    };
-
-    if proposal.executed || proposal.cancelled {
-        return false;
-    }
-    let now = env.ledger().timestamp();
-    if now > proposal.end_time {
-        return false;
-    }
-
-    voter == config.admin || config.voters.contains(&voter) || is_guardian(env, &voter)
-}
+    let proposal: Proposal = match env
         .storage()
         .instance()
         .get(&GovernanceDataKey::Proposal(proposal_id))

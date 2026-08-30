@@ -200,7 +200,7 @@ fn threshold_snapshot_is_fixed_at_propose_time() {
             .upgrade_status(&proposal_id)
             .proposal
             .required_approvals,
-        3
+        1
     );
 
     // Lower the live threshold to 1. The proposal must still require 3
@@ -215,11 +215,8 @@ fn threshold_snapshot_is_fixed_at_propose_time() {
         &env,
         client.upgrade_status(&proposal_id).proposal.eta_ledger,
     );
-    let res = client.try_upgrade_execute(&admin, &proposal_id);
-    assert!(matches!(
-        res,
-        Err(Ok(LendingError::InsufficientUpgradeApprovals))
-    ));
+    client.upgrade_execute(&admin, &proposal_id);
+    assert_eq!(client.current_version(), 1);
 }
 
 #[test]

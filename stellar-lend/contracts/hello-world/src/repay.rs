@@ -17,9 +17,6 @@
 
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Symbol};
 
-pub const SECONDS_PER_YEAR: u64 = 31_536_000;
-pub const DEFAULT_APR_BPS: i128 = 500;
-pub const BPS_DENOM: i128 = 10_000;
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -129,25 +126,6 @@ pub struct RepayEvent {
     pub timestamp: u64,
 }
 
-pub fn compute_interest(
-    principal: i128,
-    elapsed: u64,
-    rate_bps: i128,
-) -> Result<i128, RepayError> {
-    if principal <= 0 || elapsed == 0 || rate_bps <= 0 {
-        return Ok(0);
-    }
-    let numerator = principal
-        .checked_mul(rate_bps)
-        .and_then(|v| v.checked_mul(elapsed as i128))
-        .ok_or(RepayError::Overflow)?;
-    let denominator = BPS_DENOM
-        .checked_mul(SECONDS_PER_YEAR as i128)
-        .ok_or(RepayError::Overflow)?;
-    numerator.checked_div(denominator).ok_or(RepayError::Overflow)
-}
-
-pub fn load_position(env: &Env, user: &Address) -> Position {
 /// Emitted whenever a user's position (principal + interest) changes.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -242,7 +220,6 @@ fn is_repay_paused(env: &Env) -> bool {
         .unwrap_or(false)
 }
 
-pub fn save_position(env: &Env, user: &Address, position: &Position) {
 // ---------------------------------------------------------------------------
 // Interest accrual
 // ---------------------------------------------------------------------------

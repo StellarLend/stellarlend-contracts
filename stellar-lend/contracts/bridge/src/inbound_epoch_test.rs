@@ -56,8 +56,8 @@ mod inbound_epoch_tests {
         epoch: u64,
         signers: &[&Keypair],
     ) -> Vec<(ed25519_dalek::PublicKey, Signature)> {
-        let payload =
-            Bridge::quorum_proof_payload(&[], new_set, epoch).expect("serialization must not fail");
+        let payload = Bridge::quorum_proof_payload(&[], new_set, epoch)
+            .expect("serialization must not fail");
         signers
             .iter()
             .map(|kp| (kp.public, kp.sign(&payload)))
@@ -95,10 +95,7 @@ mod inbound_epoch_tests {
             current_kps = next_kps;
         }
 
-        assert_eq!(
-            bridge.epoch, target,
-            "bridge.epoch must match the requested target"
-        );
+        assert_eq!(bridge.epoch, target, "bridge.epoch must match the requested target");
         bridge
     }
 
@@ -294,7 +291,18 @@ mod inbound_epoch_tests {
             .expect("active epoch 5 must be accepted");
 
         // Everything else is rejected.
-        for &bad in &[0u64, 1, 2, 3, 4, 6, 7, 100, 1_000_000, u64::MAX] {
+        for &bad in &[
+            0u64,
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            100,
+            1_000_000,
+            u64::MAX,
+        ] {
             let err = bridge
                 .validate_inbound_epoch(bad)
                 .unwrap_or_else(|e| panic!("non-active epoch {bad} must be rejected, got: {e}"));

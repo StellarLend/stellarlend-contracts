@@ -125,10 +125,6 @@ pub enum LendingError {
 /// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
 /// Negative rates and rates above `100%` return `None`, as do overflow cases.
 ///
-/// The computation uses a quotient/remainder decomposition, so valid rates
-/// never fail solely because an intermediate `value * rate_bps` product would
-/// overflow `i128`.
-///
 /// # Examples
 /// ```
 /// use stellar_lend_common::{scale_bps, BPS_DENOM};
@@ -142,22 +138,13 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
     if rate_bps < 0 || rate_bps > BPS_DENOM {
         return None;
     }
-    // Decompose into quotient/remainder by BPS_DENOM to avoid intermediate
-    // overflow: every partial product stays within the final result's range.
-    let q = value / BPS_DENOM;
-    let r = value % BPS_DENOM;
-    let scaled_q = q.checked_mul(rate_bps)?;
-    let scaled_r = r.checked_mul(rate_bps)?.checked_div(BPS_DENOM);
-    scaled_q.checked_add(scaled_r?)
+    value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
 }
 
 /// Divide `value` by `rate_bps` and multiply by [`BPS_DENOM`] (inverse of `scale_bps`).
 ///
 /// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
 /// Zero, negative, and rates above `100%` return `None`, as do overflow cases.
-///
-/// A quotient/remainder decomposition avoids spurious intermediate overflow;
-/// for example, `unscale_bps(i128::MAX, BPS_DENOM)` returns `Some(i128::MAX)`.
 ///
 /// # Examples
 /// ```

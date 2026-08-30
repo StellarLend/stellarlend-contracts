@@ -616,7 +616,9 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
 /// bounded and deterministic at maximum utilization instead of feeding an
 /// out-of-range utilization to the model.
-pub(crate) fn compute_utilization_bps(snapshot: &RateSnapshot) -> Result<i128, DebtError> {
+pub(crate) fn compute_utilization_bps(
+    snapshot: &RateSnapshot,
+) -> Result<i128, DebtError> {
     if snapshot.total_supply <= 0 {
         return Ok(0);
     }
@@ -769,11 +771,6 @@ const KEY_ACCRUAL_LOG: &str = "accrual_log";
 /// Append a settle_accrual_split result to the persistent log and emit a
 /// `settle_accrual_split` contract event for off-chain indexers.
 ///
-/// The log is a bounded ring buffer capped at [`MAX_ACCRUAL_LOG_SIZE`] entries.
-/// When the cap is reached the oldest entry is evicted before the newest is
-/// appended, keeping persistent-storage rent cost and read/decode cost
-/// deterministically bounded regardless of protocol lifetime.
-///
 /// Call this immediately after `settle_accrual_split` so the split is
 /// recorded for both on-chain history (via `get_accrual_split_log`) and
 /// off-chain TWAP/revenue attribution consumers.
@@ -791,18 +788,6 @@ pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split
         .persistent()
         .get(&Symbol::new(env, KEY_ACCRUAL_LOG))
         .unwrap_or_else(|| Vec::new(env));
-
-    // Enforce the ring-buffer bound: evict oldest when at capacity.
-    let cap = MAX_ACCRUAL_LOG_SIZE as u32;
-    if log.len() >= cap {
-        // Remove front (oldest) entry to make room.
-        let mut trimmed: Vec<AccrualSplitEntry> = Vec::new(env);
-        for i in 1..log.len() {
-            trimmed.push_back(log.get(i).unwrap());
-        }
-        log = trimmed;
-    }
-
     log.push_back(entry.clone());
     env.storage()
         .persistent()

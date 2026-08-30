@@ -7,8 +7,6 @@
 
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::events::MAX_AUDIT_PAGE_SIZE;
-
 /// Storage keys for the governance audit log.
 /// Implements a circular buffer with a configurable maximum.
 #[contracttype]
@@ -102,12 +100,10 @@ pub fn get_governance_audit_count(env: &Env) -> u64 {
 }
 
 /// Returns audit log entries, most recent first.
-/// Returns up to `limit` entries, capped at the circular buffer size AND at
-/// [`MAX_AUDIT_PAGE_SIZE`] to bound per-call read cost.
+/// Returns up to `limit` entries, capped at the circular buffer size.
 ///
 /// # Arguments
-/// * `limit` - Maximum number of entries to return (0 = return up to
-///   `MAX_AUDIT_PAGE_SIZE`; values above `MAX_AUDIT_PAGE_SIZE` are clamped)
+/// * `limit` - Maximum number of entries to return (0 = return all available)
 ///
 /// Matches the function documented in governance_audit.md.
 pub fn get_governance_audit_entries(env: &Env, limit: u64) -> Vec<AuditLogEntry> {
@@ -129,9 +125,9 @@ pub fn get_governance_audit_entries(env: &Env, limit: u64) -> Vec<AuditLogEntry>
     // How many entries actually exist (capped at buffer size)
     let available = count.min(max_size);
     let to_return = if limit == 0 {
-        available.min(MAX_AUDIT_PAGE_SIZE)
+        available
     } else {
-        limit.min(available).min(MAX_AUDIT_PAGE_SIZE)
+        limit.min(available)
     };
 
     let mut entries = Vec::new(env);
