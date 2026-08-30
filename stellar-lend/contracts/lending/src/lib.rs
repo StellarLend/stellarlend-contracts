@@ -79,6 +79,8 @@ mod liquidate_accrual_test;
 #[cfg(test)]
 mod liquidate_checked_sub_test;
 #[cfg(test)]
+mod liquidation_arithmetic_invariant_test;
+#[cfg(test)]
 mod liquidate_close_factor_test;
 #[cfg(test)]
 mod liquidate_event_test;
@@ -1999,6 +2001,29 @@ impl LendingContract {
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
 
+            // Recompute the post-liquidation health factor *before* mutating any
+            // storage, using the same governed threshold (`threshold_bps`) and the
+            // same checked helper as the entry guard above.
+            //
+            // Previously this ran *after* the writes and used the hardcoded
+            // `LIQUIDATION_THRESHOLD_BPS` with a raw `checked_mul` + `/` and
+            // `unwrap_or(i128::MAX)`, which produced two defects:
+            //   * governance drift — once an admin overrode the threshold via
+            //     `set_liquidation_threshold_bps`, the entry guard and this check
+            //     evaluated different predicates, so
+            //     `DataKey::FirstUnhealthyTimestamp` was cleared or retained on the
+            //     wrong one, corrupting the liquidation grace-period state machine;
+            //   * fail-open on overflow — an arithmetic overflow collapsed to
+            //     `i128::MAX`, i.e. "infinitely healthy", silently clearing the
+            //     grace-period timestamp instead of aborting.
+            // Failing here now aborts before any state is written.
+            let hf_after = if new_debt > 0 {
+                math::checked_mul_div_floor(new_col, threshold_bps, new_debt)
+                    .map_err(|_| LendingError::Overflow)?
+            } else {
+                i128::MAX
+            };
+
             let updated_position = DebtPosition {
                 principal: new_debt,
                 borrow_index_snapshot: settled_position.borrow_index_snapshot,
@@ -2014,16 +2039,7 @@ impl LendingContract {
                 decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
             }
 
-            // Recompute health factor after liquidation and clear unhealthy timestamp if healthy
-            let hf_after = if new_debt > 0 {
-                new_col
-                    .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-                    .map(|v| v / new_debt)
-                    .unwrap_or(i128::MAX)
-            } else {
-                i128::MAX
-            };
-            if hf_after >= 10000 {
+            if hf_after >= HEALTH_FACTOR_SCALE {
                 let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
                 if env.storage().persistent().has(&first_unhealthy_key) {
                     env.storage().persistent().remove(&first_unhealthy_key);
@@ -3703,11 +3719,21 @@ fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
         let position = load_debt(env, user);
         let debt = position.principal;
 
+        // Mirror `liquidate`'s entry guard: consult the *governed* threshold rather
+        // than the hardcoded default, and treat an arithmetic failure as "not
+        // provably healthy" (fail-closed) so an overflow can never clear the
+        // grace-period timestamp. This is the same invariant as the post-liquidation
+        // check in `liquidate`; both decide the fate of
+        // `DataKey::FirstUnhealthyTimestamp` and must agree.
         let hf = if debt > 0 {
-            collateral
-                .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-                .map(|v| v / debt)
-                .unwrap_or(i128::MAX)
+            match math::checked_mul_div_floor(
+                collateral,
+                LendingContract::get_liquidation_threshold_bps(env.clone()),
+                debt,
+            ) {
+                Ok(hf) => hf,
+                Err(_) => return,
+            }
         } else {
             i128::MAX
         };
