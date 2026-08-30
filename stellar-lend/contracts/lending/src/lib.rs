@@ -140,6 +140,9 @@ mod storage_tier_test;
 mod supply_rate_split_test;
 
 #[cfg(test)]
+mod upgrade_governance_test;
+
+#[cfg(test)]
 mod config_roundtrip_test;
 #[cfg(test)]
 mod utilization_history_test;
@@ -485,6 +488,19 @@ pub enum LendingError {
     ApproverNotFound = 4009,
     MaxApproversReached = 4010,
     InvalidUpgradeConfig = 4011,
+    /// The upgrade proposal has been cancelled and cannot be acted on.
+    UpgradeProposalCancelled = 4012,
+    /// The upgrade proposal is not in a cancellable (pending) state.
+    UpgradeProposalNotCancellable = 4013,
+    /// The upgrade approver set changed after the proposal was created, so
+    /// in-flight approvals are no longer authorized to execute.
+    ApproverSetChanged = 4014,
+    /// A stale/duplicate upgrade submission would create contradictory state
+    /// and is rejected rather than silently re-applied.
+    UpgradeSubmissionConflict = 4015,
+    /// The recorded approval binding does not match the expected nonce-bound
+    /// domain-separated authorization for this proposal/approver pair.
+    ApprovalBindingMismatch = 4016,
     /// `write_off_bad_debt` called when there is no recorded bad debt.
     NoBadDebt = 6001,
     /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
@@ -2625,8 +2641,7 @@ impl LendingContract {
     /// behaviour. It leaks no secrets.
     pub fn get_rate_model_diagnostics(env: Env) -> RateModelDiagnostics {
         let snapshot = debt::load_rate_snapshot(&env);
-        let utilization_bps =
-            debt::compute_utilization_bps(&snapshot).unwrap_or(0);
+        let utilization_bps = debt::compute_utilization_bps(&snapshot).unwrap_or(0);
 
         let current_ledger = env.ledger().sequence();
         let last_update_ledger = env
@@ -2635,20 +2650,18 @@ impl LendingContract {
             .get(&rate_model::RateModelKey::LastRateLedger)
             .unwrap_or(0);
 
-        let (rate_model_active, target_rate_bps, applied_rate_bps) =
-            match &snapshot.params {
-                Some(p) => {
-                    let target_rate =
-                        rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
-                    let applied_rate = env
-                        .storage()
-                        .instance()
-                        .get(&rate_model::RateModelKey::LastRate)
-                        .unwrap_or(target_rate);
-                    (true, target_rate, applied_rate)
-                }
-                None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
-            };
+        let (rate_model_active, target_rate_bps, applied_rate_bps) = match &snapshot.params {
+            Some(p) => {
+                let target_rate = rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
+                let applied_rate = env
+                    .storage()
+                    .instance()
+                    .get(&rate_model::RateModelKey::LastRate)
+                    .unwrap_or(target_rate);
+                (true, target_rate, applied_rate)
+            }
+            None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
+        };
 
         let elapsed_ledgers = if last_update_ledger == 0 {
             0
@@ -3199,6 +3212,11 @@ impl LendingContract {
         upgrade::upgrade_execute(&env, &caller, proposal_id)
     }
 
+    /// Cancel a pending upgrade proposal (admin-only, issue #1940).
+    pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
+        upgrade::upgrade_cancel(&env, &caller, proposal_id)
+    }
+
     pub fn upgrade_set_required_approvals(
         env: Env,
         caller: Address,
@@ -3253,6 +3271,32 @@ impl LendingContract {
         proposal_id: u64,
     ) -> Result<upgrade::UpgradeStatus, LendingError> {
         upgrade::upgrade_status(&env, proposal_id)
+    }
+
+    /// Returns whether a proposal is in the `Cancelled` terminal state (issue #1940).
+    pub fn is_upgrade_proposal_cancelled(env: Env, proposal_id: u64) -> bool {
+        upgrade::is_proposal_cancelled(&env, proposal_id)
+    }
+
+    /// Returns the stored domain-separated approval binding hash for
+    /// `(proposal_id, approver)` (issue #1940).
+    pub fn get_upgrade_approval_binding(
+        env: Env,
+        proposal_id: u64,
+        approver: Address,
+    ) -> Option<BytesN<32>> {
+        upgrade::get_approval_binding(&env, proposal_id, approver)
+    }
+
+    /// Returns the approver-set fingerprint captured when the proposal was
+    /// created (issue #1940).
+    pub fn get_upgrade_proposal_signer_hash(env: Env, proposal_id: u64) -> Option<BytesN<32>> {
+        upgrade::get_proposal_approver_set_hash(&env, proposal_id)
+    }
+
+    /// Returns the fingerprint of the live upgrade approver set (issue #1940).
+    pub fn get_upgrade_approver_set_hash(env: Env) -> BytesN<32> {
+        upgrade::get_approver_set_hash(&env)
     }
 
     pub fn get_min_upgrade_delay_ledgers(env: Env) -> u32 {
