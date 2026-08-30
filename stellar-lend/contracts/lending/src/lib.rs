@@ -14,7 +14,13 @@ pub mod invariants;
 pub mod operation_tracker;
 pub mod two_phase_ops;
 pub mod flash_loan_state;
+pub mod authorization;
+pub mod validation;
 
+#[cfg(test)]
+mod adversarial_scenarios_test;
+#[cfg(test)]
+mod event_schema_versioning_test;
 #[cfg(test)]
 mod governance_audit_test;
 
@@ -127,9 +133,8 @@ mod rate_updated_event_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
-<<<<<<< HEAD
 mod invariant_integration_test;
-=======
+#[cfg(test)]
 mod repay_overpay_test;
 #[cfg(test)]
 mod reserve_split_proptest;
@@ -142,10 +147,10 @@ mod stateful_lifecycle_invariant_test;
 #[cfg(test)]
 mod storage_tier_test;
 #[cfg(test)]
-mod supply_rate_split_test;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
-
 #[cfg(test)]
+mod supply_rate_split_test;
+
+#[cfg(test))]
 mod config_roundtrip_test;
 #[cfg(test)]
 mod utilization_history_test;
@@ -962,6 +967,42 @@ impl LendingContract {
             // No prior record: first-ever price for this asset is exempt.
         }
 
+        // Per-update move-cap circuit breaker.
+        // If max_move_bps is configured and a prior price record exists, reject
+        // updates that move the price beyond the configured threshold.
+        if let Some(max_move_bps) = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
+        {
+            if let Some(last) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
+            {
+                let last_price = last.price;
+                // delta = |price - last_price| * 10_000 / last_price
+                let delta_abs = if price >= last_price {
+                    price
+                        .checked_sub(last_price)
+                        .ok_or(LendingError::Overflow)?
+                } else {
+                    last_price
+                        .checked_sub(price)
+                        .ok_or(LendingError::Overflow)?
+                };
+                let move_bps = delta_abs
+                    .checked_mul(BPS_DENOM)
+                    .ok_or(LendingError::Overflow)?
+                    .checked_div(last_price)
+                    .ok_or(LendingError::Overflow)?;
+                if move_bps > max_move_bps {
+                    return Err(LendingError::MaxMoveBpsExceeded);
+                }
+            }
+            // No prior record: first-ever price for this asset is exempt.
+        }
+
         env.storage().persistent().set(
             &DataKey::OraclePrice(asset),
             &PriceRecord { price, timestamp },
@@ -1447,12 +1488,7 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
-<<<<<<< HEAD
-    pub fn deposit(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &asset);
-        
-=======
+
     /// Receive tokens from a user via the SEP-41 `transfer_from`/`approve`
     /// allowance flow and apply them as a deposit or debt repayment.
     ///
@@ -1569,9 +1605,16 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Deposit collateral with comprehensive authorization and validation.
+    ///
+    /// # Security
+    /// - Validates authorization through require_auth
+    /// - Validates amount and deposit cap
+    /// - Checks reserve invariants before and after
+    /// - Prevents replay attacks
+    /// - Enforces network validation
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Deposit);
         check_emergency_status(&env, ProtocolAction::Deposit);
         if amount <= 0 {
