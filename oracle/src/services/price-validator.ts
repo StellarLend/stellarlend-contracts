@@ -27,6 +27,14 @@ export interface ValidatorConfig {
 }
 
 /**
+ * Cached price entry with the source timestamp used for freshness checks.
+ */
+interface CachedPrice {
+    price: number;
+    timestamp: number;
+}
+
+/**
  * Default validator configuration
  */
 const DEFAULT_CONFIG: ValidatorConfig = {
@@ -41,7 +49,7 @@ const DEFAULT_CONFIG: ValidatorConfig = {
  */
 export class PriceValidator {
     private config: ValidatorConfig;
-    private cachedPrices: Map<string, number> = new Map();
+    private cachedPrices: Map<string, CachedPrice> = new Map();
     private assetBounds: Record<string, AssetPriceBounds>;
 
     constructor(
@@ -49,6 +57,7 @@ export class PriceValidator {
         assetBounds: Record<string, AssetPriceBounds> = {},
     ) {
         this.config = { ...DEFAULT_CONFIG, ...config };
+        this.validateConfig(this.config);
         this.assetBounds = this.normalizeBounds(assetBounds);
 
         logger.info('Price validator initialized', {
@@ -64,21 +73,21 @@ export class PriceValidator {
     validate(raw: RawPriceData): ValidationResult {
         const errors: ValidationError[] = [];
 
-        if (raw.price <= 0) {
+        if (!Number.isFinite(raw.price) || raw.price <= 0) {
             errors.push({
                 code: 'PRICE_ZERO' as ValidationErrorCode,
-                message: `Price must be positive, got ${raw.price}`,
+                message: `Price must be a positive finite number, got ${raw.price}`,
             });
         }
 
-        if (raw.price < this.config.minPrice) {
+        if (Number.isFinite(raw.price) && raw.price < this.config.minPrice) {
             errors.push({
                 code: 'PRICE_ZERO' as ValidationErrorCode,
                 message: `Price ${raw.price} below minimum ${this.config.minPrice}`,
             });
         }
 
-        if (raw.price > this.config.maxPrice) {
+        if (Number.isFinite(raw.price) && raw.price > this.config.maxPrice) {
             errors.push({
                 code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
                 message: `Price ${raw.price} exceeds maximum ${this.config.maxPrice}`,
@@ -87,6 +96,14 @@ export class PriceValidator {
 
         const now = Math.floor(Date.now() / 1000);
         const age = now - raw.timestamp;
+
+        if (age < 0) {
+            errors.push({
+                code: 'PRICE_STALE' as ValidationErrorCode,
+                message: `Price timestamp is ${-age}s in the future`,
+                details: { age, maxAge: this.config.maxStalenessSeconds },
+            });
+        }
 
         if (age > this.config.maxStalenessSeconds) {
             errors.push({
@@ -99,7 +116,7 @@ export class PriceValidator {
         const asset = raw.asset.toUpperCase();
         const bounds = this.getBounds(asset);
 
-        if (raw.price < bounds.minPrice) {
+        if (Number.isFinite(raw.price) && raw.price < bounds.minPrice) {
             errors.push({
                 code: 'PRICE_BELOW_MIN' as ValidationErrorCode,
                 message: `Price ${raw.price} below minimum ${bounds.minPrice} for ${asset}`,
@@ -110,7 +127,7 @@ export class PriceValidator {
             });
         }
 
-        if (raw.price > bounds.maxPrice) {
+        if (Number.isFinite(raw.price) && raw.price > bounds.maxPrice) {
             errors.push({
                 code: 'PRICE_ABOVE_MAX' as ValidationErrorCode,
                 message: `Price ${raw.price} exceeds maximum ${bounds.maxPrice} for ${asset}`,
@@ -121,7 +138,9 @@ export class PriceValidator {
             });
         }
 
-        const cachedPrice = this.cachedPrices.get(asset);
+        const cached = this.cachedPrices.get(asset);
+        const cachedPrice = cached !== undefined && this.isFresh(cached, now) ? cached.price : undefined;
+
         if (cachedPrice !== undefined) {
             const deviation = Math.abs((raw.price - cachedPrice) / cachedPrice) * 100;
 
@@ -138,17 +157,26 @@ export class PriceValidator {
             }
         }
 
+        const scaledPrice = scalePrice(raw.price);
+        if (Number.isFinite(raw.price) && !Number.isSafeInteger(scaledPrice)) {
+            errors.push({
+                code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
+                message: `Scaled price ${scaledPrice} for ${asset} is not a safe integer`,
+                details: { scaledPrice, maxSafeInteger: Number.MAX_SAFE_INTEGER },
+            });
+        }
+
         if (errors.length === 0) {
             const validatedPrice: PriceData = {
                 asset,
-                price: scalePrice(raw.price),
+                price: scaledPrice,
                 timestamp: raw.timestamp,
                 source: raw.source,
                 confidence: this.calculateConfidence(raw, cachedPrice),
                 volume24h: raw.volume24h,
             };
 
-            this.cachedPrices.set(asset, raw.price);
+            this.cachedPrices.set(asset, { price: raw.price, timestamp: raw.timestamp });
 
             return {
                 isValid: true,
@@ -170,6 +198,14 @@ export class PriceValidator {
      */
     validateMany(prices: RawPriceData[]): ValidationResult[] {
         return prices.map((p) => this.validate(p));
+    }
+
+    /**
+     * Check whether a cached price is fresh enough to use as a reference.
+     */
+    private isFresh(cached: CachedPrice, now: number): boolean {
+        const age = now - cached.timestamp;
+        return age >= 0 && age <= this.config.maxStalenessSeconds;
     }
 
     /**
@@ -206,8 +242,14 @@ export class PriceValidator {
     /**
      * Update cached price manually (e.g., after successful contract update)
      */
-    updateCache(asset: string, price: number): void {
-        this.cachedPrices.set(asset.toUpperCase(), price);
+    updateCache(asset: string, price: number, timestamp?: number): void {
+        if (!Number.isFinite(price) || price <= 0) {
+            throw new Error(`Cannot cache invalid price for ${asset}: ${price}`);
+        }
+        this.cachedPrices.set(asset.toUpperCase(), {
+            price,
+            timestamp: timestamp ?? Math.floor(Date.now() / 1000),
+        });
     }
 
     /**
@@ -217,10 +259,13 @@ export class PriceValidator {
         config: Partial<ValidatorConfig> = {},
         assetBounds?: Record<string, AssetPriceBounds>,
     ): void {
-        this.config = { ...this.config, ...config };
+        const nextConfig = { ...this.config, ...config };
+        this.validateConfig(nextConfig);
+        const nextBounds = assetBounds ? this.normalizeBounds(assetBounds) : undefined;
 
-        if (assetBounds) {
-            this.assetBounds = this.normalizeBounds(assetBounds);
+        this.config = nextConfig;
+        if (nextBounds) {
+            this.assetBounds = nextBounds;
         }
 
         logger.info('Price validator configuration reloaded', {
@@ -245,7 +290,23 @@ export class PriceValidator {
      * Get current cache state (for debugging)
      */
     getCacheState(): Record<string, number> {
-        return Object.fromEntries(this.cachedPrices);
+        return Object.fromEntries(
+            Array.from(this.cachedPrices.entries()).map(([asset, cached]) => [
+                asset,
+                cached.price,
+            ] as [string, number]),
+        );
+    }
+
+    /**
+     * Get latest fresh cached price for an asset (safe fallback value).
+     */
+    getCachedPrice(asset: string, timestamp: number = Math.floor(Date.now() / 1000)): number | undefined {
+        const cached = this.cachedPrices.get(asset.toUpperCase());
+        if (cached === undefined || !this.isFresh(cached, timestamp)) {
+            return undefined;
+        }
+        return cached.price;
     }
 
     private getBounds(asset: string): AssetPriceBounds {
@@ -259,14 +320,46 @@ export class PriceValidator {
         bounds: Record<string, AssetPriceBounds>,
     ): Record<string, AssetPriceBounds> {
         return Object.fromEntries(
-            Object.entries(bounds).map(([asset, value]) => [
-                asset.toUpperCase(),
-                {
-                    minPrice: value.minPrice,
-                    maxPrice: value.maxPrice,
-                },
-            ]),
+            Object.entries(bounds).map(([asset, value]) => {
+                const normalizedAsset = asset.toUpperCase();
+                this.validateBounds(normalizedAsset, value);
+                return [
+                    normalizedAsset,
+                    {
+                        minPrice: value.minPrice,
+                        maxPrice: value.maxPrice,
+                    },
+                ] as [string, AssetPriceBounds];
+            }),
         );
+    }
+
+    private validateConfig(config: ValidatorConfig): void {
+        if (!Number.isFinite(config.maxDeviationPercent) || config.maxDeviationPercent <= 0) {
+            throw new Error('maxDeviationPercent must be a finite number greater than 0');
+        }
+        if (!Number.isFinite(config.maxStalenessSeconds) || config.maxStalenessSeconds <= 0) {
+            throw new Error('maxStalenessSeconds must be a finite number greater than 0');
+        }
+        if (!Number.isFinite(config.minPrice) || config.minPrice <= 0) {
+            throw new Error('minPrice must be a finite number greater than 0');
+        }
+        if (!Number.isFinite(config.maxPrice) || config.maxPrice < config.minPrice) {
+            throw new Error('maxPrice must be a finite number greater than or equal to minPrice');
+        }
+    }
+
+    private validateBounds(asset: string, bounds: AssetPriceBounds): void {
+        if (!Number.isFinite(bounds.minPrice) || bounds.minPrice <= 0) {
+            throw new Error(
+                `Invalid bounds for ${asset}: minPrice must be a finite number greater than 0`,
+            );
+        }
+        if (!Number.isFinite(bounds.maxPrice) || bounds.maxPrice < bounds.minPrice) {
+            throw new Error(
+                `Invalid bounds for ${asset}: maxPrice must be a finite number greater than or equal to minPrice`,
+            );
+        }
     }
 }
 
