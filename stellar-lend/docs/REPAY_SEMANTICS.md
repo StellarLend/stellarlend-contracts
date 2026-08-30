@@ -13,17 +13,21 @@ Integrators must understand which path they are calling.
 pub fn repay(env: &Env, user: Address, asset: Address, amount: i128) -> Result<(), BorrowError>
 ```
 
-### Overpay behaviour: **Clamp to zero, refund excess**
-If `amount` exceeds the total outstanding debt (principal + accrued interest), the repay
-clamps the consumed amount to the outstanding debt, zeroing the principal exactly. The excess
-payment is refunded conceptually (not consumed). Integrators must calculate the refund as:
+### Overpay behaviour: **Error on overpay**
+If `amount` exceeds the total outstanding debt (principal + accrued interest after settlement),
+`repay` returns `LendingError::RepayAmountTooHigh` (error code 1012). The position is not
+modified and no funds are consumed.
 
-```
-refund = max(0, amount - (principal + accrued_interest))
+Integrators **must** query the exact current debt before submitting a repay:
+
+```rust
+let debt = client.get_debt_position(&user);
+// derive effective balance including accrued interest
+let effective = debt::effective_debt(&debt, now, rate_bps)?;
+client.repay(&user, effective);
 ```
 
-**Integrator requirement**: For transactions that handle user funds, query the exact current debt
-with `get_debt_position()` before submitting a repay. This allows precise overpayment refund handling.
+Attempting to pass any amount larger than the effective balance will be rejected.
 
 ### Interest ordering
 Interest is settled **before** principal on every repay:
@@ -42,7 +46,7 @@ interest = ceil(principal × INTEREST_RATE_PER_YEAR × elapsed / (BPS_SCALE × S
 ```
 
 For any non-zero principal and any elapsed time ≥ 1 second, interest ≥ 1. Therefore
-`get_debt_balance()` at the moment of repay equals the exact amount `repay` will consume.
+`get_debt_position()` (with the interest-inclusive balance derived via `debt::effective_debt`) at the moment of repay equals the exact amount `repay` will consume.
 No sub-unit dust can remain after a correctly-sized repay call.
 
 ### Recovery mode
@@ -55,13 +59,12 @@ if is_paused(PauseType::Repay) || (!is_recovery && blocks_high_risk_ops)
 
 ### Summary of error codes
 
-| Condition                              | Error                        |
-|----------------------------------------|------------------------------|
-| `amount ≤ 0`                           | `BorrowError::InvalidAmount` |
-| No outstanding debt                    | `BorrowError::InvalidAmount` |
-| `asset` does not match position asset  | `BorrowError::AssetNotSupported` |
-| `amount > interest + principal`        | `BorrowError::RepayAmountTooHigh` |
-| Protocol paused for repay              | `BorrowError::ProtocolPaused` |
+| Condition                              | Error                             |
+|----------------------------------------|-----------------------------------|
+| `amount ≤ 0`                           | `LendingError::InvalidAmount`     |
+| No outstanding debt                    | `LendingError::InvalidAmount`     |
+| `amount > interest + principal`        | `LendingError::RepayAmountTooHigh` (1012) |
+| Protocol paused for repay              | (contract panics / pause guard)   |
 
 ---
 
@@ -102,25 +105,27 @@ Each asset key is independent in the `debt_balances` map.
 
 ## 3. Comparison table
 
-| Dimension               | `borrow::repay`           | `cross_asset::repay_asset`    |
-|-------------------------|---------------------------|-------------------------------|
-| Overpay handling        | Error (`RepayAmountTooHigh`) | Silent clamp to balance     |
-| Interest accrual        | Yes (ceiling-rounded)     | No                            |
-| Repay ordering          | Interest first, then principal | N/A                      |
-| Dust risk               | None (ceiling rounding)   | None (clamp floors at 0)      |
-| Recovery-mode repay     | Allowed                   | Allowed                       |
-| Asset isolation         | Single asset per position | Per-asset in a shared map     |
+| Dimension               | `borrow::repay`                      | `cross_asset::repay_asset`    |
+|-------------------------|--------------------------------------|-------------------------------|
+| Overpay handling        | Error (`RepayAmountTooHigh`, 1012)   | Silent clamp to balance       |
+| Interest accrual        | Yes (ceiling-rounded)                | No                            |
+| Repay ordering          | Interest first, then principal       | N/A                           |
+| Dust risk               | None (ceiling rounding)              | None (clamp floors at 0)      |
+| Recovery-mode repay     | Allowed                              | Allowed                       |
+| Asset isolation         | Single asset per position            | Per-asset in a shared map     |
 
 ---
 
 ## 4. Security notes for integrators
 
 **Do not overpay the borrow system.** Unlike many DeFi protocols that silently refund excess,
-`borrow::repay` returns `RepayAmountTooHigh`. Always query `get_debt_balance()` for the exact
-amount required.
+`borrow::repay` returns `LendingError::RepayAmountTooHigh` (1012). Always query `get_debt_position()`
+for the raw debt state and derive the effective balance with `debt::effective_debt` before
+submitting a repay.
 
-**Dust debt cannot block withdrawals.** Because interest uses ceiling division, `get_debt_balance()`
-at any timestamp is exactly what a full repay consumes. There is no scenario where a tiny
+**Dust debt cannot block withdrawals.** Because interest uses ceiling division, the effective
+balance derived from `get_debt_position()` (via `debt::effective_debt`) at any timestamp is
+exactly what a full repay consumes. There is no scenario where a tiny
 residual interest amount (< 1 unit) blocks a user's withdrawal.
 
 **Cross-asset overpay is safe by design.** A malicious caller cannot use an overpay to extract
