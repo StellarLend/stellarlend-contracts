@@ -1,105 +1,6 @@
-use soroban_sdk::{contracttype, symbol_short, Address, Env};
-pub use stellarlend_amm::{AmmError, AmmProtocolConfig, LiquidityParams, SwapParams};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
 
-use crate::amm_twap;
-
-/// Initialize AMM settings (admin only)
-pub fn initialize_amm(
-    env: Env,
-    admin: Address,
-    default_slippage: i128,
-    max_slippage: i128,
-    auto_swap_threshold: i128,
-) -> Result<(), AmmError> {
-    stellarlend_amm::initialize_amm_settings(
-        &env,
-        admin,
-        default_slippage,
-        max_slippage,
-        auto_swap_threshold,
-    )
-}
-
-/// Set AMM pool configuration (admin only)
-pub fn set_amm_pool(
-    env: Env,
-    admin: Address,
-    protocol_config: AmmProtocolConfig,
-) -> Result<(), AmmError> {
-    stellarlend_amm::add_amm_protocol(&env, admin, protocol_config)
-}
-
-/// Execute swap through AMM
-pub fn amm_swap(env: Env, user: Address, params: SwapParams) -> Result<i128, AmmError> {
-    let result = stellarlend_amm::execute_swap(&env, user, params)?;
-
-    // Update TWAP accumulator after swap
-    if let Some(asset) = get_swap_asset(&params) {
-        if let Some((r0, r1)) = get_pool_reserves_after_swap(&env, &asset) {
-            if r0 > 0 && r1 > 0 {
-                amm_twap::update_twap_accumulators(&env, &asset, r0, r1);
-            }
-        }
-    }
-
-    Ok(result)
-}
-
-/// Add liquidity to AMM pool
-pub fn amm_add_liquidity(
-    env: Env,
-    user: Address,
-    params: LiquidityParams,
-) -> Result<i128, AmmError> {
-    let result = stellarlend_amm::add_liquidity(&env, user, params)?;
-
-    // Update TWAP accumulator after liquidity change
-    if let Some(asset) = get_liquidity_asset(&params) {
-        if let Some((r0, r1)) = get_pool_reserves_after_swap(&env, &asset) {
-            if r0 > 0 && r1 > 0 {
-                amm_twap::update_twap_accumulators(&env, &asset, r0, r1);
-            }
-        }
-    }
-
-    Ok(result)
-}
-
-/// Remove liquidity from AMM pool
-pub fn amm_remove_liquidity(
-    env: Env,
-    user: Address,
-    protocol: Address,
-    token_a: Option<Address>,
-    token_b: Option<Address>,
-    lp_tokens: i128,
-    min_amount_a: i128,
-    min_amount_b: i128,
-    deadline: u64,
-) -> Result<(i128, i128), AmmError> {
-    let result = stellarlend_amm::remove_liquidity(
-        &env,
-        user,
-        protocol,
-        token_a.clone(),
-        token_b,
-        lp_tokens,
-        min_amount_a,
-        min_amount_b,
-        deadline,
-    )?;
-
-    // Update TWAP accumulator after liquidity removal
-    if let Some(asset) = token_a {
-        if let Some((r0, r1)) = get_pool_reserves_after_swap(&env, &asset) {
-            if r0 > 0 && r1 > 0 {
-                amm_twap::update_twap_accumulators(&env, &asset, r0, r1);
-            }
-        }
-    }
-
-    Ok(result)
-}
+use crate::{amm_twap, risk_management};
 
 // ---------------------------------------------------------------------------
 // Storage types
@@ -150,28 +51,8 @@ fn commit_reserves(env: &Env, asset: &Address, r: &PoolReserves) {
     amm_twap::update_twap_accumulators(env, asset, r.reserve0, r.reserve1);
 }
 
-/// Read reserves from storage (used for TWAP update after stellarlend_amm calls).
-fn get_pool_reserves_after_swap(env: &Env, asset: &Address) -> Option<(u128, u128)> {
-    let r = load_reserves(env, asset);
-    if r.reserve0 > 0 && r.reserve1 > 0 {
-        Some((r.reserve0, r.reserve1))
-    } else {
-        None
-    }
-}
-
-/// Extract asset from SwapParams for TWAP update.
-fn get_swap_asset(params: &SwapParams) -> Option<Address> {
-    params.token_in.clone()
-}
-
-/// Extract asset from LiquidityParams for TWAP update.
-fn get_liquidity_asset(params: &LiquidityParams) -> Option<Address> {
-    params.token_a.clone()
-}
-
 // ---------------------------------------------------------------------------
-// Direct pool operations (used internally and by tests)
+// Pool operations (used internally and by tests)
 // ---------------------------------------------------------------------------
 
 /// Initialise a new pool with seed reserves. Can only be called once.
@@ -186,4 +67,60 @@ pub fn initialise_pool(env: &Env, asset: &Address, reserve0: u128, reserve1: u12
 /// Read the current reserves without mutating state.
 pub fn get_reserves(env: &Env, asset: &Address) -> PoolReserves {
     load_reserves(env, asset)
+}
+
+/// Execute a swap: if `a_for_b` is true, swap `amount` of token A for token B,
+/// increasing reserve0 and decreasing reserve1. Otherwise swap token B for
+/// token A, decreasing reserve0 and increasing reserve1.
+pub fn swap(env: &Env, asset: &Address, amount: u128, a_for_b: bool) {
+    assert!(amount > 0, "swap amount must be positive");
+    if risk_management::is_emergency_paused(env) {
+        panic!("protocol is emergency paused");
+    }
+    if risk_management::is_operation_paused(env, Symbol::new(env, "amm_swap")) {
+        panic!("amm_swap is paused");
+    }
+    let mut r = load_reserves(env, asset);
+    assert!(r.reserve0 > 0 && r.reserve1 > 0, "pool not initialised");
+    if a_for_b {
+        r.reserve0 = r.reserve0.wrapping_add(amount);
+        assert!(r.reserve1 > amount, "swap exceeds reserve1");
+        r.reserve1 = r.reserve1.wrapping_sub(amount);
+    } else {
+        assert!(r.reserve0 > amount, "swap exceeds reserve0");
+        r.reserve0 = r.reserve0.wrapping_sub(amount);
+        r.reserve1 = r.reserve1.wrapping_add(amount);
+    }
+    commit_reserves(env, asset, &r);
+}
+
+/// Add liquidity to the pool, increasing both reserves.
+pub fn add_liquidity(env: &Env, asset: &Address, add_a: u128, add_b: u128) {
+    if risk_management::is_emergency_paused(env) {
+        panic!("protocol is emergency paused");
+    }
+    if risk_management::is_operation_paused(env, Symbol::new(env, "amm_add_liquidity")) {
+        panic!("amm_add_liquidity is paused");
+    }
+    let mut r = load_reserves(env, asset);
+    assert!(r.reserve0 > 0 && r.reserve1 > 0, "pool not initialised");
+    r.reserve0 = r.reserve0.wrapping_add(add_a);
+    r.reserve1 = r.reserve1.wrapping_add(add_b);
+    commit_reserves(env, asset, &r);
+}
+
+/// Remove liquidity from the pool, decreasing both reserves.
+pub fn remove_liquidity(env: &Env, asset: &Address, rem_a: u128, rem_b: u128) {
+    if risk_management::is_emergency_paused(env) {
+        panic!("protocol is emergency paused");
+    }
+    if risk_management::is_operation_paused(env, Symbol::new(env, "amm_remove_liquidity")) {
+        panic!("amm_remove_liquidity is paused");
+    }
+    let mut r = load_reserves(env, asset);
+    assert!(r.reserve0 > rem_a, "remove exceeds reserve0");
+    assert!(r.reserve1 > rem_b, "remove exceeds reserve1");
+    r.reserve0 = r.reserve0.wrapping_sub(rem_a);
+    r.reserve1 = r.reserve1.wrapping_sub(rem_b);
+    commit_reserves(env, asset, &r);
 }

@@ -1,25 +1,68 @@
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, Env, Map, Vec};
 
-use crate::debt::{load_debt, DebtPosition, DEFAULT_APR_BPS};
+use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
 use crate::{
     check_emergency_status, check_pause_status, AssetParams, DataKey, LendingError, PriceRecord,
-    ProtocolAction,
+    ProtocolAction, DEFAULT_ORACLE_MAX_AGE_SECS,
 };
 
+/// Fixed-point divisor for converting oracle prices into protocol value units.
+///
+/// The Lending oracle feeds all asset prices in a uniform 7-decimal scale
+/// (e.g. `1_000_000_000` = $100.00 at 7 dp).  Therefore this contract does
+/// *not* need the per-asset decimal normalisation offered by
+/// [`stellar_lend_common::normalize_price`] and
+/// [`stellar_lend_common::INTERNAL_DECIMALS`]; a single global divisor is
+/// sufficient and keeps read paths simpler.
+///
+/// The hello-world and `cross_asset_test` crates use the 18-decimal
+/// `INTERNAL_DECIMALS` path instead because their oracle layer was designed
+/// to accept feeds with heterogeneous decimal scales.  Both approaches are
+/// numerically equivalent for a homogenously-scaled feed; the difference is
+/// purely architectural.
+///
+/// See [`docs/cross_asset.md`] for a worked example.
 const PRICE_DIVISOR: i128 = 10_000_000;
-const HEALTH_FACTOR_NO_DEBT: i128 = 100_000_000;
+
+/// Sentinel health factor returned when a user has zero outstanding debt.
+///
+/// Value: `100_000_000` (10 000× the [`HEALTH_FACTOR_SCALE`] baseline of 10 000).
+/// Callers should treat any value ≥ this constant as "position is fully healthy"
+/// and skip liquidation checks.
+pub const HEALTH_FACTOR_NO_DEBT: i128 = 100_000_000;
+
+/// Baseline scale for health-factor comparisons.
+///
+/// A health factor ≥ `HEALTH_FACTOR_SCALE` (i.e., ≥ 1.0 in human terms) means the
+/// position is sufficiently collateralised and cannot be liquidated.
 pub const HEALTH_FACTOR_SCALE: i128 = 10_000;
 
+/// Load the collateral balance for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Returns
+/// The stored collateral amount, or `0` if no entry exists.
 pub fn load_collateral_asset(env: &Env, user: &Address, asset: &Address) -> i128 {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
+/// Persist the collateral balance for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage write** per call.
 pub fn save_collateral_asset(env: &Env, user: &Address, asset: &Address, amount: i128) {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     env.storage().persistent().set(&key, &amount);
 }
 
+/// Load the debt position for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Returns
+/// The stored [`DebtPosition`], or a zero-principal position timestamped at
+/// the current ledger if no entry exists.
 pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPosition {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     env.storage()
@@ -27,25 +70,169 @@ pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPositi
         .get(&key)
         .unwrap_or(DebtPosition {
             principal: 0,
+            borrow_index_snapshot: 0,
             last_update: env.ledger().timestamp(),
         })
 }
 
+/// Persist the debt position for a single `(user, asset)` pair.
+///
+/// Issues **1 persistent-storage write** per call.
 pub fn save_debt_asset(env: &Env, user: &Address, asset: &Address, position: &DebtPosition) {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     env.storage().persistent().set(&key, position);
 }
 
+/// Load the risk parameters configured for `asset`.
+///
+/// Issues **1 instance-storage read** per call.
+///
+/// # Returns
+/// `Some(AssetParams)` if the asset has been configured via `set_asset_params`,
+/// `None` otherwise.
 pub fn load_asset_params(env: &Env, asset: &Address) -> Option<AssetParams> {
     let key = DataKey::AssetParams(asset.clone());
     env.storage().instance().get(&key)
 }
 
+/// Fetch the most recent oracle price record for `asset`.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Errors
+/// Returns [`LendingError::PriceFeedNotFound`] if no price has been stored for
+/// this asset, or if the stored price is non-positive.
+///
+/// Returns [`LendingError::StaleOracleTimestamp`] if the price is older than
+/// `DEFAULT_ORACLE_MAX_AGE_SECS` or carries a future timestamp.
 pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, LendingError> {
-    env.storage()
+    get_price_for_asset_with_max_age(env, asset, DEFAULT_ORACLE_MAX_AGE_SECS)
+}
+
+/// Fetch an oracle price using an explicit freshness limit.
+///
+/// This is the implementation core behind [`get_price_for_asset`]. It exists
+/// so callers that need a tighter (or a one-off fallback) staleness policy can
+/// express the limit without weakening the fail-closed invariants.
+///
+/// The fallback policy is fail-closed: a missing or stale price is never
+/// replaced with an older recorded price or a zero value.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Errors
+/// Returns [`LendingError::PriceFeedNotFound`] if no price has been stored for
+/// this asset, or if the stored price is non-positive.
+///
+/// Returns [`LendingError::StaleOracleTimestamp`] if the price is older than
+/// `max_age_secs` or carries a future timestamp.
+pub fn get_price_for_asset_with_max_age(
+    env: &Env,
+    asset: &Address,
+    max_age_secs: u64,
+) -> Result<PriceRecord, LendingError> {
+    let record: PriceRecord = env
+        .storage()
         .persistent()
         .get(&DataKey::OraclePrice(asset.clone()))
-        .ok_or(LendingError::PriceFeedNotFound)
+        .ok_or(LendingError::PriceFeedNotFound)?;
+
+    // A non-positive price would erase a collateral or debt leg from every
+    // downstream health calculation. Treat it the same as a missing feed so
+    // positions fail closed instead of silently valuing at zero.
+    if record.price <= 0 {
+        return Err(LendingError::PriceFeedNotFound);
+    }
+
+    let now = env.ledger().timestamp();
+
+    // Reject future-dated records so a bad update cannot make a stale price
+    // look perpetually fresh.
+    if record.timestamp > now {
+        return Err(LendingError::StaleOracleTimestamp);
+    }
+
+    if now.saturating_sub(record.timestamp) > max_age_secs {
+        return Err(LendingError::StaleOracleTimestamp);
+    }
+    Ok(record)
+}
+
+#[cfg(test)]
+mod oracle_freshness_fallback_tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn set_price(env: &Env, asset: &Address, price: i128, timestamp: u64) {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset.clone()),
+            &PriceRecord { price, timestamp },
+        );
+    }
+
+    #[test]
+    fn custom_max_age_boundary_is_fresh() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + 42);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(
+            get_price_for_asset_with_max_age(&env, &asset, 42).is_ok(),
+            "price exactly at the freshness boundary must be accepted"
+        );
+    }
+
+    #[test]
+    fn custom_max_age_one_past_is_stale() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + 43);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(matches!(
+            get_price_for_asset_with_max_age(&env, &asset, 42),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+    }
+
+    #[test]
+    fn stale_price_retry_after_fresh_update_succeeds() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let stale_timestamp = 1_000_000u64;
+        let fresh_timestamp = stale_timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 2;
+
+        env.ledger().set_timestamp(fresh_timestamp);
+        set_price(&env, &asset, 10_000_000, stale_timestamp);
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+
+        set_price(&env, &asset, 10_000_001, fresh_timestamp);
+        assert!(get_price_for_asset(&env, &asset).is_ok());
+    }
+
+    #[test]
+    fn missing_and_non_positive_feed_fail_closed() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        env.ledger().set_timestamp(1_000_000);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+
+        set_price(&env, &asset, 0, 1_000_000);
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+    }
 }
 
 fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
@@ -100,6 +287,9 @@ fn remove_from_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
+/// Return the ordered list of collateral asset addresses for `user`.
+///
+/// Issues **1 persistent-storage read** per call.
 fn get_user_collateral_assets(env: &Env, user: &Address) -> Vec<Address> {
     let key = DataKey::UserCollateralAssets(user.clone());
     env.storage()
@@ -108,6 +298,9 @@ fn get_user_collateral_assets(env: &Env, user: &Address) -> Vec<Address> {
         .unwrap_or(Vec::new(env))
 }
 
+/// Return the ordered list of debt asset addresses for `user`.
+///
+/// Issues **1 persistent-storage read** per call.
 fn get_user_debt_assets(env: &Env, user: &Address) -> Vec<Address> {
     let key = DataKey::UserDebtAssets(user.clone());
     env.storage()
@@ -138,8 +331,60 @@ fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
+/// Compute the aggregate health factor across all collateral and debt assets.
+///
+/// # Read-budget contract
+///
+/// For a user with **N** collateral assets and **M** debt assets, this function
+/// issues the following persistent-storage reads:
+///
+/// | Operation | Reads |
+/// |-----------|-------|
+/// | Collateral-asset list (`UserCollateralAssets`) | 1 |
+/// | Debt-asset list (`UserDebtAssets`) | 1 |
+/// | Per collateral asset: `AssetParams` (instance) + `OraclePrice` + `CollateralAsset` | 3 × N |
+/// | Per debt asset: `OraclePrice` (if not cached) + `DebtAsset` | 2 × M (worst case) |
+/// | **Total** | **2 + 3N + 2M - C** (where C is the number of overlapping assets) |
+///
+/// The `cross_asset_health_perf_test` module asserts this budget for
+/// representative values of N and M and must be kept in sync with this comment
+/// whenever the implementation changes.
+///
+/// # Price Cache
+///
+/// This function uses a local `Map<Address, PriceRecord>` to cache prices fetched
+/// during the cross-asset evaluation. If an asset appears in both the collateral and
+/// debt lists, its price is fetched from persistent storage only once, saving a read.
+///
+/// # Redundant-read note
+///
+/// `compute_aggregate_health_factor` fetches the two asset lists independently
+/// of `get_cross_position_value` and `get_cross_debt_value`.  When all three
+/// are called together (via `get_cross_position_summary`) the lists are read
+/// **three times** instead of once.  This is linear O(N+M), not quadratic, but
+/// carries a 3× constant.  A future single-pass optimisation could merge the
+/// loops and reduce the constant to ≈1× — tracked as a separate issue.
+///
+/// # Formula
+///
+/// ```text
+/// weighted_collateral = Σ  amount_i × price_i × liquidation_threshold_bps_i
+/// total_debt_value    = Σ  effective_debt_j × price_j
+/// health_factor       = weighted_collateral / total_debt_value
+/// ```
+///
+/// # Returns
+/// - `Ok(HEALTH_FACTOR_NO_DEBT)` when the user has no debt.
+/// - `Ok(health_factor)` — scaled integer; values ≥ `HEALTH_FACTOR_SCALE` are healthy.
+/// - `Err(LendingError)` on missing asset params, missing price feed, or overflow.
+///
+/// # See also
+/// - [`cross_asset.md`] — full aggregation pipeline and a worked example.
+/// - [`CROSS_ASSET_HEALTH_PERF.md`] — read-budget rationale and edge-case notes.
 pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128, LendingError> {
+    // Read 1: collateral-asset list
     let collateral_assets = get_user_collateral_assets(env, user);
+    // Read 2: debt-asset list
     let debt_assets = get_user_debt_assets(env, user);
 
     if debt_assets.is_empty() {
@@ -149,10 +394,24 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
     let mut weighted_collateral: i128 = 0;
     let mut total_debt_value: i128 = 0;
 
+    // Cache to prevent duplicate price fetches for assets on both sides.
+    let mut price_cache: Map<Address, PriceRecord> = Map::new(env);
+
+    // Reads 3 .. 2 + 3N: per collateral asset — params (instance), price, balance
     for i in 0..collateral_assets.len() {
         let asset = collateral_assets.get(i).unwrap();
+        // Instance read: AssetParams (1 per asset)
         let params = load_asset_params(env, &asset).ok_or(LendingError::AssetNotConfigured)?;
-        let price_record = get_price_for_asset(env, &asset)?;
+        // Persistent read: OraclePrice (1 per asset, cached locally)
+        let price_record = match price_cache.get(asset.clone()) {
+            Some(cached) => cached,
+            None => {
+                let fetched = get_price_for_asset(env, &asset)?;
+                price_cache.set(asset.clone(), fetched.clone());
+                fetched
+            }
+        };
+        // Persistent read: CollateralAsset balance (1 per asset)
         let amount = load_collateral_asset(env, user, &asset);
         if amount == 0 {
             continue;
@@ -168,9 +427,19 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
             .ok_or(LendingError::Overflow)?;
     }
 
+    // Reads 3 + 3N .. 2 + 3N + 2M: per debt asset — price, debt position
     for i in 0..debt_assets.len() {
         let asset = debt_assets.get(i).unwrap();
-        let price_record = get_price_for_asset(env, &asset)?;
+        // Persistent read: OraclePrice (1 per asset, cached locally)
+        let price_record = match price_cache.get(asset.clone()) {
+            Some(cached) => cached,
+            None => {
+                let fetched = get_price_for_asset(env, &asset)?;
+                price_cache.set(asset.clone(), fetched.clone());
+                fetched
+            }
+        };
+        // Persistent read: DebtAsset position (1 per asset)
         let position = load_debt_asset(env, user, &asset);
         let debt =
             crate::debt::effective_debt(&position, env.ledger().timestamp(), DEFAULT_APR_BPS)
@@ -197,6 +466,19 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
     Ok(health_factor)
 }
 
+/// Return the total USD value of a user's cross-asset collateral positions.
+///
+/// # Read-budget contract
+///
+/// Issues `1 + 2N` persistent-storage reads for a user with **N** collateral
+/// assets:
+/// - 1 read for the collateral-asset list.
+/// - N reads for oracle prices.
+/// - N reads for collateral balances.
+///
+/// # Returns
+/// Total collateral value in protocol units (price × amount ÷ `PRICE_DIVISOR`),
+/// or `Err(LendingError)` on missing price feed or overflow.
 pub fn get_cross_position_value(env: &Env, user: &Address) -> Result<i128, LendingError> {
     let collateral_assets = get_user_collateral_assets(env, user);
     let mut total_collateral = 0i128;
@@ -221,6 +503,18 @@ pub fn get_cross_position_value(env: &Env, user: &Address) -> Result<i128, Lendi
     Ok(total_collateral)
 }
 
+/// Return the total USD value of a user's cross-asset debt positions.
+///
+/// # Read-budget contract
+///
+/// Issues `1 + 2M` persistent-storage reads for a user with **M** debt assets:
+/// - 1 read for the debt-asset list.
+/// - M reads for oracle prices.
+/// - M reads for debt positions.
+///
+/// # Returns
+/// Total debt value in protocol units, or `Err(LendingError)` on missing price
+/// feed or overflow.
 pub fn get_cross_debt_value(env: &Env, user: &Address) -> Result<i128, LendingError> {
     let debt_assets = get_user_debt_assets(env, user);
     let mut total_debt_value = 0i128;
@@ -248,6 +542,12 @@ pub fn get_cross_debt_value(env: &Env, user: &Address) -> Result<i128, LendingEr
     Ok(total_debt_value)
 }
 
+/// Validate that `asset` has been configured and return its [`AssetParams`].
+///
+/// Issues **1 instance-storage read**.
+///
+/// # Errors
+/// Returns [`LendingError::AssetNotConfigured`] if no params entry exists.
 pub fn validate_asset_params_configured(
     env: &Env,
     asset: &Address,
@@ -255,11 +555,23 @@ pub fn validate_asset_params_configured(
     load_asset_params(env, asset).ok_or(LendingError::AssetNotConfigured)
 }
 
+/// Persist risk parameters for `asset`.
+///
+/// Issues **1 instance-storage write**.
 pub fn set_asset_params_internal(env: &Env, asset: &Address, params: &AssetParams) {
     let key = DataKey::AssetParams(asset.clone());
     env.storage().instance().set(&key, params);
 }
 
+/// Deposit `amount` of `asset` as collateral for `user`.
+///
+/// Validates protocol pause state, checks that `asset` is configured, requires
+/// the user's authorisation, updates the collateral balance, registers the
+/// asset in the user's collateral list, and extends the entry's TTL.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
 pub fn deposit_collateral_asset_internal(
     env: &Env,
     user: &Address,
@@ -286,6 +598,17 @@ pub fn deposit_collateral_asset_internal(
     Ok(new_balance)
 }
 
+/// Withdraw `amount` of collateral `asset` for `user`.
+///
+/// Checks pause state, validates params, requires authorisation, reduces the
+/// collateral balance, removes the asset from the list when balance reaches
+/// zero, and verifies the resulting health factor remains ≥ `HEALTH_FACTOR_SCALE`.
+/// Rolls back the state change if the health-factor check fails.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0` or exceeds current balance.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::HealthFactorTooLow`] if withdrawal would under-collateralise the position.
 pub fn withdraw_asset_internal(
     env: &Env,
     user: &Address,
@@ -315,7 +638,20 @@ pub fn withdraw_asset_internal(
         remove_from_user_collateral_list(env, user, asset);
     }
 
-    let hf = compute_aggregate_health_factor(env, user)?;
+    let hf = match compute_aggregate_health_factor(env, user) {
+        Ok(hf) => hf,
+        Err(err) => {
+            // Roll back the provisional collateral write if the health check
+            // itself fails (for example, due to a stale or missing oracle
+            // price). Without this, a failed withdrawal would still reduce the
+            // user's collateral balance.
+            save_collateral_asset(env, user, asset, current);
+            if current > 0 {
+                add_to_user_collateral_list(env, user, asset);
+            }
+            return Err(err);
+        }
+    };
     if hf < HEALTH_FACTOR_SCALE {
         save_collateral_asset(env, user, asset, current);
         if current > 0 {
@@ -329,6 +665,38 @@ pub fn withdraw_asset_internal(
     Ok(new_balance)
 }
 
+/// Borrow `amount` of `asset` for `user`.
+///
+/// Checks pause state, validates params, enforces the minimum-borrow floor,
+/// **fail-closes on partial oracle staleness** (every collateral and debt leg
+/// already on the position, plus the asset being borrowed, must have a fresh
+/// price — see [`ensure_position_prices_fresh`]), accrues interest on any
+/// existing debt position, creates or updates the debt entry, verifies the
+/// health factor post-borrow, enforces the per-asset and protocol debt
+/// ceilings, and extends the debt entry's TTL.
+///
+/// # Partial-staleness policy
+///
+/// A multi-asset position is valued by aggregating every collateral and debt
+/// leg. If *any* of those legs carries a stale oracle price while others are
+/// fresh, the true health of the position is unknown. This function therefore
+/// **fails closed** with [`LendingError::StaleOracleTimestamp`] whenever any
+/// relevant leg is stale — not only when the borrowed asset itself is stale.
+///
+/// Repay is intentionally *not* gated by this check (see
+/// `PARTIAL_STALENESS_POLICY.md`): reducing risk must remain allowed.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::BelowMinimumBorrow`] if `amount < min_borrow`.
+/// - [`LendingError::StaleOracleTimestamp`] if any collateral, existing debt,
+///   or the borrowed asset has a price older than `DEFAULT_ORACLE_MAX_AGE_SECS`.
+/// - [`LendingError::PriceFeedNotFound`] if a required oracle price is missing.
+/// - [`LendingError::HealthFactorTooLow`] if borrow would under-collateralise the position.
+/// - [`LendingError::DebtCeilingExceeded`] if borrow would exceed the per-asset ceiling.
+/// - [`LendingError::BorrowCapExceeded`] if borrow would exceed the per-asset borrow cap.
+/// - [`LendingError::Overflow`] on arithmetic overflow.
 pub fn borrow_asset_internal(
     env: &Env,
     user: &Address,
@@ -351,28 +719,42 @@ pub fn borrow_asset_internal(
 
     user.require_auth();
 
+    // Fail closed on partial oracle staleness: reject the borrow if *any*
+    // collateral or debt asset already on the user's cross-asset position has
+    // a stale price, or if the asset being borrowed itself has a stale price.
+    // This hardens the borrow path so a single stale leg cannot enable an
+    // under-collateralised borrow, independent of the health-factor computation.
+    // Repay is intentionally not gated here (reducing risk must always
+    // succeed). See PARTIAL_STALENESS_POLICY.md.
+    ensure_position_prices_fresh(env, user, asset)?;
+
     let now = env.ledger().timestamp();
 
     let rate = crate::current_borrow_rate(env);
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
-    let updated = crate::debt::borrow_amount(position, now, amount, rate)
+    let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
+    let updated = crate::debt::borrow_amount(settled_position, now, amount, rate)
         .map_err(|_| LendingError::Overflow)?;
     save_debt_asset(env, user, asset, &updated);
     add_to_user_debt_list(env, user, asset);
 
-    let hf = compute_aggregate_health_factor(env, user)?;
+    let hf = match compute_aggregate_health_factor(env, user) {
+        Ok(hf) => hf,
+        Err(err) => {
+            // Roll back the provisional debt write if the health check itself
+            // fails. The borrow is rejected, so the user's debt position must
+            // be restored to its original state.
+            save_debt_asset(env, user, asset, &position);
+            if prev_principal == 0 {
+                remove_from_user_debt_list(env, user, asset);
+            }
+            return Err(err);
+        }
+    };
 
     if hf < HEALTH_FACTOR_SCALE {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                last_update: now,
-            },
-        );
+        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
             remove_from_user_debt_list(env, user, asset);
         }
@@ -392,19 +774,19 @@ pub fn borrow_asset_internal(
         .checked_add(delta)
         .ok_or(LendingError::Overflow)?;
     if new_total_debt > params.debt_ceiling {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                last_update: now,
-            },
-        );
+        save_debt_asset(env, user, asset, &position);
         if prev_principal == 0 {
             remove_from_user_debt_list(env, user, asset);
         }
         return Err(LendingError::DebtCeilingExceeded);
+    }
+    // Enforce optional per-asset borrow cap: 0 means uncapped.
+    if params.borrow_cap != 0 && new_total_debt > params.borrow_cap {
+        save_debt_asset(env, user, asset, &position);
+        if prev_principal == 0 {
+            remove_from_user_debt_list(env, user, asset);
+        }
+        return Err(LendingError::BorrowCapExceeded);
     }
     env.storage()
         .persistent()
@@ -427,6 +809,63 @@ pub fn borrow_asset_internal(
     Ok(updated.principal)
 }
 
+/// Reject (fail closed) a borrow when *any* collateral or debt asset on the
+/// user's cross-asset position — or the asset being borrowed — carries a stale
+/// oracle price.
+///
+/// # Rationale
+///
+/// Multi-asset health is an aggregate of every leg. A single stale collateral
+/// or debt price makes the true health unknown; allowing the borrow would let
+/// a partial-staleness gap enable under-collateralised debt. This helper scans
+/// every existing position leg plus `borrow_asset` (which may not yet be on
+/// the debt list on first borrow of that asset) via [`get_price_for_asset`],
+/// which returns [`LendingError::StaleOracleTimestamp`] when the price is older
+/// than `DEFAULT_ORACLE_MAX_AGE_SECS`, or has a future timestamp.
+///
+/// # Fail-open counterpart
+///
+/// Repay is intentionally *not* gated by this helper — reducing a position's
+/// risk must always be permitted. See `PARTIAL_STALENESS_POLICY.md`.
+///
+/// # Errors
+/// - [`LendingError::StaleOracleTimestamp`] if any scanned asset's price is stale.
+/// - [`LendingError::PriceFeedNotFound`] if any scanned asset has no price record.
+fn ensure_position_prices_fresh(
+    env: &Env,
+    user: &Address,
+    borrow_asset: &Address,
+) -> Result<(), LendingError> {
+    let collateral_assets = get_user_collateral_assets(env, user);
+    for i in 0..collateral_assets.len() {
+        let asset = collateral_assets.get(i).unwrap();
+        get_price_for_asset(env, &asset)?;
+    }
+
+    let debt_assets = get_user_debt_assets(env, user);
+    for i in 0..debt_assets.len() {
+        let asset = debt_assets.get(i).unwrap();
+        get_price_for_asset(env, &asset)?;
+    }
+
+    // First borrow of this asset: it is not yet on the debt list, but it
+    // contributes to post-borrow health and must be fresh.
+    get_price_for_asset(env, borrow_asset)?;
+
+    Ok(())
+}
+
+/// Repay `amount` of debt `asset` for `user`.
+///
+/// Checks pause state, validates params, requires authorisation, accrues
+/// interest on the existing position, applies the repayment, removes the asset
+/// from the user's debt list when the position reaches zero, and updates both
+/// per-asset and protocol-level total-debt accumulators.
+///
+/// # Errors
+/// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
+/// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::Overflow`] on arithmetic overflow.
 pub fn repay_asset_internal(
     env: &Env,
     user: &Address,
@@ -448,7 +887,15 @@ pub fn repay_asset_internal(
     let rate = crate::current_borrow_rate(env);
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
-    let updated = crate::debt::repay_amount(position, now, amount, rate)
+    let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
+    // Cross-asset repay silently clamps to the outstanding balance so callers
+    // can safely pass an amount larger than the debt (see REPAY_SEMANTICS.md).
+    // When the position is already zero, return early — nothing to repay.
+    let clamped_amount = amount.min(settled_position.principal);
+    if clamped_amount <= 0 {
+        return Ok(settled_position.principal);
+    }
+    let updated = crate::debt::repay_amount(settled_position, now, clamped_amount, rate)
         .map_err(|_| LendingError::Overflow)?;
     save_debt_asset(env, user, asset, &updated);
     if updated.principal == 0 {
@@ -462,7 +909,16 @@ pub fn repay_asset_internal(
         .persistent()
         .get(&DataKey::TotalDebtAsset(asset.clone()))
         .unwrap_or(0);
-    let new_total_debt_asset = total_debt_asset.saturating_sub(repaid);
+    let debt_delta = updated
+        .principal
+        .checked_sub(prev_principal)
+        .ok_or(LendingError::Overflow)?;
+    let new_total_debt_asset = total_debt_asset
+        .checked_add(debt_delta)
+        .ok_or(LendingError::Overflow)?;
+    if new_total_debt_asset < 0 {
+        return Err(LendingError::Overflow);
+    }
     env.storage().persistent().set(
         &DataKey::TotalDebtAsset(asset.clone()),
         &new_total_debt_asset,
@@ -473,7 +929,12 @@ pub fn repay_asset_internal(
         .persistent()
         .get(&DataKey::TotalDebt)
         .unwrap_or(0);
-    let new_total_protocol = total_debt_protocol.saturating_sub(repaid);
+    let new_total_protocol = total_debt_protocol
+        .checked_add(debt_delta)
+        .ok_or(LendingError::Overflow)?;
+    if new_total_protocol < 0 {
+        return Err(LendingError::Overflow);
+    }
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_protocol);
@@ -481,4 +942,95 @@ pub fn repay_asset_internal(
     extend_debt_asset_ttl(env, user, asset);
 
     Ok(updated.principal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn set_price(env: &Env, asset: &Address, price: i128, timestamp: u64) {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset.clone()),
+            &PriceRecord { price, timestamp },
+        );
+    }
+
+    #[test]
+    fn get_price_for_asset_success() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        let result = get_price_for_asset(&env, &asset);
+        assert!(result.is_ok());
+        match result {
+            Ok(record) => assert_eq!(record.price, 10_000_000),
+            Err(_) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn get_price_for_asset_missing_feed_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+    }
+
+    #[test]
+    fn get_price_for_asset_stale_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+    }
+
+    #[test]
+    fn get_price_for_asset_boundary_is_fresh() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(get_price_for_asset(&env, &asset).is_ok());
+    }
+
+    #[test]
+    fn get_price_for_asset_future_timestamp_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        env.ledger().set_timestamp(1_000_000);
+        set_price(&env, &asset, 10_000_000, 1_000_001);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+    }
+
+    #[test]
+    fn get_price_for_asset_non_positive_price_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        env.ledger().set_timestamp(1_000_000);
+        set_price(&env, &asset, 0, 1_000_000);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+    }
 }

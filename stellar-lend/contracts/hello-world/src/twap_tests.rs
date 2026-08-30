@@ -179,7 +179,7 @@ mod tests {
         setup_pool_with_history(&env, &asset);
 
         // 5 ledger closes ≈ 25 s = MIN_WINDOW_SECS
-        let twap = get_twap(&env, &asset, MIN_WINDOW_SECS);
+        let twap = get_twap(&env, &asset, MIN_WINDOW_SECS).unwrap();
         // Price should be approximately 1:1 (tiny swaps barely move the reserves).
         let price = twap as f64 / PRICE_SCALE as f64;
         assert!((price - 1.0_f64).abs() < 0.01, "expected ~1.0, got {price}");
@@ -191,7 +191,7 @@ mod tests {
         let asset = mock_asset(&env);
         setup_pool_with_history(&env, &asset);
 
-        let twap = get_twap(&env, &asset, 150); // 30 ledgers
+        let twap = get_twap(&env, &asset, 150).unwrap(); // 30 ledgers
         let price = twap as f64 / PRICE_SCALE as f64;
         assert!((price - 1.0_f64).abs() < 0.01, "expected ~1.0, got {price}");
     }
@@ -202,7 +202,7 @@ mod tests {
         let asset = mock_asset(&env);
         setup_pool_with_history(&env, &asset);
 
-        let twap = get_twap(&env, &asset, 1500); // 300 ledgers — use all available history
+        let twap = get_twap(&env, &asset, 1500).unwrap(); // 300 ledgers — use all available history
         let price = twap as f64 / PRICE_SCALE as f64;
         assert!((price - 1.0_f64).abs() < 0.02, "expected ~1.0, got {price}");
     }
@@ -232,7 +232,7 @@ mod tests {
         amm::swap(&env, &asset, 1, true);
 
         // TWAP over last 150 s should be between 1.0 and 2.0.
-        let twap = get_twap(&env, &asset, 150);
+        let twap = get_twap(&env, &asset, 150).unwrap();
         let price = twap as f64 / PRICE_SCALE as f64;
         assert!(
             price > 1.0 && price < 2.0,
@@ -350,17 +350,20 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[should_panic(expected = "insufficient TWAP history")]
-    fn test_twap_panics_with_no_history() {
+    fn test_twap_returns_none_with_no_history() {
         let env = Env::default();
         let asset = mock_asset(&env);
         env.ledger().set_timestamp(10);
 
-        // Write a single point — no elapsed time, so no history.
+        // Write a single point — no elapsed time, so no window coverage.
         update_twap_accumulators(&env, &asset, 1_000, 1_000);
 
-        // Requesting a window requires at least MIN_WINDOW_SECS of history.
-        get_twap(&env, &asset, MIN_WINDOW_SECS);
+        // get_twap returns None instead of panicking when history is insufficient.
+        assert_eq!(
+            get_twap(&env, &asset, MIN_WINDOW_SECS),
+            None,
+            "expected None on thin-history pool, not a panic"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -384,7 +387,48 @@ mod tests {
         update_twap_accumulators(&env, &asset, 1, 1);
 
         // Should not panic.
-        let _ = get_twap(&env, &asset, MIN_WINDOW_SECS);
+        let _ = get_twap(&env, &asset, MIN_WINDOW_SECS).unwrap();
+    }
+
+    #[test]
+    fn test_same_timestamp_update_does_not_change_accumulator() {
+        let env = Env::default();
+        let asset = mock_asset(&env);
+
+        env.ledger().set_timestamp(1_000);
+
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        let before = amm_twap::get_pool_state(&env, &asset).unwrap();
+
+        // Same timestamp
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        let after = amm_twap::get_pool_state(&env, &asset).unwrap();
+
+        assert_eq!(before.price0_cumulative, after.price0_cumulative);
+        assert_eq!(before.price1_cumulative, after.price1_cumulative);
+    }
+
+    #[test]
+    fn test_equal_timestamp_twap_query() {
+        let env = Env::default();
+        let asset = mock_asset(&env);
+
+        env.ledger().set_timestamp(1_000);
+
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        advance_time(&env, MIN_WINDOW_SECS);
+
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        // Same timestamp again
+        update_twap_accumulators(&env, &asset, 100, 200);
+
+        let twap = get_twap(&env, &asset, MIN_WINDOW_SECS).unwrap();
+
+        assert!(twap > 0);
     }
 
     // -----------------------------------------------------------------------
@@ -410,7 +454,7 @@ mod tests {
 
         // Query TWAP over the 150 s window.
         env.ledger().set_timestamp(301);
-        let twap = get_twap(&env, &asset, 150);
+        let twap = get_twap(&env, &asset, 150).unwrap();
         let price = twap as f64 / PRICE_SCALE as f64;
 
         // Even with a huge swap at T=300, the TWAP over 150 s should remain

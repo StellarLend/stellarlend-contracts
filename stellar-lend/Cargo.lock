@@ -329,6 +329,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cross-asset-test"
+version = "0.0.0"
+dependencies = [
+ "soroban-sdk",
+ "stellar-lend-common",
+]
+
+[[package]]
 name = "crypto-bigint"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -855,13 +863,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hello-world"
-version = "0.0.0"
-dependencies = [
- "soroban-sdk",
-]
 
 [[package]]
 name = "hex"
@@ -1706,9 +1707,9 @@ dependencies = [
 
 [[package]]
 name = "soroban-sdk"
-version = "25.3.0"
+version = "25.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fb27e93f8d3fc3a815d24c60ec11e893c408a36693ec9c823322f954fa096ae"
+checksum = "4502f2e018f238a4c5d3212d7d20ea6abcdc6e58babd63b642b693739db30fd1"
 dependencies = [
  "arbitrary",
  "bytes-lit",
@@ -1778,6 +1779,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-token-sdk"
+version = "25.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8230fe7cf1bf138068cbe5cfa54a76657bed8a9bb6a89a4a229383116d3f067"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "soroban-wasmi"
 version = "0.31.1-soroban.20.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1822,6 +1832,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "stellar-lend-common"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "soroban-sdk",
 ]
 
@@ -1866,6 +1877,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellarlend-amm"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "stellarlend-bridge"
+version = "0.0.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "stellarlend-lending"
 version = "0.1.0"
 dependencies = [
@@ -1879,14 +1905,19 @@ dependencies = [
 
 [[package]]
 name = "stellarlend-multisig"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "soroban-sdk",
 ]
 
 [[package]]
 name = "stellarlend-vesting"
-version = "0.1.0"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "soroban-sdk",
+ "soroban-token-sdk",
+]
 
 [[package]]
 name = "strsim"

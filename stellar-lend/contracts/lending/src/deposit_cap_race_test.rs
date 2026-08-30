@@ -43,7 +43,7 @@ fn same_ledger_second_deposit_rejects_when_running_total_would_cross_cap() {
     let (env, client, _admin, user1) = setup();
     let user2 = Address::generate(&env);
     let ledger_sequence = 1048;
-    env.ledger().set_sequence(ledger_sequence);
+    env.ledger().set_sequence_number(ledger_sequence);
     set_deposit_cap(&env, &client.address, 1_000);
 
     assert_eq!(client.deposit(&user1, &600), 600);
@@ -66,7 +66,7 @@ fn same_ledger_deposits_can_fill_exact_cap_then_reject_one_over() {
     let user2 = Address::generate(&env);
     let user3 = Address::generate(&env);
     let ledger_sequence = 1049;
-    env.ledger().set_sequence(ledger_sequence);
+    env.ledger().set_sequence_number(ledger_sequence);
     set_deposit_cap(&env, &client.address, 1_000);
 
     assert_eq!(client.deposit(&user1, &250), 250);
@@ -91,7 +91,7 @@ fn withdraw_in_same_ledger_frees_headroom_for_later_deposit() {
     let user2 = Address::generate(&env);
     let user3 = Address::generate(&env);
     let ledger_sequence = 1050;
-    env.ledger().set_sequence(ledger_sequence);
+    env.ledger().set_sequence_number(ledger_sequence);
     set_deposit_cap(&env, &client.address, 1_000);
 
     client.deposit(&user1, &800);
@@ -112,7 +112,7 @@ fn cap_reduced_below_current_total_rejects_until_withdraw_creates_room() {
     let (env, client, _admin, user1) = setup();
     let user2 = Address::generate(&env);
     let ledger_sequence = 1051;
-    env.ledger().set_sequence(ledger_sequence);
+    env.ledger().set_sequence_number(ledger_sequence);
     set_deposit_cap(&env, &client.address, 1_000);
 
     client.deposit(&user1, &1_000);

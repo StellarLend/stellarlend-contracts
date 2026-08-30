@@ -13,25 +13,51 @@
 //! Every test probes sub-unit boundaries where truncation matters.
 
 use super::*;
+use crate::debt::{save_debt, DebtPosition};
+use crate::liquidate_transfer_test::{MockToken, MockTokenClient};
 use soroban_sdk::testutils::Address as _;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
+fn setup() -> (
+    Env,
+    LendingContractClient<'static>,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
     client.initialize(&admin);
-    (env, client, admin, user)
+    (env, client, admin, user, debt_asset, collateral_asset)
 }
 
 /// Create a position with `collateral` deposited and `debt` borrowed such that
 /// HF < 1.0 (liquidatable).  Uses `mock_all_auths`.
+fn mint_and_make_unhealthy_position(
+    env: &Env,
+    client: &LendingContractClient<'static>,
+    liquidator: &Address,
+    user: &Address,
+    debt_asset: &Address,
+    collateral_asset: &Address,
+    collateral: i128,
+    debt: i128,
+) {
+    MockTokenClient::new(env, debt_asset).mint(liquidator, &1_000_000);
+    MockTokenClient::new(env, collateral_asset).mint(&client.address, &1_000_000);
+    make_unhealthy_position(env, client, user, collateral, debt);
+}
+
 fn make_unhealthy_position(
     env: &Env,
     client: &LendingContractClient<'static>,
@@ -39,8 +65,21 @@ fn make_unhealthy_position(
     collateral: i128,
     debt: i128,
 ) {
-    client.deposit(user, &collateral);
-    client.borrow(user, &debt);
+    let now = env.ledger().timestamp();
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &collateral);
+        save_debt(
+            env,
+            user,
+            &DebtPosition {
+                principal: debt,
+                borrow_index_snapshot: 0,
+                last_update: now,
+            },
+        );
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -52,12 +91,21 @@ fn make_unhealthy_position(
 /// borrower / protocol — the liquidator must NOT receive 2.
 #[test]
 fn one_unit_repay_seizes_one_collateral() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Collateral = 2, debt = 3 → HF = 2 * 8000 / 3 = 5333 < 10000
-    make_unhealthy_position(&env, &client, &user, 2, 3);
-
     let liquidator = Address::generate(&env);
-    let result = client.try_liquidate(&liquidator, &user, &1);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        3,
+    );
+
+    let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     assert!(result.is_ok(), "liquidation of 1 unit should succeed");
 
     let pos = client.get_position(&user);
@@ -65,10 +113,7 @@ fn one_unit_repay_seizes_one_collateral() {
     // seized = 1 * 11000 / 10000 = 1 (floor)
     // new_debt = 3 - 1 = 2
     // new_col = 2 - 1 = 1
-    assert_eq!(
-        pos.debt, 2,
-        "debt should decrease by 1 (floor of 1/1)"
-    );
+    assert_eq!(pos.debt, 2, "debt should decrease by 1 (floor of 1/1)");
     assert_eq!(
         pos.collateral, 1,
         "collateral should decrease by 1, not by 2 (floor protects protocol)"
@@ -78,15 +123,21 @@ fn one_unit_repay_seizes_one_collateral() {
 /// Exact same scenario verifying the returned `actual_repay` is 1.
 #[test]
 fn one_unit_liquidate_returns_actual_repay() {
-    let (env, client, _admin, user) = setup();
-    make_unhealthy_position(&env, &client, &user, 2, 3);
-
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     let liquidator = Address::generate(&env);
-    let repay = client.liquidate(&liquidator, &user, &1);
-    assert_eq!(
-        repay, 1,
-        "liquidate must return actual_repay = 1"
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        3,
     );
+
+    let repay = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
+    assert_eq!(repay, 1, "liquidate must return actual_repay = 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -97,10 +148,20 @@ fn one_unit_liquidate_returns_actual_repay() {
 /// amount to the liquidator.  This test pins the exact boundary.
 #[test]
 fn fractional_seizure_rounds_down_for_liquidator() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Collateral = 2, debt = 9 → HF = 2 * 8000 / 9 = 1777 < 10000
     // max_repay = 9 * 5000 / 10000 = 4
-    make_unhealthy_position(&env, &client, &user, 2, 9);
+    let liquidator = Address::generate(&env);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        9,
+    );
 
     // Liquidate with amount = 2
     // actual_repay = min(2, 4) = 2
@@ -108,9 +169,11 @@ fn fractional_seizure_rounds_down_for_liquidator() {
     // final_seized = min(2, 2) = 2
     // new_debt = 9 - 2 = 7
     // new_col = 2 - 2 = 0
-    let liquidator = Address::generate(&env);
-    let result = client.try_liquidate(&liquidator, &user, &2);
-    assert!(result.is_ok(), "fractional-seizure liquidation should succeed");
+    let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &2);
+    assert!(
+        result.is_ok(),
+        "fractional-seizure liquidation should succeed"
+    );
 
     let pos = client.get_position(&user);
     assert_eq!(pos.debt, 7, "debt 9 - 2 = 7");
@@ -120,13 +183,21 @@ fn fractional_seizure_rounds_down_for_liquidator() {
 /// Repaying 1 unit when seized would be 1.1 → liquidator gets 1, not 2.
 #[test]
 fn fractional_seizure_at_one_unit_repay() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Collateral = 3, debt = 3 → HF = 3 * 8000 / 3 = 8000 < 10000
     // max_repay = 3 * 5000 / 10000 = 1
-    make_unhealthy_position(&env, &client, &user, 3, 3);
-
     let liquidator = Address::generate(&env);
-    client.liquidate(&liquidator, &user, &1);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        3,
+        3,
+    );
+    client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     // seized = 1 * 11000 / 10000 = 1 (floor of 1.1)
     // new_col = 3 - 1 = 2
     let pos = client.get_position(&user);
@@ -144,13 +215,13 @@ fn fractional_seizure_at_one_unit_repay() {
 /// Liquidator cannot repay debt of 1 because the close-factor cap rounds to 0.
 #[test]
 fn close_factor_floor_at_one_unit_debt() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Collateral = 1, debt = 1 → HF = 1 * 8000 / 1 = 8000 < 10000
     make_unhealthy_position(&env, &client, &user, 1, 1);
 
     let liquidator = Address::generate(&env);
     // amount = 1, max_repay = 0 → actual_repay = 0 → dust guard kicks in
-    let result = client.try_liquidate(&liquidator, &user, &1);
+    let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     assert!(
         result.is_err(),
         "liquidating 1 unit of 1 debt should fail: max_repay = 0"
@@ -160,12 +231,20 @@ fn close_factor_floor_at_one_unit_debt() {
 /// When debt = 2, max_repay = 2 * 5000 / 10000 = 1 (floor of 1.0 = exact).
 #[test]
 fn close_factor_exact_at_two_units_debt() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // HF = 2 * 8000 / 2 = 8000 < 10000
-    make_unhealthy_position(&env, &client, &user, 2, 2);
-
     let liquidator = Address::generate(&env);
-    let repay = client.liquidate(&liquidator, &user, &2);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        2,
+    );
+    let repay = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &2);
     // max_repay = 2 * 5000 / 10000 = 1
     assert_eq!(repay, 1, "max_repay caps at 1 for debt=2");
 }
@@ -173,12 +252,20 @@ fn close_factor_exact_at_two_units_debt() {
 /// When debt = 3, max_repay = 3 * 5000 / 10000 = 1 (floor of 1.5).
 #[test]
 fn close_factor_floor_at_three_units_debt() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // HF = 2 * 8000 / 3 = 5333 < 10000
-    make_unhealthy_position(&env, &client, &user, 2, 3);
-
     let liquidator = Address::generate(&env);
-    let repay = client.liquidate(&liquidator, &user, &2);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        3,
+    );
+    let repay = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &2);
     // max_repay = 3 * 5000 / 10000 = 1
     assert_eq!(repay, 1, "max_repay = 1 (floor of 1.5)");
 }
@@ -191,13 +278,13 @@ fn close_factor_floor_at_three_units_debt() {
 /// Position is liquidatable.
 #[test]
 fn health_factor_exact_at_boundary() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     make_unhealthy_position(&env, &client, &user, 1, 1);
     let hf = client.get_health_factor(&user);
     assert_eq!(hf, 8000, "HF = 8000 (exact)");
     // Should be liquidatable since 8000 < 10000
     let liquidator = Address::generate(&env);
-    let result = client.try_liquidate(&liquidator, &user, &1);
+    let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     assert!(
         result.is_err(),
         "liquidation of debt=1 should fail: max_repay=0"
@@ -208,7 +295,7 @@ fn health_factor_exact_at_boundary() {
 /// If we had ceil, it would be 5334.  Floor is more conservative (lower HF).
 #[test]
 fn health_factor_floor_is_conservative() {
-    let (_env, client, _admin, user) = setup();
+    let (_env, client, _admin, user, _debt_asset, _collateral_asset) = setup();
     make_unhealthy_position(&_env, &client, &user, 2, 3);
     let hf = client.get_health_factor(&user);
     // 2 * 8000 / 3 = 5333.333... → floor = 5333
@@ -224,18 +311,26 @@ fn health_factor_floor_is_conservative() {
 /// floor rounding of seized_collateral.
 #[test]
 fn clamp_caps_seized_at_available_collateral() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Collateral = 2, debt = 10 → HF = 2 * 8000 / 10 = 1600 < 10000
     // max_repay = 10 * 5000 / 10000 = 5
-    make_unhealthy_position(&env, &client, &user, 2, 10);
-
     let liquidator = Address::generate(&env);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        10,
+    );
     // amount = 5 → actual_repay = min(5, 5) = 5
     // seized = 5 * 11000 / 10000 = 5 (floor of 5.5)
     // final_seized = min(5, 2) = 2 (clamp)
     // new_debt = 10 - 5 = 5
     // new_col = 2 - 2 = 0
-    let repay = client.liquidate(&liquidator, &user, &5);
+    let repay = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &5);
     assert_eq!(repay, 5, "liquidator repays 5");
 
     let pos = client.get_position(&user);
@@ -246,62 +341,19 @@ fn clamp_caps_seized_at_available_collateral() {
 /// Clamping when seized_collateral exactly equals collateral (no truncation).
 #[test]
 fn clamp_exact_match() {
-    let (env, client, _admin, user) = setup();
-    // Collateral = 110, debt = 10 → HF = 110 * 8000 / 10 = 88000 > 10000 → healthy!
-
-    // Let's use a scenario where seized exactly equals collateral.
-    // seized = repay * 11000 / 10000 = collateral
-    // repay = collateral * 10000 / 11000
-    // For collateral = 11: repay = 11 * 10000 / 11000 = 10
-    // seized = 10 * 11000 / 10000 = 11 → exact
-    // But we need HF < 10000 first.
-    // collateral = 11, debt = 11 → HF = 11 * 8000 / 11 = 8000 < 10000
-    // max_repay = 11 * 5000 / 10000 = 5
-    // So we can only repay 5 max.
-    // seized = 5 * 11000 / 10000 = 5
-    // That doesn't hit the clamp.
-    //
-    // Better: collateral = 5, debt = 4 → HF = 5 * 8000 / 4 = 10000 = 1.0 → not liquidatable
-    //
-    // Let's try: collateral = 5, debt = 5 → HF = 5 * 8000 / 5 = 8000 < 10000
-    // max_repay = 5 * 5000 / 10000 = 2
-    // seized = 2 * 11000 / 10000 = 2
-    // final_seized = min(2, 5) = 2 (no clamp needed)
-    //
-    // For clamp to matter: seized > collateral.
-    // We need seized > 5 when collateral = 5.
-    // That requires repay > 5 * 10000 / 11000 = 4.545...
-    // max_repay needs to be >= 5, so debt >= 10
-    // collateral = 5, debt = 10 → HF = 5 * 8000 / 10 = 4000 < 10000 ✓
-    // max_repay = 10 * 5000 / 10000 = 5
-    // actual_repay = min(10, 5) = 5 (if caller asks for 10)
-    // seized = 5 * 11000 / 10000 = 5
-    // final_seized = min(5, 5) = 5 → exact match, no clamp
-    // Hmm, still exact because 5 * 11000 / 10000 = 5.0 exactly
-    //
-    // To get fractional: repay = 4, seized = 4 * 11000 / 10000 = 4
-    // That's still exact. Need repay where repay * 11000 % 10000 != 0.
-    // repay = 3 → seized = 33000 / 10000 = 3 (floor of 3.3)
-    // repay = 2 → seized = 22000 / 10000 = 2 (floor of 2.2)
-    //
-    // For clamp: collateral = 5, we need seized > 5, meaning repay * 11000 > 50000
-    // repay > 50000 / 11000 = 4.545...
-    // So repay = 5 → seized = 5 (floor) → exact
-    // It's hard to get a seized > collateral with the floor.
-    //
-    // Actually floor makes it *less* likely to hit the clamp. This is fine —
-    // the clamp is a safety net, and the floor rounding makes it less needed.
-    // Let's just test that the clamp works at all.
-
-    // Collateral = 2, debt = 10 → HF = 1600 < 10000
-    // max_repay = 10 * 5000 / 10000 = 5
-    // If liquidator repays 5: seized = 5 * 11000 / 10000 = 5 (floor of 5.5)
-    // final_seized = min(5, 2) = 2
-    // Already tested above. Let's just confirm:
-    let (_env, client, _admin, user) = setup();
-    make_unhealthy_position(&_env, &client, &user, 2, 10);
+    let (_env, client, _admin, user, debt_asset, collateral_asset) = setup();
     let liquidator = Address::generate(&_env);
-    client.liquidate(&liquidator, &user, &5);
+    mint_and_make_unhealthy_position(
+        &_env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        2,
+        10,
+    );
+    client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &5);
     let pos = client.get_position(&user);
     assert_eq!(pos.collateral, 0, "clamp at 2 released all collateral");
 }
@@ -315,45 +367,34 @@ fn clamp_exact_match() {
 /// rounding error should favour the protocol (not the liquidator).
 #[test]
 fn repeated_dust_liquidations_dont_leak_value() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     // Position: collateral = 10, debt = 10 → HF = 8000 < 10000
-    make_unhealthy_position(&env, &client, &user, 10, 10);
-
     let liquidator = Address::generate(&env);
+    mint_and_make_unhealthy_position(
+        &env,
+        &client,
+        &liquidator,
+        &user,
+        &debt_asset,
+        &collateral_asset,
+        10,
+        10,
+    );
 
-    // Each dust liquidation repays 1 unit (max_repay = 10*5000/10000 = 5, so 1 is fine).
-    // Each time: seized = 1 * 11000 / 10000 = 1 (floor of 1.1)
-    // The 0.1 remainder accrues to the protocol each round.
-    //
-    // After 8 liquidations of 1:
-    //   repaid = 8, debt = 2, seized = 8, collateral = 2
-    // Cumulative "lost" to protocol due to floor: 8 * 0.1 = 0.8 (lost to liquidator)
-    //
-    // If we had CEIL rounding, the liquidator would get 2 per round
-    // and drain the position much faster.
     for i in 0..8 {
-        let result = client.try_liquidate(&liquidator, &user, &1);
-        assert!(
-            result.is_ok(),
-            "dust liquidation {} should succeed",
-            i + 1
-        );
+        let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
+        assert!(result.is_ok(), "dust liquidation {} should succeed", i + 1);
     }
 
     let pos = client.get_position(&user);
-    // repaid = 8, debt = 10 - 8 = 2
-    // seized = 8, collateral = 10 - 8 = 2
-    assert_eq!(
-        pos.debt, 2,
-        "debt after 8 dust liquidations: 10 - 8 = 2"
-    );
+    assert_eq!(pos.debt, 2, "debt after 8 dust liquidations: 10 - 8 = 2");
     assert_eq!(
         pos.collateral, 2,
         "collateral after 8 dust liquidations: 10 - 8 = 2"
     );
 
     // The 9th liquidation should work (actual_repay = min(1, 1) = 1 > 0)
-    let result = client.try_liquidate(&liquidator, &user, &1);
+    let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     assert!(result.is_ok(), "9th dust liquidation should succeed");
 
     let pos = client.get_position(&user);
@@ -372,11 +413,11 @@ fn repeated_dust_liquidations_dont_leak_value() {
 /// result.  This pins that the helpers don't introduce spurious rounding.
 #[test]
 fn exact_division_rounding_is_idempotent() {
-    // 100 * 11000 / 10000 = 1100 → exact
+    // 100 * 11000 / 10000 = 110 → exact
     let floor_result = math::checked_mul_div_floor(100, 11000, 10000).unwrap();
     let ceil_result = math::checked_mul_div_ceil(100, 11000, 10000).unwrap();
-    assert_eq!(floor_result, 1100, "floor exact");
-    assert_eq!(ceil_result, 1100, "ceil exact");
+    assert_eq!(floor_result, 110, "floor exact");
+    assert_eq!(ceil_result, 110, "ceil exact");
 }
 
 // ---------------------------------------------------------------------------
@@ -387,11 +428,11 @@ fn exact_division_rounding_is_idempotent() {
 /// InvalidAmount rather than silently doing nothing.
 #[test]
 fn dust_guard_rejects_zero_actual_repay() {
-    let (env, client, _admin, user) = setup();
+    let (env, client, _admin, user, debt_asset, collateral_asset) = setup();
     make_unhealthy_position(&env, &client, &user, 1, 1);
 
     let liquidator = Address::generate(&env);
-    let result = client.try_liquidate(&liquidator, &user, &1);
+    let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1);
     assert!(
         result.is_err(),
         "dust guard should reject liquidation when max_repay = 0"

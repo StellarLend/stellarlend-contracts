@@ -8,8 +8,9 @@ recovering from incidents. Two independent mechanisms can restrict operations:
 1. **Granular pause flags** — per-operation toggles set by the admin at any time.
 2. **Emergency state machine** — protocol-wide lifecycle (Normal → Shutdown → Recovery → Normal).
 
-Both mechanisms are composable: emergency state enforcement is applied first, then
-granular pause flags layer on top.
+Both mechanisms are composable: granular pause flags are checked first, then the
+emergency state is checked on top. Every state-mutating entry point in `lib.rs`
+calls `check_pause_status` before `check_emergency_status`.
 
 ---
 
@@ -18,11 +19,10 @@ granular pause flags layer on top.
 | Operation          | Normal | Granular-paused | Shutdown | Recovery | Normal (post) |
 |--------------------|--------|-----------------|----------|----------|---------------|
 | `deposit`          | ✓      | ✗ (if paused)   | ✗        | ✗        | ✓             |
-| `deposit_collateral` | ✓    | ✗ (if paused)   | ✗        | ✗        | ✓             |
 | `borrow`           | ✓      | ✗ (if paused)   | ✗        | ✗        | ✓             |
 | `repay`            | ✓      | ✗ (if paused)   | ✗        | **✓**    | ✓             |
 | `withdraw`         | ✓      | ✗ (if paused)   | ✗        | **✓**    | ✓             |
-| `liquidate`        | ✓      | ✗ (if paused)   | ✗        | ✗        | ✓             |
+| `liquidate`        | ✓      | ✗ (if paused)   | ✗        | **✓**    | ✓             |
 | `flash_loan`       | ✓      | —               | ✗        | ✗        | ✓             |
 
 ---

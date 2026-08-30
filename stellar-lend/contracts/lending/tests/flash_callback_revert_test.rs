@@ -9,9 +9,7 @@
 //! same approach used by `src/deposit_accounting_test.rs`.
 
 use soroban_sdk::{
-    contract, contractimpl,
-    testutils::Address as _,
-    Address, Bytes, Env, IntoVal, Val,
+    contract, contractimpl, testutils::Address as _, Address, Bytes, Env, IntoVal, Val,
 };
 
 use stellarlend_lending::{DataKey, LendingContract, LendingContractClient};
@@ -197,12 +195,30 @@ fn test_flash_active_not_stuck_after_consecutive_failures() {
     let initiator = Address::generate(&env);
 
     // First failure.
-    let _ = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &Bytes::new(&env));
-    assert!(!read_flash_active(&env, &contract_id), "FlashActive stuck after 1st failure");
+    let _ = client.try_flash_loan(
+        &initiator,
+        &receiver,
+        &asset,
+        &1_000_i128,
+        &Bytes::new(&env),
+    );
+    assert!(
+        !read_flash_active(&env, &contract_id),
+        "FlashActive stuck after 1st failure"
+    );
 
     // Second failure — must succeed in entering the loan path (not blocked by stuck flag).
-    let _ = client.try_flash_loan(&initiator, &receiver, &asset, &2_000_i128, &Bytes::new(&env));
-    assert!(!read_flash_active(&env, &contract_id), "FlashActive stuck after 2nd failure");
+    let _ = client.try_flash_loan(
+        &initiator,
+        &receiver,
+        &asset,
+        &2_000_i128,
+        &Bytes::new(&env),
+    );
+    assert!(
+        !read_flash_active(&env, &contract_id),
+        "FlashActive stuck after 2nd failure"
+    );
 
     // Treasury must be fully intact.
     assert_eq!(read_treasury(&env, &contract_id, &asset), 20_000);
