@@ -14,6 +14,7 @@ pub mod invariants;
 pub mod operation_tracker;
 pub mod two_phase_ops;
 pub mod flash_loan_state;
+pub mod lifecycle;
 
 #[cfg(test)]
 mod governance_audit_test;
@@ -147,6 +148,8 @@ mod supply_rate_split_test;
 
 #[cfg(test)]
 mod config_roundtrip_test;
+#[cfg(test)]
+mod lifecycle_test;
 #[cfg(test)]
 mod utilization_history_test;
 #[cfg(test)]
@@ -3528,6 +3531,66 @@ impl LendingContract {
             .instance()
             .set(&DataKey::ConfigEntries, &entries);
         Ok(())
+    }
+
+    /// Return structured, read-only diagnostics for the lending lifecycle
+    /// state machine.
+    ///
+    /// Reports aggregate attempt/commit/reject/throttle/recovery counters, a
+    /// fixed four-bucket latency histogram, the most recent failure class and
+    /// reason code, and the bounds that produced all of it (ring capacity,
+    /// page size, per-ledger recording budget, retry budget). A dashboard can
+    /// therefore render "how close are we to the cap" without hard-coding the
+    /// constants.
+    ///
+    /// No borrower address appears anywhere in the result: callers are
+    /// identified only by a non-reversible `actor_tag`. Cheap and bounded —
+    /// two persistent reads, both of fixed-capacity values.
+    pub fn get_lifecycle_diagnostics(env: Env) -> lifecycle::LifecycleDiagnostics {
+        lifecycle::diagnostics(&env)
+    }
+
+    /// Return a page of recent lifecycle transition records, newest first.
+    ///
+    /// `offset` counts back from the newest record; `limit` is **clamped** to
+    /// [`lifecycle::MAX_LIFECYCLE_PAGE`] rather than rejected, so a client
+    /// that asks for everything still receives a bounded response. An
+    /// `offset` at or past the end returns an empty page, which is the
+    /// termination condition for a paging client.
+    ///
+    /// Records carry the action, outcome, reason code, amount, ledger,
+    /// timestamp, inter-arrival latency and repeat count — never an address.
+    pub fn get_lifecycle_records(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<lifecycle::TransitionRecord> {
+        lifecycle::read_records(&env, offset, limit)
+    }
+
+    /// Simulate a lifecycle transition without touching any state.
+    ///
+    /// Runs the same guard suite the write path uses ([`lifecycle::evaluate`])
+    /// and returns the resulting position, or the stable reason code the
+    /// transition would be refused with. Because the guard is pure, a
+    /// simulation and the real call can never disagree.
+    ///
+    /// Clients use this to avoid submitting a transaction that is already
+    /// known to fail — the on-chain half of "avoid redundant work during rapid
+    /// user interaction".
+    pub fn simulate_lifecycle_transition(
+        _env: Env,
+        collateral: i128,
+        debt: i128,
+        action: lifecycle::LifecycleAction,
+        amount: i128,
+        authorized: bool,
+        caller_is_owner: bool,
+    ) -> lifecycle::SimulationResult {
+        let before = lifecycle::PositionSnapshot::new(collateral, debt);
+        let request =
+            lifecycle::TransitionRequest::new(action, amount, authorized, caller_is_owner);
+        lifecycle::simulate(&before, &request)
     }
 }
 
