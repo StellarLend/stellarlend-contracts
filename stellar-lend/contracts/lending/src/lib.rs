@@ -2080,6 +2080,10 @@ impl LendingContract {
         invariants::check_invariant_after(&env, &debt_asset);
         invariants::check_invariant_after(&env, &collateral_asset);
 
+        // Check invariants AFTER state change for both assets
+        invariants::check_invariant_after(&env, &debt_asset);
+        invariants::check_invariant_after(&env, &collateral_asset);
+
         Ok(actual_repay)
     }
 
