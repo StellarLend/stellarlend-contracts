@@ -24,15 +24,34 @@ export interface AggregatorConfig {
     useWeightedMedian: boolean;
     /** MAD z-score threshold; prices beyond this are rejected as outliers (0 = disabled). */
     madZScoreThreshold: number;
+    /**
+     * Maximum age of a cached price in milliseconds before a fresh provider
+     * fetch is required. If omitted, defaults to 30 seconds.
+     */
+    maxCacheAgeMs?: number;
+    /**
+     * Maximum age of a stale cached price in milliseconds allowed as a
+     * last-resort fallback when live providers fail. If omitted, defaults to
+     * 5 minutes.
+     */
+    staleFallbackMaxAgeMs?: number;
+    /**
+     * Confidence value used for stale-cache fallback prices. If omitted,
+     * defaults to 0 (degraded/unknown confidence).
+     */
+    staleFallbackConfidence?: number;
 }
 
 /**
  * Default aggregator configuration
  */
-const DEFAULT_CONFIG: AggregatorConfig = {
+const DEFAULT_CONFIG: Required<AggregatorConfig> = {
     minSources: 1,
     useWeightedMedian: true,
     madZScoreThreshold: MAD_Z_SCORE_THRESHOLD,
+    maxCacheAgeMs: 30_000,
+    staleFallbackMaxAgeMs: 5 * 60_000,
+    staleFallbackConfidence: 0,
 };
 
 /**
@@ -42,7 +61,8 @@ export class PriceAggregator {
     private providers: BasePriceProvider[];
     private validator: PriceValidator;
     private cache: PriceCache;
-    private config: AggregatorConfig;
+    private config: Required<AggregatorConfig>;
+    private cacheMetadata: Map<string, { timestamp: number; confidence: number }> = new Map();
 
     constructor(
         providers: BasePriceProvider[],
@@ -56,7 +76,25 @@ export class PriceAggregator {
 
         this.validator = validator;
         this.cache = cache;
-        this.config = { ...DEFAULT_CONFIG, ...config };
+        const resolvedConfig: Required<AggregatorConfig> = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
+
+        if (resolvedConfig.minSources < 1) {
+            throw new Error('minSources must be at least 1');
+        }
+        if (resolvedConfig.maxCacheAgeMs < 0) {
+            throw new Error('maxCacheAgeMs cannot be negative');
+        }
+        if (resolvedConfig.staleFallbackMaxAgeMs < 0) {
+            throw new Error('staleFallbackMaxAgeMs cannot be negative');
+        }
+        if (
+            resolvedConfig.staleFallbackConfidence < 0 ||
+            resolvedConfig.staleFallbackConfidence > 100
+        ) {
+            throw new Error('staleFallbackConfidence must be between 0 and 100');
+        }
+
+        this.config = resolvedConfig;
 
         logger.info('Price aggregator initialized', {
             enabledProviders: this.providers.map((p) => p.name),
@@ -70,15 +108,19 @@ export class PriceAggregator {
     async getPrice(asset: string): Promise<AggregatedPrice | null> {
         const upperAsset = asset.toUpperCase();
 
+        const now = Date.now();
         const cachedPrice = this.cache.getPrice(upperAsset);
-        if (cachedPrice !== undefined) {
+        const cachedMeta = this.cacheMetadata.get(upperAsset);
+        const cacheAgeMs = cachedMeta ? now - cachedMeta.timestamp : Number.POSITIVE_INFINITY;
+
+        if (cachedPrice !== undefined && cachedMeta !== undefined && cacheAgeMs <= this.config.maxCacheAgeMs) {
             logger.debug(`Using cached price for ${upperAsset}`);
             return {
                 asset: upperAsset,
                 price: cachedPrice,
                 sources: [],
-                timestamp: Math.floor(Date.now() / 1000),
-                confidence: 100,
+                timestamp: Math.floor(cachedMeta.timestamp / 1000),
+                confidence: cachedMeta.confidence,
             };
         }
 
@@ -89,12 +131,34 @@ export class PriceAggregator {
                 got: validPrices.length,
                 required: this.config.minSources,
             });
+
+            if (
+                cachedPrice !== undefined &&
+                cachedMeta !== undefined &&
+                cacheAgeMs <= this.config.staleFallbackMaxAgeMs
+            ) {
+                logger.warn(`Using stale cached price for ${upperAsset} as fallback`, {
+                    ageMs: cacheAgeMs,
+                });
+                return {
+                    asset: upperAsset,
+                    price: cachedPrice,
+                    sources: [],
+                    timestamp: Math.floor(cachedMeta.timestamp / 1000),
+                    confidence: this.config.staleFallbackConfidence,
+                };
+            }
+
             return null;
         }
 
         const aggregated = this.aggregate(upperAsset, validPrices);
 
         this.cache.setPrice(upperAsset, aggregated.price);
+        this.cacheMetadata.set(upperAsset, {
+            timestamp: now,
+            confidence: aggregated.confidence,
+        });
 
         return aggregated;
     }
