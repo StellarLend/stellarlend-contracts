@@ -226,11 +226,34 @@ fn stale_oracle_price_is_rejected() {
         );
     });
 
-    let result = env.as_contract(&id, || compute_aggregate_health_factor(&env, &user));
+    let position_value_result =
+        env.as_contract(&id, || get_cross_position_value(&env, &user));
     assert!(
-        result.is_err(),
+        position_value_result.is_err(),
+        "stale oracle price must be rejected by position value without fallback"
+    );
+
+    let stale_result = env.as_contract(&id, || compute_aggregate_health_factor(&env, &user));
+    assert!(
+        stale_result.is_err(),
         "stale oracle price must be rejected to protect collateral safety"
     );
+
+    // Freshen the oracle price; the next read must succeed and remain available.
+    env.as_contract(&id, || {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset.clone()),
+            &PriceRecord {
+                price: 10_000_000i128,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+    });
+
+    let fresh_hf = env.as_contract(&id, || {
+        compute_aggregate_health_factor(&env, &user).expect("fresh oracle price must be accepted")
+    });
+    assert!(fresh_hf > 0);
 }
 
 #[test]
@@ -265,6 +288,13 @@ fn missing_oracle_price_is_rejected() {
             .persistent()
             .remove(&DataKey::OraclePrice(asset.clone()));
     });
+
+    let position_value_result =
+        env.as_contract(&id, || get_cross_position_value(&env, &user));
+    assert!(
+        position_value_result.is_err(),
+        "missing oracle price must be rejected by position value without fallback"
+    );
 
     let result = env.as_contract(&id, || compute_aggregate_health_factor(&env, &user));
     assert!(
