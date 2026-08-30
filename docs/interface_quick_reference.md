@@ -57,6 +57,7 @@
 | `get_debt_position` | `(user: Address)` | `DebtPosition { principal: i128, last_update: u64 }` |
 | `get_min_borrow` | `()` | `i128` |
 | `get_rate_smoothing_state` | `()` | `RateSmoothingState { schema_version: u32, current_rate_bps: i128, last_target_rate_bps: i128, last_update_ledger: u32 }` |
+| `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { rate_model_active: bool, utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32, elapsed_ledgers: u32 }` |
 | `get_health_factor` | `(user: Address)` | `i128` |
 | `get_protocol_metrics` | `()` | `ProtocolMetrics { total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` |
 
