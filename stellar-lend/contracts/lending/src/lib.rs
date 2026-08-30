@@ -143,6 +143,12 @@ mod config_roundtrip_test;
 mod utilization_history_test;
 #[cfg(test)]
 mod withdraw_overflow_test;
+#[cfg(test)]
+mod event_schema_bounds_test;
+#[cfg(test)]
+mod migration_event_test;
+#[cfg(test)]
+mod diagnostics_event_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt, repay_amount,
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
