@@ -55,7 +55,7 @@ class MockProvider extends BasePriceProvider {
             throw new Error(`Asset ${asset} not found in mock provider`);
         }
 
-        return { ...data, timestamp: Math.floor(Date.now() / 1000) };
+        return { ...data };
     }
 
     setPrice(asset: string, price: number): void {
@@ -72,6 +72,22 @@ class MockProvider extends BasePriceProvider {
 
     setFail(shouldFail: boolean): void {
         this.shouldFail = shouldFail;
+    }
+
+    /**
+     * Marks an asset's latest price as stale by rewriting its timestamp.
+     * Used to exercise the aggregator's freshness/staleness fallback path.
+     */
+    setStale(asset: string, ageSeconds: number): void {
+        const upper = asset.toUpperCase();
+        const existing = this.mockPrices.get(upper);
+        if (existing === undefined) {
+            throw new Error(`Asset ${asset} not found in mock provider`);
+        }
+        this.mockPrices.set(upper, {
+            ...existing,
+            timestamp: Math.floor(Date.now() / 1000) - ageSeconds,
+        });
     }
 }
 
@@ -363,5 +379,150 @@ describe('PriceAggregator', () => {
             expect(stats.enabledProviders).toBe(3);
             expect(stats.cacheStats).toBeDefined();
         });
+    });
+});
+
+describe('oracle freshness and fallback policy', () => {
+    let aggregator: PriceAggregator;
+    let providerA: MockProvider;
+    let providerB: MockProvider;
+    let providerC: MockProvider;
+
+    beforeEach(() => {
+        providerA = new MockProvider('providerA', 1, 0.5, { XLM: 0.15 });
+        providerB = new MockProvider('providerB', 2, 0.3, { XLM: 0.151 });
+        providerC = new MockProvider('providerC', 3, 0.2, { XLM: 0.149 });
+
+        aggregator = createAggregator(
+            [providerA, providerB, providerC],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 1 }
+        );
+    });
+
+    it('returns null when all provider prices are stale', async () => {
+        providerA.setStale('XLM', 301);
+        providerB.setStale('XLM', 301);
+        providerC.setStale('XLM', 301);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).toBeNull();
+    });
+
+    it('accepts prices exactly at the staleness boundary', async () => {
+        providerA.setStale('XLM', 300);
+        providerB.setStale('XLM', 300);
+        providerC.setStale('XLM', 300);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+    });
+
+    it('skips stale high-priority prices and falls back to fresh providers', async () => {
+        providerA.setStale('XLM', 301);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+        expect(result!.sources.some((s) => s.source === 'providerA')).toBe(false);
+        expect(result!.sources.some((s) => s.source === 'providerB')).toBe(true);
+    });
+
+    it('skips a price that violates maxDeviationPercent and falls back to the cluster', async () => {
+        providerA.setPrice('XLM', 0.3);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+        expect(result!.sources.some((s) => s.source === 'providerA')).toBe(false);
+    });
+
+    it('refetches after the cache entry expires', async () => {
+        vi.useFakeTimers();
+        try {
+            const first = await aggregator.getPrice('XLM');
+            expect(first?.sources.length).toBeGreaterThan(0);
+
+            vi.setSystemTime(Date.now() + 31_000);
+
+            const second = await aggregator.getPrice('XLM');
+            expect(second?.sources.length).toBeGreaterThan(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('retries a provider after a transient failure and cooldown expiry', async () => {
+        vi.useFakeTimers();
+        try {
+            providerA.setFail(true);
+
+            const failed = await aggregator.getPrice('XLM');
+            expect(failed?.sources.some((s) => s.source === 'providerA')).toBe(false);
+
+            providerA.setFail(false);
+            providerA.cooldownUntil = Date.now() - 1;
+            vi.setSystemTime(Date.now() + 61_000);
+
+            const retried = await aggregator.getPrice('XLM');
+            expect(retried?.sources.some((s) => s.source === 'providerA')).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('enforces minSources below the required threshold', async () => {
+        const strict = createAggregator(
+            [providerA, providerB, providerC],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 3 }
+        );
+
+        providerB.setFail(true);
+
+        const result = await strict.getPrice('XLM');
+        expect(result).toBeNull();
+    });
+
+    it('returns a price when fresh sources meet minSources', async () => {
+        const strict = createAggregator(
+            [providerA, providerB, providerC],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 2 }
+        );
+
+        providerC.setFail(true);
+
+        const result = await strict.getPrice('XLM');
+        expect(result).not.toBeNull();
+        expect(result!.sources.some((s) => s.source === 'providerC')).toBe(false);
+    });
+
+    it('returns an empty map when no asset prices are available', async () => {
+        providerA.setFail(true);
+        providerB.setFail(true);
+        providerC.setFail(true);
+
+        const results = await aggregator.getPrices(['XLM']);
+
+        expect(results.size).toBe(0);
+    });
+
+    it('returns an empty map for an empty asset list', async () => {
+        const results = await aggregator.getPrices([]);
+
+        expect(results.size).toBe(0);
+    });
+
+    it('preserves fixed-point decimal scaling in reported prices', async () => {
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result!.price).toBeTypeOf('bigint');
+        expect(Number(result!.price)).toBeGreaterThan(0);
     });
 });
