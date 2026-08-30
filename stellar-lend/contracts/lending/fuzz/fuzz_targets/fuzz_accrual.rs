@@ -7,13 +7,9 @@
 
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
-use stellarlend_lending::math::{
-    compute_compound_interest,
-    MathError,
-    MAX_RATE_BPS,
-};
 use arbitrary::Arbitrary;
+use libfuzzer_sys::fuzz_target;
+use stellarlend_lending::math::{compute_compound_interest, MathError, MAX_RATE_BPS};
 
 /// Structured input for accrual fuzzing
 #[derive(Debug, Arbitrary)]
@@ -43,9 +39,13 @@ fuzz_target!(|input: AccrualInput| {
 
             // Critical invariant: interest >= 1 for principal > 0 && elapsed > 0
             if input.principal > 0 && input.elapsed > 0 {
-                assert!(interest >= 1,
+                assert!(
+                    interest >= 1,
                     "Interest ceiling violated: principal={}, rate={}, elapsed={}, interest={}",
-                    input.principal, input.rate_bps, input.elapsed, interest
+                    input.principal,
+                    input.rate_bps,
+                    input.elapsed,
+                    interest
                 );
             }
 

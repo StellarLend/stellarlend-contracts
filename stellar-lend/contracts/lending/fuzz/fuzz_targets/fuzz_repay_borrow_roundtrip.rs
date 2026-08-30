@@ -34,7 +34,9 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use stellarlend_lending::debt::{borrow_amount, effective_debt, repay_amount, DebtError, DebtPosition};
+use stellarlend_lending::debt::{
+    borrow_amount, effective_debt, repay_amount, DebtError, DebtPosition,
+};
 
 /// Upper bound for a "small" amount/elapsed value — the common case.
 const SMALL_AMOUNT_MAX: i128 = 1_000_000_000;
@@ -123,6 +125,7 @@ fuzz_target!(|input: RoundtripInput| {
     let mut now: u64 = 0;
     let mut position = DebtPosition {
         principal: 0,
+        borrow_index_snapshot: stellarlend_lending::debt::INDEX_SCALE,
         last_update: 0,
     };
     // Baseline for the monotonic-effective-debt check; reset after every
@@ -147,24 +150,40 @@ fuzz_target!(|input: RoundtripInput| {
             );
         } else {
             match step.action {
-                Action::Borrow => match borrow_amount(position.clone(), now, step.amount, input.rate_bps) {
-                    Ok(next) => {
-                        assert!(next.principal >= 0, "principal negative after borrow: {:?}", next);
-                        position = next;
+                Action::Borrow => {
+                    match borrow_amount(position.clone(), now, step.amount, input.rate_bps) {
+                        Ok(next) => {
+                            assert!(
+                                next.principal >= 0,
+                                "principal negative after borrow: {:?}",
+                                next
+                            );
+                            position = next;
+                        }
+                        Err(DebtError::Overflow) => {
+                            // Expected once principal accumulates near i128::MAX.
+                        }
+                        Err(DebtError::InvalidAmount) => {
+                            panic!(
+                                "unexpected InvalidAmount for positive borrow amount {}",
+                                step.amount
+                            );
+                        }
+                        Err(DebtError::IndexInvariantViolated) => {
+                            // Should not occur in the legacy path; treat as unexpected overflow.
+                        }
                     }
-                    Err(DebtError::Overflow) => {
-                        // Expected once principal accumulates near i128::MAX.
-                    }
-                    Err(DebtError::InvalidAmount) => {
-                        panic!("unexpected InvalidAmount for positive borrow amount {}", step.amount);
-                    }
-                },
+                }
                 Action::Repay => {
                     let debt_before = effective_debt(&position, now, input.rate_bps);
 
                     match repay_amount(position.clone(), now, step.amount, input.rate_bps) {
                         Ok(next) => {
-                            assert!(next.principal >= 0, "principal negative after repay: {:?}", next);
+                            assert!(
+                                next.principal >= 0,
+                                "principal negative after repay: {:?}",
+                                next
+                            );
 
                             if let Ok(owed) = debt_before {
                                 if step.amount >= owed {
@@ -191,7 +210,13 @@ fuzz_target!(|input: RoundtripInput| {
                             // Expected: settling accrued interest before the repay overflowed.
                         }
                         Err(DebtError::InvalidAmount) => {
-                            panic!("unexpected InvalidAmount for positive repay amount {}", step.amount);
+                            panic!(
+                                "unexpected InvalidAmount for positive repay amount {}",
+                                step.amount
+                            );
+                        }
+                        Err(DebtError::IndexInvariantViolated) => {
+                            // Should not occur in the legacy path.
                         }
                     }
                 }

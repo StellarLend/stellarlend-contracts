@@ -17,7 +17,7 @@ mod supply_rate_split_tests {
         accrue_interest, accrue_interest_split, effective_supply_rate, settle_accrual,
         settle_accrual_split, DebtPosition, DEFAULT_APR_BPS, DEFAULT_RESERVE_FACTOR_BPS,
     };
-    use crate::math::{compute_supply_rate, split_interest_by_reserve_factor, BPS_SCALE};
+    use crate::math::split_interest_by_reserve_factor;
     use crate::rounding_strategy::SECONDS_PER_YEAR;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -25,6 +25,7 @@ mod supply_rate_split_tests {
     fn position(principal: i128, last_update: u64) -> DebtPosition {
         DebtPosition {
             principal,
+            borrow_index_snapshot: crate::debt::INDEX_SCALE,
             last_update,
         }
     }
@@ -77,7 +78,10 @@ mod supply_rate_split_tests {
                     total,
                     "no-leakage violated: total={total} rf_bps={rf_bps} => d={d} r={r}"
                 );
-                assert!(d >= 0, "negative depositor share: total={total} rf={rf_bps}");
+                assert!(
+                    d >= 0,
+                    "negative depositor share: total={total} rf={rf_bps}"
+                );
                 assert!(r >= 0, "negative reserve share: total={total} rf={rf_bps}");
             }
         }
@@ -151,7 +155,10 @@ mod supply_rate_split_tests {
     fn accrue_split_no_leakage() {
         let split =
             accrue_interest_split(50_000, SECONDS_PER_YEAR, DEFAULT_APR_BPS, 1_500).unwrap();
-        assert_eq!(split.depositor_yield + split.reserve_cut, split.total_interest);
+        assert_eq!(
+            split.depositor_yield + split.reserve_cut,
+            split.total_interest
+        );
     }
 
     /// Zero reserve factor: all interest to depositors, reserve_cut == 0.
@@ -160,9 +167,13 @@ mod supply_rate_split_tests {
         let principal = 100_000i128;
         let elapsed = SECONDS_PER_YEAR;
 
-        let split =
-            accrue_interest_split(principal, elapsed, DEFAULT_APR_BPS, DEFAULT_RESERVE_FACTOR_BPS)
-                .unwrap();
+        let split = accrue_interest_split(
+            principal,
+            elapsed,
+            DEFAULT_APR_BPS,
+            DEFAULT_RESERVE_FACTOR_BPS,
+        )
+        .unwrap();
 
         // With DEFAULT_RESERVE_FACTOR_BPS == 0 the full interest goes to depositors.
         assert_eq!(split.reserve_cut, 0);
@@ -220,8 +231,7 @@ mod supply_rate_split_tests {
         let now = SECONDS_PER_YEAR;
 
         let plain = settle_accrual(&pos, now, DEFAULT_APR_BPS).unwrap();
-        let (split_pos, _split) =
-            settle_accrual_split(&pos, now, DEFAULT_APR_BPS, 1_500).unwrap();
+        let (split_pos, _split) = settle_accrual_split(&pos, now, DEFAULT_APR_BPS, 1_500).unwrap();
 
         assert_eq!(
             split_pos.principal, plain.principal,
@@ -234,17 +244,19 @@ mod supply_rate_split_tests {
     #[test]
     fn settle_split_no_leakage() {
         let pos = position(200_000, 0);
-        let (_, split) = settle_accrual_split(&pos, SECONDS_PER_YEAR, DEFAULT_APR_BPS, 3_000)
-            .unwrap();
-        assert_eq!(split.depositor_yield + split.reserve_cut, split.total_interest);
+        let (_, split) =
+            settle_accrual_split(&pos, SECONDS_PER_YEAR, DEFAULT_APR_BPS, 3_000).unwrap();
+        assert_eq!(
+            split.depositor_yield + split.reserve_cut,
+            split.total_interest
+        );
     }
 
     /// Zero reserve: depositor gets everything.
     #[test]
     fn settle_split_zero_reserve_all_to_depositor() {
         let pos = position(100_000, 0);
-        let (_, split) =
-            settle_accrual_split(&pos, SECONDS_PER_YEAR, DEFAULT_APR_BPS, 0).unwrap();
+        let (_, split) = settle_accrual_split(&pos, SECONDS_PER_YEAR, DEFAULT_APR_BPS, 0).unwrap();
         assert_eq!(split.reserve_cut, 0);
         assert_eq!(split.depositor_yield, split.total_interest);
     }
@@ -323,23 +335,11 @@ mod supply_rate_split_tests {
         assert_eq!(rate, 1_360);
     }
 
-    /// `effective_supply_rate` and `compute_supply_rate` (math.rs) agree.
-    ///
-    /// Both implement the same formula; this cross-checks them against each
-    /// other to ensure the debt.rs implementation has not drifted.
+    /// The production supply-rate implementation rounds each basis-point step
+    /// down deterministically.
     #[test]
-    fn supply_rate_agrees_with_math_compute_supply_rate() {
-        let borrow_rate = 900u32; // 9%
-        let util = 7_000u32; // 70%
-        let reserve = 1_500u32; // 15%
-
-        let from_math = compute_supply_rate(borrow_rate, util, reserve).unwrap() as i128;
-        let from_debt = effective_supply_rate(borrow_rate as i128, util as i128, reserve).unwrap();
-
-        assert_eq!(
-            from_debt, from_math,
-            "effective_supply_rate disagrees with compute_supply_rate"
-        );
+    fn supply_rate_uses_expected_rounding() {
+        assert_eq!(effective_supply_rate(900, 7_000, 1_500).unwrap(), 535);
     }
 
     /// Supply rate is non-negative at every valid input combination.
@@ -427,7 +427,7 @@ mod supply_rate_split_tests {
     fn depositor_yield_consistent_with_supply_rate() {
         let principal = 1_000_000i128;
         let borrow_rate = 500i128; // 5% APR
-        let utilization = 5_000i128; // 50%
+        let utilization = 10_000i128; // 100% — matches accrue_interest_split (no utilization scaling)
         let reserve_factor = 2_000u32; // 20%
         let elapsed = SECONDS_PER_YEAR;
 

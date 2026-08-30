@@ -10,6 +10,43 @@ The Cross-Asset implementation in StellarLend allows users to interact with mult
 - **Aggregate Health Factor**: HealthFactor = (Σ CollateralValue_i * LTV_i) / Σ DebtValue_j.
 - **Isolation Mode**: Riskier assets can be flagged as *isolated*, capping their collateral contribution at a per-asset debt ceiling and preventing cross-margining with other collateral.
 
+## Aggregation Pipeline
+
+The cross‑asset module aggregates collateral and debt across multiple assets to compute a unified health factor.
+
+**Per‑Asset Valuation**
+- Collateral amount is multiplied by the oracle price (`price_record.price`) and divided by `PRICE_DIVISOR = 10_000_000` to obtain a USD‑denominated value.
+- The resulting value is then multiplied by the asset's liquidation threshold expressed in basis points (`params.liquidation_threshold_bps`). This yields the *weighted collateral* contribution.
+
+**Debt Valuation**
+- Effective debt is calculated via `crate::debt::effective_debt`, then multiplied by the oracle price and divided by `PRICE_DIVISOR` to obtain USD debt value.
+- All debt values are summed to `total_debt_value`.
+
+**Health Factor Calculation**
+```
+if total_debt_value == 0 {
+    health_factor = HEALTH_FACTOR_NO_DEBT; // sentinel = 100_000_000
+} else {
+    // `weighted_collateral` is the sum of weighted collateral values.
+    health_factor = weighted_collateral / total_debt_value;
+}
+```
+The `HEALTH_FACTOR_SCALE = 10_000` represents a health factor of 1.0 (100 %).
+
+**Worked Example**
+- Collateral: 100 USDC @ $1.00, LT = 90 % (9_000 bps)
+- Collateral: 1 ETH @ $2,000.00, LT = 80 % (8_000 bps)
+- Debt: 1,000 USDC @ $1.00
+
+Calculation:
+- USDC value = 100 * 1_000_0000 / 10_000_000 = 100
+- ETH value = 1 * 2_000_000_000 / 10_000_000 = 2000
+- Weighted collateral = (100 * 9_000) + (2000 * 8_000) = 900_000 + 16_000_000 = 16_900_000
+- Debt value = 1_000 * 1_000_0000 / 10_000_000 = 1_000
+- Health factor = 16_900_000 / 1_000 = 16_900 (i.e., 1.69 × 10_000)
+
+This example matches the computation performed by `compute_aggregate_health_factor`.
+
 ## Isolation Mode
 
 ### Overview
@@ -105,7 +142,9 @@ Admin only function to configure an asset's parameters.
 - `liquidation_threshold`: Point at which the asset becomes eligible for liquidation (basis points).
 - `price_feed`: The oracle address providing the asset's price.
 - `debt_ceiling`: Total system-wide debt allowed for this asset.
-- **Event**: Emits `AssetParamsSetEvent`.
+- `borrow_cap`: Per-asset protocol borrow cap (`0` = uncapped).
+- `supply_cap`: Per-asset protocol supply / collateral cap (`0` = uncapped).
+- **Event**: Emits `AssetParamsSetEvent` with `asset`, `ltv_bps`, `liquidation_threshold_bps`, `debt_ceiling`, `borrow_cap`, and `supply_cap` so indexers can observe the full config without re-reading storage.
 
 ### `deposit_collateral_asset`
 Users can deposit any supported asset as collateral. This increases their total borrowing power based on the asset's USD value and its specific LTV.
