@@ -290,6 +290,7 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `get_debt_position`           | Query raw debt principal and last update time    |
 | `get_health_factor`           | Query current health factor                      |
 | `get_protocol_metrics`        | Query aggregate debt, supply, utilization, ledger |
+| `get_rate_model_diagnostics` | Query real-time rate-model utilization, target/applied rates, latency |
 
 For exact signatures and planned-but-not-shipping names, see
 [docs/interface_quick_reference.md](docs/interface_quick_reference.md).

@@ -70,6 +70,7 @@ DOCUMENTED_FUNCTIONS=(
   "get_price_record"
   "get_proposal_approvals"
   "get_protocol_metrics"
+  "get_rate_model_diagnostics"
   "get_rate_params"
   "get_rate_smoothing_state"
   "get_required_approvals"
