@@ -125,6 +125,10 @@ pub enum LendingError {
 /// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
 /// Negative rates and rates above `100%` return `None`, as do overflow cases.
 ///
+/// The computation uses a quotient/remainder decomposition, so valid rates
+/// never fail solely because an intermediate `value * rate_bps` product would
+/// overflow `i128`.
+///
 /// # Examples
 /// ```
 /// use stellar_lend_common::{scale_bps, BPS_DENOM};
@@ -138,13 +142,22 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
     if rate_bps < 0 || rate_bps > BPS_DENOM {
         return None;
     }
-    value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
+    // Decompose into quotient/remainder by BPS_DENOM to avoid intermediate
+    // overflow: every partial product stays within the final result's range.
+    let q = value / BPS_DENOM;
+    let r = value % BPS_DENOM;
+    let scaled_q = q.checked_mul(rate_bps)?;
+    let scaled_r = r.checked_mul(rate_bps)?.checked_div(BPS_DENOM);
+    scaled_q.checked_add(scaled_r?)
 }
 
 /// Divide `value` by `rate_bps` and multiply by [`BPS_DENOM`] (inverse of `scale_bps`).
 ///
 /// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
 /// Zero, negative, and rates above `100%` return `None`, as do overflow cases.
+///
+/// A quotient/remainder decomposition avoids spurious intermediate overflow;
+/// for example, `unscale_bps(i128::MAX, BPS_DENOM)` returns `Some(i128::MAX)`.
 ///
 /// # Examples
 /// ```
@@ -159,7 +172,13 @@ pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
     if rate_bps <= 0 || rate_bps > BPS_DENOM {
         return None;
     }
-    value.checked_mul(BPS_DENOM)?.checked_div(rate_bps)
+    // Decompose by `rate_bps` first; `q * BPS_DENOM` cannot overflow when the
+    // final result fits, while the remainder term is bounded by `BPS_DENOM^2`.
+    let q = value / rate_bps;
+    let r = value % rate_bps;
+    let unscaled_q = q.checked_mul(BPS_DENOM)?;
+    let unscaled_r = r.checked_mul(BPS_DENOM)?.checked_div(rate_bps);
+    unscaled_q.checked_add(unscaled_r?)
 }
 
 // ── Cross-asset price normalisation ────────────────────────────────────────
@@ -298,9 +317,12 @@ mod tests {
     }
 
     #[test]
-    fn scale_bps_overflow_returns_none() {
-        // i128::MAX * 1 overflows in checked_mul → None
-        assert_eq!(scale_bps(i128::MAX, 2), None);
+    fn scale_bps_max_value_no_overflow() {
+        assert_eq!(scale_bps(i128::MAX, BPS_DENOM), Some(i128::MAX));
+        assert_eq!(scale_bps(i128::MIN, BPS_DENOM), Some(i128::MIN));
+        let expected = (i128::MAX / BPS_DENOM) * 2
+            + ((i128::MAX % BPS_DENOM) * 2) / BPS_DENOM;
+        assert_eq!(scale_bps(i128::MAX, 2), Some(expected));
     }
 
     #[test]
@@ -347,6 +369,12 @@ mod tests {
     fn unscale_bps_overflow_returns_none() {
         // i128::MAX * BPS_DENOM overflows
         assert_eq!(unscale_bps(i128::MAX, 1), None);
+    }
+
+    #[test]
+    fn unscale_bps_max_value_full_rate() {
+        assert_eq!(unscale_bps(i128::MAX, BPS_DENOM), Some(i128::MAX));
+        assert_eq!(unscale_bps(i128::MIN, BPS_DENOM), Some(i128::MIN));
     }
 
     #[test]
