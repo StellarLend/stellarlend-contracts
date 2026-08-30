@@ -125,6 +125,12 @@ pub enum LendingError {
 /// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
 /// Negative rates and rates above `100%` return `None`, as do overflow cases.
 ///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `rate_bps` is in [0, BPS_DENOM] to reject invalid rates
+/// - Uses checked arithmetic to detect overflow on hostile large values
+/// - Returns `None` for any out-of-range or overflow condition
+///
 /// # Examples
 /// ```
 /// use stellar_lend_common::{scale_bps, BPS_DENOM};
@@ -135,9 +141,11 @@ pub enum LendingError {
 /// ```
 #[inline]
 pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
+    // Authorization boundary: strict rate validation
     if rate_bps < 0 || rate_bps > BPS_DENOM {
         return None;
     }
+    // Checked arithmetic for overflow detection
     value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
 }
 
@@ -145,6 +153,12 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 ///
 /// Only basis-point rates in the valid range `0..=BPS_DENOM` are accepted.
 /// Zero, negative, and rates above `100%` return `None`, as do overflow cases.
+///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `rate_bps` is in (0, BPS_DENOM] to reject zero/invalid rates
+/// - Uses checked arithmetic to detect overflow on hostile large values
+/// - Returns `None` for any out-of-range or overflow condition
 ///
 /// # Examples
 /// ```
@@ -156,9 +170,11 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 /// ```
 #[inline]
 pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
+    // Authorization boundary: strict rate validation (must be positive)
     if rate_bps <= 0 || rate_bps > BPS_DENOM {
         return None;
     }
+    // Checked arithmetic for overflow detection
     value.checked_mul(BPS_DENOM)?.checked_div(rate_bps)
 }
 
@@ -212,6 +228,12 @@ pub fn pow10_checked(exp: u32) -> Option<i128> {
 /// conservative for collateral values.  Callers that need ceiling rounding
 /// (e.g. for debt values) should use [`normalize_price_ceil`].
 ///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `raw_price >= 0` to reject negative prices
+/// - Uses checked arithmetic to detect overflow on hostile large values
+/// - Returns `None` on any overflow or invalid input
+///
 /// Returns `None` on overflow.
 ///
 /// # Examples
@@ -226,6 +248,11 @@ pub fn pow10_checked(exp: u32) -> Option<i128> {
 /// ```
 #[inline]
 pub fn normalize_price(raw_price: i128, asset_decimals: u32) -> Option<i128> {
+    // Authorization boundary: reject negative prices
+    if raw_price < 0 {
+        return None;
+    }
+    
     if asset_decimals == INTERNAL_DECIMALS {
         return Some(raw_price);
     }
@@ -243,6 +270,12 @@ pub fn normalize_price(raw_price: i128, asset_decimals: u32) -> Option<i128> {
 /// Used for debt values to stay conservative — rounding a debt value down
 /// would understate the borrower's obligation.
 ///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `raw_price >= 0` to reject negative prices
+/// - Uses checked arithmetic to detect overflow on hostile large values
+/// - Returns `None` on any overflow or invalid input
+///
 /// # Examples
 /// ```
 /// use stellar_lend_common::normalize_price_ceil;
@@ -255,6 +288,11 @@ pub fn normalize_price(raw_price: i128, asset_decimals: u32) -> Option<i128> {
 /// ```
 #[inline]
 pub fn normalize_price_ceil(raw_price: i128, asset_decimals: u32) -> Option<i128> {
+    // Authorization boundary: reject negative prices
+    if raw_price < 0 {
+        return None;
+    }
+    
     if asset_decimals <= INTERNAL_DECIMALS {
         normalize_price(raw_price, asset_decimals)
     } else {
