@@ -489,6 +489,19 @@ pub enum LendingError {
     ApproverNotFound = 4009,
     MaxApproversReached = 4010,
     InvalidUpgradeConfig = 4011,
+    /// The upgrade proposal has been cancelled and cannot be acted on.
+    UpgradeProposalCancelled = 4012,
+    /// The upgrade proposal is not in a cancellable (pending) state.
+    UpgradeProposalNotCancellable = 4013,
+    /// The upgrade approver set changed after the proposal was created, so
+    /// in-flight approvals are no longer authorized to execute.
+    ApproverSetChanged = 4014,
+    /// A stale/duplicate upgrade submission would create contradictory state
+    /// and is rejected rather than silently re-applied.
+    UpgradeSubmissionConflict = 4015,
+    /// The recorded approval binding does not match the expected nonce-bound
+    /// domain-separated authorization for this proposal/approver pair.
+    ApprovalBindingMismatch = 4016,
     /// `write_off_bad_debt` called when there is no recorded bad debt.
     NoBadDebt = 6001,
     /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
@@ -866,9 +879,52 @@ impl LendingContract {
             .ok_or(LendingError::OraclePubkeyNotSet)?;
 
         let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
-        // ed25519_verify traps (panics) on bad signature in soroban-sdk 25.x
-        env.crypto()
-            .ed25519_verify(&oracle_pubkey, &payload, &signature);
+        if !env
+            .crypto()
+            .ed25519_verify(&oracle_pubkey, &payload, &signature)
+        {
+            return Err(LendingError::InvalidOracleSignature);
+        }
+
+        // A retry of an already-applied update is a successful no-op. The
+        // signature above proves the caller is authoritative for this payload.
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp == last.timestamp && price == last.price {
+                return Ok(());
+            }
+        }
+
+        // Per-update move-cap circuit breaker.
+        // If max_move_bps is configured and a prior price record exists, reject
+        // updates that move the price beyond the configured threshold.
+        if let Some(max_move_bps) = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
+        {
+            if let Some(last) = existing_record.as_ref() {
+                let last_price = last.price;
+                // delta = |price - last_price| * 10_000 / last_price
+                let delta_abs = if price >= last_price {
+                    price
+                        .checked_sub(last_price)
+                        .ok_or(LendingError::Overflow)?
+                } else {
+                    last_price
+                        .checked_sub(price)
+                        .ok_or(LendingError::Overflow)?
+                };
+                let move_bps = delta_abs
+                    .checked_mul(BPS_DENOM)
+                    .ok_or(LendingError::Overflow)?
+                    .checked_div(last_price)
+                    .ok_or(LendingError::Overflow)?;
+                if move_bps > max_move_bps {
+                    return Err(LendingError::MaxMoveBpsExceeded);
+                }
+            }
+            // No prior record: first-ever price for this asset is exempt.
+        }
 
         // Per-update move-cap circuit breaker.
         // If max_move_bps is configured and a prior price record exists, reject
@@ -3287,6 +3343,11 @@ impl LendingContract {
         upgrade::upgrade_execute(&env, &caller, proposal_id)
     }
 
+    /// Cancel a pending upgrade proposal (admin-only, issue #1940).
+    pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
+        upgrade::upgrade_cancel(&env, &caller, proposal_id)
+    }
+
     pub fn upgrade_set_required_approvals(
         env: Env,
         caller: Address,
@@ -3341,6 +3402,32 @@ impl LendingContract {
         proposal_id: u64,
     ) -> Result<upgrade::UpgradeStatus, LendingError> {
         upgrade::upgrade_status(&env, proposal_id)
+    }
+
+    /// Returns whether a proposal is in the `Cancelled` terminal state (issue #1940).
+    pub fn is_upgrade_proposal_cancelled(env: Env, proposal_id: u64) -> bool {
+        upgrade::is_proposal_cancelled(&env, proposal_id)
+    }
+
+    /// Returns the stored domain-separated approval binding hash for
+    /// `(proposal_id, approver)` (issue #1940).
+    pub fn get_upgrade_approval_binding(
+        env: Env,
+        proposal_id: u64,
+        approver: Address,
+    ) -> Option<BytesN<32>> {
+        upgrade::get_approval_binding(&env, proposal_id, approver)
+    }
+
+    /// Returns the approver-set fingerprint captured when the proposal was
+    /// created (issue #1940).
+    pub fn get_upgrade_proposal_signer_hash(env: Env, proposal_id: u64) -> Option<BytesN<32>> {
+        upgrade::get_proposal_approver_set_hash(&env, proposal_id)
+    }
+
+    /// Returns the fingerprint of the live upgrade approver set (issue #1940).
+    pub fn get_upgrade_approver_set_hash(env: Env) -> BytesN<32> {
+        upgrade::get_approver_set_hash(&env)
     }
 
     pub fn get_min_upgrade_delay_ledgers(env: Env) -> u32 {
@@ -4350,6 +4437,96 @@ pub(crate) mod test {
         assert!(
             matches!(res, Err(Ok(LendingError::StaleOracleTimestamp))),
             "expected StaleOracleTimestamp, got {:?}",
+            res
+        );
+    }
+ 
+    #[test]
+    fn test_set_price_retry_exact_update_is_idempotent() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+
+        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        let retry = client.try_set_price(&admin, &asset, &price, &timestamp, &signature);
+        assert!(
+            retry.is_ok(),
+            "exact retry must be treated as an idempotent success, got {:?}",
+            retry
+        );
+        let record = client.get_price_record(&asset).expect("price record exists");
+        assert_eq!(record.price, price);
+        assert_eq!(record.timestamp, timestamp);
+    }
+
+    #[test]
+    fn test_set_price_rejects_same_timestamp_different_price() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let timestamp = env.ledger().timestamp();
+        let price1 = 1_000_000_000i128;
+        let price2 = 1_500_000_000i128;
+        let signature1 = sign_oracle_update(&env, &keypair, &asset, price1, timestamp);
+        let signature2 = sign_oracle_update(&env, &keypair, &asset, price2, timestamp);
+
+        client.set_price(&admin, &asset, &price1, &timestamp, &signature1);
+        let res = client.try_set_price(&admin, &asset, &price2, &timestamp, &signature2);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_rejects_older_timestamp_after_update() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+
+        let old_timestamp = timestamp.saturating_sub(1);
+        let old_signature = sign_oracle_update(&env, &keypair, &asset, price, old_timestamp);
+        let res = client.try_set_price(&admin, &asset, &price, &old_timestamp, &old_signature);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_requires_admin() {
+        let (env, client, _admin, _user) = setup();
+        let attacker = Address::generate(&env);
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_000_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let res = client.try_set_price(&attacker, &asset, &price, &timestamp, &signature);
+        assert!(
+            matches!(res, Err(Ok(LendingError::Unauthorized))),
+            "expected Unauthorized, got {:?}",
             res
         );
     }

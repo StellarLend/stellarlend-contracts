@@ -518,7 +518,20 @@ pub fn withdraw_asset_internal(
         remove_from_user_collateral_list(env, user, asset);
     }
 
-    let hf = compute_aggregate_health_factor(env, user)?;
+    let hf = match compute_aggregate_health_factor(env, user) {
+        Ok(hf) => hf,
+        Err(err) => {
+            // Roll back the provisional collateral write if the health check
+            // itself fails (for example, due to a stale or missing oracle
+            // price). Without this, a failed withdrawal would still reduce the
+            // user's collateral balance.
+            save_collateral_asset(env, user, asset, current);
+            if current > 0 {
+                add_to_user_collateral_list(env, user, asset);
+            }
+            return Err(err);
+        }
+    };
     if hf < HEALTH_FACTOR_SCALE {
         save_collateral_asset(env, user, asset, current);
         if current > 0 {
@@ -606,7 +619,19 @@ pub fn borrow_asset_internal(
     save_debt_asset(env, user, asset, &updated);
     add_to_user_debt_list(env, user, asset);
 
-    let hf = compute_aggregate_health_factor(env, user)?;
+    let hf = match compute_aggregate_health_factor(env, user) {
+        Ok(hf) => hf,
+        Err(err) => {
+            // Roll back the provisional debt write if the health check itself
+            // fails. The borrow is rejected, so the user's debt position must
+            // be restored to its original state.
+            save_debt_asset(env, user, asset, &position);
+            if prev_principal == 0 {
+                remove_from_user_debt_list(env, user, asset);
+            }
+            return Err(err);
+        }
+    };
 
     if hf < HEALTH_FACTOR_SCALE {
         save_debt_asset(
@@ -620,7 +645,12 @@ pub fn borrow_asset_internal(
             },
         );
         if prev_principal == 0 {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
             remove_from_user_debt_list(env, user, asset);
+        } else {
+            save_debt_asset(env, user, asset, &position);
         }
         return Err(LendingError::HealthFactorTooLow);
     }
@@ -649,7 +679,12 @@ pub fn borrow_asset_internal(
             },
         );
         if prev_principal == 0 {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
             remove_from_user_debt_list(env, user, asset);
+        } else {
+            save_debt_asset(env, user, asset, &position);
         }
         return Err(LendingError::DebtCeilingExceeded);
     }
@@ -784,14 +819,22 @@ pub fn repay_asset_internal(
         remove_from_user_debt_list(env, user, asset);
     }
 
-    let repaid = prev_principal.checked_sub(updated.principal).unwrap_or(0);
+    let principal_delta = updated
+        .principal
+        .checked_sub(prev_principal)
+        .ok_or(LendingError::Overflow)?;
 
     let total_debt_asset: i128 = env
         .storage()
         .persistent()
         .get(&DataKey::TotalDebtAsset(asset.clone()))
         .unwrap_or(0);
-    let new_total_debt_asset = total_debt_asset.saturating_sub(repaid);
+    let new_total_debt_asset = total_debt_asset
+        .checked_add(principal_delta)
+        .ok_or(LendingError::Overflow)?;
+    if new_total_debt_asset < 0 {
+        return Err(LendingError::Overflow);
+    }
     env.storage().persistent().set(
         &DataKey::TotalDebtAsset(asset.clone()),
         &new_total_debt_asset,
@@ -802,7 +845,12 @@ pub fn repay_asset_internal(
         .persistent()
         .get(&DataKey::TotalDebt)
         .unwrap_or(0);
-    let new_total_protocol = total_debt_protocol.saturating_sub(repaid);
+    let new_total_protocol = total_debt_protocol
+        .checked_add(principal_delta)
+        .ok_or(LendingError::Overflow)?;
+    if new_total_protocol < 0 {
+        return Err(LendingError::Overflow);
+    }
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_protocol);
@@ -810,4 +858,95 @@ pub fn repay_asset_internal(
     extend_debt_asset_ttl(env, user, asset);
 
     Ok(updated.principal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn set_price(env: &Env, asset: &Address, price: i128, timestamp: u64) {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(asset.clone()),
+            &PriceRecord { price, timestamp },
+        );
+    }
+
+    #[test]
+    fn get_price_for_asset_success() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        let result = get_price_for_asset(&env, &asset);
+        assert!(result.is_ok());
+        match result {
+            Ok(record) => assert_eq!(record.price, 10_000_000),
+            Err(_) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn get_price_for_asset_missing_feed_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+    }
+
+    #[test]
+    fn get_price_for_asset_stale_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+    }
+
+    #[test]
+    fn get_price_for_asset_boundary_is_fresh() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        let timestamp = 1_000_000u64;
+        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
+        set_price(&env, &asset, 10_000_000, timestamp);
+
+        assert!(get_price_for_asset(&env, &asset).is_ok());
+    }
+
+    #[test]
+    fn get_price_for_asset_future_timestamp_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        env.ledger().set_timestamp(1_000_000);
+        set_price(&env, &asset, 10_000_000, 1_000_001);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::StaleOracleTimestamp)
+        ));
+    }
+
+    #[test]
+    fn get_price_for_asset_non_positive_price_fails() {
+        let env = Env::default();
+        let asset = Address::generate(&env);
+        env.ledger().set_timestamp(1_000_000);
+        set_price(&env, &asset, 0, 1_000_000);
+
+        assert!(matches!(
+            get_price_for_asset(&env, &asset),
+            Err(LendingError::PriceFeedNotFound)
+        ));
+    }
 }

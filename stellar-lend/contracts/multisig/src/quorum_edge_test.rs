@@ -13,7 +13,9 @@
 ///    approvals before the proposal can execute.
 #[cfg(test)]
 mod quorum_edge_tests {
-    use crate::{MultisigContract, MultisigContractClient, MultisigError, MIN_THRESHOLD_DELAY_LEDGERS};
+    use crate::{
+        MultisigContract, MultisigContractClient, MultisigError, MIN_THRESHOLD_DELAY_LEDGERS,
+    };
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::testutils::Ledger;
     use soroban_sdk::{Address, Env, Vec};
@@ -253,10 +255,7 @@ mod quorum_edge_tests {
 
         // Queue a threshold increase (2 → 3) and apply it after the mandatory delay.
         client.queue_threshold_change(&3);
-        let tc_eta = client
-            .get_pending_threshold_change()
-            .unwrap()
-            .eta_ledger;
+        let tc_eta = client.get_pending_threshold_change().unwrap().eta_ledger;
         env.ledger().set_sequence_number(tc_eta);
         client.apply_threshold_change();
         assert_eq!(client.get_threshold(), 3);
