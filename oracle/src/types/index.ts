@@ -1,20 +1,19 @@
 /**
  * Oracle Service Type Definitions
- * 
+ *
  * This module contains all TypeScript interfaces and types used across
  * the Oracle Integration Service for StellarLend protocol.
  */
 
-/**
- * Represents price data fetched from an external source
- */
+// ─── Core price types ─────────────────────────────────────────────────────────
+
 export interface PriceData {
     asset: string;
     price: bigint;
     timestamp: number;
     source: string;
     confidence: number;
-    /** 24-hour quote volume in USD, carried from the raw provider response. Used as weight in aggregation. */
+    /** 24-hour quote volume in USD. Used as weight in aggregation. */
     volume24h?: bigint;
     /** Optional signer public key when providers sign payloads */
     signer?: string;
@@ -22,25 +21,16 @@ export interface PriceData {
     signature?: string;
 }
 
-/**
- * Raw price data before validation and conversion
- */
 export interface RawPriceData {
     asset: string;
     price: number;
     timestamp: number;
     source: string;
-    /** 24-hour quote volume in USD (integer, scaled to avoid floats). Used as weight in aggregation. */
     volume24h?: bigint;
-    /** Optional signer public key when providers sign payloads */
     signer?: string;
-    /** Optional signature over the canonical payload (hex/base64) */
     signature?: string;
 }
 
-/**
- * Aggregated price from multiple sources
- */
 export interface AggregatedPrice {
     asset: string;
     price: bigint;
@@ -51,27 +41,20 @@ export interface AggregatedPrice {
     sequence?: number;
 }
 
-/**
- * Price validation result
- */
+// ─── Validation ───────────────────────────────────────────────────────────────
+
 export interface ValidationResult {
     isValid: boolean;
     price?: PriceData;
     errors: ValidationError[];
 }
 
-/**
- * Validation error details
- */
 export interface ValidationError {
     code: ValidationErrorCode;
     message: string;
     details?: Record<string, unknown>;
 }
 
-/**
- * Validation error codes
- */
 export enum ValidationErrorCode {
     PRICE_ZERO = 'PRICE_ZERO',
     PRICE_NEGATIVE = 'PRICE_NEGATIVE',
@@ -80,15 +63,14 @@ export enum ValidationErrorCode {
     PRICE_BELOW_MIN = 'PRICE_BELOW_MIN',
     PRICE_ABOVE_MAX = 'PRICE_ABOVE_MAX',
     INVALID_ASSET = 'INVALID_ASSET',
-    SOURCE_UNAVAILABL = 'SOURCE_UNAVAILABL',
+    SOURCE_UNAVAILABLE = 'SOURCE_UNAVAILABLE',
     DUPLICATE_SUBMISSION = 'DUPLICATE_SUBMISSION',
     INVALID_STATE_TRANSITION = 'INVALID_STATE_TRANSITION',
     RECOVERY_IN_PROGRESS = 'RECOVERY_IN_PROGRESS',
 }
 
-/**
- * Provider configuration
- */
+// ─── Provider / cache ─────────────────────────────────────────────────────────
+
 export interface ProviderConfig {
     name: string;
     enabled: boolean;
@@ -102,18 +84,14 @@ export interface ProviderConfig {
     };
 }
 
-/**
- * Cache entry structure
- */
 export interface CacheEntry<T> {
     data: T;
     cachedAt: number;
     expiresAt: number;
 }
 
-/**
- * Contract update result
- */
+// ─── Contract update ──────────────────────────────────────────────────────────
+
 export interface ContractUpdateResult {
     success: boolean;
     transactionHash?: string;
@@ -129,9 +107,8 @@ export interface ContractUpdateResult {
     sessionState?: PriceUpdateState;
 }
 
-/**
- * Service configuration
- */
+// ─── Service configuration ────────────────────────────────────────────────────
+
 export interface AssetPriceBounds {
     minPrice: number;
     maxPrice: number;
@@ -142,17 +119,21 @@ export interface OracleServiceConfig {
     stellarRpcUrl: string;
     contractId: string;
     adminSecretKey: string;
-    adminApiPort: number;
+    /** Port for the admin HTTP API (0 or omitted disables the server). */
+    adminApiPort?: number;
+    /** HMAC-SHA256 secret. Required when adminApiPort > 0. */
     adminHmacSecret?: string;
     updateIntervalMs: number;
     maxPriceDeviationPercent: number;
-    madZ?ScoreThreshold: number;
+    /** MAD z-score threshold for outlier rejection (default 3.5). */
+    madZScoreThreshold?: number;
     priceStaleThresholdSeconds: number;
     cacheTtlSeconds: number;
     redisUrl?: string;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     providers: ProviderConfig[];
-    priceBounds: Record<SupportedAsset, AssetPriceBounds>;
+    /** Per-asset price bounds enforced by the validator. */
+    priceBounds?: Partial<Record<SupportedAsset, AssetPriceBounds>>;
     /** Freshness policy governing stale data handling. */
     freshnessPolicy?: FreshnessPolicy;
     /** Fallback policy governing provider fallback and aggregation. */
@@ -161,19 +142,39 @@ export interface OracleServiceConfig {
     recoveryPolicy?: RecoveryPolicy;
 }
 
-/**
- * Supported assets for price fetching
- */
-export type SupportedAsset =
-    | 'XLM'
-    | 'USDC'
-    | 'USDT'
-    | 'BTC'
-    | 'ETH';
+// ─── Telemetry / diagnostics ──────────────────────────────────────────────────
 
 /**
- * Asset mapping for different providers
+ * Outcome of a single provider fetch attempt within one update cycle.
+ * Error classes are normalised — raw messages are never included.
  */
+export interface ProviderFetchEvent {
+    provider: string;
+    asset: string;
+    /** Wall-clock latency in milliseconds. */
+    latencyMs: number;
+    success: boolean;
+    errorClass?: 'network' | 'rate_limit' | 'validation' | 'timeout' | 'unknown';
+}
+
+/**
+ * Diagnostics emitted at the end of each price-update cycle.
+ * Exposes latency, failure, and recovery signals without leaking secrets.
+ */
+export interface UpdateCycleDiagnostics {
+    startedAt: string;
+    durationMs: number;
+    assetsUpdated: number;
+    assetsFailed: number;
+    providerEvents: ProviderFetchEvent[];
+    cooledDownProviders: string[];
+    contractUpdateOk: boolean;
+}
+
+// ─── Supported assets ─────────────────────────────────────────────────────────
+
+export type SupportedAsset = 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH';
+
 export interface AssetMapping {
     symbol: SupportedAsset;
     coingeckoId: string;
@@ -181,9 +182,8 @@ export interface AssetMapping {
     binanceSymbol: string;
 }
 
-/**
- * Health check status
- */
+// ─── Health / metrics ─────────────────────────────────────────────────────────
+
 export interface HealthStatus {
     provider: string;
     healthy: boolean;
@@ -192,9 +192,6 @@ export interface HealthStatus {
     error?: string;
 }
 
-/**
- * Service metrics for monitoring
- */
 export interface ServiceMetrics {
     priceUpdatesTotal: number;
     priceUpdatesFailed: number;
@@ -203,6 +200,8 @@ export interface ServiceMetrics {
     providerErrors: Map<string, number>;
     lastUpdateTimestamp: number;
 }
+
+// ─── State machine (upstream: idempotency / session tracking) ─────────────────
 
 /**
  * Price update state machine states.
@@ -218,13 +217,9 @@ export enum PriceUpdateState {
     FAILED = 'FAILED',
     RETRYING = 'RETRYING',
     CANCELLED = 'CANCELLED',
-    RECOVERING = 'RECOVERING,
+    RECOVERING = 'RECOVERING',
 }
 
-/**
- * Defined transitions for the price update state machine.
- * This fully specifies valid state transitions and ensures deterministic behavior.
- */
 export const PriceUpdateStateTransitions: Record<PriceUpdateState, PriceUpdateState[]> = {
     [PriceUpdateState.IDLE]: [PriceUpdateState.FETCHING, PriceUpdateState.CANCELLED],
     [PriceUpdateState.FETCHING]: [PriceUpdateState.VALIDATING, PriceUpdateState.FAILED, PriceUpdateState.CANCELLED],
@@ -238,10 +233,6 @@ export const PriceUpdateStateTransitions: Record<PriceUpdateState, PriceUpdateSt
     [PriceUpdateState.RECOVERING]: [PriceUpdateState.FETCHING, PriceUpdateState.SUBMITTING, PriceUpdateState.FAILED, PriceUpdateState.CANCELLED],
 };
 
-/**
- * Context for a single price update session.
- * Tracks state, attempt count, idempotency, and recovery metadata.
- */
 export interface PriceUpdateSession {
     sessionId: string;
     asset: SupportedAsset;
@@ -258,9 +249,8 @@ export interface PriceUpdateSession {
     userIntent?: string;
 }
 
-/**
- * Policy governing freshness enforcement and stale-data fallback.
- */
+// ─── Policy types (upstream: freshness / fallback / recovery) ─────────────────
+
 export interface FreshnessPolicy {
     maxStalenessSeconds: number;
     maxDeviationPercent: number;
@@ -268,9 +258,6 @@ export interface FreshnessPolicy {
     fallbackOnStale: boolean;
 }
 
-/**
- * Policy governing provider fallback and data aggregation.
- */
 export interface FallbackPolicy {
     enabled: boolean;
     fallbackOrder: 'priority' | 'round-robin';
@@ -280,9 +267,6 @@ export interface FallbackPolicy {
     maxFallbackAttempts: number;
 }
 
-/**
- * Policy governing recovery after interruptions or failed on-chain submissions.
- */
 export interface RecoveryPolicy {
     enabled: boolean;
     preserveUserIntent: boolean;
@@ -292,10 +276,6 @@ export interface RecoveryPolicy {
     timeoutSeconds: number;
 }
 
-/**
- * A serializable receipt that proves an on-chain submission was attempted.
- * Used to prevent duplicate submissions and enable recovery.
- */
 export interface SubmissionReceipt {
     idempotencyKey: string;
     asset: SupportedAsset;
