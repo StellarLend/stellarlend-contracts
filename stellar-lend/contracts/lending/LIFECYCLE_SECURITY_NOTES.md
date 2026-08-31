@@ -93,6 +93,78 @@ Effect: All operations re-enabled. State = **Normal**.
 | Recovery permits only repay + withdraw | `test_recovery_mode_allows_only_unwind` |
 | `complete_recovery` fully restores all operations | `test_complete_recovery_re_enables_full_lifecycle` |
 | Multi-cycle + granular pauses in recovery do not leak state | `test_multi_cycle_with_partial_pauses_in_recovery` |
+| Emergency state transitions are atomic and idempotent | `test_emergency_transitions_idempotent` |
+| Duplicate submissions cannot corrupt state | `test_duplicate_submissions_are_noops` |
+| Stale responses are ignored | `test_stale_response_ignored` |
+| Interrupted operations recover without repeating on-chain action | `test_interrupted_operation_recovery` |
+
+---
+
+## Transactional Invariants and Recovery
+
+### Core Invariants
+
+1. **State validity**: The emergency state is always one of `Normal`, `Shutdown`, or `Recovery`.
+2. **Transition validity**: Only the transitions encoded in the state diagram are permitted; all others are rejected.
+3. **Permission gating**: `complete_recovery` requires `admin`; `emergency_shutdown` requires `guardian` or `admin`; `start_recovery` requires `admin`.
+4. **No partial application**: A transition either fully applies or fails; no intermediate state is ever persisted.
+5. **Idempotency**: Re-applying the current state is a success with no state change.
+6. **Composability**: Granular pauses are AND-ed with emergency state; neither can bypass the other.
+7. **Reentrancy safety**: All state transitions run under the reentrancy guard; recovery-mode unwind operations are protected.
+
+### State Transition Atomicity
+
+Every emergency-state transition (`emergency_shutdown`, `start_recovery`,
+`complete_recovery`) and granular pause update is atomic. The new state is
+written in a single ledger entry; a failed or interrupted operation leaves the
+previous state fully intact. No partial state is observable within a
+transaction or across retries.
+
+### Success, Rejection, Cancellation, and Retry Paths
+
+- **Success**: Operation completes and the state transition is emitted as an
+  event. The caller receives the new state.
+- **Rejection**: An unauthorized or invalid transition is rejected before any
+  state change. The rejection error is deterministic and contains the reason.
+- **Cancellation**: A user-initiated cancellation (if supported by the caller
+  SDK) is treated as a client-side discard; it does not invoke an on-chain
+  state change.
+- **Retry**: Every state-mutation call is idempotent when the target state is
+  already active:
+  - `emergency_shutdown` when already `Shutdown` → success, no state change.
+  - `start_recovery` when already `Recovery` → success, no state change.
+  - `complete_recovery` when already `Normal` → success, no state change.
+  - `set_pause` to the same value → success, no state change.
+  
+  This ensures a duplicate submission (wallet retry, reorg, double-tap) cannot
+  corrupt the state machine.
+
+### Duplicate and Stale Response Prevention
+
+Clients must include a unique `op_id` in each transaction and check that the
+emitted event's `op_id` matches the request. Any response carrying an `op_id`
+older than the latest confirmed operation is stale and MUST be ignored. The
+contract itself does not need to track client nonces for pause/emergency
+transitions because idempotency provides the same protection.
+
+### Failure Recovery Preserving User Intent
+
+For user operations that may be interrupted (e.g., deposit/repay after signing),
+the SDK persists a `PendingIntent` containing the operation parameters and the
+original transaction hash. On retry, the SDK first checks whether the original
+transaction hash is already confirmed on-chain:
+- **Confirmed** → do not resubmit. Surface the original success to the user.
+- **Not confirmed** → resubmit the exact operation with a fresh `op_id`.
+
+This prevents silently repeating an on-chain action while still recovering the
+user's original intent.
+
+### Invariant Enforcement
+
+All invariants are enforced by the same code path that checks granular pause
+flags and emergency state. The invariant layer is independent of the
+permission layer: an operation can only proceed if the invariants hold, even if
+the caller has admin/guardian rights.
 
 ---
 
