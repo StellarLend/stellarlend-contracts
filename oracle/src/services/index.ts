@@ -10,8 +10,11 @@ export type { ValidatorConfig } from './price-validator.js';
 export { Cache, PriceCache, createCache, createPriceCache } from './cache.js';
 export type { CacheConfig } from './cache.js';
 
-export { PriceAggregator, createAggregator } from './price-aggregator.js';
+export { PriceAggregator, createAggregator, filterOutliersByMAD } from './price-aggregator.js';
 export type { AggregatorConfig } from './price-aggregator.js';
 
-export { ContractUpdater, createContractUpdater } from './contract-updater.js';
+export { ContractUpdater, createContractUpdater, calculateJitterDelay } from './contract-updater.js';
 export type { ContractUpdaterConfig } from './contract-updater.js';
+
+export { OracleTelemetry } from './oracle-telemetry.js';
+export type { TelemetrySummary, ProviderSummary } from './oracle-telemetry.js';

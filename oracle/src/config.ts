@@ -30,6 +30,15 @@ const envSchema = z.object({
     MAD_Z_SCORE_THRESHOLD: z.coerce.number().positive().default(3.5),
     PRICE_STALENESS_THRESHOLD_SECONDS: z.coerce.number().positive().default(300),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    // Admin API
+    ADMIN_API_PORT: z.coerce.number().int().min(0).max(65535).default(0),
+    ADMIN_HMAC_SECRET: z.string().optional(),
+    // Retry / backoff (used by ContractUpdater)
+    MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(3),
+    BACKOFF_BASE_MS: z.coerce.number().positive().default(1000),
+    BACKOFF_CAP_MS: z.coerce.number().positive().default(30000),
+    // Concurrency: max parallel provider fetches per update cycle
+    MAX_CONCURRENT_PROVIDERS: z.coerce.number().int().min(1).max(20).default(5),
 });
 
 /**
@@ -145,16 +154,34 @@ export function isSupportedAsset(symbol: string): symbol is SupportedAsset {
 }
 
 /**
+ * Default per-asset price bounds applied by the validator.
+ * These are conservative safe-guards; operators should tune them for their deployment.
+ */
+export const DEFAULT_PRICE_BOUNDS: Partial<Record<import('./types/index.js').SupportedAsset, import('./types/index.js').AssetPriceBounds>> = {
+    XLM:  { minPrice: 0.001,   maxPrice: 100 },
+    USDC: { minPrice: 0.9,     maxPrice: 1.1 },
+    USDT: { minPrice: 0.9,     maxPrice: 1.1 },
+    BTC:  { minPrice: 1_000,   maxPrice: 500_000 },
+    ETH:  { minPrice: 50,      maxPrice: 50_000 },
+};
+
+/**
  * Build and export the service configuration
  */
 export function loadConfig(): OracleServiceConfig {
     const env = parseEnv();
+
+    if (env.ADMIN_API_PORT > 0 && !env.ADMIN_HMAC_SECRET) {
+        throw new Error('ADMIN_HMAC_SECRET is required when ADMIN_API_PORT is configured');
+    }
 
     return {
         stellarNetwork: env.STELLAR_NETWORK,
         stellarRpcUrl: env.STELLAR_RPC_URL,
         contractId: env.CONTRACT_ID,
         adminSecretKey: env.ADMIN_SECRET_KEY,
+        adminApiPort: env.ADMIN_API_PORT,
+        adminHmacSecret: env.ADMIN_HMAC_SECRET,
         updateIntervalMs: env.UPDATE_INTERVAL_MS,
         maxPriceDeviationPercent: env.MAX_PRICE_DEVIATION_PERCENT,
         madZScoreThreshold: env.MAD_Z_SCORE_THRESHOLD,
@@ -163,6 +190,7 @@ export function loadConfig(): OracleServiceConfig {
         redisUrl: env.REDIS_URL,
         logLevel: env.LOG_LEVEL,
         providers: getProviderConfigs(env),
+        priceBounds: DEFAULT_PRICE_BOUNDS,
     };
 }
 
@@ -181,3 +209,20 @@ export function unscalePrice(price: bigint): number {
  * Overridden at runtime by MAD_Z_SCORE_THRESHOLD env var.
  */
 export const MAD_Z_SCORE_THRESHOLD = 3.5;
+
+/**
+ * Runtime-configurable bounds, exported so `ContractUpdater` and tests can
+ * read the same validated values from the environment.
+ */
+function getEnvNumbers() {
+    const parsed = envSchema.safeParse(process.env);
+    if (!parsed.success) return { maxRetries: 3, backoffBaseMs: 1000, backoffCapMs: 30000, maxConcurrentProviders: 5 };
+    return {
+        maxRetries: parsed.data.MAX_RETRIES,
+        backoffBaseMs: parsed.data.BACKOFF_BASE_MS,
+        backoffCapMs: parsed.data.BACKOFF_CAP_MS,
+        maxConcurrentProviders: parsed.data.MAX_CONCURRENT_PROVIDERS,
+    };
+}
+
+export const runtimeConfig = getEnvNumbers();

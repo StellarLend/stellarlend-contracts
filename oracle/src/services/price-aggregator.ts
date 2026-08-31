@@ -1,42 +1,43 @@
 /**
  * Price Aggregator Service
- * 
- * Fetches prices from multiple providers and aggregates them
- * using weighted median calculation.
+ *
+ * Fetches prices from multiple providers and aggregates them using
+ * weighted-median calculation with MAD outlier rejection.
  */
 
 import type {
-    RawPriceData,
     PriceData,
     AggregatedPrice,
+    ProviderFetchEvent,
 } from '../types/index.js';
 import { BasePriceProvider } from '../providers/base-provider.js';
 import { PriceValidator } from './price-validator.js';
 import { PriceCache } from './cache.js';
-import { scalePrice, MAD_Z_SCORE_THRESHOLD } from '../config.js';
+import { MAD_Z_SCORE_THRESHOLD, runtimeConfig } from '../config.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * Aggregator configuration
- */
+// ─── Configuration ────────────────────────────────────────────────────────────
+
 export interface AggregatorConfig {
     minSources: number;
     useWeightedMedian: boolean;
     /** MAD z-score threshold; prices beyond this are rejected as outliers (0 = disabled). */
     madZScoreThreshold: number;
-    /** Max age of a cached price in milliseconds before it is considered stale. */
+    /** Max age of a cached price in milliseconds before triggering a refresh. */
     maxStalenessMs: number;
-    /** Max age of a stale price in milliseconds that may be used if refresh fails. */
+    /** Max age of a stale cached price that may be served as fallback if refresh fails. */
     maxFallbackAgeMs: number;
-    /** Number of retries for transient provider failures. */
+    /** Per-provider retry attempts on transient failure (0 = no retry). */
     providerRetries: number;
-    /** Base backoff in milliseconds between provider retries. */
+    /** Base back-off in milliseconds between per-provider retries. */
     retryBackoffMs: number;
+    /**
+     * Maximum number of provider fetches that may run concurrently within a
+     * single `fetchWithFallback` call.  Bounds parallelism without serialising.
+     */
+    maxConcurrentProviders: number;
 }
 
-/**
- * Default aggregator configuration
- */
 const DEFAULT_CONFIG: Required<AggregatorConfig> = {
     minSources: 1,
     useWeightedMedian: true,
@@ -45,17 +46,19 @@ const DEFAULT_CONFIG: Required<AggregatorConfig> = {
     maxFallbackAgeMs: 300_000,
     providerRetries: 2,
     retryBackoffMs: 100,
+    maxConcurrentProviders: runtimeConfig.maxConcurrentProviders,
 };
 
-/**
- * Price Aggregator
- */
+// ─── PriceAggregator ──────────────────────────────────────────────────────────
+
 export class PriceAggregator {
     private providers: BasePriceProvider[];
     private validator: PriceValidator;
     private cache: PriceCache;
-    private config: AggregatorConfig;
+    private config: Required<AggregatorConfig>;
+    /** Tracks when each asset was last written to cache (ms). */
     private cacheTimestamps: Map<string, number> = new Map();
+    /** In-flight requests per asset — coalesces concurrent callers. */
     private pendingRequests: Map<string, Promise<AggregatedPrice | null>> = new Map();
 
     constructor(
@@ -70,44 +73,31 @@ export class PriceAggregator {
 
         this.validator = validator;
         this.cache = cache;
-        const resolvedConfig: Required<AggregatorConfig> = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
+        this.config = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
 
-        if (resolvedConfig.minSources < 1) {
-            throw new Error('minSources must be at least 1');
-        }
-        if (resolvedConfig.maxCacheAgeMs < 0) {
-            throw new Error('maxCacheAgeMs cannot be negative');
-        }
-        if (resolvedConfig.staleFallbackMaxAgeMs < 0) {
-            throw new Error('staleFallbackMaxAgeMs cannot be negative');
-        }
-        if (
-            resolvedConfig.staleFallbackConfidence < 0 ||
-            resolvedConfig.staleFallbackConfidence > 100
-        ) {
-            throw new Error('staleFallbackConfidence must be between 0 and 100');
-        }
-
-        if (!Number.isInteger(resolvedConfig.maxRetries) || resolvedConfig.maxRetries < 0) {
-            throw new Error('maxRetries must be a non-negative integer');
-        }
-
-        this.config = resolvedConfig;
+        if (this.config.minSources < 1) throw new Error('minSources must be at least 1');
 
         logger.info('Price aggregator initialized', {
             enabledProviders: this.providers.map((p) => p.name),
             minSources: this.config.minSources,
+            maxConcurrentProviders: this.config.maxConcurrentProviders,
         });
     }
 
+    // ─── Public API ───────────────────────────────────────────────────────────
+
     /**
-     * Fetch and aggregate price for a single asset
+     * Fetch and aggregate price for a single asset.
+     *
+     * - Returns the cached result when it is still fresh (age < maxStalenessMs).
+     * - Coalesces concurrent calls for the same asset into a single in-flight request.
+     * - Falls back to a stale cached value when a refresh fails and the stale value
+     *   is still within maxFallbackAgeMs.
      */
     async getPrice(asset: string): Promise<AggregatedPrice | null> {
         const upperAsset = asset.toUpperCase();
         const now = Date.now();
 
-        const now = Date.now();
         const cachedPrice = this.cache.getPrice(upperAsset);
         const cachedAt = this.cacheTimestamps.get(upperAsset);
 
@@ -119,10 +109,11 @@ export class PriceAggregator {
             }
         }
 
+        // Coalesce: reuse an in-flight request rather than launching a duplicate.
         const pending = this.pendingRequests.get(upperAsset);
         if (pending) {
             logger.debug(`Reusing in-flight price request for ${upperAsset}`);
-            return await pending;
+            return pending;
         }
 
         const request = this.refreshPrice(upperAsset, cachedPrice, cachedAt);
@@ -138,16 +129,145 @@ export class PriceAggregator {
     }
 
     /**
-     * Refresh a price and update the cache atomically from this aggregator's
-     * perspective. A failed refresh falls back to a stale cached value only
-     * when that value is known and still within the fallback age window.
+     * Fetch prices for multiple assets concurrently (bounded by aggregator config).
+     */
+    async getPrices(assets: string[]): Promise<Map<string, AggregatedPrice>> {
+        const results = new Map<string, AggregatedPrice>();
+
+        await Promise.allSettled(
+            assets.map(async (asset) => {
+                const price = await this.getPrice(asset);
+                if (price) results.set(asset.toUpperCase(), price);
+            }),
+        );
+
+        return results;
+    }
+
+    /**
+     * Fetch price from providers with bounded concurrency and per-provider telemetry.
+     *
+     * At most `maxConcurrentProviders` providers run simultaneously per batch.
+     * Cooled-down providers are skipped and recorded in telemetry.
+     * Each provider attempt records a ProviderFetchEvent for diagnostics.
+     */
+    async fetchWithFallback(
+        asset: string,
+    ): Promise<{ prices: PriceData[]; events: ProviderFetchEvent[] }> {
+        const validPrices: PriceData[] = [];
+        const events: ProviderFetchEvent[] = [];
+
+        const concurrency = Math.max(1, this.config.maxConcurrentProviders);
+
+        for (let i = 0; i < this.providers.length; i += concurrency) {
+            const batch = this.providers.slice(i, i + concurrency);
+
+            const batchResults = await Promise.allSettled(
+                batch.map(async (provider) => {
+                    if (provider.isCooledDown) {
+                        logger.warn(`Skipping ${provider.name}: active cooldown`);
+                        events.push({ provider: provider.name, asset, latencyMs: 0, success: false, errorClass: 'rate_limit' });
+                        return null;
+                    }
+
+                    const maxAttempts = this.config.providerRetries + 1;
+
+                    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                        const start = Date.now();
+                        try {
+                            const rawPrice = await provider.fetchPrice(asset);
+                            const latencyMs = Date.now() - start;
+                            const validation = this.validator.validate(rawPrice);
+
+                            if (validation.isValid && validation.price) {
+                                events.push({ provider: provider.name, asset, latencyMs, success: true });
+                                logger.debug(`Valid price from ${provider.name} for ${asset}`, {
+                                    price: validation.price.price.toString(),
+                                    latencyMs,
+                                });
+                                return validation.price;
+                            }
+
+                            events.push({ provider: provider.name, asset, latencyMs: Date.now() - start, success: false, errorClass: 'validation' });
+                            logger.warn(`Invalid price from ${provider.name} for ${asset}`, { errors: validation.errors });
+                            return null; // validation failure — no retry
+                        } catch (err) {
+                            const latencyMs = Date.now() - start;
+                            const errClass = classifyFetchError(err);
+
+                            if (attempt < maxAttempts) {
+                                const backoffMs = this.config.retryBackoffMs * attempt;
+                                logger.warn(`${provider.name} failed for ${asset}; retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`, { errorClass: errClass });
+                                await new Promise((r) => setTimeout(r, backoffMs));
+                                continue;
+                            }
+
+                            events.push({ provider: provider.name, asset, latencyMs, success: false, errorClass: errClass });
+                            logger.warn(`${provider.name} failed for ${asset} after ${maxAttempts} attempt(s)`, {
+                                errorClass: errClass,
+                                // err.message omitted — may contain secrets from RPC responses
+                            });
+                            return null;
+                        }
+                    }
+
+                    return null;
+                }),
+            );
+
+            for (const r of batchResults) {
+                if (r.status === 'fulfilled' && r.value !== null) {
+                    validPrices.push(r.value);
+                }
+            }
+        }
+
+        if (validPrices.length === 0) {
+            logger.error(`All providers failed for ${asset}`, {
+                providers: this.providers.map((p) => p.name),
+            });
+        }
+
+        return { prices: validPrices, events };
+    }
+
+    /**
+     * Aggregate pre-fetched `prices` for `asset`, write to cache, return result.
+     * Lets callers (e.g. OracleService) avoid a second provider round-trip after
+     * having already called `fetchWithFallback` to collect telemetry.
+     */
+    aggregateAndCache(asset: string, prices: PriceData[]): AggregatedPrice | null {
+        if (prices.length < this.config.minSources) return null;
+        const upper = asset.toUpperCase();
+        const aggregated = this.aggregate(upper, prices);
+        this.cache.setPrice(upper, aggregated.price);
+        this.cacheTimestamps.set(upper, Date.now());
+        return aggregated;
+    }
+
+    getProviders(): string[] {
+        return this.providers.map((p) => p.name);
+    }
+
+    getStats() {
+        return {
+            enabledProviders: this.providers.length,
+            cacheStats: this.cache.getStats(),
+        };
+    }
+
+    // ─── Private helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Refresh price from providers, write cache on success, fall back to stale
+     * cache value when refresh fails and the stale value is within maxFallbackAgeMs.
      */
     private async refreshPrice(
         asset: string,
         cachedPrice: bigint | undefined,
         cachedAt: number | undefined,
     ): Promise<AggregatedPrice | null> {
-        const validPrices = await this.fetchWithFallback(asset);
+        const { prices: validPrices } = await this.fetchWithFallback(asset);
 
         if (validPrices.length >= this.config.minSources) {
             const aggregated = this.aggregate(asset, validPrices);
@@ -178,9 +298,6 @@ export class PriceAggregator {
         return null;
     }
 
-    /**
-     * Format a cached price as an AggregatedPrice.
-     */
     private formatCachedPrice(
         asset: string,
         price: bigint,
@@ -196,84 +313,6 @@ export class PriceAggregator {
         };
     }
 
-    /**
-     * Fetch prices for multiple assets
-     */
-    async getPrices(assets: string[]): Promise<Map<string, AggregatedPrice>> {
-        const results = new Map<string, AggregatedPrice>();
-
-        const promises = assets.map(async (asset) => {
-            const price = await this.getPrice(asset);
-            if (price) {
-                results.set(asset.toUpperCase(), price);
-            }
-        });
-
-        await Promise.allSettled(promises);
-
-        return results;
-    }
-
-    /**
-     * Fetch price from providers with fallback logic
-     */
-    private async fetchWithFallback(asset: string): Promise<PriceData[]> {
-        const validPrices: PriceData[] = [];
-        const errors: Map<string, Error> = new Map();
-
-        for (const provider of this.providers) {
-            if (provider.isCooledDown) {
-                logger.warn(`Skipping provider ${provider.name} due to active cooldown`);
-                continue;
-            }
-
-            const maxAttempts = this.config.providerRetries + 1;
-            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                try {
-                    const rawPrice = await provider.fetchPrice(asset);
-                    const validation = this.validator.validate(rawPrice);
-
-                    if (validation.isValid && validation.price) {
-                        validPrices.push(validation.price);
-                        logger.debug(`Got valid price from ${provider.name} for ${asset}`, {
-                            price: validation.price.price.toString(),
-                        });
-                        break;
-                    }
-
-                    logger.warn(`Invalid price from ${provider.name} for ${asset}`, {
-                        errors: validation.errors,
-                    });
-                    break;
-                } catch (error) {
-                    if (attempt < maxAttempts) {
-                        const backoffMs = this.config.retryBackoffMs * attempt;
-                        logger.warn(
-                            `Provider ${provider.name} failed for ${asset}; retrying in ${backoffMs}ms`,
-                            { attempt, error },
-                        );
-                        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-                        continue;
-                    }
-
-                    errors.set(provider.name, error instanceof Error ? error : new Error(String(error)));
-                    logger.warn(`Provider ${provider.name} failed for ${asset}`, { error, attempt });
-                }
-            }
-        }
-
-        if (validPrices.length === 0 && errors.size > 0) {
-            logger.error(`All providers failed for ${asset}`, {
-                providers: Array.from(errors.keys()),
-            });
-        }
-
-        return validPrices;
-    }
-
-    /**
-     * Aggregate prices from multiple sources
-     */
     private aggregate(asset: string, prices: PriceData[]): AggregatedPrice {
         const now = Math.floor(Date.now() / 1000);
 
@@ -302,16 +341,10 @@ export class PriceAggregator {
             ? this.weightedMedian(activePrices)
             : this.simpleMedian(activePrices);
 
-        const totalWeight = activePrices.reduce(
-            (sum, p) => sum + this.getSourceWeight(p),
-            0,
-        );
+        const totalWeight = activePrices.reduce((sum, p) => sum + this.getSourceWeight(p), 0);
         const weightedConfidence =
             totalWeight > 0 && Number.isFinite(totalWeight)
-                ? activePrices.reduce(
-                      (sum, p) => sum + p.confidence * this.getSourceWeight(p),
-                      0,
-                  ) / totalWeight
+                ? activePrices.reduce((sum, p) => sum + p.confidence * this.getSourceWeight(p), 0) / totalWeight
                 : activePrices.reduce((sum, p) => sum + p.confidence, 0) / activePrices.length;
 
         return {
@@ -323,95 +356,46 @@ export class PriceAggregator {
         };
     }
 
-    /**
-     * Calculate weighted median of prices.
-     *
-     * Weight selection (in priority order):
-     *  1. `price.volume24h` – 24-hour quote volume supplied by the provider (e.g. Binance).
-     *     A higher volume means the pair is more liquid and its price is more reliable.
-     *  2. Static `provider.weight` – configured priority fraction used when no volume is available.
-     *
-     * Using volume as the weight means thin/illiquid pairs automatically carry less influence
-     * during aggregation without any manual tuning.
-     */
     private weightedMedian(prices: PriceData[]): bigint {
         const sorted = [...prices].sort((a, b) =>
-            a.price < b.price ? -1 : a.price > b.price ? 1 : 0
+            a.price < b.price ? -1 : a.price > b.price ? 1 : 0,
         );
-
-        // Derive a numeric weight for each price point.
         const weights = sorted.map((p) => this.getSourceWeight(p));
-
         const totalWeight = weights.reduce((a, b) => a + b, 0);
         const halfWeight = totalWeight / 2;
 
         let cumWeight = 0;
         for (let i = 0; i < sorted.length; i++) {
             cumWeight += weights[i];
-            if (cumWeight >= halfWeight) {
-                return sorted[i].price;
-            }
+            if (cumWeight >= halfWeight) return sorted[i].price;
         }
-
         return sorted[sorted.length - 1].price;
     }
 
-    /**
-     * Calculate simple median of prices
-     */
     private simpleMedian(prices: PriceData[]): bigint {
         const sorted = [...prices].sort((a, b) =>
-            a.price < b.price ? -1 : a.price > b.price ? 1 : 0
+            a.price < b.price ? -1 : a.price > b.price ? 1 : 0,
         );
-
         const mid = Math.floor(sorted.length / 2);
-
-        if (sorted.length % 2 === 0) {
-            const avg = (sorted[mid - 1].price + sorted[mid].price) / 2n;
-            return avg;
-        }
-
+        if (sorted.length % 2 === 0) return (sorted[mid - 1].price + sorted[mid].price) / 2n;
         return sorted[mid].price;
     }
 
     /**
-     * Determine the numeric weight for a price point.
-     *
-     * Uses `volume24h` when available; otherwise falls back to the provider's
-     * configured static weight. This keeps confidence weighting consistent with
-     * weighted-median price selection.
+     * Numeric weight for a price point: volume24h when available, else provider weight.
+     * Keeps confidence weighting consistent with weighted-median price selection.
      */
     private getSourceWeight(price: PriceData): number {
         if (price.volume24h !== undefined && price.volume24h > 0n) {
-            // Convert bigint volume to a Number for weight arithmetic.
-            // Precision loss is acceptable here: we only need relative ordering.
             return Number(price.volume24h);
         }
         const provider = this.providers.find((pr) => pr.name === price.source);
         return provider?.weight ?? 0.1;
     }
-
-    /**
-     * Get list of enabled providers
-     */
-    getProviders(): string[] {
-        return this.providers.map((p) => p.name);
-    }
-
-    /**
-     * Get aggregator statistics
-     */
-    getStats() {
-        return {
-            enabledProviders: this.providers.length,
-            cacheStats: this.cache.getStats(),
-        };
-    }
 }
 
-/**
- * Create a price aggregator
- */
+// ─── Factory ──────────────────────────────────────────────────────────────────
+
 export function createAggregator(
     providers: BasePriceProvider[],
     validator: PriceValidator,
@@ -421,48 +405,47 @@ export function createAggregator(
     return new PriceAggregator(providers, validator, cache, config);
 }
 
+// ─── Error classification ─────────────────────────────────────────────────────
+
+type FetchErrorClass = ProviderFetchEvent['errorClass'];
+
+function classifyFetchError(err: unknown): FetchErrorClass {
+    if (!(err instanceof Error)) return 'unknown';
+    const msg = err.message.toLowerCase();
+    if (msg.includes('timeout') || msg.includes('timed out')) return 'timeout';
+    if (msg.includes('429') || msg.includes('rate limit') || msg.includes('too many')) return 'rate_limit';
+    if (msg.includes('invalid') || msg.includes('validation') || msg.includes('malformed')) return 'validation';
+    if (msg.includes('network') || msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('socket')) return 'network';
+    return 'unknown';
+}
+
+// ─── MAD outlier filter ───────────────────────────────────────────────────────
+
 /**
  * Filter outlier prices using the Median Absolute Deviation (MAD) method.
  *
- * For each price p_i, compute a modified z-score:
- *   z_i = |p_i - median| / (1.4826 * MAD)
- * where MAD = median(|p_i - median|).
- * The constant 1.4826 makes MAD a consistent estimator of σ for Gaussian data.
+ * Modified z-score: z_i = |p_i - median| / (1.4826 * MAD).
+ * Prices with z_i > zMax are rejected.
  *
- * Any price with z_i > zMax is rejected as an outlier.
- *
- * Special cases:
- * - <= 2 prices: return all (not enough data to reject reliably).
- * - MAD == 0 (all prices identical, or a single unique value): return all.
- * - zMax <= 0: filter disabled, return all.
- *
- * @param prices  Validated price data points.
- * @param zMax    Maximum modified z-score to accept (e.g. 3.5). 0 disables filtering.
- * @returns       Prices with outliers removed.
+ * Special cases: ≤2 prices, MAD=0, or zMax≤0 → return all.
  */
 export function filterOutliersByMAD(prices: PriceData[], zMax: number): PriceData[] {
     if (zMax <= 0 || prices.length <= 2) return prices;
 
     const sorted = [...prices].map((p) => p.price).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-
     const med = bigintMedian(sorted);
     const deviations = sorted.map((p) => (p > med ? p - med : med - p));
     const mad = bigintMedian([...deviations].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
 
-    // When MAD is 0 all prices are identical (or only one unique value); nothing to reject.
     if (mad === 0n) return prices;
 
-    // Scale factor: 1.4826 represented as 14826 / 10000 to stay in integer arithmetic.
-    // threshold = zMax * 1.4826 * MAD  =>  price is outlier if |p - med| * 10000 > zMax * 14826 * MAD
     const zMaxScaled = BigInt(Math.round(zMax * 14826));
-
     return prices.filter((p) => {
         const dev = p.price > med ? p.price - med : med - p.price;
         return dev * 10000n <= zMaxScaled * mad;
     });
 }
 
-/** Return the median of a sorted array of bigints. */
 function bigintMedian(sorted: bigint[]): bigint {
     const mid = Math.floor(sorted.length / 2);
     if (sorted.length % 2 === 1) return sorted[mid];

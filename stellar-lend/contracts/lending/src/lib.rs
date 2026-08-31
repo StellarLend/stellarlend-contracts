@@ -111,6 +111,8 @@ mod max_borrow_proptest;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
+mod oracle_diagnostics_test;
+#[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
 mod property_invariants_test;
@@ -574,6 +576,44 @@ pub struct PriceRecord {
     pub timestamp: u64,
 }
 
+/// Structured, read-only diagnostics for a single oracle price feed.
+///
+/// Returned by [`LendingContract::get_oracle_diagnostics`].
+///
+/// All fields are derived from on-chain state at the time of the call; no
+/// computation is mutated or cached.  Off-chain monitoring tools can decode
+/// this struct to detect stale feeds, missing price bounds, or feeds that
+/// have never been initialised — without requiring a borrow attempt that
+/// would consume user funds or mutate protocol state.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleDiagnostics {
+    /// The asset address whose price feed was queried.
+    pub asset: Address,
+    /// The most-recently stored price in raw oracle units, or `None` if no
+    /// price has ever been pushed for this asset.
+    pub price: Option<i128>,
+    /// Unix timestamp (seconds) of the stored price record, or `None` if
+    /// no record exists.
+    pub record_timestamp: Option<u64>,
+    /// Current ledger timestamp (seconds since Unix epoch) at query time.
+    pub ledger_timestamp: u64,
+    /// Seconds elapsed since `record_timestamp`.  Zero when no record exists.
+    pub age_secs: u64,
+    /// The staleness threshold in seconds (`DEFAULT_ORACLE_MAX_AGE_SECS`).
+    /// A price is fresh when `age_secs <= max_age_secs`.
+    pub max_age_secs: u64,
+    /// `true` iff a price record exists and `age_secs <= max_age_secs`.
+    pub is_fresh: bool,
+    /// `true` iff at least one of `PriceMin` / `PriceMax` is configured for
+    /// this asset.
+    pub has_bounds: bool,
+    /// Configured lower price bound, or `None` if unset.
+    pub min_price: Option<i128>,
+    /// Configured upper price bound, or `None` if unset.
+    pub max_price: Option<i128>,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolMetrics {
@@ -823,6 +863,82 @@ impl LendingContract {
     /// Returns the currently configured oracle pubkey, if set.
     pub fn get_oracle_pubkey(env: Env) -> Option<BytesN<32>> {
         env.storage().instance().get(&DataKey::OraclePubKey)
+    }
+
+    /// Read-only structured diagnostics for a single oracle price feed.
+    ///
+    /// Returns the stored [`PriceRecord`] (if any) together with freshness
+    /// metadata derived from the current ledger timestamp.  The function is
+    /// intentionally read-only: it does not mutate any storage, does not
+    /// perform signature verification, and does not consume compute budget
+    /// beyond two storage reads.
+    ///
+    /// # Freshness definition
+    ///
+    /// A price is considered *fresh* when:
+    /// ```text
+    /// now <= record.timestamp + DEFAULT_ORACLE_MAX_AGE_SECS
+    /// ```
+    /// — the same predicate enforced by `get_price_for_asset` in the borrow path.
+    ///
+    /// # Use cases
+    ///
+    /// - Off-chain monitoring dashboards can poll this endpoint to detect stale
+    ///   feeds before they block borrows.
+    /// - Integration tests can assert freshness invariants without triggering a
+    ///   real borrow or liquidation.
+    /// - Operators can compare `age_secs` against their push-interval SLA to
+    ///   catch a stalled oracle pusher early.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(OracleDiagnostics)` — always succeeds; `price_record` is `None`
+    ///   when no price has ever been pushed for `asset`.
+    /// - `Err(LendingError::NotInitialized)` — contract is not yet initialised.
+    pub fn get_oracle_diagnostics(
+        env: Env,
+        asset: Address,
+    ) -> Result<OracleDiagnostics, LendingError> {
+        require_initialized(&env)?;
+
+        let now = env.ledger().timestamp();
+        let max_age = DEFAULT_ORACLE_MAX_AGE_SECS;
+
+        let record: Option<PriceRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OraclePrice(asset.clone()));
+
+        let (age_secs, is_fresh, price, record_timestamp) = match &record {
+            Some(r) => {
+                let age = now.saturating_sub(r.timestamp);
+                let fresh = now <= r.timestamp.saturating_add(max_age);
+                (age, fresh, Some(r.price), Some(r.timestamp))
+            }
+            None => (0u64, false, None, None),
+        };
+
+        let min_price: Option<i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceMin(asset.clone()));
+        let max_price: Option<i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceMax(asset.clone()));
+
+        Ok(OracleDiagnostics {
+            asset,
+            price,
+            record_timestamp,
+            ledger_timestamp: now,
+            age_secs,
+            max_age_secs: max_age,
+            is_fresh,
+            has_bounds: min_price.is_some() || max_price.is_some(),
+            min_price,
+            max_price,
+        })
     }
 
     pub fn set_price(
