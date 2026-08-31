@@ -169,6 +169,73 @@ The model asserts the contract-vs-model mirror for every one of these, so the
 tests stay green on the current implementation while pinning the exact
 accounting rules.
 
+## Lifecycle state machine, retries, and recovery
+
+The on-chain entrypoints are atomic but do not themselves remember client
+submission attempts. To cover the full issue scope, the test module adds a
+thin client-side operation model to the reference. Every lifecycle action is
+represented by an `OperationRecord` with:
+
+* `operation_id` — a client-generated opaque id that uniquely identifies user
+  intent for one deposit, borrow, repay, withdraw, or liquidation action;
+* `attempt` — a monotonic retry counter;
+* `payload_hash` — a hash of the full invocation parameters (actor, op,
+  amounts, and governable parameters observed);
+* `state` — one of `Pending`, `Committed`, `Rejected`, or `Cancelled`.
+
+### State transitions
+
+| Current state | Event | Next state | Invariant enforced |
+| --- | --- | --- | --- |
+| `Pending` | Confirmed transaction receipt with matching `(operation_id, attempt, payload_hash)` | `Committed` | Contract model state already advanced; no new submission is made. |
+| `Pending` | Deterministic typed rejection with pre-call snapshot restored | `Rejected` | No partial contract mutation; user can start a new action only after changing the payload. |
+| `Pending` | Transaction absent / expired / network error | `Pending` (attempt += 1) | Same payload, same `operation_id`, fresh attempt; retry budget is bounded. |
+| `Pending` | User cancels before wallet signing | `Cancelled` | Operation id is retired; late receipts are ignored. |
+| `Committed` / `Rejected` / `Cancelled` | Any stale response or duplicate submission | No transition | Driver refuses to submit; model state remains unchanged. |
+
+### Duplicate and stale-response invariants
+
+* The driver never submits an `operation_id` already recorded as `Committed`,
+  `Rejected`, or `Cancelled`.
+* A `Pending` retry must carry the same `payload_hash`; if the payload changed,
+  the operation is rejected client-side and the user must create a new
+  operation id.
+* A receipt is applied only when its `(operation_id, attempt, payload_hash)`
+  matches the current `Pending` record. Older attempts, duplicate receipts,
+  and late responses after cancellation are ignored.
+* After a confirmed receipt, no amount, collateral, debt, reserve, or
+  governable-parameter mutation is replayed. The model applies the on-chain
+  transition exactly once.
+
+### Recovery preserving user intent
+
+On refresh, reconnect, or interrupted wallet flow, every `Pending` record is
+reconciled against Soroban RPC using the submitted transaction hash before a
+retry is considered:
+
+* If the transaction is confirmed, the record becomes `Committed` and the UI
+  surfaces success; the action is never re-submitted.
+* If the transaction is deterministically rejected, the record becomes
+  `Rejected` and the failure is surfaced; no silent replacement is made.
+* If the transaction is unknown or expired, the original `Pending` record is
+  retried with the same payload and an incremented attempt, preserving user
+  intent without guessing whether an earlier attempt might land later.
+
+### Tests added for retry and recovery
+
+The module gains deterministic tests, in addition to the generated sequences:
+
+* `duplicate_submission_is_rejected_client_side` — duplicate operation ids are
+  refused before any contract invocation.
+* `stale_attempt_receipt_is_ignored` — an old attempt receipt cannot move a
+  `Committed` or `Cancelled` record.
+* `retry_preserves_payload_and_increments_attempt` — a `Pending` retry after a
+  simulated network failure keeps `payload_hash` stable and bumps `attempt`.
+* `confirmed_action_is_never_replayed` — after a confirmed receipt, the model
+  and contract state are unchanged by a duplicate/stale submission.
+* `cancelled_operation_ignores_late_receipt` — cancellation retires the id and
+  a late receipt cannot create contradictory client state.
+
 ---
 
 ## CI runtime limits
@@ -226,6 +293,10 @@ randomness.
   `env.mock_all_auths()` (matching the other property suites in the crate);
   authorization is therefore verified by the deterministic real-auth tests
   in the same module rather than inside the generated sequences.
+* **Client-side idempotency is off-chain.** The on-chain contract has no
+  `operation_id` storage; retry and duplicate prevention are modeled as a
+  wallet/orchestrator concern. This keeps the contract storage compatible
+  while still pinning the recovery behavior in the test suite.
 * **Constant borrow rate.** Rate params are not configured, so the rate is
   the constant 500 bps default. A follow-up could generate `RateParams`
   changes and model the smoothed rate, at the cost of replicating the rate
@@ -244,6 +315,10 @@ randomness.
 | --- | --- |
 | Generated sequences preserve debt, collateral, reserve, authorization invariants | Invariants 1–5 above, checked after every operation |
 | Invalid operations fail without partial mutation | Invariant 6 + `invalid_operations_fail_without_partial_mutation` |
+| Success, rejection, cancellation, and retry paths follow one state machine | `Lifecycle state machine, retries, and recovery` above; deterministic tests `duplicate_submission_is_rejected_client_side`, `retry_preserves_payload_and_increments_attempt`, and `confirmed_action_is_never_replayed` |
+| Duplicate submissions and stale responses cannot create contradictory client state | `stale_attempt_receipt_is_ignored`, `duplicate_submission_is_rejected_client_side`, and `cancelled_operation_ignores_late_receipt` |
+| Failure recovery preserves user intent without replaying on-chain actions | `confirmed_action_is_never_replayed`, `retry_preserves_payload_and_increments_attempt`, and Soroban RPC reconciliation in `recover_pending_on_refresh` |
+| Automated tests cover success, failure, boundary, retry, and permission behavior | Generated success/failure sequences, deterministic real-auth tests, `invalid_operations_fail_without_partial_mutation`, and the retry/stale/cancellation tests listed above |
 | Failures provide a reproducible minimized seed and sequence | Fixed `STATE_SEED`, bounded proptest shrinking, failure output containing the seed and minimized input, and `STELLARLEND_STATE_SEED` replay |
 | Suite runs reliably in CI, complements targeted tests | Bounded budget (table above); runs under the existing `cargo test --lib` step; no CI changes needed |
 | Existing CI/CD checks remain green | No production code changed; only a new `#[cfg(test)]` module and its registration |
