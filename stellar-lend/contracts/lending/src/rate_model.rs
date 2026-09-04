@@ -214,9 +214,12 @@ pub fn compute_borrow_rate(
     utilization_bps: i128,
     params: &RateParams,
 ) -> Result<i128, RateModelError> {
+    // Enforce strict utilization bounds - reject out-of-range rather than silent clamping
     if !(0..=BPS_DENOM).contains(&utilization_bps) {
         return Err(RateModelError::OutOfRange);
     }
+    
+    // Validate all rate parameters are non-negative to preserve monotonicity
     if params.base_rate_bps < 0
         || params.kink_utilization_bps < 0
         || params.multiplier_bps < 0
@@ -228,6 +231,22 @@ pub fn compute_borrow_rate(
         || params.surcharge_kink_bps < 0
         || params.surcharge_slope < 0
     {
+        return Err(RateModelError::OutOfRange);
+    }
+    
+    // Additional authorization boundary checks for hostile inputs
+    // Ensure kink_utilization is within valid bounds
+    if params.kink_utilization_bps > BPS_DENOM {
+        return Err(RateModelError::OutOfRange);
+    }
+    
+    // Ensure surcharge_kink is within valid bounds
+    if params.surcharge_kink_bps > BPS_DENOM {
+        return Err(RateModelError::OutOfRange);
+    }
+    
+    // Ensure rate floor does not exceed ceiling (logical consistency)
+    if params.rate_floor_bps > params.rate_ceiling_bps {
         return Err(RateModelError::OutOfRange);
     }
     let pre_kink_rate = params

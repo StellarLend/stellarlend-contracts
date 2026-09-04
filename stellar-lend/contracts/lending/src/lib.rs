@@ -77,6 +77,8 @@ mod granular_pause_ops_test;
 #[cfg(test)]
 mod health_factor_edge_test;
 #[cfg(test)]
+mod hostile_input_boundary_test;
+#[cfg(test)]
 mod initialize_auth_test;
 #[cfg(test)]
 mod interest_drift_regression_test;

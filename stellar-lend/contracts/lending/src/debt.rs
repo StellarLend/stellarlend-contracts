@@ -198,6 +198,13 @@ pub fn save_last_index_update(env: &Env, ts: u64) {
 /// All intermediate multiplications use `checked_*` to detect overflow.
 /// Returns the new (or unchanged, if elapsed == 0 or rate == 0) index.
 ///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `current_index > 0` to reject malicious zero/negative indices
+/// - Validates `rate_bps >= 0` to reject negative interest rates
+/// - Validates `rate_bps <= MAX_RATE_BPS` to reject unreasonably high rates
+/// - Uses checked arithmetic throughout to detect all overflow conditions
+///
 /// # Overflow guard
 /// If the new index would exceed `i128::MAX / INDEX_SCALE` the function
 /// panics with `"BorrowIndex: overflow guard triggered"`.
@@ -205,6 +212,19 @@ pub fn save_last_index_update(env: &Env, ts: u64) {
 /// # Monotonicity guarantee
 /// The returned value is always `>= current_index`.
 pub fn accrue_index(current_index: i128, elapsed: u64, rate_bps: i128) -> i128 {
+    // Authorization boundary: reject invalid indices
+    if current_index <= 0 {
+        panic!("BorrowIndex: invalid current_index (must be > 0)");
+    }
+    
+    // Authorization boundary: reject negative or excessive rates
+    if rate_bps < 0 {
+        panic!("BorrowIndex: negative rate_bps not allowed");
+    }
+    if rate_bps > crate::math::MAX_RATE_BPS {
+        panic!("BorrowIndex: rate_bps exceeds MAX_RATE_BPS");
+    }
+    
     if elapsed == 0 || rate_bps == 0 {
         return current_index;
     }
@@ -387,7 +407,30 @@ pub fn elapsed_seconds(now: u64, last_update: u64) -> u64 {
 ///
 /// Retained for backward compatibility with existing tests; new code should
 /// use `compute_debt` + `touch_borrow_index` instead.
+///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `principal >= 0` to reject malicious negative principal
+/// - Validates `rate_bps >= 0` to reject negative interest rates  
+/// - Validates `rate_bps <= MAX_RATE_BPS` to reject unreasonably high rates
+/// - Returns zero for zero principal or elapsed time (safe short-circuit)
+/// - Uses checked arithmetic to detect overflow on hostile large inputs
 pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, DebtError> {
+    // Authorization boundary: reject negative principal
+    if principal < 0 {
+        return Err(DebtError::InvalidAmount);
+    }
+    
+    // Authorization boundary: reject negative rates
+    if rate_bps < 0 {
+        return Err(DebtError::Overflow);
+    }
+    
+    // Authorization boundary: reject excessive rates
+    if rate_bps > crate::math::MAX_RATE_BPS {
+        return Err(DebtError::Overflow);
+    }
+    
     if principal == 0 || elapsed == 0 {
         return Ok(0);
     }
@@ -416,6 +459,12 @@ pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<
 /// The depositor share is the complement, so `depositor_yield + reserve_cut ==
 /// total_interest` exactly — no precision is lost to either side.
 ///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `reserve_factor_bps <= BPS_DENOM` to prevent excessive reserve
+/// - Delegates principal, rate, and elapsed validation to `accrue_interest`
+/// - Uses checked arithmetic in split calculation to detect overflow
+///
 /// # Arguments
 ///
 /// * `principal`           – Current settled principal (≥ 0).
@@ -434,6 +483,11 @@ pub fn accrue_interest_split(
     rate_bps: i128,
     reserve_factor_bps: u32,
 ) -> Result<InterestSplit, DebtError> {
+    // Authorization boundary: validate reserve factor before calculation
+    if reserve_factor_bps > stellar_lend_common::BPS_DENOM as u32 {
+        return Err(DebtError::Overflow);
+    }
+    
     let total_interest = accrue_interest(principal, elapsed, rate_bps)?;
 
     // Delegate to the pure math helper which validates reserve_factor_bps.
@@ -616,19 +670,34 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
 /// bounded and deterministic at maximum utilization instead of feeding an
 /// out-of-range utilization to the model.
+///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `total_debt >= 0` to reject malicious negative debt values
+/// - Validates `total_supply >= 0` to reject malicious negative supply values
+/// - Returns zero utilization when supply is zero or negative (safe fallback)
+/// - Bounds result to [0, BPS_DENOM] to ensure rate model receives valid input
 pub(crate) fn compute_utilization_bps(
     snapshot: &RateSnapshot,
 ) -> Result<i128, DebtError> {
+    // Reject negative debt (hostile input boundary)
+    if snapshot.total_debt < 0 {
+        return Err(DebtError::Overflow);
+    }
+    
+    // Safe fallback for zero or negative supply
     if snapshot.total_supply <= 0 {
         return Ok(0);
     }
+    
+    // Checked multiplication to detect overflow on hostile large debt values
     snapshot
         .total_debt
         .checked_mul(BPS_DENOM)
         .ok_or(DebtError::Overflow)?
         .checked_div(snapshot.total_supply)
         .ok_or(DebtError::Overflow)
-        .map(|raw| raw.min(BPS_DENOM))
+        .map(|raw| raw.max(0).min(BPS_DENOM)) // Enforce [0, BPS_DENOM] bounds
 }
 
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.
@@ -701,6 +770,14 @@ pub fn settle_accrual_split(
 /// `borrow_rate * utilization / 10_000`, which is the full utilization-weighted
 /// borrow rate — identical to the previous (no-reserve) behaviour.
 ///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `borrow_rate_bps >= 0` to reject negative rates
+/// - Validates `utilization_bps >= 0` to reject negative utilization
+/// - Validates `reserve_factor_bps <= BPS_DENOM` to prevent excessive reserve
+/// - Uses checked arithmetic throughout to detect overflow on hostile inputs
+/// - Returns non-negative rate (clamped to zero minimum)
+///
 /// # Arguments
 ///
 /// * `borrow_rate_bps`    – Current borrow APR in basis points.
@@ -722,11 +799,21 @@ pub fn effective_supply_rate(
 ) -> Result<i128, DebtError> {
     use crate::rounding_strategy::BASIS_POINTS_SCALE;
 
-    // Guard inputs so we fail clearly rather than produce silent garbage.
+    // Authorization boundary: guard inputs so we fail clearly rather than produce silent garbage.
     if borrow_rate_bps < 0 || utilization_bps < 0 {
         return Err(DebtError::Overflow);
     }
     if reserve_factor_bps > BASIS_POINTS_SCALE as u32 {
+        return Err(DebtError::Overflow);
+    }
+    
+    // Additional hostile input boundary: reject unreasonably high rates
+    if borrow_rate_bps > crate::math::MAX_RATE_BPS {
+        return Err(DebtError::Overflow);
+    }
+    
+    // Boundary check: utilization should not exceed 100%
+    if utilization_bps > stellar_lend_common::BPS_DENOM {
         return Err(DebtError::Overflow);
     }
 

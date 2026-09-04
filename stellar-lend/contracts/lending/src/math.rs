@@ -31,14 +31,24 @@ pub enum MathError {
 ///
 /// The reserve share is rounded down and the depositor receives the remainder,
 /// which guarantees that the two results always sum to `total_interest`.
+///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `principal >= 0` to reject malicious negative principal
+/// - Validates `rate_bps >= 0` and `<= MAX_RATE_BPS` to reject invalid rates
+/// - Validates `elapsed_seconds` does not cause overflow
+/// - Uses checked arithmetic throughout to detect all overflow conditions
 pub fn compute_compound_interest(
     principal: i128,
     rate_bps: i128,
     elapsed_seconds: u64,
 ) -> Result<i128, MathError> {
+    // Authorization boundary: validate all inputs
     if principal < 0 || rate_bps < 0 || rate_bps > MAX_RATE_BPS {
         return Err(MathError::OutOfRange);
     }
+    
+    // Safe short-circuit for zero values
     if principal == 0 || elapsed_seconds == 0 || rate_bps == 0 {
         return Ok(0);
     }
@@ -55,10 +65,22 @@ pub fn compute_compound_interest(
     Ok(interest)
 }
 
+/// Split accrued interest into depositor yield and protocol reserve.
+///
+/// The reserve share is rounded down and the depositor receives the remainder,
+/// which guarantees that the two results always sum to `total_interest`.
+///
+/// # Authorization and Hostile Input Boundary
+///
+/// - Validates `total_interest >= 0` to reject negative interest
+/// - Validates `reserve_factor_bps <= BPS_SCALE` to prevent excessive reserve
+/// - Uses checked arithmetic to detect overflow
+/// - Ensures depositor_yield + reserve_cut == total_interest (no precision loss)
 pub fn split_interest_by_reserve_factor(
     total_interest: i128,
     reserve_factor_bps: u32,
 ) -> Result<(i128, i128), MathError> {
+    // Authorization boundary: validate inputs
     if total_interest < 0 || reserve_factor_bps > BPS_SCALE {
         return Err(MathError::OutOfRange);
     }
