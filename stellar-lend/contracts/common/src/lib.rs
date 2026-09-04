@@ -336,9 +336,12 @@ mod tests {
     }
 
     #[test]
-    fn scale_bps_overflow_returns_none() {
-        // i128::MAX * 1 overflows in checked_mul → None
-        assert_eq!(scale_bps(i128::MAX, 2), None);
+    fn scale_bps_max_value_no_overflow() {
+        assert_eq!(scale_bps(i128::MAX, BPS_DENOM), Some(i128::MAX));
+        assert_eq!(scale_bps(i128::MIN, BPS_DENOM), Some(i128::MIN));
+        let expected = (i128::MAX / BPS_DENOM) * 2
+            + ((i128::MAX % BPS_DENOM) * 2) / BPS_DENOM;
+        assert_eq!(scale_bps(i128::MAX, 2), Some(expected));
     }
 
     #[test]
@@ -385,6 +388,12 @@ mod tests {
     fn unscale_bps_overflow_returns_none() {
         // i128::MAX * BPS_DENOM overflows
         assert_eq!(unscale_bps(i128::MAX, 1), None);
+    }
+
+    #[test]
+    fn unscale_bps_max_value_full_rate() {
+        assert_eq!(unscale_bps(i128::MAX, BPS_DENOM), Some(i128::MAX));
+        assert_eq!(unscale_bps(i128::MIN, BPS_DENOM), Some(i128::MIN));
     }
 
     #[test]

@@ -1,8 +1,3 @@
-//! Fuzz target: Supply rate computation
-//!
-//! Fuzzes `compute_supply_rate` to detect overflow and ensure
-//! supply rate <= borrow rate (after reserve factor adjustment).
-
 #![no_main]
 
 use arbitrary::Arbitrary;

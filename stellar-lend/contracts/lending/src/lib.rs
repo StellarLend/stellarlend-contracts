@@ -10,7 +10,17 @@ pub mod math;
 mod rate_model;
 pub mod rounding_strategy;
 pub mod upgrade;
+pub mod invariants;
+pub mod operation_tracker;
+pub mod two_phase_ops;
+pub mod flash_loan_state;
+pub mod authorization;
+pub mod validation;
 
+#[cfg(test)]
+mod adversarial_scenarios_test;
+#[cfg(test)]
+mod event_schema_versioning_test;
 #[cfg(test)]
 mod governance_audit_test;
 
@@ -125,6 +135,8 @@ mod rate_updated_event_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
 #[cfg(test)]
+mod invariant_integration_test;
+#[cfg(test)]
 mod repay_overpay_test;
 #[cfg(test)]
 mod reserve_split_proptest;
@@ -137,9 +149,10 @@ mod stateful_lifecycle_invariant_test;
 #[cfg(test)]
 mod storage_tier_test;
 #[cfg(test)]
+#[cfg(test)]
 mod supply_rate_split_test;
 
-#[cfg(test)]
+#[cfg(test))]
 mod config_roundtrip_test;
 #[cfg(test)]
 mod utilization_history_test;
@@ -298,6 +311,10 @@ pub enum DataKey {
     ConfigEntries,
     /// Config store: named backup snapshot.
     ConfigBackup(Symbol),
+    /// Operation tracking: per-user sequence number for operation ordering.
+    UserOperationSequence(Address),
+    /// Operation tracking: operation ID → OperationRecord mapping for deduplication.
+    OperationRecord(BytesN<32>),
 }
 
 #[contractevent]
@@ -479,6 +496,19 @@ pub enum LendingError {
     ApproverNotFound = 4009,
     MaxApproversReached = 4010,
     InvalidUpgradeConfig = 4011,
+    /// The upgrade proposal has been cancelled and cannot be acted on.
+    UpgradeProposalCancelled = 4012,
+    /// The upgrade proposal is not in a cancellable (pending) state.
+    UpgradeProposalNotCancellable = 4013,
+    /// The upgrade approver set changed after the proposal was created, so
+    /// in-flight approvals are no longer authorized to execute.
+    ApproverSetChanged = 4014,
+    /// A stale/duplicate upgrade submission would create contradictory state
+    /// and is rejected rather than silently re-applied.
+    UpgradeSubmissionConflict = 4015,
+    /// The recorded approval binding does not match the expected nonce-bound
+    /// domain-separated authorization for this proposal/approver pair.
+    ApprovalBindingMismatch = 4016,
     /// `write_off_bad_debt` called when there is no recorded bad debt.
     NoBadDebt = 6001,
     /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
@@ -507,6 +537,9 @@ pub enum LendingError {
     /// `receive` called with `from` equal to the token asset or the lending
     /// contract itself (prevents self-call / reentrancy attacks).
     UnauthorizedSender = 1016,
+    /// A prepared operation (prepare_borrow, prepare_withdraw) has exceeded
+    /// its maximum age and must be re-prepared with fresh validation.
+    OperationExpired = 1017,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -853,9 +886,88 @@ impl LendingContract {
             .ok_or(LendingError::OraclePubkeyNotSet)?;
 
         let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
-        // ed25519_verify traps (panics) on bad signature in soroban-sdk 25.x
-        env.crypto()
-            .ed25519_verify(&oracle_pubkey, &payload, &signature);
+        if !env
+            .crypto()
+            .ed25519_verify(&oracle_pubkey, &payload, &signature)
+        {
+            return Err(LendingError::InvalidOracleSignature);
+        }
+
+        // A retry of an already-applied update is a successful no-op. The
+        // signature above proves the caller is authoritative for this payload.
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp == last.timestamp && price == last.price {
+                return Ok(());
+            }
+        }
+
+        // Per-update move-cap circuit breaker.
+        // If max_move_bps is configured and a prior price record exists, reject
+        // updates that move the price beyond the configured threshold.
+        if let Some(max_move_bps) = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
+        {
+            if let Some(last) = existing_record.as_ref() {
+                let last_price = last.price;
+                // delta = |price - last_price| * 10_000 / last_price
+                let delta_abs = if price >= last_price {
+                    price
+                        .checked_sub(last_price)
+                        .ok_or(LendingError::Overflow)?
+                } else {
+                    last_price
+                        .checked_sub(price)
+                        .ok_or(LendingError::Overflow)?
+                };
+                let move_bps = delta_abs
+                    .checked_mul(BPS_DENOM)
+                    .ok_or(LendingError::Overflow)?
+                    .checked_div(last_price)
+                    .ok_or(LendingError::Overflow)?;
+                if move_bps > max_move_bps {
+                    return Err(LendingError::MaxMoveBpsExceeded);
+                }
+            }
+            // No prior record: first-ever price for this asset is exempt.
+        }
+
+        // Per-update move-cap circuit breaker.
+        // If max_move_bps is configured and a prior price record exists, reject
+        // updates that move the price beyond the configured threshold.
+        if let Some(max_move_bps) = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
+        {
+            if let Some(last) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
+            {
+                let last_price = last.price;
+                // delta = |price - last_price| * 10_000 / last_price
+                let delta_abs = if price >= last_price {
+                    price
+                        .checked_sub(last_price)
+                        .ok_or(LendingError::Overflow)?
+                } else {
+                    last_price
+                        .checked_sub(price)
+                        .ok_or(LendingError::Overflow)?
+                };
+                let move_bps = delta_abs
+                    .checked_mul(BPS_DENOM)
+                    .ok_or(LendingError::Overflow)?
+                    .checked_div(last_price)
+                    .ok_or(LendingError::Overflow)?;
+                if move_bps > max_move_bps {
+                    return Err(LendingError::MaxMoveBpsExceeded);
+                }
+            }
+            // No prior record: first-ever price for this asset is exempt.
+        }
 
         // Per-update move-cap circuit breaker.
         // If max_move_bps is configured and a prior price record exists, reject
@@ -1378,6 +1490,7 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
+
     /// Receive tokens from a user via the SEP-41 `transfer_from`/`approve`
     /// allowance flow and apply them as a deposit or debt repayment.
     ///
@@ -1494,6 +1607,14 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Deposit collateral with comprehensive authorization and validation.
+    ///
+    /// # Security
+    /// - Validates authorization through require_auth
+    /// - Validates amount and deposit cap
+    /// - Checks reserve invariants before and after
+    /// - Prevents replay attacks
+    /// - Enforces network validation
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Deposit);
@@ -1530,16 +1651,30 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
+<<<<<<< HEAD
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
+=======
 
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
 
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(new_balance)
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
+<<<<<<< HEAD
+    pub fn withdraw(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
+=======
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Withdraw);
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
@@ -1567,10 +1702,17 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
+<<<<<<< HEAD
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
+=======
 
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
 
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(new_balance)
     }
 
@@ -1638,8 +1780,15 @@ impl LendingContract {
     /// and rejects the borrow when the post-borrow health factor would fall below
     /// 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
     /// `DataKey::DebtCeiling`.
+<<<<<<< HEAD
+    pub fn borrow(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
+=======
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1686,6 +1835,12 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
+<<<<<<< HEAD
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
+=======
 
         save_debt(&env, &user, &updated);
         // Extend TTL to prevent archival of debt entry
@@ -1694,6 +1849,7 @@ impl LendingContract {
         // Emit borrow event
         emit_borrow(&env, &user, amount, updated.principal);
 
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(updated.principal)
     }
 
@@ -1719,7 +1875,13 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
+<<<<<<< HEAD
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
+=======
         require_initialized(&env)?;
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1770,6 +1932,9 @@ impl LendingContract {
             increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
 
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &collateral_asset);
+
         Ok(updated.principal)
     }
 
@@ -1787,7 +1952,13 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
+<<<<<<< HEAD
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
+=======
         require_initialized(&env)?;
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
         if amount <= 0 {
@@ -1831,7 +2002,13 @@ impl LendingContract {
             decrement_isolation_debt(&env, &collateral_asset, repaid)?;
         }
 
+<<<<<<< HEAD
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &collateral_asset);
+
+=======
         check_and_clear_unhealthy_timestamp(&env, &user);
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(updated.principal)
     }
 
@@ -1897,12 +2074,23 @@ impl LendingContract {
         collateral_asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
+<<<<<<< HEAD
+        // Check invariants BEFORE state change for both assets
+        invariants::check_invariant_before(&env, &debt_asset);
+        invariants::check_invariant_before(&env, &collateral_asset);
+        
+        liquidator.require_auth();
+        if liquidator == borrower {
+            return Err(LendingError::SelfLiquidation);
+        }
+=======
         require_initialized(&env)?;
         with_reentrancy_lock(&env, || {
             liquidator.require_auth();
             if liquidator == borrower {
                 return Err(LendingError::SelfLiquidation);
             }
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
 
             check_pause_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
@@ -2150,6 +2338,19 @@ impl LendingContract {
         Ok(())
     }
 
+<<<<<<< HEAD
+        // Check invariants AFTER state change for both assets
+        invariants::check_invariant_after(&env, &debt_asset);
+        invariants::check_invariant_after(&env, &collateral_asset);
+
+        Ok(actual_repay)
+    }
+
+    pub fn repay(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
+        // Check invariant BEFORE state change
+        invariants::check_invariant_before(&env, &asset);
+        
+=======
     /// Return the effective liquidation incentive (basis points) used by
     /// `liquidate` — the bonus, on top of the repaid debt, paid to the
     /// liquidator in seized collateral.
@@ -2200,6 +2401,7 @@ impl LendingContract {
 
     pub fn repay(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
 
@@ -2234,10 +2436,17 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
+<<<<<<< HEAD
+        
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &asset);
+        
+=======
 
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
 
+>>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(updated.principal)
     }
 
@@ -3179,6 +3388,11 @@ impl LendingContract {
         upgrade::upgrade_execute(&env, &caller, proposal_id)
     }
 
+    /// Cancel a pending upgrade proposal (admin-only, issue #1940).
+    pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
+        upgrade::upgrade_cancel(&env, &caller, proposal_id)
+    }
+
     pub fn upgrade_set_required_approvals(
         env: Env,
         caller: Address,
@@ -3233,6 +3447,32 @@ impl LendingContract {
         proposal_id: u64,
     ) -> Result<upgrade::UpgradeStatus, LendingError> {
         upgrade::upgrade_status(&env, proposal_id)
+    }
+
+    /// Returns whether a proposal is in the `Cancelled` terminal state (issue #1940).
+    pub fn is_upgrade_proposal_cancelled(env: Env, proposal_id: u64) -> bool {
+        upgrade::is_proposal_cancelled(&env, proposal_id)
+    }
+
+    /// Returns the stored domain-separated approval binding hash for
+    /// `(proposal_id, approver)` (issue #1940).
+    pub fn get_upgrade_approval_binding(
+        env: Env,
+        proposal_id: u64,
+        approver: Address,
+    ) -> Option<BytesN<32>> {
+        upgrade::get_approval_binding(&env, proposal_id, approver)
+    }
+
+    /// Returns the approver-set fingerprint captured when the proposal was
+    /// created (issue #1940).
+    pub fn get_upgrade_proposal_signer_hash(env: Env, proposal_id: u64) -> Option<BytesN<32>> {
+        upgrade::get_proposal_approver_set_hash(&env, proposal_id)
+    }
+
+    /// Returns the fingerprint of the live upgrade approver set (issue #1940).
+    pub fn get_upgrade_approver_set_hash(env: Env) -> BytesN<32> {
+        upgrade::get_approver_set_hash(&env)
     }
 
     pub fn get_min_upgrade_delay_ledgers(env: Env) -> u32 {
@@ -4242,6 +4482,96 @@ pub(crate) mod test {
         assert!(
             matches!(res, Err(Ok(LendingError::StaleOracleTimestamp))),
             "expected StaleOracleTimestamp, got {:?}",
+            res
+        );
+    }
+ 
+    #[test]
+    fn test_set_price_retry_exact_update_is_idempotent() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+
+        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        let retry = client.try_set_price(&admin, &asset, &price, &timestamp, &signature);
+        assert!(
+            retry.is_ok(),
+            "exact retry must be treated as an idempotent success, got {:?}",
+            retry
+        );
+        let record = client.get_price_record(&asset).expect("price record exists");
+        assert_eq!(record.price, price);
+        assert_eq!(record.timestamp, timestamp);
+    }
+
+    #[test]
+    fn test_set_price_rejects_same_timestamp_different_price() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let timestamp = env.ledger().timestamp();
+        let price1 = 1_000_000_000i128;
+        let price2 = 1_500_000_000i128;
+        let signature1 = sign_oracle_update(&env, &keypair, &asset, price1, timestamp);
+        let signature2 = sign_oracle_update(&env, &keypair, &asset, price2, timestamp);
+
+        client.set_price(&admin, &asset, &price1, &timestamp, &signature1);
+        let res = client.try_set_price(&admin, &asset, &price2, &timestamp, &signature2);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_rejects_older_timestamp_after_update() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+
+        let old_timestamp = timestamp.saturating_sub(1);
+        let old_signature = sign_oracle_update(&env, &keypair, &asset, price, old_timestamp);
+        let res = client.try_set_price(&admin, &asset, &price, &old_timestamp, &old_signature);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_requires_admin() {
+        let (env, client, _admin, _user) = setup();
+        let attacker = Address::generate(&env);
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_000_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let res = client.try_set_price(&attacker, &asset, &price, &timestamp, &signature);
+        assert!(
+            matches!(res, Err(Ok(LendingError::Unauthorized))),
+            "expected Unauthorized, got {:?}",
             res
         );
     }
