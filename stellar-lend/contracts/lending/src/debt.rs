@@ -1,5 +1,6 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
+use crate::events::MAX_ACCRUAL_LOG_SIZE;
 use crate::math::split_interest_by_reserve_factor;
 use crate::rounding_strategy::{calculate_interest_with_rounding, RoundingError, RoundingMode};
 use crate::{rate_model, write_utilization_sample, DataKey};

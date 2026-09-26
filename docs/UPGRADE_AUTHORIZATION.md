@@ -16,6 +16,28 @@ This document describes how upgrade authorization works for the lending contract
 
 All mutating authorization paths call `require_auth()` on the provided caller.
 
+## Public API contract
+
+The entrypoints `upgrade_init`, `upgrade_propose`, `upgrade_add_approver`,
+`upgrade_remove_approver`, `upgrade_approve`, and `upgrade_execute` form the public upgrade API.
+Their names, argument order, authorization rules, and state transitions are part of the stable
+contract. Existing consumers (governance front-ends, automation, and downstream contracts) rely on
+these exact semantics; any change that alters authorization, failure behavior, or event emission must
+be treated as a breaking change and coordinated with a migration plan.
+
+The contract also guarantees these invariants at all times:
+
+- `required_approvals` is always `> 0` and cannot exceed the current approver set size.
+- A proposal can be executed only after at least `required_approvals` distinct current approvers have
+  approved it.
+- Approvals from addresses that are not current approvers are rejected, including addresses that
+  approved the proposal before being removed.
+- `upgrade_remove_approver` refuses to remove an approver if doing so would make the current threshold
+  unsatisfiable.
+- `upgrade_execute` refuses to execute a proposal whose `new_version <= current_version`.
+
+These invariants are enforced by the contract and covered by the failure-path tests described below.
+
 ## Role separation
 
 - The stored `admin` is the governance authority for upgrade configuration: it can propose upgrades
