@@ -43,6 +43,7 @@ pub mod liquidate;
 pub mod multisig;
 pub mod oracle;
 pub mod recovery;
+pub mod reentrancy;
 pub mod repay;
 pub mod reserve;
 pub mod risk_management;
@@ -232,54 +233,72 @@ impl HelloContract {
     }
 
     /// Increment the user's deposit balance.
+    ///
+    /// Protected by the reentrancy guard: reentrant calls (e.g. from an
+    /// `invoke_contract` callback triggered inside the same transaction) are
+    /// rejected with a `ReentrantCall` panic, preventing double-spend attacks.
     pub fn deposit(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Balance(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_bal = current + amount;
         env.storage().persistent().set(&key, &new_bal);
+        reentrancy::release(&env);
         new_bal
     }
 
     /// Decrement the user's deposit balance.
+    ///
+    /// Protected by the reentrancy guard.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Balance(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_bal = current - amount;
         env.storage().persistent().set(&key, &new_bal);
+        reentrancy::release(&env);
         new_bal
     }
 
     /// Borrow increases the user's debt.
+    ///
+    /// Protected by the reentrancy guard.
     pub fn borrow(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Debt(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_debt = current + amount;
         env.storage().persistent().set(&key, &new_debt);
+        reentrancy::release(&env);
         new_debt
     }
 
     /// Repay decreases the user's debt.
+    ///
+    /// Protected by the reentrancy guard.
     pub fn repay(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Debt(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_debt = current - amount;
         env.storage().persistent().set(&key, &new_debt);
+        reentrancy::release(&env);
         new_debt
     }
 
@@ -865,6 +884,17 @@ impl HelloContract {
     /// Check if emergency pause is active.
     pub fn is_emergency_paused(env: Env) -> bool {
         risk_management::is_emergency_paused(&env)
+    }
+
+    /// Check if the reentrancy guard is currently locked.
+    ///
+    /// Returns `true` when a protected entrypoint (`deposit`, `withdraw`,
+    /// `borrow`, `repay`) is currently executing.  Under normal operation
+    /// this will always be `false` when queried from outside the contract;
+    /// it is exposed primarily for off-chain monitoring and integration
+    /// tests.
+    pub fn is_reentrant_locked(env: Env) -> bool {
+        reentrancy::is_locked(&env)
     }
 
     /// Set emergency pause (admin only).
