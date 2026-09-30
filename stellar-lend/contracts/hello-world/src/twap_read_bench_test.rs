@@ -91,7 +91,7 @@ fn get_twap_read_cost_stays_logarithmic_as_snapshots_grow() {
             comparisons <= TWAP_READ_SEARCH_COMPARISON_BUDGET,
             "lookup exceeded the global read budget"
         );
-        assert_eq!(get_twap(&env, &asset, SNAPSHOT_INTERVAL_SECS), PRICE_SCALE);
+        assert_eq!(get_twap(&env, &asset, SNAPSHOT_INTERVAL_SECS).unwrap(), PRICE_SCALE);
     }
 }
 

@@ -65,8 +65,8 @@ pub enum BridgeDataKey {
     /// Stored in *instance* storage (low write count, high read count).
     Guardian,
     /// Address authorised to administer bridges (register / set fee / set
-    /// guardian). Stored in *instance* storage.
-    Admin,
+    /// guardian). Stored by the shared admin module in instance storage.
+    ///
     /// `bool` flag: when `true`, `bridge_withdraw` is rejected with
     /// [`BridgeError::Frozen`]. Stored in *instance* storage.
     IsFrozen,
@@ -178,17 +178,6 @@ fn emit_freeze_event(env: &Env, guardian: &Address, is_frozen: bool) {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Enforce that `caller` is the stored admin. Must call `require_auth()` first.
-fn require_admin(env: &Env, caller: &Address) -> Result<(), BridgeError> {
-    caller.require_auth();
-    let admin: Option<Address> = env.storage().instance().get(&BridgeDataKey::Admin);
-    match admin {
-        Some(admin) if &admin == caller => Ok(()),
-        Some(_) => Err(BridgeError::Unauthorized),
-        None => Err(BridgeError::AdminNotInitialized),
-    }
-}
-
 /// Enforce that `caller` is the stored guardian. Must call `require_auth()`
 /// first and is distinct from `require_admin` — the guardian and the admin
 /// are *intentionally* different roles so that a key compromise on one role
@@ -241,12 +230,10 @@ fn add_to_index(env: &Env, network_id: u32) {
 /// Any address may call this once; after the admin is set, only the admin
 /// can update it.
 pub fn initialize(env: &Env, admin: Address) {
-    if env.storage().instance().has(&BridgeDataKey::Admin) {
+    if crate::admin::has_admin(env) {
         return;
     }
-    env.storage()
-        .instance()
-        .set(&BridgeDataKey::Admin, &admin);
+    crate::admin::set_admin(env, admin, None).expect("bridge admin initialization should succeed");
 }
 
 /// Register a bridge for `network_id` (admin only).
@@ -261,7 +248,10 @@ pub fn register_bridge(
     bridge: Address,
     fee_bps: i128,
 ) -> Result<(), BridgeError> {
-    require_admin(env, &caller)?;
+    crate::admin::require_admin(env, &caller).map_err(|error| match error {
+        crate::admin::AdminError::NotInitialized => BridgeError::AdminNotInitialized,
+        _ => BridgeError::Unauthorized,
+    })?;
     if !(0..=10_000).contains(&fee_bps) {
         return Err(BridgeError::FeeOutOfRange);
     }
@@ -289,7 +279,10 @@ pub fn set_bridge_fee(
     network_id: u32,
     fee_bps: i128,
 ) -> Result<(), BridgeError> {
-    require_admin(env, &caller)?;
+    crate::admin::require_admin(env, &caller).map_err(|error| match error {
+        crate::admin::AdminError::NotInitialized => BridgeError::AdminNotInitialized,
+        _ => BridgeError::Unauthorized,
+    })?;
     if !(0..=10_000).contains(&fee_bps) {
         return Err(BridgeError::FeeOutOfRange);
     }
@@ -314,7 +307,10 @@ pub fn set_bridge_guardian(
     caller: Address,
     guardian: Address,
 ) -> Result<(), BridgeError> {
-    require_admin(env, &caller)?;
+    crate::admin::require_admin(env, &caller).map_err(|error| match error {
+        crate::admin::AdminError::NotInitialized => BridgeError::AdminNotInitialized,
+        _ => BridgeError::Unauthorized,
+    })?;
     env.storage()
         .instance()
         .set(&BridgeDataKey::Guardian, &guardian);
@@ -476,9 +472,7 @@ pub fn unfreeze_bridge(env: &Env, caller: Address) -> Result<(), BridgeError> {
         // No-op: do not double-emit.
         return Ok(());
     }
-    env.storage()
-        .instance()
-        .remove(&BridgeDataKey::IsFrozen);
+    env.storage().instance().remove(&BridgeDataKey::IsFrozen);
     emit_freeze_event(env, &caller, false);
     Ok(())
 }

@@ -88,7 +88,7 @@ Set once at `initialize()` and stored in **instance storage**.  Cannot be cleare
 | `set_guardian` | Appoints a secondary emergency key |
 | `set_oracle` / `set_primary_oracle` / `set_fallback_oracle` / `configure_oracle` / `set_oracle_paused` | Price-feed governance |
 | `set_liquidation_threshold_bps` / `set_close_factor_bps` / `set_liquidation_incentive_bps` | Risk parameter tuning |
-| `set_flash_loan_fee_bps` | Flash-loan revenue policy |
+| `set_flash_fee` | Flash-loan revenue policy |
 | `start_recovery` / `complete_recovery` | Emergency lifecycle management |
 | `upgrade_init` / `upgrade_propose` / `upgrade_approve` / `upgrade_execute` | Upgrade governance |
 
@@ -223,7 +223,6 @@ Set once at `initialize()` and stored in **instance storage**.  Cannot be cleare
 | `set_oracle` / `set_primary_oracle` / `set_fallback_oracle` / `configure_oracle` / `set_oracle_paused` | Price-feed governance |
 | `set_liquidation_threshold_bps` / `set_close_factor_bps` / `set_liquidation_incentive_bps` | Risk parameter tuning |
 | `set_flash_loan_fee_bps` | Flash-loan revenue policy |
-| `set_read_only` | Protocol-level state freeze |
 | `start_recovery` / `complete_recovery` | Emergency lifecycle management |
 | `upgrade_init` / `upgrade_propose` / `upgrade_approve` / `upgrade_execute` | Upgrade governance |
 
@@ -312,10 +311,20 @@ Recovery ──(admin only)──> Normal
 * In **Recovery** state, users may `repay` and `withdraw` but not borrow more or deposit.
 * Transitions are one-way through the intended flow; there is no shortcut from Shutdown directly back to Normal.
 
-### Read-Only Mode (Incident Response)
+---
 
-* **Purpose**: A lightweight, reversible switch to freeze protocol state.
-* **Mechanism**: When `is_read_only()` is `true`, all user-facing mutations (deposit, borrow, repay, withdraw, liquidate) and critical admin mutations (oracle updates) are blocked.
-* **Precedence**: Overrides all granular pause flags and emergency states.
-* **View Functions**: Remain available, allowing for transparent auditing during incidents.
-* **Authorized**: Only the protocol `admin` can toggle Read-Only mode.
+## Pause and Emergency-State Model
+
+The lending contract exposes two complementary mechanisms for limiting activity:
+
+* **Granular pause controls** via `set_pause(PauseType, bool, ttl_ledgers)`.
+  - `PauseType::All` blocks every mutating operation.
+  - Operation-specific pause flags are available for `Deposit`, `Withdraw`, `Borrow`, `Repay`, `Liquidation`, and `FlashLoan`.
+  - Pauses can be applied with a ledger-time-to-live and are checked before the corresponding operation executes.
+
+* **Emergency states** via `set_emergency_state(EmergencyState)`.
+  - `Normal` is the default active state.
+  - `Shutdown` is a stronger emergency state that blocks high-risk operations (`borrow`, `flash_loan`, and `deposit`).
+  - `Recovery` permits withdraws and repays only, enabling safe unwind without new exposure.
+
+The contract does not implement a distinct `read-only` mode API.  References to `is_read_only` / `set_read_only` / `blocks_high_risk_ops` in auditing documentation are therefore outdated and have been replaced by the actual `PauseType` / `EmergencyState` controls.

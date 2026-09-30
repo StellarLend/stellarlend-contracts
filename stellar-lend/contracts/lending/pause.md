@@ -1,33 +1,50 @@
 # Protocol Pause Mechanism
 
-The StellarLend protocol includes a **granular pause mechanism** to ensure safety during emergency
-situations or maintenance windows.
+The StellarLend lending contract exposes a **granular pause mechanism** and an
+**emergency lifecycle state machine** to ensure safety during emergency
+situations or maintenance windows. The two layers are independent and
+complementary.
 
 ## Features
 
-- **Granular Control**: Pause specific operations (`Deposit`, `Borrow`, `Repay`, `Withdraw`,
-  `Liquidation`) without affecting others.
+- **Granular Control**: Pause specific operations (`Deposit`, `Borrow`, `Repay`,
+  `Withdraw`, `Liquidation`, `FlashLoan`) without affecting others.
 - **Global Pause**: A master switch (`All`) that immediately halts every operation.
-- **Admin & Guardian Managed**: The admin or guardian can toggle individual pause flags.
-- **Guardian Trigger**: A configured guardian (e.g., a security multisig) can trigger emergency
-  shutdown without waiting for full governance latency.
-- **Recovery Mode**: After a shutdown the admin can move the protocol into a controlled unwind mode
+- **Admin & Guardian Managed**: The admin or the configured guardian can toggle
+  individual pause flags and trigger an emergency shutdown.
+- **Guardian Trigger**: A configured guardian (e.g., a security multisig) can
+  trigger emergency shutdown without waiting for full governance latency.
+- **Recovery Mode**: After a shutdown the admin can move the protocol into a
+  controlled unwind mode by calling `set_emergency_state(EmergencyState::Recovery)`
   so users can repay debt and withdraw collateral.
-- **Event Driven**: Every pause state change emits a `PauseStateChangedEvent` for transparent off-chain
-  monitoring.
-- **Auto-Expiry**: Each pause switch carries an `expires_at_ledger` and automatically clears when
-  ledger sequence progresses past its expiry.
-- **Read-Only Mode**: A lightweight incident response switch that blocks all state-changing
-  operations while keeping view functions available.
+- **Event Driven**: Every pause and emergency state change emits an
+  `EmergencyStateChangedEvent` / `PauseStateChangedEvent` for transparent
+  off-chain monitoring.
+- **Auto-Expiry**: Each granular pause switch carries an `expires_at_ledger` and
+  automatically clears when ledger sequence progresses past its expiry.
+- **Read-Only Mode**: A separate incident-response switch that blocks all
+  state-changing operations while keeping view functions available.
+
+> **Note — recovery / extension API.** This contract does **not** expose
+> `start_recovery`, `complete_recovery`, or `extend_pause` entrypoints. Recovery
+> is performed via `set_emergency_state(EmergencyState::Recovery)` (admin only),
+> exit-to-Normal is `set_emergency_state(EmergencyState::Normal)` (admin only),
+> and pause expiry/extension is managed via the TTL parameter on `set_pause`.
+> A separate `start_recovery` / `approve_recovery` / `execute_recovery` flow
+> exists in the `hello-world` crate's `governance` module, but it is unrelated
+> to this lending contract.
 
 ## Auto-Expiry Lifecycle
 
-- Each granular pause is stored as a struct with `paused: bool` and `expires_at_ledger: u32`.
-- A pause is considered active only while `env.ledger().sequence() < expires_at_ledger`.
-- When ledger sequence exceeds `expires_at_ledger`, the paused operation is treated as unpaused
-  without any storage rewrite.
-- Operators should either explicitly extend an active pause with `extend_pause(operation, new_expiry)`
-  or re-issue a new pause after expiry.
+- Each granular pause is stored as a struct with `paused: bool` and
+  `expires_at_ledger: u32`.
+- A pause is considered active only while
+  `env.ledger().sequence() < expires_at_ledger`.
+- When ledger sequence exceeds `expires_at_ledger`, the paused operation is
+  treated as unpaused without any storage rewrite.
+- Operators can either re-issue a pause with `set_pause(operation, paused=true, ttl_ledgers=N)`
+  or call `set_pause(operation, paused=false, ttl_ledgers=0)` to explicitly
+  clear an active pause.
 
 ## Operation Types
 
@@ -40,7 +57,9 @@ situations or maintenance windows.
 | `Withdraw`    | Prevents collateral withdrawals.                                    |
 | `Liquidation` | Prevents liquidations.                                              |
 | `FlashLoan`   | Prevents flash loan issuance and repayment (`flash_loan`, `repay_flash_loan`). |
-| `ReadOnly`    | Master switch that blocks ALL state changes (user and most admin).  |
+
+(`ReadOnly` is a separate protocol-level mode; see
+[`emergency_shutdown.md`](./emergency_shutdown.md).)
 
 ## Liquidation-Pause Policy
 
@@ -55,7 +74,7 @@ The protocol follows an explicit liquidation policy that balances **solvency pro
 | **Normal** + Global Pause (`All`)    | **Yes**            | **BLOCKED**          | **Protocol Halt**: All operations including liquidations are stopped.                                                            |
 | **Shutdown**                         | **Yes**            | **BLOCKED**          | **Emergency Stop**: Hard stop for all operations to prevent cascading failures.                                                  |
 | **Recovery**                         | **Yes**            | **BLOCKED**          | **Unwind-Only Mode**: Only repay/withdraw allowed to safely close positions.                                                     |
-| **ReadOnly**                         | **Yes**            | **BLOCKED**          | **Incident Freeze**: All state changes frozen for investigation.                                                                 |
+| **ReadOnly**                         | **Yes**            | **BLOCKED**          | **Incident Freeze**: All state changes frozen for investigation.                                                                |
 
 ### Trade-offs and Decision Framework
 
@@ -119,8 +138,8 @@ The protocol follows an explicit liquidation policy that balances **solvency pro
 ### Flash Loan Pause Policy
 
 Flash loans are high-risk operations that are frequently used as attack vectors in DeFi exploits.
-Both `flash_loan` and `repay_flash_loan` are gated behind `check_pause_status` and
-`check_emergency_status`, identical to the deposit/borrow/repay/withdraw entrypoints.
+Both `flash_loan` and `repay_flash_loan` are gated by the pause / emergency checks
+identically to the deposit/borrow/repay/withdraw entrypoints.
 
 | Condition                       | `flash_loan` | `repay_flash_loan` |
 | ------------------------------- | ------------ | ------------------ |
@@ -131,20 +150,21 @@ Both `flash_loan` and `repay_flash_loan` are gated behind `check_pause_status` a
 | `EmergencyState::Recovery`      | ❌ BLOCKED   | ❌ BLOCKED         |
 | Pause expired                   | ✅ ALLOWED   | ✅ ALLOWED         |
 
-> **Design decision**: `repay_flash_loan` is also gated because during an incident
-> there should be no in-flight flash loans. If `flash_loan` is blocked, no new
-> flash loan can start, so blocking repayment is safe and provides defense in depth.
-
 ### Security Considerations
 
-- **Precedence Rules**: Emergency states and ReadOnly mode override granular pause flags
-- **Atomic Operations**: Pause checks happen before any state changes
-- **Event Transparency**: All pause changes emit events for off-chain monitoring
-- **Role Separation**: Only admin can set granular pauses; guardian can trigger emergency shutdown
+- **Precedence Rules**: Emergency states take precedence over granular pause flags.
+- **Atomic Operations**: Pause checks happen before any state changes.
+- **Event Transparency**: All pause changes emit events for off-chain monitoring.
+- **Role Separation**: Only the admin can set granular pauses; the guardian can
+  additionally trigger `EmergencyState::Shutdown` but cannot compute with the
+  lifecycle beyond that.
 
 ## Contract Interface
 
-### Admin Functions
+The pause mechanism is governed by the following public entrypoints (all
+`pub fn`, accepting `Env`):
+
+### Admin / Guardian Functions
 
 #### `set_pause(pause_type: PauseType, paused: bool, ttl_ledgers: u32)`
 
@@ -166,50 +186,40 @@ Sets or clears a granular pause flag with a time-to-live expressed in ledger cou
   is configured, the guardian is the expected caller; otherwise admin is required).
 - **Emits**: `PauseStateChangedEvent` with `old_state` and `new_state`.
 
-#### `extend_pause(admin: Address, operation: PauseType, new_expiry: u32) -> Result<(), LendingError>`
+> The function supports effective extension simply by re-issuing `set_pause` with a later TTL
+> — the contract does **not** expose a separate `extend_pause` entrypoint.
 
-Extends an active pause state to a later ledger sequence.
-
-- **Requires Authorization**: Yes (by `admin`).
-- **Emits**: `PauseStateChangedEvent`.
-
-#### `set_guardian(admin: Address, guardian: Address) -> Result<(), BorrowError>`
+#### `set_guardian(guardian: Address)`
 
 Sets or rotates the guardian authorized to trigger emergency shutdown.
 
-- **Requires Authorization**: Yes (by `admin`).
-- **Emits**: `guardian_set_event`.
+- **Requires Authorization**: Yes (admin).
+- **Emits**: `GuardianSetEvent`.
 
-#### `start_recovery(admin: Address) -> Result<(), BorrowError>`
+#### `set_emergency_state(new_state: EmergencyState)`
 
-Transitions the protocol from `Shutdown` to `Recovery`.
+Transitions the protocol to a new emergency lifecycle state.
 
-- **Requires Authorization**: Yes (by `admin`).
-- **Precondition**: Emergency state must be `Shutdown`.
-- **Emits**: `emergency_state_event`.
+- **Authorization**:
+  - `EmergencyState::Shutdown` → admin **or** guardian.
+  - `EmergencyState::Recovery` → admin only.
+  - `EmergencyState::Normal`   → admin only.
+- **Emits**: `EmergencyStateChangedEvent { old_state, new_state }`.
+- **See**: [`emergency_shutdown.md`](./emergency_shutdown.md) for the full lifecycle.
 
-#### `complete_recovery(admin: Address) -> Result<(), BorrowError>`
+This single entrypoint replaces the `start_recovery` / `complete_recovery` pair: passing
+`Recovery` enters unwind-only mode and passing `Normal` returns to full operation.
 
-Returns the protocol to `Normal` from any non-normal state.
+#### `emergency_shutdown(caller: Address)`
 
-- **Requires Authorization**: Yes (by `admin`).
-- **Emits**: `emergency_state_event`.
+Convenience entrypoint that triggers `set_emergency_state(EmergencyState::Shutdown)`.
+Accepts either the configured guardian or the admin.
 
-### Guardian / Admin Emergency Function
-
-#### `emergency_shutdown(caller: Address) -> Result<(), BorrowError>`
-
-Transitions the protocol to `Shutdown`.
-
-- **Requires Authorization**: Yes — caller must be the admin **or** the configured guardian.
-- **Emits**: `emergency_state_event`.
-
-#### `set_read_only(admin: Address, read_only: bool) -> Result<(), BorrowError>`
+#### `set_read_only(read_only: bool)`
 
 Toggles the protocol-level read-only mode.
 
-- **Requires Authorization**: Yes (by `admin`).
-- **Emits**: `read_only_event`.
+- **Requires Authorization**: Admin.
 - **Precedence**: Blocks all user-facing mutations even if granular pause flags are off.
 
 ### Public (Read-Only) Functions
@@ -236,16 +246,13 @@ Returns the current emergency lifecycle state.
 
 Returns `true` if the protocol is currently in read-only mode. No authorization required.
 
-Returns the current emergency lifecycle state:
-
 | Value      | Meaning                                                                 |
 | ---------- | ----------------------------------------------------------------------- |
 | `Normal`   | Standard operation — all flags are honoured normally.                   |
 | `Shutdown` | Hard stop — all high-risk operations blocked.                           |
 | `Recovery` | Controlled unwind — `repay` and `withdraw` allowed; all others blocked. |
-| `ReadOnly` | Incident Response — ALL state changes blocked; view functions only.     |
 
-Note: `ReadOnly` is a separate flag and can be toggled in any state (`Normal`, `Shutdown`, `Recovery`).
+`ReadOnly` is a separate flag and can be toggled in any state (`Normal`, `Shutdown`, `Recovery`).
 
 ## Pause Precedence Matrix
 
@@ -284,8 +291,12 @@ state-mutating operations, regardless of the status of any other pause flags or 
 ## Emergency Lifecycle
 
 ```
-Normal ──(emergency_shutdown)──► Shutdown ──(start_recovery)──► Recovery ──(complete_recovery)──► Normal
-                                     └──────────────(complete_recovery, fast-exit)────────────────►
+Normal ──(set_emergency_state(Shutdown) — admin|guardian)──► Shutdown
+                                                                  │
+                                                                  ▼
+Recovery ◀──(set_emergency_state(Recovery) — admin)── Shutdown
+   │
+   └──(set_emergency_state(Normal) — admin)──► Normal
 ```
 
 During **Recovery**, repay / withdraw remain available only when their granular pause flag and the
@@ -295,26 +306,26 @@ global `All` flag are inactive. Deposit, borrow, and liquidation remain blocked 
 
 | Event                      | Topic                     | Emitted by                                |
 | -------------------------- | ------------------------- | ----------------------------------------- |
-| `PauseStateChangedEvent`   | `pause_state_changed_event` | `set_pause`, `extend_pause`               |
+| `PauseStateChangedEvent`   | `pause_state_changed_event` | `set_pause`                               |
 | `GuardianSetEvent`         | `guardian_set_event`      | `set_guardian`                            |
-| `EmergencyStateEvent`      | `emergency_state_event`   | `emergency_shutdown`, `start_recovery`, `complete_recovery` |
+| `EmergencyStateChangedEvent` | `emergency_state_event` | `set_emergency_state`                     |
 
 ## Security Assumptions
 
 1. **Admin Trust**: The admin should be a multisig or DAO-governed address to avoid single-key
-   centralization risk. Compromise of the admin key allows arbitrary pause/unpause.
+   centralization risk. Compromise of the admin key allows arbitrary pause/unpause and
+   state lifecycle control.
 
-2. **Guardian Scope**: The guardian can trigger `emergency_shutdown` and call `set_pause`. It
-   cannot rotate itself or invoke recovery — those paths require the admin key. Configure the
-   guardian as a lower-latency security multisig.
+2. **Guardian Scope**: The guardian can trigger `EmergencyState::Shutdown` and `set_pause`. It
+   cannot exit the shutdown, enter Recovery, set ReadOnly, or rotate itself — those paths
+   require the admin key. Configure the guardian as a lower-latency security multisig.
 
 3. **Persistence**: All pause and emergency states are stored in persistent storage so they survive
    ledger upgrades and contract updates.
 
-4. **No Bypass**: Every operation entry point in `lib.rs` and the inner module implementations
-   enforce pause and emergency checks independently (defense in depth). This includes
-   `flash_loan` and `repay_flash_loan`, which are gated identically to
-   deposit/borrow/repay/withdraw. There is no mutating path that skips both layers.
+4. **No Bypass**: Every operation entry point enforces pause and emergency checks independently
+   (defense in depth). This includes `flash_loan` and `repay_flash_loan`, which are gated
+   identically to deposit/borrow/repay/withdraw. There is no mutating path that skips both layers.
 
 5. **Global Overrides Local**: The `All` pause flag supersedes individual unpause flags. Setting
    `Deposit = false` while `All = true` still blocks deposit operations.
@@ -349,17 +360,20 @@ client.set_pause(&PauseType::All, &true, &500u32);
 // Pause with immediate expiry (ttl=0 means pause_is_active returns false)
 client.set_pause(&PauseType::Deposit, &true, &0u32);
 
+// Extend an active pause by re-issuing with a later TTL
+client.set_pause(&PauseType::Deposit, &true, &500u32);
+
 // Configure a guardian (e.g., security multisig)
-client.set_guardian(&admin, &security_multisig);
+client.set_guardian(&security_multisig);
 
 // Guardian (or admin) triggers emergency shutdown
-client.emergency_shutdown(&security_multisig);
+client.set_emergency_state(&EmergencyState::Shutdown);
 
 // Admin moves to controlled recovery so users can exit
-client.start_recovery(&admin);
+client.set_emergency_state(&EmergencyState::Recovery);
 
 // After all positions are resolved, return to normal
-client.complete_recovery(&admin);
+client.set_emergency_state(&EmergencyState::Normal);
 ```
 
 ## Security Notes: Operational Correctness
@@ -368,17 +382,17 @@ During an active incident, operators must follow these precedence rules to ensur
 protocol behavior:
 
 1. **Predictable Halt**: If an unknown vulnerability is detected, activate `PauseType::All` or
-   `ReadOnly` mode immediately. These flags guarantee that NO operations can bypass the halt,
-   even if other granular flags are later toggled by mistake.
+   use `set_read_only(true)` immediately. These flags guarantee that NO operations can bypass
+   the halt, even if other granular flags are later toggled by mistake.
 
 2. **Deterministic Unpause**: To resume service, granular flags should be reviewed and set to
-   `False` _before_ disabling the global `All` flag. This prevents an "accidental unpause" of a
-   specific vulnerable path.
+   `false` _before_ disabling the global `All` flag. This prevents an "accidental unpause" of a
+   specific vulnerable path. To effectively extend a pause, simply re-issue `set_pause(..., true, new_ttl)`.
 
 3. **Recovery Sequence**: Transitioning to `Recovery` mode is a one-way path to protocol unwind.
    Once in recovery, the protocol cannot return to `Normal` without resolving all outstanding
-   liabilities or an admin `complete_recovery` call. Granular pauses remain active in recovery
-   to allow for "paused unwinds" if specific assets become volatile.
+   liabilities or an admin `set_emergency_state(EmergencyState::Normal)` call. Granular pauses
+   remain active in recovery to allow for "paused unwinds" if specific assets become volatile.
 
 4. **Atomicity**: Pause checks are performed at the very beginning of every transaction. State
    reverts are atomic; a paused operation will never leave a partial state (e.g., tokens

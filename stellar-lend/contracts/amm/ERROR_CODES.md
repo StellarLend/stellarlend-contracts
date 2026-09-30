@@ -10,6 +10,16 @@ This document maps the `AmmPoolError` discriminants to their causes. These codes
 | 4 | `Overflow` | An arithmetic operation overflowed or underflowed. |
 | 5 | `InvariantViolation` | A core pool invariant was breached (e.g., $k$ decreased during a swap or increased during liquidity removal). |
 | 6 | `ReentrantFlashSwap` | A state-mutating operation was attempted while a flash swap was already in flight. |
+| 7 | `UnauthorizedCaller` | Caller is not the flash-swap initiator. |
+| 8 | `FeeBpsOutOfRange` | `fee_bps` is outside `0..=MAX_FEE_BPS`. |
+| 9 | `InsufficientLiquidityMinted` | LP shares minted would be zero (deposit too small). |
+| 10 | `ZeroSupply` | Pool has zero LP supply (cannot burn). |
+| 11 | `BurnExceedsSupply` | Burn amount exceeds total LP supply. |
+| 12 | `InvalidBurnAmount` | Invalid burn amount (non-positive). |
+| 13 | `ZeroReserve` | Pool reserves are zero (cannot compute share ratio). |
+| 14 | `InsufficientLpBalance` | Caller has insufficient LP balance for requested burn. |
+| 15 | `ZeroOutput` | Computed swap output floors to zero after fees — dust input rejected. See [DUST_SWAP_GUARD.md](./DUST_SWAP_GUARD.md). |
+| 16 | `AmountBelowMinSwapIn` | Input (or flash `amount_out`) is below the admin-configured `min_swap_in` floor. |
 
 ## Example: Invariant Violation
 

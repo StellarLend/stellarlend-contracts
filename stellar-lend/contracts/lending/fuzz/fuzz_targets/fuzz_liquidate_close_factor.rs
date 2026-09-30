@@ -25,7 +25,7 @@
 //!    any storage write, so collateral and debt are unchanged.
 //! 3. **Non-negative post-state.** `debt >= 0` and `collateral >= 0` after a
 //!    successful liquidation.
-//! 4. **Close-factor cap.** `repaid <= debt * CLOSE_FACTOR_BPS / 10_000` and
+//! 4. **Close-factor cap.** `repaid <= debt * close_factor_bps / 10_000` and
 //!    `repaid <= amount` — a liquidator can never repay more than the
 //!    close-factor share of the debt, nor more than they asked for.
 //! 5. **Seized <= available collateral.** The collateral removed never exceeds
@@ -34,22 +34,34 @@
 //!    equal the close-factor / incentive formulas recomputed independently from
 //!    the pre-state, catching off-by-one and rounding drift.
 //!
-//! Note: the close factor (50%) and liquidation incentive (10%) are protocol
-//! *constants* baked into the entrypoint, not parameters. The fuzzer therefore
-//! exercises the branches that depend on them by varying `(collateral, debt,
-//! amount)` across the close-factor cap, the health-factor boundary, and the
-//! arithmetic-overflow edges.
+//! ## Governable parameters
+//!
+//! The close factor and liquidation incentive are now **governable risk
+//! parameters** read from contract storage via
+//! `close_factor_bps_config` / `liquidation_incentive_bps_config`
+//! (defaulting to `DEFAULT_CLOSE_FACTOR_BPS` = 5000 bps / 50 % and
+//! `DEFAULT_LIQUIDATION_INCENTIVE_BPS` = 1000 bps / 10 % when unset).
+//! Both are admin-configurable through `set_close_factor_bps` (range
+//! `(0, 10000]`) and `set_liquidation_incentive_bps` (range
+//! `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` = `[0, 5000]`).
+//!
+//! The fuzzer draws both default and non-default values for these parameters
+//! so the governable storage path is exercised alongside the default
+//! fallthrough. When a non-default value is drawn, the fuzz harness calls the
+//! corresponding admin setter before seeding the position.
 
 #![no_main]
 
 use arbitrary::{Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use soroban_sdk::{testutils::Address as _, Address, Env};
-use stellarlend_lending::{debt::DebtPosition, DataKey, LendingContract, LendingContractClient};
+use stellarlend_lending::{
+    debt::DebtPosition,
+    liquidate_transfer_test::{MockToken, MockTokenClient},
+    DataKey, LendingContract, LendingContractClient, DEFAULT_CLOSE_FACTOR_BPS,
+    DEFAULT_LIQUIDATION_INCENTIVE_BPS, MAX_LIQUIDATION_INCENTIVE_BPS,
+};
 
-// ── Protocol constants mirrored from `LendingContract::liquidate` (src/lib.rs) ──
-const CLOSE_FACTOR_BPS: i128 = 5_000; // 50% of debt may be repaid per call
-const INCENTIVE_BPS: i128 = 1_000; // 10% liquidation bonus on seized collateral
 const BPS_DENOM: i128 = 10_000;
 
 // ── Value-generation bounds ─────────────────────────────────────────────────
@@ -57,22 +69,75 @@ const BPS_DENOM: i128 = 10_000;
 const SMALL_MAX: i128 = 1_000_000_000_000;
 /// "Mid" magnitude (1e18) — large but far from the i128 overflow edges.
 const MID_MAX: i128 = 1_000_000_000_000_000_000;
-/// Debt at/above which `debt * CLOSE_FACTOR_BPS` overflows i128 (~3.4e34).
-const CLOSE_FACTOR_OVERFLOW_DEBT: i128 = i128::MAX / CLOSE_FACTOR_BPS;
-/// Repay at/above which `repay * (BPS_DENOM + INCENTIVE_BPS)` overflows (~1.5e34).
-const SEIZE_OVERFLOW_REPAY: i128 = i128::MAX / (BPS_DENOM + INCENTIVE_BPS);
+
+// ── Config generators ───────────────────────────────────────────────────────
+
+/// Generate a close-factor value in basis points.
+///
+/// Distribution:
+/// - ~50%: default (5000 = 50%)
+/// - ~17%: lower bound (1 bps)
+/// - ~17%: upper bound (10000 = 100%)
+/// - ~17%: random value in `[1, 10000]`
+fn gen_close_factor(u: &mut Unstructured) -> Result<i128> {
+    Ok(match u.int_in_range(0u8..=5)? {
+        0..=2 => DEFAULT_CLOSE_FACTOR_BPS, // 50 % of cases: default
+        3 => 1,                             // lower bound
+        4 => 10_000,                        // upper bound (100 %)
+        _ => u.int_in_range(1..=10_000)?,   // random in valid range
+    })
+}
+
+/// Generate a liquidation-incentive value in basis points.
+///
+/// Distribution:
+/// - ~50%: default (1000 = 10%)
+/// - ~17%: lower bound (0 = no bonus)
+/// - ~17%: upper bound (5000 = 50% max bonus)
+/// - ~17%: random value in `[0, 5000]`
+fn gen_incentive(u: &mut Unstructured) -> Result<i128> {
+    Ok(match u.int_in_range(0u8..=5)? {
+        0..=2 => DEFAULT_LIQUIDATION_INCENTIVE_BPS, // 50 % of cases: default
+        3 => 0,                                      // lower bound (no bonus)
+        4 => MAX_LIQUIDATION_INCENTIVE_BPS,           // upper bound (max bonus)
+        _ => u.int_in_range(0..=MAX_LIQUIDATION_INCENTIVE_BPS)?, // random
+    })
+}
+
+// ── Magnitude / amount generators ───────────────────────────────────────────
 
 /// Draw a non-negative magnitude from a multi-modal distribution that
 /// deliberately straddles the interesting arithmetic edges of `liquidate`.
-fn gen_nonneg(u: &mut Unstructured) -> Result<i128> {
+///
+/// The overflow straddle boundaries are computed dynamically from the
+/// fuzzed `close_factor_bps` and `incentive_bps` so they stay accurate
+/// even when non-default configuration is exercised.
+fn gen_nonneg(
+    u: &mut Unstructured,
+    close_factor_bps: i128,
+    incentive_bps: i128,
+) -> Result<i128> {
+    let close_factor_overflow_debt = i128::MAX / close_factor_bps;
+    let seize_overflow_repay = i128::MAX / (BPS_DENOM + incentive_bps);
+
     Ok(match u.int_in_range(0u8..=5)? {
         0 => u.int_in_range(0..=4)?,         // tiny / zero debt
         1 => u.int_in_range(0..=SMALL_MAX)?, // realistic
         2 => u.int_in_range(0..=MID_MAX)?,   // large
         // Straddle the close-factor multiply overflow boundary.
-        3 => u.int_in_range(CLOSE_FACTOR_OVERFLOW_DEBT - 16..=CLOSE_FACTOR_OVERFLOW_DEBT + 16)?,
-        // Debt whose 50% close-factor cap straddles the seizure-multiply overflow.
-        4 => u.int_in_range(2 * SEIZE_OVERFLOW_REPAY - 16..=2 * SEIZE_OVERFLOW_REPAY + 16)?,
+        3 => u.int_in_range(
+            close_factor_overflow_debt.saturating_sub(16)
+                ..=close_factor_overflow_debt.saturating_add(16),
+        )?,
+        // Debt whose close-factor cap straddles the seizure-multiply overflow.
+        4 => u.int_in_range(
+            2_i128
+                .saturating_mul(seize_overflow_repay)
+                .saturating_sub(16)
+                ..=2_i128
+                    .saturating_mul(seize_overflow_repay)
+                    .saturating_add(16),
+        )?,
         _ => u.int_in_range(0..=i128::MAX)?, // anywhere, including near-MAX collateral
     })
 }
@@ -81,15 +146,15 @@ fn gen_nonneg(u: &mut Unstructured) -> Result<i128> {
 /// but occasionally zero or negative to confirm the entrypoint never traps on
 /// degenerate input, and frequently pinned near the close-factor cap so the
 /// `amount > max_repay` branch is exercised on both sides.
-fn gen_amount(u: &mut Unstructured, debt: i128) -> Result<i128> {
+fn gen_amount(u: &mut Unstructured, debt: i128, close_factor_bps: i128) -> Result<i128> {
     Ok(match u.int_in_range(0u8..=4)? {
         0 => 0,
         1 => u.int_in_range(-SMALL_MAX..=SMALL_MAX)?, // includes negatives
-        2 => gen_nonneg(u)?,
+        2 => gen_nonneg(u, close_factor_bps, DEFAULT_LIQUIDATION_INCENTIVE_BPS)?,
         3 => {
             // Straddle the per-call close-factor cap for this debt.
             let cap = debt
-                .checked_mul(CLOSE_FACTOR_BPS)
+                .checked_mul(close_factor_bps)
                 .map(|v| v / BPS_DENOM)
                 .unwrap_or(i128::MAX);
             let delta = u.int_in_range(-3i128..=3)?;
@@ -99,10 +164,18 @@ fn gen_amount(u: &mut Unstructured, debt: i128) -> Result<i128> {
     })
 }
 
-/// A fuzzed liquidation scenario: the borrower's seeded position plus the
-/// liquidator's requested repay amount.
+// ── Fuzz input ──────────────────────────────────────────────────────────────
+
+/// A fuzzed liquidation scenario: the governable parameters plus the
+/// borrower's seeded position plus the liquidator's requested repay amount.
 #[derive(Debug)]
 struct LiqInput {
+    /// Governed close-factor cap in basis points (already drawn from the
+    /// valid range `(0, 10000]`).
+    close_factor_bps: i128,
+    /// Governed liquidation incentive in basis points (already drawn from
+    /// the valid range `[0, 5000]`).
+    incentive_bps: i128,
     collateral: i128,
     debt: i128,
     amount: i128,
@@ -110,8 +183,13 @@ struct LiqInput {
 
 impl<'a> Arbitrary<'a> for LiqInput {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
-        let collateral = gen_nonneg(u)?;
-        let mut debt = gen_nonneg(u)?;
+        // Parameters must be drawn first so the overflow straddle boundaries
+        // in `gen_nonneg` / `gen_amount` reflect the actual configuration.
+        let close_factor_bps = gen_close_factor(u)?;
+        let incentive_bps = gen_incentive(u)?;
+
+        let collateral = gen_nonneg(u, close_factor_bps, incentive_bps)?;
+        let mut debt = gen_nonneg(u, close_factor_bps, incentive_bps)?;
 
         // One time in three, derive the debt so the health factor sits right on
         // the liquidation boundary (`hf == 10_000`), exercising the
@@ -124,8 +202,10 @@ impl<'a> Arbitrary<'a> for LiqInput {
             }
         }
 
-        let amount = gen_amount(u, debt)?;
+        let amount = gen_amount(u, debt, close_factor_bps)?;
         Ok(LiqInput {
+            close_factor_bps,
+            incentive_bps,
             collateral,
             debt,
             amount,
@@ -133,8 +213,12 @@ impl<'a> Arbitrary<'a> for LiqInput {
     }
 }
 
+// ── Fuzz harness ────────────────────────────────────────────────────────────
+
 fuzz_target!(|input: LiqInput| {
     let LiqInput {
+        close_factor_bps,
+        incentive_bps,
         collateral: col_pre,
         debt: debt_pre,
         amount,
@@ -142,11 +226,35 @@ fuzz_target!(|input: LiqInput| {
 
     let env = Env::default();
     env.mock_all_auths();
+
+    // Register mock token contracts so the token transfers inside `liquidate`
+    // succeed.  Both tokens are fully minted to avoid balance-panics.
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+
     let cid = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     let liquidator = Address::generate(&env);
     let borrower = Address::generate(&env);
+
+    // Apply governable parameters before seeding the position.
+    // Skip the setter call when the value equals the default to exercise the
+    // "unset → default fallthrough" path as well.
+    if close_factor_bps != DEFAULT_CLOSE_FACTOR_BPS {
+        client.set_close_factor_bps(&close_factor_bps);
+    }
+    if incentive_bps != DEFAULT_LIQUIDATION_INCENTIVE_BPS {
+        client.set_liquidation_incentive_bps(&incentive_bps);
+    }
+
+    // Mint enough tokens so that any repay amount and any collateral seizure
+    // can be honoured without hitting an "insufficient balance" panic inside
+    // the mock token contract.
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &i128::MAX);
+    MockTokenClient::new(&env, &collateral_asset).mint(&cid, &i128::MAX);
 
     // `now == last_update` so settle_accrual is a no-op: the contract's settled
     // debt equals `debt_pre`, making every post-state invariant exact.
@@ -159,15 +267,16 @@ fuzz_target!(|input: LiqInput| {
             &DataKey::Debt(borrower.clone()),
             &DebtPosition {
                 principal: debt_pre,
+                borrow_index_snapshot: 0,
                 last_update: now,
             },
         );
     });
 
-    match client.try_liquidate(&liquidator, &borrower, &amount) {
+    match client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &amount) {
         // Invariant 1: a host trap is always a bug.
         Err(Err(invoke)) => panic!(
-            "liquidate trapped (host error) for (col={col_pre}, debt={debt_pre}, amount={amount}): {invoke:?}"
+            "liquidate trapped (host error) for (close={close_factor_bps}, incentive={incentive_bps}, col={col_pre}, debt={debt_pre}, amount={amount}): {invoke:?}"
         ),
         // The i128 return value must always decode cleanly.
         Ok(Err(conv)) => panic!("liquidate return-value conversion error: {conv:?}"),
@@ -188,15 +297,15 @@ fuzz_target!(|input: LiqInput| {
         // Successful liquidation -> Invariants 3-6.
         Ok(Ok(repaid)) => {
             // Invariant 4: close-factor cap. The contract reached `Ok`, so the
-            // `debt * CLOSE_FACTOR_BPS` multiply did not overflow and we can
+            // `debt * close_factor_bps` multiply did not overflow and we can
             // recompute the cap with the same checked arithmetic.
             let max_repay = debt_pre
-                .checked_mul(CLOSE_FACTOR_BPS)
+                .checked_mul(close_factor_bps)
                 .map(|v| v / BPS_DENOM)
                 .expect("Ok return implies the close-factor multiply did not overflow");
             assert!(
                 repaid <= max_repay,
-                "repaid {repaid} exceeds close-factor cap {max_repay} (debt {debt_pre})"
+                "repaid {repaid} exceeds close-factor cap {max_repay} (close={close_factor_bps}, debt {debt_pre})"
             );
             assert!(
                 repaid <= amount,
@@ -229,14 +338,14 @@ fuzz_target!(|input: LiqInput| {
 
             // Invariant 6: exact collateral transition mirrors the incentive math.
             let seize = repaid
-                .checked_mul(BPS_DENOM + INCENTIVE_BPS)
+                .checked_mul(BPS_DENOM + incentive_bps)
                 .map(|v| v / BPS_DENOM)
                 .expect("Ok return implies the seizure multiply did not overflow");
             let final_seized = if seize > col_pre { col_pre } else { seize };
             assert_eq!(
                 post.collateral,
                 col_pre.saturating_sub(final_seized),
-                "collateral transition mismatch (col {col_pre}, repaid {repaid})"
+                "collateral transition mismatch (col {col_pre}, repaid {repaid}, close={close_factor_bps}, incentive={incentive_bps})"
             );
 
             // For a real (non-negative) liquidation, value only flows one way.

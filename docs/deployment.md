@@ -53,7 +53,7 @@ stellarlend-contracts/
 └── stellar-lend/
     ├── Cargo.toml         # Workspace root
     └── contracts/
-        ├── hello-world/   # Main lending contract  (crate: hello-world)
+        ├── lending/       # Main lending contract  (crate: stellarlend-lending)
         └── amm/           # AMM integration contract (crate: stellarlend-amm)
 ```
 
@@ -61,10 +61,10 @@ Compiled WASM artefacts land in:
 
 ```
 stellar-lend/target/wasm32-unknown-unknown/release/
-  hello_world.wasm
-  hello_world.optimized.wasm        ← deployed to chain
+  stellarlend_lending.wasm
+  stellarlend_lending.optimized.wasm    ← deployed to chain
   stellarlend_amm.wasm
-  stellarlend_amm.optimized.wasm    ← deployed to chain
+  stellarlend_amm.optimized.wasm       ← deployed to chain
 ```
 
 ---
@@ -96,12 +96,12 @@ stellar contract build --verbose
 
 # Optimise
 WASM_DIR=target/wasm32-unknown-unknown/release
-stellar contract optimize --wasm "$WASM_DIR/hello_world.wasm"
+stellar contract optimize --wasm "$WASM_DIR/stellarlend_lending.wasm"
 stellar contract optimize --wasm "$WASM_DIR/stellarlend_amm.wasm"
 
 # Inspect interface
 stellar contract inspect \
-  --wasm "$WASM_DIR/hello_world.optimized.wasm" \
+  --wasm "$WASM_DIR/stellarlend_lending.optimized.wasm" \
   --output json
 
 # Run unit tests
@@ -177,7 +177,7 @@ WASM_DIR=stellar-lend/target/wasm32-unknown-unknown/release
 
 # Lending contract
 stellar contract deploy \
-  --wasm "$WASM_DIR/hello_world.optimized.wasm" \
+  --wasm "$WASM_DIR/stellarlend_lending.optimized.wasm" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet
 
@@ -289,15 +289,15 @@ stellar contract invoke \
 ### Verifying initialization
 
 ```bash
-# Should return 11000 (110%)
+# Should return 8000 (80%)
 stellar contract invoke \
   --id "$LENDING_CONTRACT_ID" --source "$ADMIN_SECRET_KEY" --network testnet \
-  -- get_min_collateral_ratio
+  -- get_liquidation_threshold_bps
 
 # Should return false
 stellar contract invoke \
   --id "$LENDING_CONTRACT_ID" --source "$ADMIN_SECRET_KEY" --network testnet \
-  -- is_emergency_paused
+  -- get_pause_state --pause_type All
 ```
 
 ---
@@ -310,16 +310,15 @@ stellar contract invoke \
 |-----------|------|-------------|
 | `admin` | `Address` | Stellar account that controls the protocol. Must sign all privileged calls. |
 
-### Default risk parameters (set automatically on `initialize`)
+### Built-in default risk parameters (unconfigured storage fallback)
 
 All values are in **basis points** (bps): 10 000 bps = 100%.
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
-| `min_collateral_ratio` | 11 000 | 110% – minimum ratio to borrow |
-| `liquidation_threshold` | 10 500 | 105% – below this, position is liquidatable |
-| `close_factor` | 5 000 | 50% – max debt liquidated per transaction |
-| `liquidation_incentive` | 1 000 | 10% – bonus paid to liquidators |
+| `liquidation_threshold_bps` | 8 000 | 80% – below this, position is liquidatable |
+| `close_factor_bps` | 5 000 | 50% – max debt liquidated per transaction |
+| `liquidation_incentive_bps` | 1 000 | 10% – bonus paid to liquidators |
 
 ### Default interest rate parameters (set automatically on `initialize`)
 
@@ -394,7 +393,7 @@ Before deploying to mainnet:
 - [ ] Contract IDs recorded in an internal infrastructure registry
 - [ ] `initialize` called once; second call confirmed to fail with `AlreadyInitialized`
 - [ ] Admin transferred to multisig after initialization
-- [ ] Oracle price feeds configured via `update_price_feed`
+- [ ] Oracle price feeds configured via `set_price`
 - [ ] Emergency pause tested: `set_emergency_pause(admin, true)` → confirmed paused
 - [ ] Emergency pause disabled before launch: `set_emergency_pause(admin, false)`
 - [ ] `MAINNET_CONFIRM=YES_I_AM_SURE` environment variable provided to bypass the safety guard preventing accidental mainnet deployments
@@ -542,6 +541,6 @@ Run targeted tests for faster iteration:
 
 ```bash
 cd stellar-lend
-cargo test -p hello-world deploy_test   # deployment tests only
-cargo test -p hello-world -- --nocapture 2>&1 | head -50
+cargo test -p stellarlend-lending deploy_test   # deployment tests only
+cargo test -p stellarlend-lending -- --nocapture 2>&1 | head -50
 ```

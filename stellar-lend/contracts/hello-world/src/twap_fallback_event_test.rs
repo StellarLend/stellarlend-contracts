@@ -276,7 +276,7 @@ mod tests {
 
         let window = 150u64;
         // Snapshot the TWAP directly before the fallback path touches it.
-        let expected_twap = get_twap(&env, &asset, window);
+        let expected_twap = get_twap(&env, &asset, window).unwrap();
 
         set_oracle_config(
             &env,

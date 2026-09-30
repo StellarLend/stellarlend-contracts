@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -58,6 +59,17 @@ class TestLoadThresholds(unittest.TestCase):
     def test_none_path_returns_defaults(self):
         result = load_thresholds(None)
         self.assertEqual(result["flat_threshold"], 95.0)
+
+
+class TestThresholdConfig(unittest.TestCase):
+    def test_config_omits_excluded_legacy_crates(self):
+        config_path = Path(__file__).resolve().parents[1] / "coverage_thresholds.json"
+        with config_path.open() as handle:
+            thresholds = json.load(handle)
+
+        self.assertEqual(thresholds["flat_threshold"], 70.0)
+        self.assertNotIn("contracts/vesting/src", thresholds["per_crate"])
+        self.assertNotIn("contracts/hello-world/src", thresholds["per_crate"])
 
 
 class TestGetThreshold(unittest.TestCase):

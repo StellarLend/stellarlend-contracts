@@ -1,6 +1,6 @@
 #![no_std]
 
-use crate::math::sqrt;
+use crate::math::try_sqrt;
 
 /// Minimum liquidity permanently locked in the pool on the first deposit.
 ///
@@ -58,7 +58,7 @@ pub fn calculate_mint_shares(
         let product = amount_0
             .checked_mul(amount_1)
             .ok_or(LiquidityMathError::Overflow)?;
-        let liquidity = sqrt(product);
+        let liquidity = try_sqrt(product)?;
         if liquidity <= MINIMUM_LIQUIDITY {
             return Err(LiquidityMathError::InsufficientLiquidityMinted);
         }

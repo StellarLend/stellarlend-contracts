@@ -2,290 +2,127 @@
 
 ## Overview
 
-This test suite provides comprehensive coverage for the StellarLend contract initialization process, ensuring secure one-time setup and correct storage initialization.
+This test suite provides comprehensive coverage for the StellarLend lending
+contract initialization process.  The key security property is:
 
-## Test Coverage
+> **Every state-mutating entry point must return `LendingError::NotInitialized`
+> when called before `LendingContract::initialize`.**
 
-### 1. Successful Initialization (`test_successful_initialization`)
-
-**Purpose**: Verifies that the contract initializes correctly with valid parameters.
-
-**Validates**:
-- Contract initializes without errors
-- Admin address is stored correctly in both risk management and interest rate modules
-- Default risk parameters are set:
-  - Min collateral ratio: 110% (11,000 basis points)
-  - Liquidation threshold: 105% (10,500 basis points)
-  - Close factor: 50% (5,000 basis points)
-  - Liquidation incentive: 10% (1,000 basis points)
-- All pause switches are initialized to `false` (unpaused)
-- Emergency pause is initialized to `false`
-
-**Security Implications**: Ensures the contract starts in a safe, operational state with reasonable defaults.
+The guard is implemented by `require_initialized(&env)` in `src/lib.rs`, which
+checks for the presence of `DataKey::Admin` in instance storage.
 
 ---
 
-### 2. Double Initialization Behavior (`test_double_initialization_behavior`)
+## Initialization Guard (`src/initialization_guard_test.rs`)
 
-**Purpose**: Tests the contract's behavior when `initialize()` is called multiple times.
+The dedicated guard test module (`initialization_guard_test.rs`) exercises every
+protected entry point *before* initialization and verifies the expected error is
+returned.  It also tests post-init happy paths and view-function safety.
 
-**Validates**:
-- Second initialization doesn't cause a panic
-- Interest rate config is not overwritten (partial idempotency)
-- Risk config timestamp updates (indicating re-initialization occurred)
+### Test categories
 
-**Current Behavior**:
-- Interest rate config: Protected from overwriting (checks if already exists)
-- Risk management config: Can be overwritten
-- Admin addresses: Can be updated
+| Category | Tests | Description |
+|---|---|---|
+| **initialize: once-only** | 3 | First call succeeds; second call (same or different admin) → `AlreadyInitialized` |
+| **deposit / withdraw** | 2 | Return `NotInitialized` before init |
+| **borrow / repay** | 4 | `borrow`, `repay`, `borrow_against_collateral`, `repay_against_collateral` all return `NotInitialized` before init |
+| **liquidate** | 1 | Returns `NotInitialized` before init |
+| **flash_loan / repay_flash_loan** | 2 | Panic with `"NotInitialized"` before init |
+| **admin setters** | 14 | All admin-only setters return / panic with `NotInitialized` before init |
+| **cross-asset entry points** | 5 | `set_asset_params`, `deposit/borrow/repay/withdraw_asset` return `NotInitialized` before init |
+| **view functions** | 9 | Read-only views return safe defaults (0 / `None`) without panicking |
+| **post-init happy path** | 1 | After `initialize`, the full deposit → borrow → repay → withdraw cycle succeeds |
 
-**Security Note**: In production, `initialize()` should only be called once during deployment. The current implementation allows re-initialization, which could be a security concern if not properly controlled.
-
-**Recommendation**: Consider adding a global initialization flag to prevent any re-initialization after the first call.
-
----
-
-### 3. Storage Correctness (`test_storage_correctness`)
-
-**Purpose**: Verifies all required storage keys are properly set during initialization.
-
-**Validates**:
-- `RiskDataKey::Admin` - Risk management admin address
-- `RiskDataKey::RiskConfig` - Risk configuration parameters
-- `RiskDataKey::EmergencyPause` - Emergency pause flag
-- `InterestRateDataKey::Admin` - Interest rate module admin address
-- `InterestRateDataKey::InterestRateConfig` - Interest rate configuration
-
-**Security Implications**: Ensures no storage keys are missing, which could cause runtime errors or undefined behavior.
+Total: **41 tests** in the guard suite.
 
 ---
 
-### 4. Default Risk Parameters Validation (`test_default_risk_parameters_valid`)
+## Covered Entry Points
 
-**Purpose**: Validates that default risk parameters meet security requirements.
+### State-mutating entry points (all guarded)
 
-**Security Checks**:
-- ✅ Min collateral ratio ≥ 100% (prevents under-collateralization)
-- ✅ Liquidation threshold < min collateral ratio (ensures liquidation buffer)
-- ✅ Close factor ≤ 100% (prevents over-liquidation)
-- ✅ Liquidation incentive > 0 (ensures liquidator motivation)
-- ✅ Liquidation incentive ≤ 50% (prevents excessive liquidator profit)
+| Entry point | Guard added |
+|---|---|
+| `deposit` | ✅ |
+| `withdraw` | ✅ |
+| `borrow` | ✅ |
+| `repay` | ✅ |
+| `borrow_against_collateral` | ✅ |
+| `repay_against_collateral` | ✅ |
+| `liquidate` | ✅ |
+| `flash_loan` | ✅ |
+| `repay_flash_loan` | ✅ |
+| `set_oracle_pubkey` | ✅ |
+| `set_price` | ✅ |
+| `set_max_move_bps` | ✅ |
+| `set_max_flash_bps` | ✅ |
+| `set_price_bounds` | ✅ |
+| `propose_admin` | ✅ |
+| `accept_admin` | ✅ |
+| `set_guardian` | ✅ |
+| `set_emergency_state` | ✅ |
+| `set_pause` | ✅ |
+| `set_min_borrow` | ✅ |
+| `set_asset_isolation` | ✅ |
+| `set_collateral_asset` | ✅ |
+| `set_close_factor_bps` | ✅ |
+| `set_liquidation_incentive_bps` | ✅ |
+| `set_debt_ceiling` | ✅ |
+| `set_flash_fee` | ✅ |
+| `fund_insurance` | ✅ |
+| `set_insurance_share` | ✅ |
+| `credit_insurance_fund` | ✅ |
+| `write_off_bad_debt` | ✅ |
+| `set_asset_params` | ✅ |
+| `deposit_collateral_asset` | ✅ |
+| `borrow_asset` | ✅ |
+| `repay_asset` | ✅ |
+| `withdraw_asset` | ✅ |
 
-**Security Implications**: These checks ensure the protocol starts with economically sound parameters that protect both borrowers and lenders.
+### `initialize` itself
 
----
-
-### 5. Default Interest Rate Config (`test_default_interest_rate_config`)
-
-**Purpose**: Verifies interest rate configuration is initialized.
-
-**Validates**:
-- Interest rate config storage key exists
-- Config is accessible after initialization
-
----
-
-### 6. Pause Switches Initialization (`test_pause_switches_initialized`)
-
-**Purpose**: Ensures all operational pause switches are initialized to the unpaused state.
-
-**Validates**:
-- `pause_deposit` = false
-- `pause_withdraw` = false
-- `pause_borrow` = false
-- `pause_repay` = false
-- `pause_liquidate` = false
-
-**Security Implications**: Ensures the protocol is operational immediately after initialization. Admin can pause operations later if needed.
-
----
-
-### 7. Emergency Pause Initialization (`test_emergency_pause_initialized`)
-
-**Purpose**: Verifies the emergency pause flag is initialized to false.
-
-**Validates**:
-- Emergency pause is not active after initialization
-- Protocol is fully operational
-
----
-
-### 8. Timestamp Recording (`test_timestamp_recorded`)
-
-**Purpose**: Verifies initialization records the current ledger timestamp.
-
-**Validates**:
-- `last_update` field in risk config matches initialization time
-- Timestamp is correctly captured from the ledger
-
-**Use Case**: Enables time-based logic and audit trails.
+`initialize` is the **only** entry point exempt from the guard.  A second call
+returns `LendingError::AlreadyInitialized` instead.
 
 ---
 
-### 9. Various Admin Addresses (`test_various_admin_addresses`)
-
-**Purpose**: Tests initialization with different admin address types.
-
-**Validates**:
-- Multiple contract instances can be initialized with different admins
-- Admin addresses are stored correctly per contract instance
-- No cross-contamination between contract instances
-
----
-
-### 10. Initialization State Consistency (`test_initialization_state_consistency`)
-
-**Purpose**: Ensures all subsystems are initialized with consistent admin addresses.
-
-**Validates**:
-- Risk management admin = Interest rate admin
-- Both admins match the initialization parameter
-- No inconsistency between modules
-
-**Security Implications**: Prevents split-brain scenarios where different modules have different admins.
-
----
-
-### 11. Storage Persistence (`test_storage_persistence`)
-
-**Purpose**: Verifies initialization data uses persistent storage and survives ledger advancement.
-
-**Validates**:
-- Data is stored in persistent storage (not temporary)
-- Data remains accessible after ledger sequence number increases
-- Storage keys remain valid over time
-
-**Security Implications**: Ensures critical configuration doesn't disappear, which would brick the contract.
-
----
-
-### 12. Production Pattern (`test_initialization_production_pattern`)
-
-**Purpose**: Documents the expected production usage pattern.
-
-**Best Practice**:
-1. Deploy contract
-2. Call `initialize()` exactly once with the admin address
-3. Never call `initialize()` again
-
-**Security Note**: This test serves as documentation for proper deployment procedures.
-
----
-
-## Security Assumptions
-
-### Validated Assumptions
-
-1. ✅ **Default parameters are economically sound**: All default risk parameters pass validation checks
-2. ✅ **Storage is persistent**: Initialization data survives ledger advancement
-3. ✅ **No missing storage keys**: All required keys are set during initialization
-4. ✅ **Consistent admin across modules**: Both subsystems use the same admin
-5. ✅ **Operational by default**: Protocol is unpaused and ready to use after initialization
-
-### Potential Security Concerns
-
-1. ⚠️ **Re-initialization allowed**: The contract can be re-initialized, potentially changing admin addresses
-   - **Mitigation**: In production, ensure `initialize()` is only called once
-   - **Recommendation**: Add a global initialization flag to prevent re-initialization
-
-2. ⚠️ **No access control on initialize()**: Anyone can call `initialize()` if not already initialized
-   - **Mitigation**: Deploy and initialize in the same transaction
-   - **Recommendation**: Consider adding deployer-only initialization
-
----
-
-## Test Execution
-
-### Run All Initialization Tests
+## Running the Tests
 
 ```bash
-cd stellar-lend/contracts/hello-world
-cargo test initialize_test --lib
+# Run guard tests only (fast)
+cargo test -p stellarlend-lending initialization_guard
+
+# Run the full lending test suite
+cargo test -p stellarlend-lending
 ```
 
-### Run Specific Test
+---
 
-```bash
-cargo test initialize_test::test_successful_initialization --lib
-```
+## Security Assumptions Verified
 
-### Run with Output
+1. ✅ **No state mutation before init** — every write path returns `NotInitialized`.
+2. ✅ **Double-init prevented** — `AlreadyInitialized` on any repeat call.
+3. ✅ **Admin unchanged on failed re-init** — original admin address preserved.
+4. ✅ **View functions safe before init** — return `0` / `None` without panicking.
+5. ✅ **Post-init operations unaffected** — the guard is a one-instruction `.has()`
+   check and adds no observable behaviour after `initialize` succeeds.
 
-```bash
-cargo test initialize_test --lib -- --nocapture
-```
+---
 
 ## Notes about recent contract changes
 
-- `get_admin()` now returns a typed contract error when the contract is not initialized; clients should use `try_get_admin()` or handle `LendingError::NotInitialized`.
-- `initialize()` now returns a typed error and will reject subsequent initialization attempts with `LendingError::AlreadyInitialized`.
-
----
-
-## Coverage Analysis
-
-### Lines Covered
-
-The test suite covers:
-- `initialize()` function in `lib.rs`
-- `initialize_risk_management()` in `risk_management.rs`
-- `initialize_interest_rate_config()` in `interest_rate.rs`
-- Storage key definitions
-- Default parameter creation
-- Validation logic
-
-### Edge Cases Tested
-
-- ✅ First initialization
-- ✅ Double initialization
-- ✅ Multiple contract instances
-- ✅ Storage persistence
-- ✅ Parameter validation
-- ✅ Timestamp recording
-- ✅ Admin consistency
-
-### Not Covered (Future Work)
-
-- ❌ Initialization with invalid parameters (would require modifying defaults)
-- ❌ Initialization failure recovery
-- ❌ Concurrent initialization attempts
-- ❌ Initialization with zero address (Soroban doesn't allow this)
-
----
-
-## Maintenance Notes
-
-### When to Update Tests
-
-1. **Default parameters change**: Update validation assertions
-2. **New storage keys added**: Update `test_storage_correctness`
-3. **New pause switches added**: Update `test_pause_switches_initialized`
-4. **Initialization logic changes**: Review all tests for relevance
-
-### Test Stability
-
-All tests use:
-- Mocked authentication (`env.mock_all_auths()`)
-- Generated addresses (deterministic in tests)
-- Default ledger state
-
-Tests are deterministic and should produce consistent results.
-
----
-
-## Recommendations for Production
-
-1. **Add initialization guard**: Implement a one-time initialization flag
-2. **Add deployer check**: Restrict initialization to contract deployer
-3. **Emit initialization event**: Log initialization for audit trails
-4. **Document admin responsibilities**: Clearly define admin role and permissions
-5. **Multi-sig admin**: Consider using multi-sig for admin operations
+- `initialize` now returns `Result<(), LendingError>` instead of panicking; clients
+  should use `try_initialize` or handle `LendingError::AlreadyInitialized`.
+- `require_initialized` is implemented as a `pub(crate)` free function in
+  `src/lib.rs` so it can be reused across all entry points without duplication.
+- Two new `LendingError` variants were added: `InvalidIsolationCeiling = 7003`
+  and `SelfLiquidation = 7004`.  Both had existing references but lacked enum
+  declarations; those are now resolved.
 
 ---
 
 ## References
 
-- Main contract: `stellar-lend/contracts/hello-world/src/lib.rs`
-- Risk management: `stellar-lend/contracts/hello-world/src/risk_management.rs`
-- Interest rate: `stellar-lend/contracts/hello-world/src/interest_rate.rs`
-- Test suite: `stellar-lend/contracts/hello-world/src/tests/initialize_test.rs`
+- Guard implementation: `stellar-lend/contracts/lending/src/lib.rs` — `require_initialized`
+- Guard test suite: `stellar-lend/contracts/lending/src/initialization_guard_test.rs`
+- Security notes: `stellar-lend/contracts/hello-world/INITIALIZATION_SECURITY_NOTES.md`

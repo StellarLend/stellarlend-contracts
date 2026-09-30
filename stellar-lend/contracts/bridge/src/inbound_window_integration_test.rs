@@ -1,246 +1,130 @@
-//! Integration test: driving [`Bridge::admit_inbound`] against the rolling-window
-//! cap boundary with realistic ledger timestamps.
+//! Integration test for the inbound per-window rolling cap on
+//! [`Bridge`].  Drives the full fill → reject → roll → refill lifecycle with
+//! deterministic timestamps, plus the long-idle-gap window realignment case.
 //!
-//! This test exercises the full lifecycle of an inbound rolling window:
-//!
-//! - **Fail-closed on fresh bridge** — a `Bridge` constructed without any cap
-//!   configuration rejects every inbound admission with the typed
-//!   [`BridgeError::InboundCapExceeded`] error.
-//! - **Fill exactly to cap** — successive `admit_inbound` calls accumulate
-//!   toward `max_per_window`; landing exactly on the cap is permitted.
-//! - **Reject over cap** — an admission that would exceed the cap is rejected
-//!   with the typed [`BridgeError::InboundCapExceeded`] and **does not mutate**
-//!   the window state.
-//! - **Window roll** — once `current_time` passes `window_start + window_size`,
-//!   the internal [`Bridge::roll_window_if_expired`] resets
-//!   `window_inbound_total` to `0` and realigns `window_start` to the current
-//!   time.
-//! - **Refill in new window** — after the roll, the full cap is available again.
-//! - **Cap of zero (explicit)** — `set_inbound_cap(0, ...)` is a valid
-//!   configuration that forces fail-closed; all admissions are rejected.
-//! - **Negative amount** — rejected upfront without touching any state.
-//! - **Overflow guard** — `window_inbound_total` arithmetic overflow is caught
-//!   and rejected, not panicked.
-//! - **Long idle gap** — a bridge that sits idle for many window lengths does
-//!   not carry stale accumulated value forward; the window realigns cleanly to
-//!   the current time.
+//! See [`stellar-lend/contracts/bridge/INBOUND_WINDOW_TESTING.md`] for the spec
+//! and `issue #1562` for the original bug report (the file was missing `mod`
+//! wiring so `cargo test -p stellarlend-bridge` never compiled it).
 
-#[cfg(test)]
-mod inbound_window_integration_tests {
-    use crate::{Bridge, BridgeError, ValidatorSet};
+use super::*;
+use soroban_sdk::Env;
 
-    /// Default window size used throughout the test: 100 ledger-time seconds.
-    const WINDOW_SECS: u64 = 100;
+/// Helper: spin up a fresh bridge contract and return its typed client.
+fn fresh_bridge() -> (Env, BridgeClient<'static>) {
+    let env = Env::default();
+    let cid = env.register_contract(None, Bridge);
+    let client = BridgeClient::new(&env, &cid);
+    (env, client)
+}
 
-    /// Per-window cap used throughout the test: 1_000 value units.
-    const CAP: i128 = 1_000;
+/// 1. Unconfigured bridge rejects every inbound admission (fail-closed default).
+#[test]
+fn unconfigured_bridge_rejects_all_inbound() {
+    let (env, client) = fresh_bridge();
+    let err = client.try_admit_inbound(&1_i128, &0_u64);
+    assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
+}
 
-    /// Build a minimal [`Bridge`] with exactly one dummy validator.  Inbound
-    /// window logic does not depend on quorum, so a single entry is sufficient.
-    fn make_bridge() -> Bridge {
-        Bridge::new(ValidatorSet {
-            validators: vec![vec![1, 2, 3]],
-        })
-    }
+/// 2. `set_inbound_cap(0, ...)` is a valid configuration and rejects even
+///    any positive amount afterwards.
+#[test]
+fn explicit_zero_cap_rejects_inbound() {
+    let (env, client) = fresh_bridge();
+    client.set_inbound_cap(&0_i128, &100_u64, &0_u64);
+    let err = client.try_admit_inbound(&1_i128, &10_u64);
+    assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
+}
 
-    /// Convenience helper: configure an inbound cap and assert it succeeded.
-    fn configure_bridge(bridge: &mut Bridge, cap: i128, window_size: u64, now: u64) {
-        bridge
-            .set_inbound_cap(cap, window_size, now)
-            .expect("set_inbound_cap should succeed with valid parameters");
-    }
+/// 3 + 4 + 5 + 6 + 7. Full fill → over-cap reject → window roll → refill.
+#[test]
+fn inbound_window_full_lifecycle() {
+    let (env, client) = fresh_bridge();
+    // max_per_window = 1_000, window_size = 100, started at t = 0.
+    client.set_inbound_cap(&1_000_i128, &100_u64, &0_u64);
 
-    // -----------------------------------------------------------------------
-    // Fail-closed on unconfigured bridge
-    // -----------------------------------------------------------------------
+    // Under-cap admit (cumulative 600).
+    client.admit_inbound(&600_i128, &10_u64);
+    // Under-cap admit lands us exactly on the cap.
+    client.admit_inbound(&400_i128, &20_u64);
 
-    #[test]
-    fn unconfigured_bridge_rejects_all_inbound() {
-        let mut bridge = make_bridge();
+    // Over-cap reject: state frozen at 1_000.
+    let err = client.try_admit_inbound(&1_i128, &30_u64);
+    assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
 
-        assert_eq!(bridge.max_per_window, 0, "fresh bridge must start with zero cap");
+    // Window has rolled (200 >= 0 + 100): admit 1_000 of the new window.
+    client.admit_inbound(&1_000_i128, &200_u64);
 
-        let err = bridge.admit_inbound(1, 0).unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<BridgeError>(),
-            Some(&BridgeError::InboundCapExceeded),
-        );
-        assert_eq!(bridge.window_inbound_total, 0);
-    }
+    // Re-over-cap in the new window.
+    let err = client.try_admit_inbound(&1_i128, &250_u64);
+    assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
+}
 
-    // -----------------------------------------------------------------------
-    // Fill to cap, reject over cap, roll window, refill
-    // -----------------------------------------------------------------------
+/// 8. `amount < 0` is rejected even before windows/caps are consulted.
+#[test]
+fn negative_amount_rejected() {
+    let (env, client) = fresh_bridge();
+    client.set_inbound_cap(&1_000_i128, &100_u64, &0_u64);
+    let err = client.try_admit_inbound(&-5_i128, &10_u64);
+    assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
+}
 
-    #[test]
-    fn inbound_window_full_lifecycle() {
-        let mut bridge = make_bridge();
-        configure_bridge(&mut bridge, CAP, WINDOW_SECS, 0);
+/// 9. Arithmetic overflow on the window total is caught (no panic).  Forcing
+///    `i128::MAX` as the amount saturates the cap exactly, then a single
+///    additional `+1` trips the `checked_add` overflow guard — the
+///    contract surfaces `WindowTotalOverflow`, not a panic.
+#[test]
+fn overflow_on_window_total_is_caught() {
+    let (env, client) = fresh_bridge();
+    client.set_inbound_cap(&i128::MAX, &100_u64, &0_u64);
+    client.admit_inbound(&i128::MAX, &10_u64);
+    let err = client.try_admit_inbound(&1_i128, &20_u64);
+    assert!(
+        matches!(err, Err(Ok(BridgeError::WindowTotalOverflow))),
+        "expected WindowTotalOverflow on overflow, got {:?}",
+        err
+    );
+}
 
-        // ── Stage 1: Fill exactly to cap ───────────────────────────────
-        bridge.admit_inbound(600, 10).expect("first admission, under cap");
-        assert_eq!(bridge.window_inbound_total, 600);
-        assert_eq!(bridge.window_start, 0);
+/// 10. Long idle gap realigns the window start to `current_time` rather than
+///     carrying over the stale total.
+#[test]
+fn long_idle_gap_realigns_window() {
+    let (env, client) = fresh_bridge();
+    client.set_inbound_cap(&1_000_i128, &100_u64, &0_u64);
 
-        bridge
-            .admit_inbound(400, 20)
-            .expect("second admission lands exactly on cap");
-        assert_eq!(bridge.window_inbound_total, CAP);
-        assert_eq!(bridge.window_start, 0);
+    // Idle-fill a small amount inside the first window.
+    client.admit_inbound(&300_i128, &5_u64);
 
-        // ── Stage 2: Reject over cap ───────────────────────────────────
-        let err = bridge.admit_inbound(1, 30).unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<BridgeError>(),
-            Some(&BridgeError::InboundCapExceeded),
-            "over-cap admission should be rejected with InboundCapExceeded",
-        );
-        // State must be unchanged after rejection.
-        assert_eq!(bridge.window_inbound_total, CAP);
-        assert_eq!(bridge.window_start, 0);
+    // Skip 10+ window lengths into the future: stale 300 must NOT carry over.
+    client.admit_inbound(&1_000_i128, &1_042_u64);
+    // We can't read `window_start` directly from the public API, but a
+    // follow-up admit that would clobber the cap must be rejected — meaning
+    // the running total IS 1_000 in the new window (not 1300).
+    let err = client.try_admit_inbound(&1_i128, &1_100_u64);
+    assert!(
+        matches!(err, Err(Ok(BridgeError::InboundCapExceeded))),
+        "long idle gap must discard stale total: {:?}",
+        err
+    );
+}
 
-        // ── Stage 3: Window roll (advance past boundary) ───────────────
-        // Window started at 0, window_size = 100 → window_end = 100.
-        // At current_time = 200 the window has clearly expired.
-        bridge
-            .admit_inbound(CAP, 200)
-            .expect("window should have rolled, making full cap available");
-        assert_eq!(
-            bridge.window_inbound_total, CAP,
-            "cap filled again in the new window",
-        );
-        assert_eq!(
-            bridge.window_start, 200,
-            "window_start realigned to current_time",
-        );
+/// 11. `roll_resets_total_and_allows_refill`: once the window rolls, a
+///     previously-rejected amount becomes admissible in the new window.
+#[test]
+fn roll_resets_total_and_allows_refill() {
+    let (env, client) = fresh_bridge();
+    client.set_inbound_cap(&100_i128, &50_u64, &0_u64);
 
-        // ── Stage 4: Over cap again in the new window ──────────────────
-        let err = bridge.admit_inbound(1, 250).unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<BridgeError>(),
-            Some(&BridgeError::InboundCapExceeded),
-        );
-        assert_eq!(bridge.window_inbound_total, CAP);
-    }
+    // Saturate the first window.
+    client.admit_inbound(&100_i128, &10_u64);
+    // Reject in the same window.
+    let err = client.try_admit_inbound(&1_i128, &20_u64);
+    assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
 
-    // -----------------------------------------------------------------------
-    // Explicitly configured zero cap (fail-closed)
-    // -----------------------------------------------------------------------
+    // After the window length, admit a fresh 100.
+    client.admit_inbound(&100_i128, &60_u64);
 
-    #[test]
-    fn explicit_zero_cap_rejects_inbound() {
-        let mut bridge = make_bridge();
-        configure_bridge(&mut bridge, 0, WINDOW_SECS, 0);
-
-        let err = bridge.admit_inbound(0, 10).unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<BridgeError>(),
-            Some(&BridgeError::InboundCapExceeded),
-        );
-        assert_eq!(bridge.window_inbound_total, 0);
-
-        assert!(bridge.admit_inbound(100, 20).is_err());
-        assert_eq!(bridge.window_inbound_total, 0);
-    }
-
-    // -----------------------------------------------------------------------
-    // Negative amount rejected
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn negative_amount_rejected() {
-        let mut bridge = make_bridge();
-        configure_bridge(&mut bridge, CAP, WINDOW_SECS, 0);
-
-        let err = bridge.admit_inbound(-50, 10).unwrap_err();
-        assert!(err.to_string().contains("must be >= 0"));
-        assert_eq!(bridge.window_inbound_total, 0);
-    }
-
-    // -----------------------------------------------------------------------
-    // Overflow guard on window_inbound_total
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn overflow_on_window_total_is_caught() {
-        let mut bridge = make_bridge();
-        configure_bridge(&mut bridge, i128::MAX, WINDOW_SECS, 0);
-
-        bridge
-            .admit_inbound(i128::MAX - 1, 10)
-            .expect("should admit just under overflow");
-        let err = bridge.admit_inbound(2, 20).unwrap_err();
-        assert!(err.to_string().contains("overflow"));
-        assert_eq!(bridge.window_inbound_total, i128::MAX - 1);
-    }
-
-    // -----------------------------------------------------------------------
-    // Window roll resets total — previously-rejected amounts become admissible
-    // in the new window.
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn roll_resets_total_and_allows_refill() {
-        let mut bridge = make_bridge();
-        configure_bridge(&mut bridge, CAP, WINDOW_SECS, 0);
-
-        // Fill and exceed.
-        bridge.admit_inbound(CAP, 50).expect("fill window");
-        let err = bridge.admit_inbound(1, 60).unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<BridgeError>(),
-            Some(&BridgeError::InboundCapExceeded),
-            "over cap should be rejected with InboundCapExceeded",
-        );
-
-        // Advance past window boundary — window rolls, total resets to 0,
-        // then admits 1.
-        bridge
-            .admit_inbound(1, 200)
-            .expect("roll resets total, smallest possible admission");
-        assert_eq!(bridge.window_inbound_total, 1);
-        assert_eq!(bridge.window_start, 200);
-
-        // Remaining cap (999) should be admissible in the rolled window.
-        bridge
-            .admit_inbound(CAP - 1, 250)
-            .expect("remaining cap available in rolled window");
-        assert_eq!(bridge.window_inbound_total, CAP);
-
-        // Over cap again in the new window (before window expires at 300).
-        let err = bridge.admit_inbound(1, 275).unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<BridgeError>(),
-            Some(&BridgeError::InboundCapExceeded),
-        );
-        assert_eq!(bridge.window_inbound_total, CAP);
-    }
-
-    // -----------------------------------------------------------------------
-    // Long idle gap: window realigns cleanly without carrying stale total.
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn long_idle_gap_realigns_window() {
-        let mut bridge = make_bridge();
-        configure_bridge(&mut bridge, CAP, WINDOW_SECS, 0);
-
-        // Partial fill.
-        bridge.admit_inbound(300, 5).unwrap();
-        assert_eq!(bridge.window_inbound_total, 300);
-
-        // Idle for 10x the window size.
-        let far_future = 10 * WINDOW_SECS + 42;
-        bridge
-            .admit_inbound(CAP, far_future)
-            .expect("idle gap must not carry over stale total");
-        assert_eq!(
-            bridge.window_inbound_total, CAP,
-            "stale pre-gap total must be gone",
-        );
-        assert_eq!(
-            bridge.window_start, far_future,
-            "window start must realign to current_time, not a stale multiple of window_size",
-        );
-    }
+    // And over-cap again in the new window.
+    let err = client.try_admit_inbound(&1_i128, &80_u64);
+    assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
 }

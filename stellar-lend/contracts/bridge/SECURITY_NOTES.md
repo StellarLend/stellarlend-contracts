@@ -4,6 +4,7 @@ Threat model and mitigations
 
 - Operator key compromise: Rotation requires a quorum proof signed by the *current* validator set. An operator private key compromise (single key) cannot rotate the set unless a quorum of current validators collude.
 - Replay and downgrade: The `epoch` counter prevents accepting messages signed by retired validator sets (any signed_epoch < current epoch is rejected). Rotation requires epoch == current_epoch + 1, preventing out-of-order rotations.
+- **Not-yet-active validator sets (#1147)**: `validate_inbound_epoch` also rejects any `signed_epoch > current_epoch` (see the dedicated section below). A naive lower-bound-only check would let an attacker pre-collect a message valid under a not-yet-rotated validator set and replay it once that future epoch actually arrives; the upper bound closes that window.
 - Signature binding: The proof signs the serialized tuple `(new_set_bytes_vec, epoch)`, binding the new validator set to the specific epoch.
 
 Implementation notes
@@ -75,6 +76,77 @@ The supermajority threshold is `floor(2n/3) + 1` for an `n`-validator set.
 - Attempting to trigger a *further* rotation (B → C) using signatures from the
   already-rotated-out set A is rejected because A's keys are no longer in the
   current validator set.
+
+### Not-yet-active validator-set rejection (#1147)
+
+`validate_inbound_epoch` ALSO rejects any inbound message bearing
+`signed_epoch > current_epoch + INBOUND_EPOCH_TOLERANCE` with
+`"not-yet-active validator set"`. This closes a window that the retired-set
+guard leaves open: an attacker who knows (or guesses) a future not-yet-rotated
+validator set can produce a message well in advance, then surface it on this
+bridge once the future epoch actually arrives — the message would already pass
+`rotate_validators`-style checks because the future keys would be authoritative
+by then, but the bridge would not otherwise have recorded it. By refusing the
+message NOW, the bridge ensures any inbound under that future epoch must go
+through a fresh submission path with the new keys, instead of replaying
+pre-collected proof material.
+
+**The tolerance is explicitly `0` (strict equality) by default.** Epochs are
+discrete monotonically-incremented sequence numbers, not physical timestamps —
+there is no realistic "clock skew" to absorb, and any positive tolerance
+weakens replay resistance without justification. Raising
+`INBOUND_EPOCH_TOLERANCE` is a security-sensitive change and must be paired
+with a test update.
+
+**Overflow is handled with `saturating_add`.** `signed_epoch = u64::MAX`
+cannot weaponise an integer overflow into a comparison that panics or wraps
+to a small value; the comparison is evaluated safely.
+
+#### Formula
+
+```text
+min_accepted_epoch = self.epoch
+max_accepted_epoch = self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE)
+
+accepted iff  min_accepted_epoch <= signed_epoch <= max_accepted_epoch
+```
+
+#### Worked example
+
+With `self.epoch = 5` and `INBOUND_EPOCH_TOLERANCE = 0`:
+
+| `signed_epoch` | Outcome | Reason |
+|---:|---|---|
+| `3` | **Rejected** (`retired validator set`) | `< self.epoch` |
+| `5` | **Accepted** | exactly the active epoch |
+| `6` | **Rejected** (`not-yet-active`) | `> self.epoch + INBOUND_EPOCH_TOLERANCE` |
+| `u64::MAX` | **Rejected** (`not-yet-active`) | strictly above the active epoch |
+
+#### Tolerance expression
+
+If `INBOUND_EPOCH_TOLERANCE` is ever raised to `N`:
+
+| `signed_epoch` | Outcome (when `self.epoch == 5`) |
+|---:|---|
+| `5 + N` | **Accepted** (upper-bound inclusive) |
+| `5 + N + 1` | **Rejected** (one above `max_accepted_epoch`) |
+
+`N = 0` enforces strict equality. The bridge is shipped at `N = 0`; an
+operator must re-justify, re-test, and document any change.
+
+#### Coverage
+
+`src/inbound_epoch_test.rs` covers, at a minimum,
+
+| Scenario | Expected outcome |
+|---|---|
+| `signed_epoch` = `self.epoch - 1` | **Rejected** — retired validator set |
+| `signed_epoch` = `self.epoch` | **Accepted** |
+| `signed_epoch` = `self.epoch + 1` | **Rejected** — not-yet-active |
+| `signed_epoch` = `self.epoch + 10⁹` | **Rejected** — not-yet-active |
+| `signed_epoch` = `u64::MAX` | **Rejected** — not-yet-active |
+| Error messages reference both `self.epoch` and `signed_epoch` | |
+| `INBOUND_EPOCH_TOLERANCE` is observed to equal `0` at test time | |
 
 ### Multi-rotation correctness
 
