@@ -67,7 +67,7 @@ class TestThresholdConfig(unittest.TestCase):
         with config_path.open() as handle:
             thresholds = json.load(handle)
 
-        self.assertEqual(thresholds["flat_threshold"], 60.0)
+        self.assertEqual(thresholds["flat_threshold"], 70.0)
         self.assertNotIn("contracts/vesting/src", thresholds["per_crate"])
         self.assertNotIn("contracts/hello-world/src", thresholds["per_crate"])
 
