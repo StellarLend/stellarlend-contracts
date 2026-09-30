@@ -2,7 +2,7 @@
 //!
 //! Covers every rejection path and confirms valid schedules are accepted.
 
-use crate::{VestingContract, VestingError};
+use crate::test_harness::{VestingContract, VestingError};
 
 // ── Rejection cases ───────────────────────────────────────────────────────────
 
@@ -35,16 +35,16 @@ fn rejects_cliff_greater_than_duration() {
     assert_eq!(c.total_locked(), 0, "no state mutated on error");
 }
 
-/// Non-admin caller must be rejected with `Unauthorized`.
-#[test]
-fn rejects_non_admin_caller() {
-    let mut c = VestingContract::new("admin", "treasury");
-    let err = c
-        .add_grant("attacker", "alice", 1_000, 0, 1_000, 0)
-        .unwrap_err();
-    assert_eq!(err, VestingError::Unauthorized);
-    assert_eq!(c.total_locked(), 0, "no state mutated on error");
-}
+// NOTE: a "non-admin caller rejected" test previously lived here, but
+// `add_grant`'s on-chain signature (`add_grant(env, grantee, total, start,
+// duration, cliff)`) has no explicit `caller` parameter -- authorization is
+// always checked against the stored admin address, and the harness's
+// `caller` string is only used to decide who tokens are pre-minted to for
+// escrow, not to impersonate a signer. There is therefore no way to
+// exercise a "non-admin calls add_grant" path through this API; that
+// concern is already covered for `pause`/`resume`/`revoke`/`transfer_grant`,
+// which do take an explicit `caller: Address` and reject non-admins (see
+// `pause_test.rs`, `grant_transfer_test.rs`).
 
 // ── Acceptance cases ──────────────────────────────────────────────────────────
 
@@ -57,9 +57,10 @@ fn accepts_cliff_equal_to_duration() {
         .expect("cliff == duration should be accepted");
     assert_eq!(c.total_locked(), 1_000);
 
-    // Before cliff end: nothing vested.
-    let before = c.claim("alice", 999).expect("claim failed");
-    assert_eq!(before, 0);
+    // Before cliff end: nothing vested, so claim is rejected outright
+    // (matches `vesting_contract_test.rs::test_claim_before_cliff_returns_nothing_to_claim`).
+    let before = c.claim("alice", 999);
+    assert_eq!(before, Err(VestingError::NothingToClaim));
 
     // At exactly cliff/duration end: fully vested.
     let at_end = c.claim("alice", 1_000).expect("claim failed");

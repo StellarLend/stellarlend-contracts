@@ -11,9 +11,9 @@ is executed.
 
 | Variant | Fields | Effect |
 |---------|--------|--------|
-| `SetThreshold` | `new_threshold: u32` | Updates the minimum approval count for future proposals |
-| `RotateSigners` | `new_signers: Vec<Address>` | Replaces the entire signer set |
-| `InvokeContract` | `contract: Address`, `fn_symbol: Symbol`, `args_hash: Bytes` | Cross-contract call to a lending upgrade entrypoint |
+| `SetThreshold` | `u32` | Updates the minimum approval count for future proposals |
+| `RotateSigners` | `Vec<Address>` | Replaces the entire signer set |
+| `InvokeContract` | `InvokeContractParams` | Cross-contract call to a lending upgrade entrypoint |
 
 ## Security Properties
 
@@ -31,11 +31,11 @@ is executed.
 
 ```
 1. Signer A calls create_proposal(
-       action = InvokeContract {
+       action = InvokeContract(InvokeContractParams {
            contract  = <lending-upgrade-addr>,
            fn_symbol = Symbol::new(&env, "upgrade_execute"),
            args_hash = sha256(abi_encode(new_wasm_hash)),
-       },
+       }),
        payload_hash = sha256(abi_encode(action)),
        ttl_ledgers  = 1000,
    )  →  proposal_id = 0

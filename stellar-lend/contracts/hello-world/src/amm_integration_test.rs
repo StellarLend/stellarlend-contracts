@@ -1,18 +1,8 @@
-/// Integration tests for the lending ↔ AmmContract swap path.
+/// Integration tests for the AMM swap formula.
 ///
-/// These tests verify that the `amm_swap` routing layer (in `amm.rs`) produces
-/// results consistent with the standalone `AmmContract` crate, proving that no
-/// calling-convention or parameter-encoding mismatch exists between the two.
-///
-/// # Test strategy
-///
-/// Because `stellarlend_amm` is not yet a workspace member of the hello-world
-/// crate, the integration tests:
-///
-/// 1. Inline the same Uniswap-v2 swap formula used by `AmmContract::swap_a_for_b`.
-/// 2. Cross-check each assertion against the formula in both directions —
-///    the "deployed contract side" (formula from `amm/src/lib.rs`) and the
-///    "lending routing side" (what `amm_swap` would forward).
+/// These tests inline the Uniswap-v2 constant-product swap formula used by
+/// the standalone `AmmContract` crate, independently verifying swap math
+/// correctness without depending on a cross-contract routing layer.
 ///
 /// This is the same approach used by cross-contract tests in the Soroban
 /// testutils examples: the expected output is computed independently and then
@@ -177,7 +167,7 @@ fn integration_fee_at_boundary_9999_bps() {
 // 4. Empty-pool error propagation
 // ---------------------------------------------------------------------------
 
-/// Verifies that `amm_swap` with an empty pool (reserve = 0) is rejected.
+/// Verifies that a swap with an empty pool (reserve = 0) is rejected.
 ///
 /// The lending routing layer must propagate the panic / error from `AmmContract`
 /// when either reserve is zero rather than silently returning 0.

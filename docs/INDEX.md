@@ -38,6 +38,7 @@ Covers the `initialize` single-call guard, the `require_admin` helper, the two-s
 - [Cross-Asset Rules](CROSS_ASSET_RULES.md)
 - [Zero Amount Semantics](ZERO_AMOUNT_SEMANTICS.md)
 - [View Schema Versioning Policy](VIEW_SCHEMA_VERSIONING_POLICY.md)
+- [Interest Rate Kink Model](../stellar-lend/contracts/lending/RATE_MODEL.md)
 
 Covers protocol-level parameters such as collateral ratios, liquidation thresholds, and limits enforced by the lending system.
 

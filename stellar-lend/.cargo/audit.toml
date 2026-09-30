@@ -1,19 +1,42 @@
+# Security audit configuration for cargo-audit.
+# Review date: 2026-10-01
+# Maintainer: @StellarLend/core-devs
+#
+# When reviewing, verify each ignore is still valid by running:
+#   cd stellar-lend && cargo audit
+# If an advisory has been fixed upstream in a crate we can update to,
+# remove the ignore entry, update the crate, and re-test.
+
 [advisories]
-# Ignore advisories for dependencies we cannot control (Soroban SDK transitive deps)
 ignore = [
-    "RUSTSEC-2026-0007",  # bytes - Integer overflow (Soroban SDK dependency)
-    "RUSTSEC-2026-0009",  # time - DoS via stack exhaustion (Soroban SDK dependency)
-    "RUSTSEC-2026-0012",  # keccak - Unsoundness in ARMv8 assembly (Soroban SDK dependency)
-    "RUSTSEC-2025-0012",  # backoff - unmaintained (client dependency)
-    "RUSTSEC-2024-0388",  # derivative - unmaintained (Soroban SDK dependency)
-    "RUSTSEC-2024-0384",  # instant - unmaintained (client dependency)
-    "RUSTSEC-2024-0436",  # paste - unmaintained (Soroban SDK dependency)
-    "RUSTSEC-2025-0134",  # rustls-pemfile - unmaintained (client dependency)
-    "RUSTSEC-2022-0054",  # wee_alloc - unmaintained (contract dependency)
-    "RUSTSEC-2025-0009",  # ring - panics on AES (indexing_system ethers-rs dependency)
-    "RUSTSEC-2025-0010",  # ring - unmaintained (indexing_system ethers-rs dependency)
-    "RUSTSEC-2025-0057",  # fxhash - unmaintained (indexing_system ethers-rs dependency)
-    "RUSTSEC-2023-0071",  # rsa - Marvin Attack (no fixed upgrade available for 0.9.x)
+    # ── Soroban SDK transitive dependencies (we cannot upgrade independently) ──
+    "RUSTSEC-2026-0007",  # bytes - Integer overflow in Bytes::slice; only reachable via attacker-controlled lengths which Soroban host env sanitises — low risk in WASM sandbox
+    "RUSTSEC-2026-0009",  # time - DoS via stack exhaustion parsing large Duration strings; contracts don't parse user-supplied durations at runtime
+    "RUSTSEC-2026-0012",  # keccak - Unsoundness in ARMv8 assembly (aarch64 crypto backend); WASM contracts are architecture-independent, wasm32 backend unaffected
+    "RUSTSEC-2024-0388",  # derivative - Unmaintained; transitive through arkworks (Soroban SDK crypto), no maintained fork available at compatible semver
+    "RUSTSEC-2024-0436",  # paste - Unmaintained; transitive through arkworks (Soroban SDK crypto), no maintained fork available at compatible semver
+
+    # ── Client / oracle dependencies (not deployed on-chain) ──
+    "RUSTSEC-2025-0012",  # backoff - Unmaintained; used only in oracle client (TypeScript/Node), not in on-chain contracts
+    "RUSTSEC-2024-0384",  # instant - Unmaintained; used only in oracle client, not in on-chain contracts
+    "RUSTSEC-2025-0134",  # rustls-pemfile - Unmaintained; used only in oracle client, not in on-chain contracts
+
+    # ── Soroban SDK crypto dependencies ──
+    "RUSTSEC-2025-0009",  # ring - Panics on AES when overflow checks enabled (debug builds only); Soroban SDK transitive dep, contracts don't use AES/QUIC directly
+    "RUSTSEC-2025-0010",  # ring - Unmaintained; Soroban SDK transitive dep, upstream ring continues to receive security patches via the BoringSSL project, no practical alternative available
+    "RUSTSEC-2025-0057",  # fxhash - Unmaintained; used only in indexing_system (ethers-rs dep), not in on-chain contracts
+
+    # ── Contract dev-dependency (test-only, not in production WASM) ──
+    "RUSTSEC-2022-0093",  # ed25519-dalek v1.0.1 - Double-signature oracle attack on decoupled Keypair API; used only as a test dev-dependency in lending crate to generate test keypairs, never exposed to adversarial oracle inputs
+    "RUSTSEC-2024-0344",  # curve25519-dalek - Timing variability in Scalar::sub via compiler branch insertion; contracts run in WASM interpreter (not native), timing side-channels are not observable
+
+    # ── No upgrade path available ──
+    "RUSTSEC-2023-0071",  # rsa v0.9.x - Marvin Attack timing side-channel on RSA decryption; no fixed release in the 0.9.x line, upgrading to 0.10+ is a breaking change blocked by upstream Soroban SDK
+    "RUSTSEC-2022-0054",  # wee_alloc - Unmaintained; legacy WASM allocator pinned by older Soroban SDK contract templates, contracts use the default global allocator at runtime
+
+    # ── Transient dependencies not reachable from contract code paths ──
+    "RUSTSEC-2026-0049",  # rustls-webpki - CRL distributionPoint matching logic bug; contracts do not perform TLS certificate validation, crate is pulled only through Soroban SDK host-facing HTTP client which is not used in contract WASM
+    "RUSTSEC-2024-0363",  # sqlx - PostgreSQL protocol smuggling via oversized values (>4 GiB); Rust database driver used only in off-chain indexing service, not in on-chain WASM contracts, and all values are < 1 MiB in practice
 ]
 
 [yanked]

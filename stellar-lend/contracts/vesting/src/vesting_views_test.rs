@@ -1,4 +1,10 @@
-use super::{Grant, VestingContract};
+#[cfg(test)]
+extern crate std;
+#[cfg(test)]
+use std::string::ToString;
+
+#[cfg(test)]
+use crate::test_harness::{Grant, VestingContract};
 
 #[test]
 fn get_grants_lists_multiple_schedules_for_one_grantee() {

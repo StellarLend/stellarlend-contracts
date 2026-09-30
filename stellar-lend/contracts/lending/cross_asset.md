@@ -142,7 +142,9 @@ Admin only function to configure an asset's parameters.
 - `liquidation_threshold`: Point at which the asset becomes eligible for liquidation (basis points).
 - `price_feed`: The oracle address providing the asset's price.
 - `debt_ceiling`: Total system-wide debt allowed for this asset.
-- **Event**: Emits `AssetParamsSetEvent`.
+- `borrow_cap`: Per-asset protocol borrow cap (`0` = uncapped).
+- `supply_cap`: Per-asset protocol supply / collateral cap (`0` = uncapped).
+- **Event**: Emits `AssetParamsSetEvent` with `asset`, `ltv_bps`, `liquidation_threshold_bps`, `debt_ceiling`, `borrow_cap`, and `supply_cap` so indexers can observe the full config without re-reading storage.
 
 ### `deposit_collateral_asset`
 Users can deposit any supported asset as collateral. This increases their total borrowing power based on the asset's USD value and its specific LTV.

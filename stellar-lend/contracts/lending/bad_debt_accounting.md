@@ -121,7 +121,7 @@ or `LendingError::ReservesNegative`).
 | I-3 | `total_borrows >= 0` | `assert_market_invariants` |
 | I-4 | `total_deposits >= 0` | `assert_market_invariants` |
 | I-5 | `total_deposits - total_borrows + reserves - bad_debt >= 0` _(nominal solvency)_ | logged, not aborted |
-| I-6 | After write-off: `user.borrowed == 0` | `record_bad_debt` |
+| I-6 | After write-off: `user.borrowed == 0` | `liquidate` |
 
 **Note on I-5:** When `bad_debt > reserves`, the protocol is nominally insolvent —
 depositors bear an economic loss equal to `bad_debt - reserves`.  This is an
@@ -130,25 +130,22 @@ in degraded mode.  Governance recovers solvency by topping up reserves.
 
 ---
 
-## 4. Write-Off Flow
+## 4. Bad-Debt Recording and Write-Off Flow
 
 ```
-liquidate()  ──or──  emergency_liquidate()
+liquidate()
         │
-        │  collateral fully seized, residual > 0?
+        │  collateral fully seized, shortfall > insurance?
         │
         ▼
-record_bad_debt(user, asset, residual, collateral_seized)
+Inline Bad-Debt Recording (inside liquidate)
         │
-        ├─ 1. Zero user.borrow                      [I-6]
-        ├─ 2. Decrement market.total_borrows
-        ├─ 3. reserve_cover = min(residual, reserves)
-        ├─ 4. market.reserves -= reserve_cover      [I-2]
-        ├─ 5. written_off = residual - reserve_cover
-        ├─ 6. market.bad_debt += written_off        [I-1]
-        ├─ 7. Store per-user audit record
-        ├─ 8. assert_market_invariants()
-        └─ 9. Persist market state
+        ├─ 1. Calculate shortfall = seized_collateral - available_collateral
+        ├─ 2. Draw insurance cover = min(shortfall, insurance_fund)
+        ├─ 3. residual = shortfall - insurance_drawn
+        ├─ 4. Increase market bad_debt accumulators += residual   [I-1]
+        ├─ 5. Decrement debt and available collateral
+        └─ 6. Emit bad_debt event
 ```
 
 ---
@@ -179,16 +176,15 @@ When governance triggers an emergency shutdown:
 1. Global shutdown flag is set — new borrows and deposits are rejected.
 2. Every specified market is **frozen** (same effect for deposits/borrows).
 3. **Liquidations remain open** so bad debt can still be cleared.
-4. `emergency_liquidate()` bypasses the close factor — the full position is
-   liquidated in a single call.
+4. `liquidate()` remains available so positions can still be liquidated.
 
 ### Shutdown accounting example
 
 | Step | Action | Result |
 |------|--------|--------|
 | 1 | Borrower has 1 ETH @ $500 collateral, 1000 USDC debt | shortfall = $500 |
-| 2 | `emergency_liquidate()` seizes 1 ETH → $500 value | collateral_seized = 1 ETH |
-| 3 | `record_bad_debt(residual=$500)` | reserve_cover = min($500, reserves) |
+| 2 | `liquidate()` seizes 1 ETH → $500 value | collateral_seized = 1 ETH |
+| 3 | Bad debt recorded inline (`residual=$500`) | reserve_cover = min($500, reserves) |
 | 4 | reserves = 0 → written_off = $500 | market.bad_debt += $500 |
 | 5 | User borrow zeroed | [I-6] satisfied |
 | 6 | Governance tops up $500 reserves | bad_debt → 0 |
@@ -222,7 +218,7 @@ Liquidation call 1:  repay 1000 USDC (50% close factor)
 Liquidation call 2:  repay 1000 USDC
   seized = min(1.35 ETH, 0.65 ETH) = 0.65 ETH ($520 value)
   residual = $1000 − $520 = $480
-  record_bad_debt(residual=$480)
+  liquidate() records bad debt inline (residual=$480)
 ```
 
 ---
@@ -247,7 +243,7 @@ Liquidation call 2:  repay 1000 USDC
 ### Re-entrancy
 - All state writes are committed atomically in Soroban's transaction model.
   There is no external call between reading and writing state in
-  `record_bad_debt`, so re-entrancy is structurally impossible.
+  `liquidate` or `write_off_bad_debt`, so re-entrancy is structurally impossible.
 
 ### Oracle manipulation
 - A manipulated oracle price could make a healthy position appear unhealthy
@@ -316,7 +312,7 @@ _Entrypoint added in feature/bad-debt-write-off._
 
 ### 11.1 Purpose
 
-`record_bad_debt` causes `bad_debt` to grow monotonically. Without a
+Liquidations resulting in unrecovered debt cause `bad_debt` to grow monotonically. Without a
 resolution path, the protocol remains nominally insolvent indefinitely.
 `write_off_bad_debt(amount)` provides the governed, auditable mechanism to
 clear recorded bad debt against available backstops.

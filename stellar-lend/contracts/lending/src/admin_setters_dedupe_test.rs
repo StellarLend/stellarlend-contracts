@@ -1,4 +1,3 @@
-#![cfg(test)]
 use crate::{LendingContract, LendingContractClient, LendingError};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env};
@@ -43,35 +42,35 @@ fn test_set_guardian_replaces_previous() {
 
 #[test]
 fn test_set_flash_fee_valid() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_flash_fee(&500);
     assert!(res.is_ok());
 }
 
 #[test]
 fn test_set_flash_fee_zero() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_flash_fee(&0);
     assert!(res.is_ok());
 }
 
 #[test]
 fn test_set_flash_fee_max() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_flash_fee(&1000);
     assert!(res.is_ok());
 }
 
 #[test]
 fn test_set_flash_fee_negative_rejected() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_flash_fee(&(-1));
     assert!(matches!(res, Err(Ok(LendingError::InvalidFeeBps))));
 }
 
 #[test]
 fn test_set_flash_fee_over_1000_rejected() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_flash_fee(&1001);
     assert!(matches!(res, Err(Ok(LendingError::InvalidFeeBps))));
 }
@@ -82,20 +81,20 @@ fn test_set_flash_fee_over_1000_rejected() {
 
 #[test]
 fn test_set_emergency_state_shutdown() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     client.set_emergency_state(&crate::EmergencyState::Shutdown);
     // Should not panic — verifies the guardian-or-admin fallback works
 }
 
 #[test]
 fn test_set_emergency_state_recovery() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     client.set_emergency_state(&crate::EmergencyState::Recovery);
 }
 
 #[test]
 fn test_set_emergency_state_normal() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     client.set_emergency_state(&crate::EmergencyState::Shutdown);
     client.set_emergency_state(&crate::EmergencyState::Normal);
 }
@@ -106,21 +105,21 @@ fn test_set_emergency_state_normal() {
 
 #[test]
 fn test_set_debt_ceiling_valid() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_debt_ceiling(&1_000_000);
     assert!(res.is_ok());
 }
 
 #[test]
 fn test_set_debt_ceiling_zero_rejected() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_debt_ceiling(&0);
     assert!(matches!(res, Err(Ok(LendingError::Overflow))));
 }
 
 #[test]
 fn test_set_debt_ceiling_negative_rejected() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_debt_ceiling(&(-1));
     assert!(matches!(res, Err(Ok(LendingError::Overflow))));
 }
@@ -131,7 +130,7 @@ fn test_set_debt_ceiling_negative_rejected() {
 
 #[test]
 fn test_set_min_borrow_valid() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_min_borrow(&100);
     assert!(res.is_ok());
     assert_eq!(client.get_min_borrow(), 100);
@@ -139,7 +138,7 @@ fn test_set_min_borrow_valid() {
 
 #[test]
 fn test_set_min_borrow_zero() {
-    let (env, client, _admin, _user) = setup();
+    let (_env, client, _admin, _user) = setup();
     let res = client.try_set_min_borrow(&0);
     assert!(res.is_ok());
     assert_eq!(client.get_min_borrow(), 0);

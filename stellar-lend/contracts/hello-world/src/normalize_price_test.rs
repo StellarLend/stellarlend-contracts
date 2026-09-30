@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::cross_asset::{normalize_price, normalize_price_ceil, INTERNAL_DECIMALS};
+use stellar_lend_common::{normalize_price, normalize_price_ceil, INTERNAL_DECIMALS};
 
 #[test]
 fn test_zero_raw_price() {
@@ -62,8 +62,22 @@ fn test_ceil_ge_floor() {
     for (raw, decimals) in test_cases {
         let floor = normalize_price(raw, decimals).unwrap();
         let ceil = normalize_price_ceil(raw, decimals).unwrap();
-        assert!(ceil >= floor, "ceil {} < floor {} for raw {} decimals {}", ceil, floor, raw, decimals);
-        assert!(ceil - floor <= 1, "ceil {} - floor {} > 1 for raw {} decimals {}", ceil, floor, raw, decimals);
+        assert!(
+            ceil >= floor,
+            "ceil {} < floor {} for raw {} decimals {}",
+            ceil,
+            floor,
+            raw,
+            decimals
+        );
+        assert!(
+            ceil - floor <= 1,
+            "ceil {} - floor {} > 1 for raw {} decimals {}",
+            ceil,
+            floor,
+            raw,
+            decimals
+        );
     }
 }
 

@@ -1,7 +1,56 @@
 use super::*;
+use crate::debt::{save_debt, DebtPosition, INDEX_SCALE};
 use ed25519_dalek::{Keypair, Signer};
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{contract, contractimpl, Symbol};
+
+#[contract]
+pub struct MockLiquidationToken;
+
+#[contractimpl]
+impl MockLiquidationToken {
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&(Symbol::new(&env, "bal"), id))
+            .unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let key = Symbol::new(&env, "bal");
+        let from_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), from.clone()))
+            .unwrap_or(0);
+        if from_bal < amount {
+            panic!("insufficient balance");
+        }
+        env.storage()
+            .persistent()
+            .set(&(key.clone(), from.clone()), &(from_bal - amount));
+        let to_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&(key, to), &(to_bal + amount));
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let key = Symbol::new(&env, "bal");
+        let bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), to.clone()))
+            .unwrap_or(0);
+        env.storage().persistent().set(&(key, to), &(bal + amount));
+    }
+}
 
 fn setup() -> (
     Env,
@@ -39,9 +88,12 @@ fn oracle_keypair() -> Keypair {
 }
 
 fn build_oracle_payload(env: &Env, asset: &Address, price: i128, timestamp: u64) -> Bytes {
+    let asset_xdr = asset.to_xdr(env);
+    let asset_len = asset_xdr.len();
     let mut payload = Bytes::new(env);
     payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-    payload.append(&asset.to_xdr(env));
+    payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
+    payload.append(&asset_xdr);
     payload.append(&Bytes::from_slice(env, &price.to_be_bytes()));
     payload.append(&Bytes::from_slice(env, &timestamp.to_be_bytes()));
     payload
@@ -170,14 +222,34 @@ fn borrow_rejects_when_debt_price_is_just_stale() {
 fn liquidate_accepts_price_exactly_at_max_age() {
     let (env, client, contract_id, admin, user) = setup();
     let liquidator = Address::generate(&env);
-    let collateral_asset = Address::generate(&env);
-    let debt_asset = Address::generate(&env);
+    let collateral_asset = env.register(MockLiquidationToken, ());
+    let debt_asset = env.register(MockLiquidationToken, ());
+
+    let debt_token = MockLiquidationTokenClient::new(&env, &debt_asset);
+    let collateral_token = MockLiquidationTokenClient::new(&env, &collateral_asset);
+    debt_token.mint(&liquidator, &1_000);
+    collateral_token.mint(&contract_id, &1_000);
 
     configure_valuation_assets(&env, &contract_id, &collateral_asset, &debt_asset);
     let _keypair = configure_oracle_prices(&env, &client, &admin, &collateral_asset, &debt_asset);
 
-    client.deposit(&user, &100);
-    client.borrow(&user, &90);
+    // Inject an unhealthy position directly (100 collateral, 90 debt)
+    // HF = 100 * 8000 / 90 = 8888 < 10000 → liquidatable
+    // max_repay = 90 * 5000 / 10000 = 45
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &100_i128);
+        save_debt(
+            &env,
+            &user,
+            &DebtPosition {
+                principal: 90,
+                borrow_index_snapshot: INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
     advance_time(&env, DEFAULT_ORACLE_MAX_AGE_SECS);
 
     assert_eq!(
@@ -196,8 +268,20 @@ fn liquidate_rejects_when_collateral_price_is_just_stale() {
     configure_valuation_assets(&env, &contract_id, &collateral_asset, &debt_asset);
     let keypair = configure_oracle_prices(&env, &client, &admin, &collateral_asset, &debt_asset);
 
-    client.deposit(&user, &100);
-    client.borrow(&user, &90);
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &100_i128);
+        save_debt(
+            &env,
+            &user,
+            &DebtPosition {
+                principal: 90,
+                borrow_index_snapshot: INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
     advance_time(&env, DEFAULT_ORACLE_MAX_AGE_SECS + 1);
     set_signed_price(&env, &client, &admin, &keypair, &debt_asset, 1_000);
 
@@ -218,8 +302,20 @@ fn liquidate_rejects_when_debt_price_is_just_stale() {
     configure_valuation_assets(&env, &contract_id, &collateral_asset, &debt_asset);
     let keypair = configure_oracle_prices(&env, &client, &admin, &collateral_asset, &debt_asset);
 
-    client.deposit(&user, &100);
-    client.borrow(&user, &90);
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &100_i128);
+        save_debt(
+            &env,
+            &user,
+            &DebtPosition {
+                principal: 90,
+                borrow_index_snapshot: INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            },
+        );
+    });
     advance_time(&env, DEFAULT_ORACLE_MAX_AGE_SECS + 1);
     set_signed_price(&env, &client, &admin, &keypair, &collateral_asset, 2_000);
 

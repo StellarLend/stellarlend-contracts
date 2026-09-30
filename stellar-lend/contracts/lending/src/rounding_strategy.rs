@@ -146,9 +146,15 @@ pub fn reconcile_debt_with_drift_correction(
     accumulated_drift: i128,
     max_allowed_drift_bps: i128, // e.g., 10 = 0.1% max drift
 ) -> Result<(i128, i128), RoundingError> {
-    // Calculate the drift in basis points
+    // Calculate the drift in basis points using checked arithmetic so that
+    // large debt values don't silently overflow (the workspace enables
+    // overflow-checks = true in release builds, which would abort the tx).
     let debt_basis = if stored_debt > 0 {
-        (freshly_calculated_debt - stored_debt) * 10000 / stored_debt
+        let delta = freshly_calculated_debt
+            .checked_sub(stored_debt)
+            .ok_or(RoundingError::Overflow)?;
+        let scaled = delta.checked_mul(10_000).ok_or(RoundingError::Overflow)?;
+        scaled / stored_debt
     } else {
         0
     };
@@ -156,11 +162,16 @@ pub fn reconcile_debt_with_drift_correction(
         return Err(RoundingError::InvalidParameter);
     }
 
+    // Compute updated accumulated drift with checked arithmetic.
+    let delta = freshly_calculated_debt
+        .checked_sub(stored_debt)
+        .ok_or(RoundingError::Overflow)?;
+    let new_drift = accumulated_drift
+        .checked_add(delta)
+        .ok_or(RoundingError::Overflow)?;
+
     // Return reconciled debt and updated drift
-    Ok((
-        freshly_calculated_debt,
-        accumulated_drift + (freshly_calculated_debt - stored_debt),
-    ))
+    Ok((freshly_calculated_debt, new_drift))
 }
 
 #[cfg(test)]
