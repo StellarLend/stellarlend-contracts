@@ -72,7 +72,10 @@ mod price_impact_tests {
         let (ta, tb) = dummy_tokens(&env);
         client.init_pool(&1_000, &1_000, &ta, &tb);
         // ~50 % of reserve_a — huge price impact
-        let out = client.swap_a_for_b(&500);
+        let out = client
+            .try_swap_a_for_b(&500)
+            .expect("contract invocation failed")
+            .expect("swap_a_for_b must succeed while the guard is disabled");
         assert!(out > 0);
         // Guard is still reporting the sentinel
         // (no set_max_impact_bps called)
@@ -90,7 +93,10 @@ mod price_impact_tests {
 
         let (ta, tb) = dummy_tokens(&env);
         client.init_pool(&1_000, &1_000, &ta, &tb);
-        let out = client.swap_a_for_b(&800);
+        let out = client
+            .try_swap_a_for_b(&800)
+            .expect("contract invocation failed")
+            .expect("swap_a_for_b must succeed while the guard is explicitly disabled");
         assert!(out > 0);
     }
 
@@ -118,7 +124,10 @@ mod price_impact_tests {
         client.set_max_impact_bps(&admin, &cap);
         let (ta, tb) = dummy_tokens(&env);
         client.init_pool(&ra, &rb, &ta, &tb);
-        let out = client.swap_a_for_b(&amount_in);
+        let out = client
+            .try_swap_a_for_b(&amount_in)
+            .expect("contract invocation failed")
+            .expect("swap_a_for_b must succeed when the impact is under the cap");
 
         // Pool must have updated correctly
         let (new_ra, new_rb) = client.get_reserves();
@@ -155,7 +164,10 @@ mod price_impact_tests {
         client.set_max_impact_bps(&admin, &(impact as u32));
         let (ta, tb) = dummy_tokens(&env);
         client.init_pool(&ra, &rb, &ta, &tb);
-        let out = client.swap_a_for_b(&amount_in);
+        let out = client
+            .try_swap_a_for_b(&amount_in)
+            .expect("contract invocation failed")
+            .expect("swap_a_for_b must succeed when the impact equals the cap");
         assert!(out > 0);
 
         // One bps tighter must reject
@@ -188,7 +200,11 @@ mod price_impact_tests {
         client.set_max_impact_bps(&admin, &cap);
         let (ta, tb) = dummy_tokens(&env);
         client.init_pool(&ra, &rb, &ta, &tb);
-        // Must panic with "PriceImpactExceeded"
+        // Must panic with "PriceImpactExceeded". The panicking (non-`try_`)
+        // client is used deliberately: the guard enforces rejection via a
+        // guest panic carrying this message, and the `try_` client would
+        // surface a generic "Host Object is stale or invalid" error instead,
+        // losing the distinctive assertion.
         client.swap_a_for_b(&amount_in);
     }
 
@@ -211,7 +227,11 @@ mod price_impact_tests {
         client.init_pool(&1_000, &1_000, &ta, &tb);
 
         let (ra_before, rb_before) = client.get_reserves();
-        let out = client.swap_a_for_b(&5); // tiny swap ~0.5 %
+        // tiny swap ~0.5 %
+        let out = client
+            .try_swap_a_for_b(&5)
+            .expect("contract invocation failed")
+            .expect("swap_a_for_b must succeed under a wide cap");
         let (ra_after, rb_after) = client.get_reserves();
 
         assert!(out > 0);
@@ -255,7 +275,10 @@ mod price_impact_tests {
         let (ta, tb) = dummy_tokens(&env);
         client.init_pool(&1_000_000, &1_000_000, &ta, &tb);
         // amount_in = 50 → impact ≈ 50 / 1_000_050 * 10_000 ≈ 0.5 bps → passes
-        let out = client.swap_a_for_b(&50);
+        let out = client
+            .try_swap_a_for_b(&50)
+            .expect("contract invocation failed")
+            .expect("swap_a_for_b must succeed under a tight-but-passing cap");
         assert!(out > 0);
     }
 
@@ -268,7 +291,8 @@ mod price_impact_tests {
         client.set_max_impact_bps(&admin, &50_u32);
         let (ta, tb) = dummy_tokens(&env);
         client.init_pool(&1_000_000, &1_000_000, &ta, &tb);
-        // amount_in = 10_000 → impact ≈ 100 bps → fails 50 bps cap
+        // amount_in = 10_000 → impact ≈ 100 bps → fails 50 bps cap. Panicking
+        // client: see over_bound_swap_rejected for why `try_` is not used here.
         client.swap_a_for_b(&10_000);
     }
 }
