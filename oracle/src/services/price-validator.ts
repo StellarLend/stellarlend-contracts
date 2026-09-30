@@ -34,6 +34,7 @@ export interface ValidatorConfig {
 }
 
 /**
+/**
  * Cached price entry with the source timestamp used for freshness checks.
  */
 interface CachedPrice {
@@ -42,6 +43,7 @@ interface CachedPrice {
     volume24h?: number;
 }
 
+/**
 /**
  * Default validator configuration
  */
@@ -55,11 +57,6 @@ const DEFAULT_CONFIG: ValidatorConfig = {
 /**
  * Price Validator
  */
-interface CachedPrice {
-    price: number;
-    timestamp: number;
-}
-
 interface PendingPrice {
     price: number;
     timestamp: number;
