@@ -292,6 +292,30 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `get_protocol_metrics`        | Query aggregate debt, supply, utilization, ledger |
 | `get_rate_model_diagnostics` | Query real-time rate-model utilization, target/applied rates, latency |
 
+### Upgrade System
+
+| Function                            | Description                                                         |
+|-------------------------------------|---------------------------------------------------------------------|
+| `upgrade_init`                      | Initialise upgrade governance with approver set and required count  |
+| `upgrade_propose`                   | Propose a new WASM hash upgrade with a timelocked ETA (admin-only)  |
+| `upgrade_approve`                   | Record an approver's signature on a pending proposal                |
+| `upgrade_cancel`                    | Cancel a pending upgrade proposal before execution (admin-only)     |
+| `upgrade_execute`                   | Execute an approved upgrade after the timelock elapses              |
+| `upgrade_set_required_approvals`    | Change the minimum approval count (admin-only)                      |
+| `upgrade_add_approver`              | Add an address to the upgrade approver set (admin-only)             |
+| `upgrade_remove_approver`           | Remove an address from the upgrade approver set (admin-only)        |
+| `upgrade_status`                    | Query the state and approval count of a proposal                    |
+| `current_version`                   | Read the currently deployed contract version number                 |
+| `current_wasm_hash`                 | Read the SHA-256 hash of the currently deployed WASM                |
+| `get_required_approvals`            | Read the minimum approvals needed to execute an upgrade             |
+| `get_upgrade_approvers`             | List all current upgrade approver addresses                         |
+| `get_proposal_approvals`            | List addresses that have approved a specific proposal               |
+| `is_upgrade_proposal_cancelled`     | Check whether a proposal has been cancelled                         |
+| `get_upgrade_approval_binding`      | Read the binding (WASM hash commitment) an approver signed          |
+| `get_upgrade_approver_set_hash`     | Read the fingerprint of the live approver set                       |
+| `get_upgrade_proposal_signer_hash`  | Read the approver-set fingerprint captured when a proposal was created |
+| `get_min_upgrade_delay_ledgers`     | Read the minimum timelock delay in ledgers                          |
+
 For exact signatures and planned-but-not-shipping names, see
 [docs/interface_quick_reference.md](docs/interface_quick_reference.md).
 
