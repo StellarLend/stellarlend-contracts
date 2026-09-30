@@ -197,7 +197,7 @@ const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
-const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
+const DEFAULT_MAX_FLASH_BPS: i128 = 5_000;
 /// Maximum number of elements allowed in a [`LendingContract::receive`]
 /// payload. Prevents DoS through oversized payloads.
 const MAX_RECEIVE_PAYLOAD_LEN: u32 = 10;

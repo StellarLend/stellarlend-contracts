@@ -535,7 +535,7 @@ fn test_get_max_move_bps_before_init_returns_none() {
 #[test]
 fn test_get_max_flash_bps_before_init_returns_default() {
     let (_, client, _admin) = uninit_client();
-    // Returns DEFAULT_MAX_FLASH_BPS (10_000) even before init — this is a
+    // Returns DEFAULT_MAX_FLASH_BPS (5_000) even before init — this is a
     // read-only configuration query that does not depend on Admin key.
     assert_eq!(client.get_max_flash_bps(), DEFAULT_MAX_FLASH_BPS);
 }
