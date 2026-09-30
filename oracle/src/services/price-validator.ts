@@ -52,6 +52,20 @@ const DEFAULT_CONFIG: ValidatorConfig = {
     maxPrice: 1000000000,
 };
 
+/** Largest scaled price that survives a round trip through a JS number. */
+const MAX_SAFE_SCALED_PRICE = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * True when a scaled bigint price can be represented exactly as a JS number.
+ *
+ * `Number.isSafeInteger` cannot be used here: it only accepts `number`
+ * arguments and always returns `false` for a `bigint`, which would reject every
+ * price. The bound is compared in bigint arithmetic instead.
+ */
+function isRepresentableScaledPrice(scaledPrice: bigint): boolean {
+    return scaledPrice >= 0n && scaledPrice <= MAX_SAFE_SCALED_PRICE;
+}
+
 /**
  * Price Validator
  */
@@ -242,11 +256,11 @@ export class PriceValidator {
         }
 
         const scaledPrice = scalePrice(raw.price);
-        if (Number.isFinite(raw.price) && !Number.isSafeInteger(scaledPrice)) {
+        if (Number.isFinite(raw.price) && !isRepresentableScaledPrice(scaledPrice)) {
             errors.push({
                 code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
                 message: `Scaled price ${scaledPrice} for ${asset} is not a safe integer`,
-                details: { scaledPrice, maxSafeInteger: Number.MAX_SAFE_INTEGER },
+                details: { scaledPrice: scaledPrice.toString(), maxSafeInteger: Number.MAX_SAFE_INTEGER },
             });
         }
 
@@ -452,6 +466,16 @@ export class PriceValidator {
     getCacheState(): Record<string, number> {
         return Object.fromEntries(
             Array.from(this.cachedPrices.entries()).map(([asset, state]) => [asset, state.price]),
+        );
+    }
+
+    /**
+     * Effective maximum age of a cached price usable as a stale fallback.
+     * Falls back to 3x the primary staleness threshold when not configured.
+     */
+    private getFallbackStalenessSeconds(): number {
+        return (
+            this.config.maxFallbackStalenessSeconds ?? this.config.maxStalenessSeconds * 3
         );
     }
 
