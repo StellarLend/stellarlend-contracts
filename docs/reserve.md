@@ -2,7 +2,7 @@
 
 The lending contract exposes a single, protocol-wide insurance fund. It is an
 accounting buffer used before liquidation shortfalls become bad debt and before
-recorded bad debt is charged to other protocol backstops.
+`write_off_bad_debt` debits any remainder from `DataKey::TotalDeposits`.
 
 The implementation is in
 [`stellar-lend/contracts/lending/src/lib.rs`](../stellar-lend/contracts/lending/src/lib.rs).
@@ -125,6 +125,48 @@ addition to the same balance. The observable difference is that
 `credit_insurance_fund` records a governance audit entry while
 `fund_insurance` does not.
 
+### `write_off_bad_debt`
+
+```rust
+pub fn write_off_bad_debt(env: Env, amount: i128) -> Result<(), LendingError>
+```
+
+Clears `amount` from recorded `DataKey::BadDebt` using the insurance balance
+first and `DataKey::TotalDeposits` second.
+
+- Requires the contract to be initialized.
+- Requires authorization from the admin stored in `DataKey::Admin`.
+- Requires `amount > 0`, existing bad debt, and `amount <= bad_debt`.
+- Sets `insurance_used = min(amount, insurance_fund)` and deducts it from
+  `DataKey::InsuranceFund`.
+- Sets `reserve_used = min(amount - insurance_used, total_deposits)` and deducts
+  it directly from `DataKey::TotalDeposits`. `reserve_used` is the event field
+  name; there is no separate protocol-reserve storage balance in this path.
+- Assigns the remainder to `socialized` and checks
+  `socialized > new_total_deposits`. With non-negative balances, a positive
+  remainder means `TotalDeposits` was fully used and `new_total_deposits == 0`,
+  so the check returns `LendingError::Overflow`. A successful call therefore
+  has `socialized = 0`; the current implementation does not successfully apply
+  an additional depositor-socialization deduction.
+- On success, subtracts `amount` from `DataKey::BadDebt`, publishes
+  `BadDebtWrittenOffEvent { amount, insurance_used, reserve_used, socialized }`,
+  and records a `write_off_bad_debt` governance audit-log entry.
+
+Errors:
+
+| Condition | Result |
+| --- | --- |
+| Contract is not initialized | `LendingError::NotInitialized` |
+| `amount <= 0` | `LendingError::InvalidAmount` |
+| Recorded bad debt is `0` | `LendingError::NoBadDebt` |
+| `amount > bad_debt` | `LendingError::WriteOffExceedsBadDebt` |
+| Insurance plus `TotalDeposits` cannot cover `amount`, or checked arithmetic fails | `LendingError::Overflow` |
+| Admin authorization is missing | Soroban authorization failure |
+
+The three accounting values are persisted before the event is published. The
+governance audit entry is recorded afterward, and no external call occurs. An
+error aborts the invocation, so the calculated deductions are not persisted.
+
 ## Automatic funding from interest
 
 Interest settlement calls the internal `settle_and_accrue_insurance` helper.
@@ -152,15 +194,16 @@ This prevents a draw from making the balance negative.
 
 - During liquidation, the fund covers as much of a collateral shortfall as it
   can. Any residual shortfall is added to recorded bad debt.
-- During `write_off_bad_debt`, the fund is the first backstop consumed before
-  the protocol reserve and depositor socialization paths.
+- During `write_off_bad_debt`, insurance is deducted first and any remainder is
+  deducted directly from `DataKey::TotalDeposits`. If the combined balances are
+  insufficient, the call returns `LendingError::Overflow`.
 
 There is no public function that withdraws the insurance balance to a treasury
 address.
 
 ## Authorization model
 
-The three mutating entrypoints first require successful contract
+The four mutating entrypoints first require successful contract
 initialization and then require the stored admin address to authorize the
 invocation. The admin address is read from storage; it is not supplied as a
 function parameter.
@@ -202,6 +245,8 @@ errors instead of panicking on a failed invocation.
 5. The accounting balance is global, not keyed by asset.
 6. Crediting the accounting balance does not itself prove that matching tokens
    were transferred to the contract.
+7. A successful `write_off_bad_debt` is fully covered by the insurance fund and
+   `TotalDeposits`; a positive residual returns `LendingError::Overflow`.
 
 ## Tests
 
@@ -211,7 +256,7 @@ Relevant source tests are:
   share bounds, explicit funding, automatic interest credits, and liquidation
   coverage.
 - [`bad_debt_write_off_test.rs`](../stellar-lend/contracts/lending/src/bad_debt_write_off_test.rs):
-  accounting credits and bad-debt backstop ordering.
+  insurance and `TotalDeposits` accounting, errors, and event fields.
 - [`initialization_guard_test.rs`](../stellar-lend/contracts/lending/src/initialization_guard_test.rs):
   pre-initialization behavior for getters and mutators.
 - [`governance_audit_test.rs`](../stellar-lend/contracts/lending/src/governance_audit_test.rs):
@@ -222,6 +267,7 @@ Run the focused lending tests from `stellar-lend/`:
 ```bash
 cargo test -p stellarlend-lending insurance_fund --lib
 cargo test -p stellarlend-lending credit_insurance_fund --lib
+cargo test -p stellarlend-lending write_off_bad_debt --lib
 cargo test -p stellarlend-lending initialization_guard --lib
 cargo test -p stellarlend-lending governance_audit --lib
 ```
@@ -232,5 +278,7 @@ cargo test -p stellarlend-lending governance_audit --lib
   storage keys, interest accrual, draw-down logic, and error definitions.
 - [`INSURANCE_FUND.md`](../stellar-lend/contracts/lending/INSURANCE_FUND.md):
   liquidation funding model and worked examples.
-- [`docs/interface_quick_reference.md`](interface_quick_reference.md): complete
-  callable lending-contract interface.
+- [`docs/interface_quick_reference.md`](interface_quick_reference.md): broader
+  lending-interface reference. It does not currently enumerate these
+  insurance-fund and bad-debt entrypoints, so use `src/lib.rs` as the source of
+  truth for this API.
