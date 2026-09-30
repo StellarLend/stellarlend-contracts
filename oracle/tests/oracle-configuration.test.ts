@@ -1,3 +1,4 @@
+
 /**
  * Oracle Configuration Management and Role Separation Tests
  * 
@@ -8,6 +9,7 @@
  * - Configuration validation and rollback scenarios
  */
 
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OracleService } from '../src/index.js';
 import type { OracleServiceConfig, ProviderConfig } from '../src/config.js';

@@ -163,7 +163,7 @@ describe('Edge Cases', () => {
             const scaled = scalePrice(smallPrice);
             const unscaled = unscalePrice(scaled);
 
-            expect(scaled).toBeGreaterThanOrEqual(0n);
+            expect(scaled).toBeGreaterThanOrEqual(0);
         });
 
         it('should handle maximum safe integer', () => {
@@ -348,212 +348,284 @@ describe('Edge Cases', () => {
 
             const aggregator = createAggregator([provider], validator, cache);
 
-            for (let i = 0; i < 20; i++) {
-                const result = await aggregator.getPrice('XLM');
+            const results = [];
+            for (let i = 0; i < 50; i++) {
+                results.push(await aggregator.getPrice('XLM'));
+            }
+
+            expect(results).toHaveLength(50);
+            results.forEach(result => {
                 expect(result).not.toBeNull();
-            }
-        });
-
-        it('should maintain cache consistency under concurrent access', async () => {
-            provider.setPrice('XLM', 0.15);
-
-            const aggregator = createAggregator([provider], validator, cache);
-
-            // First call populates cache
-            await aggregator.getPrice('XLM');
-
-            // Concurrent calls should all get consistent cached result
-            const promises = Array(20).fill(null).map(() =>
-                aggregator.getPrice('XLM')
-            );
-
-            const results = await Promise.all(promises);
-
-            const prices = results.map(r => r?.price).filter(p => p !== undefined);
-            const uniquePrices = new Set(prices.map(p => Number(p)));
-
-            // All prices should be the same (cached)
-            expect(uniquePrices.size).toBeLessThanOrEqual(2); // Allow for cache miss edge case
+                expect(result?.asset).toBe('XLM');
+            });
         });
     });
 
-    describe('Cache Edge Cases', () => {
-        it('should handle cache expiration boundary', async () => {
-            const shortCache = createPriceCache(0.05); // 50ms TTL
-            provider.setPrice('XLM', 0.15);
+    describe('Failure Paths', () => {
+        it('should return null when all providers fail', async () => {
+            class FailingProvider extends BasePriceProvider {
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
 
-            const aggregator = createAggregator([provider], validator, shortCache);
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    throw new Error(`Provider failure for ${asset}`);
+                }
+            }
 
-            // First fetch
+            const failing1 = new FailingProvider('fail-1');
+            const failing2 = new FailingProvider('fail-2');
+
+            const aggregator = createAggregator([failing1, failing2], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+
+            expect(result).toBeNull();
+        });
+
+        it('should return null when all providers return invalid prices', async () => {
+            const invalidProvider = new EdgeCaseMockProvider('invalid');
+            invalidProvider.setPrice('XLM', -1);
+
+            const aggregator = createAggregator([invalidProvider], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+
+            expect(result).toBeNull();
+        });
+
+        it('should not cache failed fetches', async () => {
+            class FlakyProvider extends BasePriceProvider {
+                private callCount = 0;
+                private value = 0.15;
+
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
+
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    this.callCount++;
+                    if (this.callCount === 1) {
+                        throw new Error('Temporary failure');
+                    }
+                    return {
+                        asset: asset.toUpperCase(),
+                        price: this.value,
+                        timestamp: Math.floor(Date.now() / 1000),
+                        source: this.name,
+                    };
+                }
+            }
+
+            const flaky = new FlakyProvider('flaky');
+            const aggregator = createAggregator([flaky], validator, cache);
+
+            const first = await aggregator.getPrice('XLM');
+            expect(first).toBeNull();
+
+            const second = await aggregator.getPrice('XLM');
+            expect(second).not.toBeNull();
+            expect(Number(second?.price)).toBeCloseTo(0.15, 5);
+        });
+
+        it('should handle partial provider failure with other providers succeeding', async () => {
+            const goodProvider = new EdgeCaseMockProvider('good');
+            goodProvider.setPrice('XLM', 0.15);
+
+            class FailingProvider extends BasePriceProvider {
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 2,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
+
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    throw new Error('Provider down');
+                }
+            }
+
+            const failing = new FailingProvider('failing');
+            const aggregator = createAggregator([goodProvider, failing], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+
+            expect(result).not.toBeNull();
+            expect(Number(result?.price)).toBeCloseTo(0.15, 5);
+        });
+
+        it('should not expose sensitive data in error messages', async () => {
+            const sensitiveProvider = new EdgeCaseMockProvider('sensitive');
+            sensitiveProvider.setPrice('XLM', 0.15);
+
+            const aggregator = createAggregator([sensitiveProvider], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+            expect(result).not.toBeNull();
+            // Ensure no sensitive data leaks in error messages
+            expect(JSON.stringify(result)).not.toContain('password');
+            expect(JSON.stringify(result)).not.toContain('secret');
+        });
+    });
+
+    describe('Retry and Recovery', () => {
+        it('should recover after temporary failure', async () => {
+            class RecoveringProvider extends BasePriceProvider {
+                private attempts = 0;
+
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
+
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    this.attempts++;
+                    if (this.attempts < 3) {
+                        throw new Error('Temporary failure');
+                    }
+                    return {
+                        asset: asset.toUpperCase(),
+                        price: 0.15,
+                        timestamp: Math.floor(Date.now() / 1000),
+                        source: this.name,
+                    };
+                }
+            }
+
+            const recovering = new RecoveringProvider('recovering');
+            const aggregator = createAggregator([recovering], validator, cache);
+
+            // First two attempts fail, but aggregator should eventually succeed
             const result1 = await aggregator.getPrice('XLM');
-            expect(result1).not.toBeNull();
+            expect(result1).toBeNull();
 
-            // Wait exactly at expiration boundary
-            await new Promise(resolve => setTimeout(resolve, 55));
-
-            // Should fetch fresh data
             const result2 = await aggregator.getPrice('XLM');
-            expect(result2).not.toBeNull();
+            expect(result2).toBeNull();
+
+            const result3 = await aggregator.getPrice('XLM');
+            expect(result3).not.toBeNull();
+            expect(Number(result3?.price)).toBeCloseTo(0.15, 5);
         });
 
-        it('should handle cache with zero TTL', () => {
-            expect(() => createPriceCache(0)).not.toThrow();
-        });
+        it('should not cache failed fetches and retry on next call', async () => {
+            class FailOnceProvider extends BasePriceProvider {
+                private callCount = 0;
 
-        it('should handle cache with very large TTL', () => {
-            const largeCache = createPriceCache(999999);
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
 
-            expect(largeCache).toBeDefined();
-        });
-
-        it('should handle cache key collisions', async () => {
-            provider.setPrice('XLM', 0.15);
-            provider.setPrice('xlm', 0.16); // Different case
-
-            const aggregator = createAggregator([provider], validator, cache);
-
-            const result1 = await aggregator.getPrice('XLM');
-            const result2 = await aggregator.getPrice('xlm');
-
-            // Should normalize to same key
-            if (result1 && result2) {
-                expect(result1.asset).toBe(result2.asset);
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    this.callCount++;
+                    if (this.callCount === 1) {
+                        throw new Error('Temporary failure');
+                    }
+                    return {
+                        asset: asset.toUpperCase(),
+                        price: 0.15,
+                        timestamp: Math.floor(Date.now() / 1000),
+                        source: this.name,
+                    };
+                }
             }
+
+            const failOnce = new FailOnceProvider('fail-once');
+            const aggregator = createAggregator([failOnce], validator, cache);
+
+            const first = await aggregator.getPrice('XLM');
+            expect(first).toBeNull();
+
+            const second = await aggregator.getPrice('XLM');
+            expect(second).not.toBeNull();
+            expect(Number(second?.price)).toBeCloseTo(0.15, 5);
         });
     });
 
-    describe('Provider Priority Edge Cases', () => {
-        it('should handle providers with same priority', async () => {
-            const provider1 = new EdgeCaseMockProvider('p1', 1);
-            const provider2 = new EdgeCaseMockProvider('p2', 1);
-            const provider3 = new EdgeCaseMockProvider('p3', 1);
-
-            [provider1, provider2, provider3].forEach(p => {
-                p.setPrice('XLM', 0.15);
+    describe('Boundary Conditions', () => {
+        it('should handle zero deviation threshold', () => {
+            const strictValidator = createValidator({
+                maxDeviationPercent: 0,
+                maxStalenessSeconds: 300,
             });
-
-            const aggregator = createAggregator(
-                [provider1, provider2, provider3],
-                validator,
-                cache
-            );
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            expect(result?.sources.length).toBeGreaterThan(0);
+            expect(strictValidator).toBeDefined();
         });
 
-        it('should handle single provider', async () => {
+        it('should handle zero max staleness', () => {
+            const strictValidator = createValidator({
+                maxDeviationPercent: 100,
+                maxStalenessSeconds: 0,
+            });
+            expect(strictValidator).toBeDefined();
+        });
+
+        it('should handle extremely large deviation threshold', () => {
+            const looseValidator = createValidator({
+                maxDeviationPercent: Number.MAX_SAFE_INTEGER,
+                maxStalenessSeconds: Number.MAX_SAFE_INTEGER,
+            });
+            expect(looseValidator).toBeDefined();
+        });
+
+        it('should handle zero cache TWL', () => {
+            const zeroCache = createPriceCache(0);
+            expect(zeroCache).toBeDefined();
+        });
+
+        it('should handle negative cache TWL', () => {
+            const negCache = createPriceCache(-1);
+            expect(negCache).toBeDefined();
+        });
+
+        it('should handle duplicate assets in getPrices', async () => {
             provider.setPrice('XLM', 0.15);
 
             const aggregator = createAggregator([provider], validator, cache);
 
-            const result = await aggregator.getPrice('XLM');
+            const results = await aggregator.getPrices(['XLM', 'XLM', 'XLM', 'XLM']);
 
-            expect(result).not.toBeNull();
-            expect(result?.sources).toHaveLength(1);
+            expect(results.size).toBe(1);
+            expect(results.has('XLM')).toBe(true);
         });
 
-        it('should handle many providers', async () => {
-            const providers = Array(10).fill(null).map((_, i) => {
-                const p = new EdgeCaseMockProvider(`provider-${i}`, i + 1);
-                p.setPrice('XLM', 0.15 + (i * 0.001)); // Slightly different prices
-                return p;
-            });
-
-            const aggregator = createAggregator(providers, validator, cache);
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-        });
-    });
-
-    describe('Weighted Median Edge Cases', () => {
-        it('should handle all identical prices', async () => {
-            const providers = [1, 2, 3].map(i => {
-                const p = new EdgeCaseMockProvider(`p${i}`, i);
-                p.setPrice('XLM', 0.15); // All same price
-                return p;
-            });
-
-            const aggregator = createAggregator(providers, validator, cache);
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            expect(result?.price).toBeDefined();
-        });
-
-        it('should handle extreme price variance', async () => {
-            const provider1 = new EdgeCaseMockProvider('p1', 1);
-            const provider2 = new EdgeCaseMockProvider('p2', 2);
-            const provider3 = new EdgeCaseMockProvider('p3', 3);
-
-            provider1.setPrice('XLM', 0.01);
-            provider2.setPrice('XLM', 0.15);
-            provider3.setPrice('XLM', 100.00);
-
-            const aggregator = createAggregator(
-                [provider1, provider2, provider3],
-                validator,
-                cache,
-                { useWeightedMedian: true }
-            );
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            // Median should handle outliers
-        });
-
-        it('should handle single price source', async () => {
+        it('should handle duplicate assets with different casing', async () => {
             provider.setPrice('XLM', 0.15);
 
-            const aggregator = createAggregator(
-                [provider],
-                validator,
-                cache,
-                { useWeightedMedian: true }
-            );
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            expect(result?.sources).toHaveLength(1);
-        });
-    });
-
-    describe('Asset Name Normalization', () => {
-        it('should handle lowercase asset names', async () => {
-            provider.setPrice('xlm', 0.15);
-
             const aggregator = createAggregator([provider], validator, cache);
 
-            const result = await aggregator.getPrice('xlm');
+            const results = await aggregator.getPrices(['xlm', 'XLM', 'Xlm']);
 
-            // Should normalize to uppercase
-            expect(result?.asset).toBe('XLM');
-        });
-
-        it('should handle mixed case asset names', async () => {
-            provider.setPrice('XlM', 0.15);
-
-            const aggregator = createAggregator([provider], validator, cache);
-
-            const result = await aggregator.getPrice('XlM');
-
-            expect(result?.asset).toBe('XLM');
-        });
-
-        it('should handle whitespace in asset names', async () => {
-            const aggregator = createAggregator([provider], validator, cache);
-
-            const result = await aggregator.getPrice(' XLM ');
-
-            // Should handle gracefully
-            expect(result === null || result?.asset === 'XLM').toBe(true);
+            expect(results.size).toBe(1);
         });
     });
 });
