@@ -1,34 +1,3 @@
-import { Request, Response } from 'express';
-import { LendingController, ActivityResponse } from '../controllers/lending.controller';
-import { StellarService } from '../services/stellar.service';
-import { encodeCursor } from '../utils/cursor';
-
-// Mock StellarService
-jest.mock('../services/stellar.service');
-
-describe('LendingController', () => {
-  let controller: LendingController;
-  let mockStellarService: jest.Mocked<<StellarService>;
-  let mockReq: Partial<<Request>;
-  let mockRes: Partial<Response>;
-  let jsonMock: jest.Mock;
-  let statusMock: jest.Mock;
-
-  beforeEach(() => {
-    mockStellarService = new StellarService() as jest.Mocked<<StellarService>;
-    controller = new LendingController(mockStellarService);
-
-    jsonMock = jest.fn();
-    statusMock = jest.fn().mockReturnValue({ json: jsonMock });
-    
-    mockReq = { query: {} };
-    mockRes = {
-      json: jsonMock,
-      status: statusMock,
-    };
-  });
-
-  afterEach(() => {
 /**
  * Lending Controller Tests
  *

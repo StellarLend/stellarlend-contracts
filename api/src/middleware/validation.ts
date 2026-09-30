@@ -3,11 +3,24 @@ import { z, ZodError, ZodSchema } from 'zod';
 import { ValidationError } from '../utils/errors';
 import { I128String, PositiveI128String, StellarAddress } from '../utils/validators';
 
+/**
+ * Body validation middleware.
+ *
+ * Invariants:
+ *  - The request body is replaced with the parsed, normalized value only after a successful parse.
+ *  - On failure the body is left untouched and a deterministic ValidationError is forwarded
+ *    to the error handler via `next(`.
+ *  - Non-Zod errors are propagated unchanged so they are not mislabeled as validation failures.
+ *  - Error messages include the field path but never echo the received value, so secrets are not leaked.
+ */
 export const validateBody =
-  (schema: ZodSchema) => (req: Request, res: Response, next: NextFunction) => {
+  (schema: ZodSchema) => (req: Request, _res: Response, next: NextFunction) => {
     try {
-      req.body = schema.parse(req.body);
-      next();
+      const parsed = schema.parse(req.body);
+      // Only mutate the body after a successful parse to avoid leaving partially
+      // normalized state on failure.
+      req.body = parsed;
+      return next();
     } catch (error) {
       if (error instanceof ZodError) {
         const errorMessages = error.issues
@@ -20,7 +33,7 @@ export const validateBody =
     }
   };
 
-const optionalStellarAddress = z.preprocess(
+export const optionalStellarAddress = z.preprocess(
   value => (value === '' ? undefined : value),
   StellarAddress.optional()
 );
