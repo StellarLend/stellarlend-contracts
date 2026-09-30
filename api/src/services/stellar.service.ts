@@ -590,6 +590,7 @@ export class StellarService {
     } catch {
       return { amount: '0', asset: '' };
     }
+  }
 
   public parseAmmEventTopic(topics: unknown): AmmEventTopic | null {
     if (!Array.isArray(topics) || topics.length !== 3) {

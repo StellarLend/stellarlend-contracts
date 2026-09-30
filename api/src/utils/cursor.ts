@@ -202,12 +202,7 @@ export class CursorError extends Error {
 
 /**
  * Checks if a cursor is valid without throwing.
- */
-export function isValidCursor(cursor: string): boolean {
-  try {
-    decodeCursor(cursor);
- * Check if a value is a valid cursor string
- * 
+ *
  * @param value - Value to check
  * @returns true if valid cursor, false otherwise
  */
