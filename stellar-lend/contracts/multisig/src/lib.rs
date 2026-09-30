@@ -13,11 +13,16 @@ pub enum ProposalAction {
     SetThreshold { new_threshold: u32 },
     /// Replace the full signer set with a new set
     RotateSigners { new_signers: Vec<Address> },
-    /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call
+    /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call.
+    /// `args` carries the actual call arguments so they are available at
+    /// dispatch time. They are also covered by `payload_hash` (which commits
+    /// to the entire `ProposalAction` value), so any mutation between proposal
+    /// creation and execution would be caught by the hash check in
+    /// `execute_proposal`.
     InvokeContract {
         contract: Address,
         fn_symbol: Symbol,
-        args_hash: soroban_sdk::Bytes,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
     },
 }
 
@@ -330,18 +335,52 @@ impl MultisigContract {
             ProposalAction::InvokeContract {
                 contract,
                 fn_symbol,
-                args_hash: _,
+                args,
             } => {
-                // Dispatch to the lending upgrade entrypoint via cross-contract call.
-                // The args_hash was verified at the payload_hash check; here we
-                // perform the actual invocation with an empty args list since the
-                // concrete arguments were committed via the hash.
-                let args: soroban_sdk::Vec<soroban_sdk::Val> = soroban_sdk::Vec::new(env);
-                let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args);
+                // Dispatch to the target contract with the arguments that were
+                // committed at proposal-creation time.  The payload_hash check
+                // in execute_proposal already verified that the entire
+                // ProposalAction (including `args`) has not been tampered with
+                // between approval and execution.
+                let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args.clone());
                 true
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // View entrypoints
+    // -----------------------------------------------------------------------
+
+    /// Return the current approval threshold.
+    pub fn get_threshold(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::Threshold)
+            .unwrap_or(1)
+    }
+
+    /// Return the current signer list.
+    pub fn get_signers(env: Env) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::Signers)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Return the current state of a proposal by ID.
+    ///
+    /// Panics with `"ProposalNotFound"` if `id` does not exist.
+    pub fn get_proposal(env: Env, id: u64) -> Proposal {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::Proposal(id))
+            .unwrap_or_else(|| panic!("ProposalNotFound"))
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancellation
+    // -----------------------------------------------------------------------
 
     /// Cancel an active proposal (proposer or any signer).
     ///
@@ -356,6 +395,8 @@ impl MultisigContract {
         if proposal.status != ProposalStatus::Active {
             panic!("ProposalNotPassed");
         }
+        proposal.status = ProposalStatus::Cancelled;
+        Self::save_proposal(&env, &proposal);
     }
 }
 
@@ -370,6 +411,9 @@ mod action_allowlist_test;
 
 #[cfg(test)]
 mod upgrade_e2e_test;
+
+#[cfg(test)]
+mod invoke_contract_with_args_test;
 
 #[cfg(test)]
 mod tests {
