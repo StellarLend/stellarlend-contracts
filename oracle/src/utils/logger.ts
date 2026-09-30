@@ -73,11 +73,11 @@ export function logPriceUpdate(
     details?: Record<string, unknown>,
 ) {
     const logData = {
+        ...details,
         asset,
         price: price.toString(),
         source,
         success,
-        ...details,
     };
 
     if (success) {
