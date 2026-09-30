@@ -406,6 +406,7 @@ pub fn get_admin(env: &Env) -> Option<Address> {
 }
 
 /// Return the multisig configuration, or `None`.
+/// Note: The standalone `stellarlend-multisig` system is the authoritative multisig implementation for this project.
 pub fn get_multisig_config(env: &Env) -> Option<MultisigConfig> {
     env.storage()
         .instance()
