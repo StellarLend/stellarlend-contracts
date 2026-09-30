@@ -39,7 +39,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```text
 //! // Borrow operation
 //! let prepared = prepare_borrow(&env, &user, &asset, amount)?;
 //! // ← All validation (health factor, debt ceiling) completed here

@@ -14,7 +14,7 @@
 //! ## Solution: Explicit Flash Loan State Machine
 //!
 //! Track full lifecycle:
-//! ```
+//! ```text
 //! [NONE]
 //!   ↓ flash_loan() called
 //! [INITIATED] (initiator, receiver, amount, fee recorded)
@@ -41,7 +41,7 @@
 //! ## Flash Loan Request ID
 //!
 //! Each flash loan is assigned a unique request ID (hash of parameters):
-//! ```rust
+//! ```text
 //! request_id = sha256(initiator || receiver || asset || amount || nonce)
 //! ```
 //!

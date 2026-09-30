@@ -37,7 +37,7 @@
 //! Each operation can optionally include a unique operation_id (32-byte hash).
 //! The protocol stores operation_id → OperationStatus mappings with TTL.
 //!
-//! ```rust
+//! ```text
 //! pub struct OperationRecord {
 //!     pub status: OperationStatus,
 //!     pub result: OperationResult,
@@ -55,7 +55,7 @@
 //!
 //! All operations follow a state machine:
 //!
-//! ```
+//! ```text
 //! [NONE]
 //!   ↓ (submit with operation_id)
 //! [PENDING]
@@ -508,7 +508,7 @@ impl core::fmt::Display for OperationTrackerError {
 /// the same logical operation always produces the same ID.
 ///
 /// Example:
-/// ```rust
+/// ```text
 /// let op_id = generate_operation_id(
 ///     env,
 ///     &user,
