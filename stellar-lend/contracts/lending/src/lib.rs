@@ -150,7 +150,7 @@ mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
 
-#[cfg(test))]
+#[cfg(test)]
 mod config_roundtrip_test;
 #[cfg(test)]
 mod utilization_history_test;
@@ -1649,30 +1649,16 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
-<<<<<<< HEAD
-        
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &asset);
-        
-=======
 
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
 
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(new_balance)
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
-<<<<<<< HEAD
-    pub fn withdraw(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &asset);
-        
-=======
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Withdraw);
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
@@ -1700,17 +1686,10 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
-<<<<<<< HEAD
-        
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &asset);
-        
-=======
 
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
 
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(new_balance)
     }
 
@@ -1778,15 +1757,8 @@ impl LendingContract {
     /// and rejects the borrow when the post-borrow health factor would fall below
     /// 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
     /// `DataKey::DebtCeiling`.
-<<<<<<< HEAD
-    pub fn borrow(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &asset);
-        
-=======
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1833,12 +1805,6 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
-<<<<<<< HEAD
-        
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &asset);
-        
-=======
 
         save_debt(&env, &user, &updated);
         // Extend TTL to prevent archival of debt entry
@@ -1847,7 +1813,6 @@ impl LendingContract {
         // Emit borrow event
         emit_borrow(&env, &user, amount, updated.principal);
 
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(updated.principal)
     }
 
@@ -1873,13 +1838,7 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
-<<<<<<< HEAD
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &collateral_asset);
-        
-=======
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1950,13 +1909,7 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
-<<<<<<< HEAD
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &collateral_asset);
-        
-=======
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
         if amount <= 0 {
@@ -2000,13 +1953,7 @@ impl LendingContract {
             decrement_isolation_debt(&env, &collateral_asset, repaid)?;
         }
 
-<<<<<<< HEAD
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &collateral_asset);
-
-=======
         check_and_clear_unhealthy_timestamp(&env, &user);
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(updated.principal)
     }
 
@@ -2072,23 +2019,12 @@ impl LendingContract {
         collateral_asset: Address,
         amount: i128,
     ) -> Result<i128, LendingError> {
-<<<<<<< HEAD
-        // Check invariants BEFORE state change for both assets
-        invariants::check_invariant_before(&env, &debt_asset);
-        invariants::check_invariant_before(&env, &collateral_asset);
-        
-        liquidator.require_auth();
-        if liquidator == borrower {
-            return Err(LendingError::SelfLiquidation);
-        }
-=======
         require_initialized(&env)?;
         with_reentrancy_lock(&env, || {
             liquidator.require_auth();
             if liquidator == borrower {
                 return Err(LendingError::SelfLiquidation);
             }
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
 
             check_pause_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
@@ -2336,19 +2272,6 @@ impl LendingContract {
         Ok(())
     }
 
-<<<<<<< HEAD
-        // Check invariants AFTER state change for both assets
-        invariants::check_invariant_after(&env, &debt_asset);
-        invariants::check_invariant_after(&env, &collateral_asset);
-
-        Ok(actual_repay)
-    }
-
-    pub fn repay(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &asset);
-        
-=======
     /// Return the effective liquidation incentive (basis points) used by
     /// `liquidate` — the bonus, on top of the repaid debt, paid to the
     /// liquidator in seized collateral.
@@ -2399,7 +2322,6 @@ impl LendingContract {
 
     pub fn repay(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
 
@@ -2434,17 +2356,10 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
         extend_debt_ttl(&env, &user);
-<<<<<<< HEAD
-        
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &asset);
-        
-=======
 
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
 
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(updated.principal)
     }
 
