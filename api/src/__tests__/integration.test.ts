@@ -36,7 +36,7 @@ describe('API Integration Tests', () => {
 
   describe('Complete Lending Flow', () => {
     const mockUserAddress = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
-    const mockUserSecret = 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I';
+    const mockUserSecret = 'SAOS4OGIK6HD3QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I';
     const depositAmount = '10000000'; // 1 XLM
     const borrowAmount = '5000000'; // 0.5 XLM
     const repayAmount = '5500000'; // 0.55 XLM (with interest)
@@ -74,7 +74,7 @@ describe('API Integration Tests', () => {
           .send({
             userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
             amount: '1000000',
-            userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
+            userSecret: 'SAOS4OGIK6HD3QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
           })
       );
 
@@ -91,12 +91,12 @@ describe('API Integration Tests', () => {
         request(app).post('/api/lending/deposit').send({
           userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
           amount: '1000000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
+          userSecret: 'SAOS4OGIK6HD3QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
         }),
         request(app).post('/api/lending/deposit').send({
           userAddress: 'GD5TFY4DYYF43CQN3UMZUPBBXBLWK3WYAM5PIOMKOVRHBTZF7J7VGHP4',
           amount: '2000000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
+          userSecret: 'SAOS4OGIK6HD3QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN75UQ55JDNS4I',
         }),
       ];
 
@@ -113,9 +113,9 @@ describe('API Integration Tests', () => {
       const response = await request(app)
         .post('/api/lending/deposit')
         .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
+          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4WOWHC3TPRN2I6NNV3ZSJ',
           amount: '170141183460469231731687303715884105728',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
+          userSecret: 'SAOS4OGIK6HD3QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
         });
 
       expect(response.status).toBe(400);
@@ -126,9 +126,9 @@ describe('API Integration Tests', () => {
       const response = await request(app)
         .post('/api/lending/deposit')
         .send({
-          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ',
+          userAddress: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4WOWHC3TPRN2I6NNV3ZSJ',
           amount: '1000000',
-          userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
+          userSecret: 'SAOS4OGIK6HD3QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
           // assetAddress is optional
         });
 
