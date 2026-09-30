@@ -30,7 +30,7 @@
 //! can detect oracle degradation in real time without polling.
 
 #![allow(unused)]
-use crate::admin::get_admin;
+use crate::admin::{get_admin, require_admin};
 use crate::events::{
     emit_price_updated, emit_twap_fallback_used, PriceUpdatedEvent, PRIMARY_FEED_ABSENT,
 };
@@ -315,6 +315,7 @@ pub fn update_price_feed(
     }
 
     let is_admin = get_admin(env).map(|admin| admin == caller).unwrap_or(false);
+    let _ = &caller;
     let primary = get_primary_oracle(env, &asset);
     let fallback = get_fallback_oracle(env, &asset);
 
