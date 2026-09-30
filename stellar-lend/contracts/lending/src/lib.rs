@@ -248,6 +248,8 @@ pub enum DataKey {
     DebtAsset(Address, Address),
     /// Per-asset risk parameters (ltv, liquidation threshold, debt ceiling).
     AssetParams(Address),
+    /// Per-asset risk parameters (ltv, liquidation threshold, debt ceiling).
+    AssetParamsV2(Address),
     /// List of assets for which a user holds non-zero collateral cross-asset.
     UserCollateralAssets(Address),
     /// List of assets for which a user holds non-zero debt cross-asset.
