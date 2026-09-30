@@ -275,6 +275,16 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `set_price`                   | Store a signed oracle price update               |
 | `get_price_record`            | Read stored oracle price                         |
 
+### Upgrade Governance
+
+| Function | Description |
+|---|---|
+| `upgrade_cancel` | Cancel a pending upgrade proposal (admin only) |
+| `is_upgrade_proposal_cancelled` | Check whether a proposal was cancelled |
+| `get_upgrade_approval_binding` | Read a proposal approval's domain-separated binding hash |
+| `get_upgrade_proposal_signer_hash` | Read the approver-set fingerprint captured by a proposal |
+| `get_upgrade_approver_set_hash` | Read the current upgrade approver-set fingerprint |
+
 ### Flash Loans
 
 | Function                      | Description                                      |
@@ -290,7 +300,7 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `get_debt_position`           | Query raw debt principal and last update time    |
 | `get_health_factor`           | Query current health factor                      |
 | `get_protocol_metrics`        | Query aggregate debt, supply, utilization, ledger |
-| `get_rate_model_diagnostics` | Query real-time rate-model utilization, target/applied rates, latency |
+| `get_rate_model_diagnostics`   | Query real-time rate-model utilization, target/applied rates, latency |
 
 For exact signatures and planned-but-not-shipping names, see
 [docs/interface_quick_reference.md](docs/interface_quick_reference.md).

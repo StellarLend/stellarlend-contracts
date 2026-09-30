@@ -3,18 +3,18 @@
 #![allow(clippy::duplicated_attributes)]
 
 mod audit_log;
+pub mod authorization;
 mod cross_asset;
 pub mod debt;
 mod events;
+pub mod flash_loan_state;
+pub mod invariants;
 pub mod math;
+pub mod operation_tracker;
 mod rate_model;
 pub mod rounding_strategy;
-pub mod upgrade;
-pub mod invariants;
-pub mod operation_tracker;
 pub mod two_phase_ops;
-pub mod flash_loan_state;
-pub mod authorization;
+pub mod upgrade;
 pub mod validation;
 
 #[cfg(test)]
@@ -81,6 +81,8 @@ mod initialize_auth_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
+mod invariant_integration_test;
+#[cfg(test)]
 mod isolation_invariants_test;
 #[cfg(test)]
 mod isolation_mode_test;
@@ -132,8 +134,6 @@ mod rate_surcharge_test;
 mod rate_updated_event_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
-#[cfg(test)]
-mod invariant_integration_test;
 #[cfg(test)]
 mod repay_overpay_test;
 #[cfg(test)]
@@ -2732,8 +2732,7 @@ impl LendingContract {
     /// behaviour. It leaks no secrets.
     pub fn get_rate_model_diagnostics(env: Env) -> RateModelDiagnostics {
         let snapshot = debt::load_rate_snapshot(&env);
-        let utilization_bps =
-            debt::compute_utilization_bps(&snapshot).unwrap_or(0);
+        let utilization_bps = debt::compute_utilization_bps(&snapshot).unwrap_or(0);
 
         let current_ledger = env.ledger().sequence();
         let last_update_ledger = env
@@ -2742,20 +2741,18 @@ impl LendingContract {
             .get(&rate_model::RateModelKey::LastRateLedger)
             .unwrap_or(0);
 
-        let (rate_model_active, target_rate_bps, applied_rate_bps) =
-            match &snapshot.params {
-                Some(p) => {
-                    let target_rate =
-                        rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
-                    let applied_rate = env
-                        .storage()
-                        .instance()
-                        .get(&rate_model::RateModelKey::LastRate)
-                        .unwrap_or(target_rate);
-                    (true, target_rate, applied_rate)
-                }
-                None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
-            };
+        let (rate_model_active, target_rate_bps, applied_rate_bps) = match &snapshot.params {
+            Some(p) => {
+                let target_rate = rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
+                let applied_rate = env
+                    .storage()
+                    .instance()
+                    .get(&rate_model::RateModelKey::LastRate)
+                    .unwrap_or(target_rate);
+                (true, target_rate, applied_rate)
+            }
+            None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
+        };
 
         let elapsed_ledgers = if last_update_ledger == 0 {
             0
@@ -4403,7 +4400,7 @@ pub(crate) mod test {
             res
         );
     }
- 
+
     #[test]
     fn test_set_price_retry_exact_update_is_idempotent() {
         let (env, client, admin, _user) = setup();
@@ -4423,7 +4420,9 @@ pub(crate) mod test {
             "exact retry must be treated as an idempotent success, got {:?}",
             retry
         );
-        let record = client.get_price_record(&asset).expect("price record exists");
+        let record = client
+            .get_price_record(&asset)
+            .expect("price record exists");
         assert_eq!(record.price, price);
         assert_eq!(record.timestamp, timestamp);
     }
