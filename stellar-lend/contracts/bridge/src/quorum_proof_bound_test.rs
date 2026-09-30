@@ -4,6 +4,4 @@
 use super::*;
 
 #[test]
-fn quorum_proof_bound_test_compile_smoke() {
-    assert!(true);
-}
+fn quorum_proof_bound_test_compile_smoke() {}

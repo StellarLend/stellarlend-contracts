@@ -134,8 +134,7 @@ pub fn validate_amount_range(amount: i128, min: i128, max: i128) -> Result<(), V
 /// # Errors
 /// - `ValidationError::NumericOverflow` - Addition would overflow
 pub fn validate_add(a: i128, b: i128) -> Result<i128, ValidationError> {
-    a.checked_add(b)
-        .ok_or(ValidationError::NumericOverflow)
+    a.checked_add(b).ok_or(ValidationError::NumericOverflow)
 }
 
 /// Validate that a subtraction will not underflow.
@@ -150,8 +149,7 @@ pub fn validate_add(a: i128, b: i128) -> Result<i128, ValidationError> {
 /// # Errors
 /// - `ValidationError::NumericUnderflow` - Subtraction would underflow
 pub fn validate_sub(a: i128, b: i128) -> Result<i128, ValidationError> {
-    a.checked_sub(b)
-        .ok_or(ValidationError::NumericUnderflow)
+    a.checked_sub(b).ok_or(ValidationError::NumericUnderflow)
 }
 
 /// Validate that a multiplication will not overflow.
@@ -166,8 +164,7 @@ pub fn validate_sub(a: i128, b: i128) -> Result<i128, ValidationError> {
 /// # Errors
 /// - `ValidationError::NumericOverflow` - Multiplication would overflow
 pub fn validate_mul(a: i128, b: i128) -> Result<i128, ValidationError> {
-    a.checked_mul(b)
-        .ok_or(ValidationError::NumericOverflow)
+    a.checked_mul(b).ok_or(ValidationError::NumericOverflow)
 }
 
 /// Validate that a division is safe (no division by zero).
@@ -185,8 +182,7 @@ pub fn validate_div(a: i128, b: i128) -> Result<i128, ValidationError> {
     if b == 0 {
         return Err(ValidationError::InvalidAmount);
     }
-    a.checked_div(b)
-        .ok_or(ValidationError::NumericOverflow)
+    a.checked_div(b).ok_or(ValidationError::NumericOverflow)
 }
 
 /// Validate that an asset is configured in the protocol.
@@ -202,11 +198,11 @@ pub fn validate_div(a: i128, b: i128) -> Result<i128, ValidationError> {
 /// - `ValidationError::AssetNotConfigured` - Asset has no configuration
 pub fn validate_asset_configured(env: &Env, asset: &Address) -> Result<(), ValidationError> {
     let key = DataKey::AssetParams(asset.clone());
-    
+
     if !env.storage().persistent().has(&key) {
         return Err(ValidationError::AssetNotConfigured);
     }
-    
+
     Ok(())
 }
 
@@ -258,17 +254,13 @@ pub fn validate_health_factor(health_factor: i128) -> Result<(), ValidationError
 /// - `ValidationError::InvalidTimestamp` - Timestamp is too old or too far in future
 pub fn validate_timestamp(env: &Env, timestamp: u64) -> Result<(), ValidationError> {
     let current = env.ledger().timestamp();
-    
-    let deviation = if timestamp > current {
-        timestamp - current
-    } else {
-        current - timestamp
-    };
-    
+
+    let deviation = timestamp.abs_diff(current);
+
     if deviation > MAX_TIMESTAMP_DEVIATION_SECS {
         return Err(ValidationError::InvalidTimestamp);
     }
-    
+
     Ok(())
 }
 
@@ -285,18 +277,18 @@ pub fn validate_timestamp(env: &Env, timestamp: u64) -> Result<(), ValidationErr
 /// - `ValidationError::StalePriceData` - Price timestamp is too old
 pub fn validate_price_freshness(env: &Env, price_timestamp: u64) -> Result<(), ValidationError> {
     let current = env.ledger().timestamp();
-    
+
     if price_timestamp > current {
         // Price from the future is invalid
         return Err(ValidationError::InvalidTimestamp);
     }
-    
+
     let age = current - price_timestamp;
-    
+
     if age > MAX_PRICE_AGE_SECS {
         return Err(ValidationError::StalePriceData);
     }
-    
+
     Ok(())
 }
 
@@ -320,23 +312,23 @@ pub fn validate_price_bounds(
     // Get configured price bounds
     let min_key = DataKey::PriceMin(asset.clone());
     let max_key = DataKey::PriceMax(asset.clone());
-    
+
     let min_price: Option<i128> = env.storage().persistent().get(&min_key);
     let max_price: Option<i128> = env.storage().persistent().get(&max_key);
-    
+
     // If bounds are configured, validate against them
     if let Some(min) = min_price {
         if price < min {
             return Err(ValidationError::PriceOutOfBounds);
         }
     }
-    
+
     if let Some(max) = max_price {
         if price > max {
             return Err(ValidationError::PriceOutOfBounds);
         }
     }
-    
+
     Ok(())
 }
 
@@ -361,8 +353,8 @@ pub fn validate_oracle_signature(
 ) -> Result<(), ValidationError> {
     // Verify Ed25519 signature
     env.crypto()
-        .ed25519_verify(pubkey, message, signature);
-    
+        .ed25519_verify(pubkey, &message.clone().into(), signature);
+
     // Note: ed25519_verify panics on failure in Soroban
     // If we reach here, signature is valid
     Ok(())
@@ -402,13 +394,13 @@ pub fn validate_cap(current: i128, addition: i128, cap: i128) -> Result<(), Vali
         // Cap of 0 or negative means unlimited
         return Ok(());
     }
-    
+
     let new_total = validate_add(current, addition)?;
-    
+
     if new_total > cap {
         return Err(ValidationError::CapExceeded);
     }
-    
+
     Ok(())
 }
 
@@ -433,15 +425,15 @@ pub fn validate_reserve_ratio(
         // No liabilities, reserves are sufficient
         return Ok(());
     }
-    
+
     // Calculate reserve ratio: (reserves / liabilities) * 10000
     let ratio = validate_mul(reserves, BPS_DENOM)?;
     let ratio_bps = validate_div(ratio, liabilities)?;
-    
+
     if ratio_bps < min_ratio_bps {
         return Err(ValidationError::InsufficientReserves);
     }
-    
+
     Ok(())
 }
 
@@ -456,15 +448,12 @@ pub fn validate_reserve_ratio(
 ///
 /// # Errors
 /// - `ValidationError::InconsistentState` - Position has negative values
-pub fn validate_position_consistency(
-    collateral: i128,
-    debt: i128,
-) -> Result<(), ValidationError> {
+pub fn validate_position_consistency(collateral: i128, debt: i128) -> Result<(), ValidationError> {
     // Collateral and debt should never be negative
     if collateral < 0 || debt < 0 {
         return Err(ValidationError::InconsistentState);
     }
-    
+
     Ok(())
 }
 
@@ -512,12 +501,12 @@ pub fn validate_withdrawal(
 ) -> Result<(), ValidationError> {
     validate_amount(amount)?;
     validate_asset_configured(env, asset)?;
-    
+
     // Cannot withdraw more than balance
     if amount > current_balance {
         return Err(ValidationError::InvalidAmount);
     }
-    
+
     validate_health_factor(health_factor_after)?;
     Ok(())
 }
@@ -567,12 +556,12 @@ pub fn validate_repay(
 ) -> Result<(), ValidationError> {
     validate_amount(amount)?;
     validate_asset_configured(env, asset)?;
-    
+
     // Cannot repay more than debt (unless it's a rounding error tolerance)
     if amount > current_debt + 1 {
         return Err(ValidationError::InvalidAmount);
     }
-    
+
     Ok(())
 }
 
@@ -597,12 +586,12 @@ pub fn validate_liquidation(
     validate_amount(repay_amount)?;
     validate_asset_configured(env, debt_asset)?;
     validate_asset_configured(env, collateral_asset)?;
-    
+
     // Borrower must be unhealthy to be liquidated
     if borrower_health_factor >= MIN_HEALTH_FACTOR {
         return Err(ValidationError::HealthFactorTooLow);
     }
-    
+
     Ok(())
 }
 
@@ -702,10 +691,7 @@ mod tests {
         assert!(validate_bps(0).is_ok());
         assert!(validate_bps(5000).is_ok());
         assert!(validate_bps(10000).is_ok());
-        assert_eq!(
-            validate_bps(-1),
-            Err(ValidationError::ParameterOutOfRange)
-        );
+        assert_eq!(validate_bps(-1), Err(ValidationError::ParameterOutOfRange));
         assert_eq!(
             validate_bps(10001),
             Err(ValidationError::ParameterOutOfRange)
@@ -715,8 +701,11 @@ mod tests {
     #[test]
     fn test_validate_cap_enforces_limit() {
         assert!(validate_cap(100, 50, 200).is_ok());
-        assert_eq!(validate_cap(100, 150, 200), Err(ValidationError::CapExceeded));
-        
+        assert_eq!(
+            validate_cap(100, 150, 200),
+            Err(ValidationError::CapExceeded)
+        );
+
         // Cap of 0 means unlimited
         assert!(validate_cap(100, 1000000, 0).is_ok());
     }
@@ -725,16 +714,16 @@ mod tests {
     fn test_validate_reserve_ratio() {
         // 100% reserve ratio (10000 bps)
         assert!(validate_reserve_ratio(100, 100, 10000).is_ok());
-        
+
         // 150% reserve ratio
         assert!(validate_reserve_ratio(150, 100, 10000).is_ok());
-        
+
         // 50% reserve ratio - fails if minimum is 100%
         assert_eq!(
             validate_reserve_ratio(50, 100, 10000),
             Err(ValidationError::InsufficientReserves)
         );
-        
+
         // No liabilities - always passes
         assert!(validate_reserve_ratio(50, 0, 10000).is_ok());
     }
@@ -756,15 +745,16 @@ mod tests {
     #[test]
     fn test_validate_timestamp() {
         let env = Env::default();
+        env.ledger().set_timestamp(1_000_000);
         let current = env.ledger().timestamp();
-        
+
         // Current timestamp is valid
         assert!(validate_timestamp(&env, current).is_ok());
-        
+
         // Within tolerance
         assert!(validate_timestamp(&env, current + 100).is_ok());
         assert!(validate_timestamp(&env, current - 100).is_ok());
-        
+
         // Outside tolerance
         assert_eq!(
             validate_timestamp(&env, current + MAX_TIMESTAMP_DEVIATION_SECS + 1),
@@ -775,18 +765,19 @@ mod tests {
     #[test]
     fn test_validate_price_freshness() {
         let env = Env::default();
+        env.ledger().set_timestamp(1_000_000);
         let current = env.ledger().timestamp();
-        
+
         // Fresh price is valid
         assert!(validate_price_freshness(&env, current).is_ok());
         assert!(validate_price_freshness(&env, current - 100).is_ok());
-        
+
         // Stale price is invalid
         assert_eq!(
             validate_price_freshness(&env, current - MAX_PRICE_AGE_SECS - 1),
             Err(ValidationError::StalePriceData)
         );
-        
+
         // Future price is invalid
         assert_eq!(
             validate_price_freshness(&env, current + 100),

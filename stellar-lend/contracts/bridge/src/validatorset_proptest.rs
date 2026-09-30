@@ -4,6 +4,4 @@
 use super::*;
 
 #[test]
-fn validatorset_proptest_compile_smoke() {
-    assert!(true);
-}
+fn validatorset_proptest_compile_smoke() {}

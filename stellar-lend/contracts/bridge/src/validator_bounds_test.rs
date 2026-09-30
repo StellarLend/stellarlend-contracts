@@ -4,6 +4,4 @@
 use super::*;
 
 #[test]
-fn validator_bounds_test_compile_smoke() {
-    assert!(true);
-}
+fn validator_bounds_test_compile_smoke() {}

@@ -4,6 +4,4 @@
 use super::*;
 
 #[test]
-fn outbound_cap_test_compile_smoke() {
-    assert!(true);
-}
+fn outbound_cap_test_compile_smoke() {}

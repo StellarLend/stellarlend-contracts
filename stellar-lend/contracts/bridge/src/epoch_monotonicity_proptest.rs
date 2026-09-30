@@ -4,6 +4,4 @@
 use super::*;
 
 #[test]
-fn epoch_monotonicity_proptest_compile_smoke() {
-    assert!(true);
-}
+fn epoch_monotonicity_proptest_compile_smoke() {}

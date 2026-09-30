@@ -12,5 +12,4 @@ fn rotation_test_module_resolves() {
     // Smoke test — confirms the module compiles and links correctly.
     // Substantive rotation/epoch tests are in lib.rs::tests and
     // inbound_epoch_test.rs; add focused rotation assertions here as needed.
-    assert!(true);
 }

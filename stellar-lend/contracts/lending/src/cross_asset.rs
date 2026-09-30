@@ -115,7 +115,7 @@ pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, Le
     Ok(record)
 }
 
-fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserCollateralAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -128,7 +128,7 @@ fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
-fn remove_from_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn remove_from_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserCollateralAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -141,7 +141,7 @@ fn remove_from_user_collateral_list(env: &Env, user: &Address, asset: &Address) 
     }
 }
 
-fn add_to_user_debt_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn add_to_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserDebtAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -154,7 +154,7 @@ fn add_to_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
-fn remove_from_user_debt_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn remove_from_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserDebtAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -189,7 +189,7 @@ fn get_user_debt_assets(env: &Env, user: &Address) -> Vec<Address> {
         .unwrap_or(Vec::new(env))
 }
 
-fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
     let threshold = extend_to / 2 + 1;
@@ -200,7 +200,7 @@ fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
-fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
     let threshold = extend_to / 2 + 1;
@@ -743,7 +743,7 @@ pub fn borrow_asset_internal(
 /// # Errors
 /// - [`LendingError::StaleOracleTimestamp`] if any scanned asset's price is stale.
 /// - [`LendingError::PriceFeedNotFound`] if any scanned asset has no price record.
-fn ensure_position_prices_fresh(
+pub(crate) fn ensure_position_prices_fresh(
     env: &Env,
     user: &Address,
     borrow_asset: &Address,
@@ -858,7 +858,7 @@ pub fn repay_asset_internal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
 
     fn set_price(env: &Env, asset: &Address, price: i128, timestamp: u64) {
         env.storage().persistent().set(
@@ -899,7 +899,8 @@ mod tests {
         let env = Env::default();
         let asset = Address::generate(&env);
         let timestamp = 1_000_000u64;
-        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
+        env.ledger()
+            .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
         set_price(&env, &asset, 10_000_000, timestamp);
 
         assert!(matches!(
@@ -913,7 +914,8 @@ mod tests {
         let env = Env::default();
         let asset = Address::generate(&env);
         let timestamp = 1_000_000u64;
-        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
+        env.ledger()
+            .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
         set_price(&env, &asset, 10_000_000, timestamp);
 
         assert!(get_price_for_asset(&env, &asset).is_ok());

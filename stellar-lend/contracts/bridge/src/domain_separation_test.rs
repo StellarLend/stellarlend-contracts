@@ -4,6 +4,4 @@
 use super::*;
 
 #[test]
-fn domain_separation_test_compile_smoke() {
-    assert!(true);
-}
+fn domain_separation_test_compile_smoke() {}
