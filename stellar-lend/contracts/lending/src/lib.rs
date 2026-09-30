@@ -1664,15 +1664,8 @@ impl LendingContract {
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
-<<<<<<< HEAD
-    pub fn withdraw(env: Env, user: Address, amount: i128, asset: Address) -> Result<i128, LendingError> {
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &asset);
-        
-=======
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Withdraw);
         check_emergency_status(&env, ProtocolAction::Withdraw);
         if amount <= 0 {
@@ -1700,17 +1693,10 @@ impl LendingContract {
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
         extend_collateral_ttl(&env, &user);
-<<<<<<< HEAD
-        
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &asset);
-        
-=======
 
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
 
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         Ok(new_balance)
     }
 
