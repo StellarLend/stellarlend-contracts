@@ -4,6 +4,7 @@
 /// in `lib.rs` resolves at compile time. Real rotation tests live in the inline
 /// `#[cfg(test)] mod tests` block inside `lib.rs` and in `inbound_epoch_test.rs`.
 #[cfg(test)]
+#[allow(unused_imports)]
 use super::*;
 
 #[test]

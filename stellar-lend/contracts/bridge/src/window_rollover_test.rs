@@ -1,5 +1,6 @@
 /// Tests for bridge epoch-window rollover behaviour.
 #[cfg(test)]
+#[allow(unused_imports)]
 use super::*;
 
 #[test]
