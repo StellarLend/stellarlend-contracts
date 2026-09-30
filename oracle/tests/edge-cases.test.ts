@@ -9,6 +9,7 @@ import { createPriceCache } from '../src/services/cache.js';
 import { scalePrice, unscalePrice } from '../src/config.js';
 import { BasePriceProvider } from '../src/providers/base-provider.js';
 import type { RawPriceData } from '../src/types/index.js';
+import { createProviderRegistry, ProviderRegistryError } from '../src/providers/index.js';
 
 /**
  * Mock provider for edge case testing
@@ -554,6 +555,240 @@ describe('Edge Cases', () => {
 
             // Should handle gracefully
             expect(result === null || result?.asset === 'XLM').toBe(true);
+        });
+    });
+
+    describe('Provider Registry Failure Paths', () => {
+        it('should reject duplicate provider names deterministically', () => {
+            const registry = createProviderRegistry();
+            const p1 = new EdgeCaseMockProvider('dup', 1);
+            const p2 = new EdgeCaseMockProvider('dup', 2);
+
+            registry.register(p1);
+
+            expect(() => registry.register(p2)).toThrow(ProviderRegistryError);
+            expect(registry.get('dup')).toBe(p1);
+            expect(registry.size()).toBe(1);
+        });
+
+        it('should reject invalid provider registration inputs', () => {
+            const registry = createProviderRegistry();
+
+            expect(() => registry.register(undefined as any)).toThrow(ProviderRegistryError);
+            expect(() => registry.register({} as any)).toThrow(ProviderRegistryError);
+            expect(() => registry.register({ name: '' } as any)).toThrow(ProviderRegistryError);
+            expect(registry.size()).toBe(0);
+        });
+
+        it('should return undefined for unknown provider lookups', () => {
+            const registry = createProviderRegistry();
+
+            expect(registry.get('missing')).toBeUndefined();
+            expect(registry.has('missing')).toBe(false);
+        });
+
+        it('should unregister providers and keep registry consistent', () => {
+            const registry = createProviderRegistry();
+            const p1 = new EdgeCaseMockProvider('a', 1);
+            const p2 = new EdgeCaseMockProvider('b', 2);
+
+            registry.register(p1);
+            registry.register(p2);
+
+            expect(registry.unregister('a')).toBe(true);
+            expect(registry.unregister('a')).toBe(false);
+            expect(registry.has('a')).toBe(false);
+            expect(registry.has('b')).toBe(true);
+            expect(registry.size()).toBe(1);
+        });
+
+        it('should list providers in deterministic priority order', () => {
+            const registry = createProviderRegistry();
+            const pLow = new EdgeCaseMockProvider('low', 10);
+            const pHigh = new EdgeCaseMockProvider('high', 1);
+            const pMid = new EdgeCaseMockProvider('mid', 5);
+
+            registry.register(pLow);
+            registry.register(pHigh);
+            registry.register(pMid);
+
+            const names = registry.list().map(p => p.name);
+            expect(names).toEqual(['high', 'mid', 'low']);
+        });
+
+        it('should break priority ties deterministically by name', () => {
+            const registry = createProviderRegistry();
+            const pB = new EdgeCaseMockProvider('bbb', 1);
+            const pA = new EdgeCaseMockProvider('aaa', 1);
+            const pC = new EdgeCaseMockProvider('ccc', 1);
+
+            registry.register(pB);
+            registry.register(pA);
+            registry.register(pC);
+
+            const names = registry.list().map(p => p.name);
+            expect(names).toEqual(['aaa', 'bbb', 'ccc']);
+        });
+
+        it('should isolate partial failures when fetching from multiple providers', async () => {
+            const registry = createProviderRegistry();
+            const good = new EdgeCaseMockProvider('good', 1);
+            const bad = new EdgeCaseMockProvider('bad', 2);
+
+            good.setPrice('XLM', 0.15);
+            // bad has no price set, so fetchPrice throws
+
+            registry.register(good);
+            registry.register(bad);
+
+            const results = await registry.fetchAll('XLM');
+
+            expect(results).toHaveLength(1);
+            expect(results[0].source).toBe('good');
+            expect(results[0].price).toBe(0.15);
+        });
+
+        it('should surface aggregate failure when all providers fail', async () => {
+            const registry = createProviderRegistry();
+            const bad1 = new EdgeCaseMockProvider('bad1', 1);
+            const bad2 = new EdgeCaseMockProvider('bad2', 2);
+
+            registry.register(bad1);
+            registry.register(bad2);
+
+            await expect(registry.fetchAll('XLM')).rejects.toThrow(ProviderRegistryError);
+        });
+
+        it('should reject fetchAll for empty registry', async () => {
+            const registry = createProviderRegistry();
+
+            await expect(registry.fetchAll('XLM')).rejects.toThrow(ProviderRegistryError);
+        });
+
+        it('should reject fetchAll for empty asset name', async () => {
+            const registry = createProviderRegistry();
+            const p = new EdgeCaseMockProvider('p', 1);
+            p.setPrice('XLM', 0.15);
+            registry.register(p);
+
+            await expect(registry.fetchAll('')).rejects.toThrow(ProviderRegistryError);
+            await expect(registry.fetchAll('   ')).rejects.toThrow(ProviderRegistryError);
+        });
+
+        it('should not mutate registry state during failed fetchAll', async () => {
+            const registry = createProviderRegistry();
+            const bad = new EdgeCaseMockProvider('bad', 1);
+            registry.register(bad);
+
+            await expect(registry.fetchAll('XLM')).rejects.toThrow(ProviderRegistryError);
+
+            expect(registry.size()).toBe(1);
+            expect(registry.has('bad')).toBe(true);
+        });
+
+        it('should handle concurrent fetchAll calls without state corruption', async () => {
+            const registry = createProviderRegistry();
+            const p1 = new EdgeCaseMockProvider('p1', 1);
+            const p2 = new EdgeCaseMockProvider('p2', 2);
+            p1.setPrice('XLM', 0.15);
+            p2.setPrice('XLM', 0.16);
+            registry.register(p1);
+            registry.register(p2);
+
+            const results = await Promise.all([
+                registry.fetchAll('XLM'),
+                registry.fetchAll('XLM'),
+                registry.fetchAll('XLM'),
+            ]);
+
+            results.forEach(r => {
+                expect(r).toHaveLength(2);
+                const sources = r.map(x => x.source).sort();
+                expect(sources).toEqual(['p1', 'p2']);
+            });
+            expect(registry.size()).toBe(2);
+        });
+
+        it('should handle concurrent register/unregister without corruption', () => {
+            const registry = createProviderRegistry();
+            const providers = Array(20).fill(null).map((_, i) =>
+                new EdgeCaseMockProvider(`p${i}`, i + 1)
+            );
+
+            providers.forEach(p => registry.register(p));
+            expect(registry.size()).toBe(20);
+
+            providers.forEach(p => registry.unregister(p.name));
+            expect(registry.size()).toBe(0);
+        });
+
+        it('should not expose sensitive data in error messages', async () => {
+            const registry = createProviderRegistry();
+            const bad = new EdgeCaseMockProvider('bad', 1);
+            registry.register(bad);
+
+            try {
+                await registry.fetchAll('XLM');
+                throw new Error('expected rejection');
+            } catch (err) {
+                expect(err).toBeInstanceOf(ProviderRegistryError);
+                const message = (err as Error).message;
+                expect(message).not.toMatch(/api[_-]?key/i);
+                expect(message).not.toMatch(/secret/i);
+                expect(message).not.toMatch(/token/i);
+                expect(message).not.toMatch(/password/i);
+            }
+        });
+
+        it('should be idempotent when registering the same instance twice', () => {
+            const registry = createProviderRegistry();
+            const p = new EdgeCaseMockProvider('same', 1);
+
+            registry.register(p);
+            expect(() => registry.register(p)).toThrow(ProviderRegistryError);
+            expect(registry.size()).toBe(1);
+        });
+
+        it('should reject unregister of unknown provider without throwing', () => {
+            const registry = createProviderRegistry();
+
+            expect(registry.unregister('nope')).toBe(false);
+            expect(registry.size()).toBe(0);
+        });
+
+        it('should clear registry deterministically', () => {
+            const registry = createProviderRegistry();
+            registry.register(new EdgeCaseMockProvider('a', 1));
+            registry.register(new EdgeCaseMockProvider('b', 2));
+
+            registry.clear();
+
+            expect(registry.size()).toBe(0);
+            expect(registry.list()).toEqual([]);
+        });
+
+        it('should handle boundary priority values', () => {
+            const registry = createProviderRegistry();
+            const pMin = new EdgeCaseMockProvider('min', Number.MIN_SAFE_INTEGER);
+            const pMax = new EdgeCaseMockProvider('max', Number.MAX_SAFE_INTEGER);
+            const pZero = new EdgeCaseMockProvider('zero', 0);
+
+            registry.register(pMax);
+            registry.register(pMin);
+            registry.register(pZero);
+
+            const names = registry.list().map(p => p.name);
+            expect(names).toEqual(['min', 'zero', 'max']);
+        });
+
+        it('should reject non-finite priority values', () => {
+            const registry = createProviderRegistry();
+            const pNaN = new EdgeCaseMockProvider('nan', NaN);
+            const pInf = new EdgeCaseMockProvider('inf', Infinity);
+
+            expect(() => registry.register(pNaN)).toThrow(ProviderRegistryError);
+            expect(() => registry.register(pInf)).toThrow(ProviderRegistryError);
+            expect(registry.size()).toBe(0);
         });
     });
 });
