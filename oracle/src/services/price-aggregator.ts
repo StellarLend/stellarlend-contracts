@@ -75,21 +75,14 @@ export class PriceAggregator {
         if (resolvedConfig.minSources < 1) {
             throw new Error('minSources must be at least 1');
         }
-        if (resolvedConfig.maxCacheAgeMs < 0) {
-            throw new Error('maxCacheAgeMs cannot be negative');
+        if (resolvedConfig.maxStalenessMs < 0) {
+            throw new Error('maxStalenessMs cannot be negative');
         }
-        if (resolvedConfig.staleFallbackMaxAgeMs < 0) {
-            throw new Error('staleFallbackMaxAgeMs cannot be negative');
+        if (resolvedConfig.maxFallbackAgeMs < 0) {
+            throw new Error('maxFallbackAgeMs cannot be negative');
         }
-        if (
-            resolvedConfig.staleFallbackConfidence < 0 ||
-            resolvedConfig.staleFallbackConfidence > 100
-        ) {
-            throw new Error('staleFallbackConfidence must be between 0 and 100');
-        }
-
-        if (!Number.isInteger(resolvedConfig.maxRetries) || resolvedConfig.maxRetries < 0) {
-            throw new Error('maxRetries must be a non-negative integer');
+        if (!Number.isInteger(resolvedConfig.providerRetries) || resolvedConfig.providerRetries < 0) {
+            throw new Error('providerRetries must be a non-negative integer');
         }
 
         this.config = resolvedConfig;
@@ -105,8 +98,6 @@ export class PriceAggregator {
      */
     async getPrice(asset: string): Promise<AggregatedPrice | null> {
         const upperAsset = asset.toUpperCase();
-        const now = Date.now();
-
         const now = Date.now();
         const cachedPrice = this.cache.getPrice(upperAsset);
         const cachedAt = this.cacheTimestamps.get(upperAsset);

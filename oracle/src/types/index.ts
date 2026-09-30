@@ -146,7 +146,7 @@ export interface OracleServiceConfig {
     adminHmacSecret?: string;
     updateIntervalMs: number;
     maxPriceDeviationPercent: number;
-    madZ?ScoreThreshold: number;
+    madZScoreThreshold: number;
     priceStaleThresholdSeconds: number;
     cacheTtlSeconds: number;
     redisUrl?: string;
@@ -218,7 +218,7 @@ export enum PriceUpdateState {
     FAILED = 'FAILED',
     RETRYING = 'RETRYING',
     CANCELLED = 'CANCELLED',
-    RECOVERING = 'RECOVERING,
+    RECOVERING = 'RECOVERING',
 }
 
 /**
