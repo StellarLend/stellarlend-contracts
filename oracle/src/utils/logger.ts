@@ -10,11 +10,14 @@ import winston from 'winston';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
+const replacer = (_key: string, value: unknown) =>
+    typeof value === 'bigint' ? value.toString() : value;
+
 /**
  * Custom log format for console output
  */
 const consoleFormat = printf(({ level, message, timestamp, ...meta }) => {
-    const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+    const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta, replacer)}` : '';
     return `${timestamp} [${level}]: ${message}${metaStr}`;
 });
 
@@ -22,12 +25,15 @@ const consoleFormat = printf(({ level, message, timestamp, ...meta }) => {
  * Custom log format for JSON output (production)
  */
 const jsonFormat = printf(({ level, message, timestamp, ...meta }) => {
-    return JSON.stringify({
-        timestamp,
-        level,
-        message,
-        ...meta,
-    });
+    return JSON.stringify(
+        {
+            timestamp,
+            level,
+            message,
+            ...meta,
+        },
+        replacer,
+    );
 });
 
 /**
