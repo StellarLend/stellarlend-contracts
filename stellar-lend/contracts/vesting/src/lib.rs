@@ -157,6 +157,9 @@ impl VestingContract {
     /// Initialize with admin, treasury, and token address.
     ///
     /// This is the primary (v2) initialization entry point.
+    ///
+    /// The `admin` must authorize this call, and the contract may only be
+    /// initialized once. Subsequent calls return `AlreadyInitialized`.
     /// Returns `AlreadyInitialized` if called more than once.
     pub fn initialize(
         env: Env,
@@ -164,6 +167,7 @@ impl VestingContract {
         treasury: Address,
         token_address: Address,
     ) -> Result<(), VestingError> {
+        admin.require_auth();
         if env
             .storage()
             .persistent()
