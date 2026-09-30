@@ -158,6 +158,10 @@ pub enum MultisigError {
 /// churn in a single contract invocation.
 pub const MAX_BATCH_SIZE: u32 = 32;
 
+/// Maximum `ttl_ledgers` accepted by `create_proposal`. Bounds the
+/// expiry arithmetic so `expires_at` cannot overflow.
+pub const MAX_TTL_LEDGERS: u64 = 3_110_400;
+
 /// Emitted when a signer revokes a previous approval from an open proposal.
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -428,7 +432,7 @@ impl MultisigContract {
         caller.require_auth();
         Self::require_signer(&env, &caller)?;
 
-        if ttl_ledgers > 3_110_400 {
+        if ttl_ledgers > MAX_TTL_LEDGERS {
             return Err(MultisigError::InvalidTtl);
         }
 
