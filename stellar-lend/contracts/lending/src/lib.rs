@@ -1873,13 +1873,7 @@ impl LendingContract {
         amount: i128,
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
-<<<<<<< HEAD
-        // Check invariant BEFORE state change
-        invariants::check_invariant_before(&env, &collateral_asset);
-        
-=======
         require_initialized(&env)?;
->>>>>>> 20622945dbe0fc28318ffd7efd2aa54c099233fa
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
         require_no_active_flash_loan(&env);
@@ -1929,9 +1923,6 @@ impl LendingContract {
         if is_asset_isolated(&env, &collateral_asset) {
             increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
-
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &collateral_asset);
 
         Ok(updated.principal)
     }
