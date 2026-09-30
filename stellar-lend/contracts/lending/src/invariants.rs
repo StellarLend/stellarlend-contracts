@@ -7,7 +7,7 @@
 //!
 //! For any asset, at any point in time:
 //! ```text
-//! token_client.balance(&env.current_contract_address()) == 
+//! token_client.balance(&env.current_contract_address()) ==
 //!     total_deposits + total_collateral_cross_asset - total_debt_principal
 //! ```
 //!
@@ -27,9 +27,9 @@
 //! Any detected drift will panic the transaction immediately with a detailed
 //! error message indicating the expected vs actual balance mismatch.
 
-use soroban_sdk::{Address, Env};
-use soroban_sdk::token::Client as TokenClient;
 use crate::DataKey;
+use soroban_sdk::token::Client as TokenClient;
+use soroban_sdk::{Address, Env};
 
 /// Check that token reserves match internal accounting before a state-changing operation.
 ///
@@ -116,7 +116,7 @@ fn check_reserve_invariant(env: &Env, asset: &Address, checkpoint: &str) {
 ///
 /// # Returns
 /// The expected token balance that the contract should hold
-pub fn compute_expected_reserve(env: &Env, asset: &Address) -> i128 {
+pub fn compute_expected_reserve(env: &Env, _asset: &Address) -> i128 {
     let mut expected: i128 = 0;
 
     // 1. Single-asset mode: TotalDeposits represents depositor collateral
@@ -125,7 +125,9 @@ pub fn compute_expected_reserve(env: &Env, asset: &Address) -> i128 {
         .persistent()
         .get(&DataKey::TotalDeposits)
         .unwrap_or(0);
-    expected = expected.checked_add(total_deposits).expect("overflow computing expected reserve");
+    expected = expected
+        .checked_add(total_deposits)
+        .expect("overflow computing expected reserve");
 
     // 2. Cross-asset mode: sum all per-user collateral for this asset
     // Note: This requires iterating over UserCollateralAssets list for each user
@@ -143,7 +145,9 @@ pub fn compute_expected_reserve(env: &Env, asset: &Address) -> i128 {
         .persistent()
         .get(&DataKey::BadDebt)
         .unwrap_or(0);
-    expected = expected.checked_sub(bad_debt).expect("underflow computing expected reserve");
+    expected = expected
+        .checked_sub(bad_debt)
+        .expect("underflow computing expected reserve");
 
     expected
 }
@@ -188,11 +192,16 @@ mod tests {
     #[test]
     fn test_invariant_passes_when_balanced() {
         let env = Env::default();
-        let asset = Address::generate(&env);
-        
-        // Set up matching internal accounting and token balance
-        env.storage().persistent().set(&DataKey::TotalDeposits, &1000i128);
-        
+        let contract_id = env.register(crate::LendingContract, ());
+        let _asset = Address::generate(&env);
+
+        // Set up matching internal accounting (contract-scoped storage access)
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDeposits, &1000i128);
+        });
+
         // Note: In a real test, we'd mock the token client balance
         // For now, this demonstrates the structure
     }
@@ -201,12 +210,26 @@ mod tests {
     #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
     fn test_invariant_panics_on_drift() {
         let env = Env::default();
-        let asset = Address::generate(&env);
-        
-        // Set up mismatched accounting
-        env.storage().persistent().set(&DataKey::TotalDeposits, &1000i128);
-        // Token balance would be different
-        
-        check_invariant_before(&env, &asset);
+        env.mock_all_auths();
+        let contract_id = env.register(crate::LendingContract, ());
+
+        // Register a real token so the balance query has a valid issuer.
+        // No mint is needed: the contract balance stays 0 while TotalDeposits
+        // is written as 1000 below, which is exactly the drift the check must
+        // detect.
+        let token_admin = Address::generate(&env);
+        let asset = env.register_stellar_asset_contract(token_admin.clone());
+
+        // Mismatched accounting: TotalDeposits = 1000 but the token balance of
+        // the contract is 0. Both the write and the check run inside the same
+        // `as_contract` frame so contract storage and the current-contract
+        // address resolve correctly.
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDeposits, &1000i128);
+
+            check_invariant_before(&env, &asset);
+        });
     }
 }

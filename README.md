@@ -292,6 +292,16 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `get_protocol_metrics`        | Query aggregate debt, supply, utilization, ledger |
 | `get_rate_model_diagnostics` | Query real-time rate-model utilization, target/applied rates, latency |
 
+### Upgrade Administration
+
+| Function                      | Description                                      |
+|-------------------------------|--------------------------------------------------|
+| `upgrade_cancel`              | Cancel a pending upgrade proposal (admin-only)   |
+| `is_upgrade_proposal_cancelled` | Query whether a proposal is in the `Cancelled` terminal state |
+| `get_upgrade_approval_binding` | Query the stored per-approver approval binding hash for a proposal |
+| `get_upgrade_proposal_signer_hash` | Query the approver-set fingerprint captured at proposal creation |
+| `get_upgrade_approver_set_hash` | Query the fingerprint of the live upgrade approver set |
+
 For exact signatures and planned-but-not-shipping names, see
 [docs/interface_quick_reference.md](docs/interface_quick_reference.md).
 

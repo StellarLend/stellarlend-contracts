@@ -51,13 +51,15 @@
 
 use crate::cross_asset::{
     add_to_user_debt_list, compute_aggregate_health_factor, ensure_position_prices_fresh,
-    load_debt_asset, save_debt_asset, validate_asset_params_configured, extend_debt_asset_ttl,
+    extend_debt_asset_ttl, load_debt_asset, save_debt_asset, validate_asset_params_configured,
 };
-use crate::debt::{borrow_amount_indexed, repay_amount_indexed, settle_position, touch_borrow_index, DebtPosition};
+use crate::debt::{
+    borrow_amount_indexed, repay_amount_indexed, settle_position, touch_borrow_index, DebtPosition,
+};
 use crate::{
     check_emergency_status, check_pause_status, current_borrow_rate, require_initialized,
     require_no_active_flash_loan, settle_and_accrue_insurance, DataKey, LendingError,
-    ProtocolAction, HEALTH_FACTOR_SCALE, BPS_DENOM,
+    ProtocolAction, BPS_DENOM, HEALTH_FACTOR_SCALE,
 };
 use soroban_sdk::{contracttype, Address, Env};
 
@@ -196,9 +198,9 @@ pub fn prepare_borrow(
 
     // Settle interest and compute new position (speculative, not yet written)
     let settled_position = settle_and_accrue_insurance(env, &position_before, now, rate)?;
-    
+
     let current_index = touch_borrow_index(env, now, rate);
-    
+
     // Compute speculative new position (with amount added)
     let position_after = borrow_amount_indexed(&settled_position, current_index, now, amount)
         .map_err(|_| LendingError::Overflow)?;
@@ -211,30 +213,30 @@ pub fn prepare_borrow(
     // ========================================================================
     // CRITICAL VALIDATION: Compute health factor on SPECULATIVE state
     // ========================================================================
-    
+
     // We need to compute health factor as if the borrow has been executed,
     // but without actually writing the debt position. This requires creating
     // a temporary "what-if" calculation.
-    
+
     // Strategy: Save current debt, temporarily write speculative debt, compute HF, restore
     // NOTE: This is still safer than optimistic write + rollback because:
     // 1. We restore immediately (no risk of forgetting cleanup)
     // 2. Failure to restore is caught by invariant checks
     // 3. No external events emitted during this phase
-    
+
     // Temporarily write speculative position for health factor calculation
     save_debt_asset(env, user, asset, &position_after);
     add_to_user_debt_list(env, user, asset);
-    
+
     // Compute aggregate health factor with speculative state
     let health_factor_after = compute_aggregate_health_factor(env, user)?;
-    
+
     // IMMEDIATELY restore original position (prepare phase doesn't commit)
     save_debt_asset(env, user, asset, &position_before);
     if prev_principal == 0 {
         crate::cross_asset::remove_from_user_debt_list(env, user, asset);
     }
-    
+
     // Validate health factor
     if health_factor_after < HEALTH_FACTOR_SCALE {
         return Err(LendingError::HealthFactorTooLow);
@@ -243,21 +245,21 @@ pub fn prepare_borrow(
     // ========================================================================
     // Debt Ceiling Validation
     // ========================================================================
-    
+
     let total_debt_for_asset: i128 = env
         .storage()
         .persistent()
         .get(&DataKey::TotalDebtAsset(asset.clone()))
         .unwrap_or(0);
-    
+
     let new_total_debt = total_debt_for_asset
         .checked_add(principal_delta)
         .ok_or(LendingError::Overflow)?;
-    
+
     if new_total_debt > params.debt_ceiling {
         return Err(LendingError::DebtCeilingExceeded);
     }
-    
+
     // Enforce optional per-asset borrow cap
     if params.borrow_cap != 0 && new_total_debt > params.borrow_cap {
         return Err(LendingError::BorrowCapExceeded);
@@ -313,33 +315,31 @@ pub fn prepare_withdraw(
         return Err(LendingError::InvalidAmount);
     }
 
-    let new_balance = current
-        .checked_sub(amount)
-        .ok_or(LendingError::Overflow)?;
-    
+    let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+
     let removes_asset = new_balance == 0;
 
     // ========================================================================
     // CRITICAL VALIDATION: Compute health factor on SPECULATIVE state
     // ========================================================================
-    
+
     let balance_before = current;
-    
+
     // Temporarily write speculative collateral for health factor calculation
     crate::cross_asset::save_collateral_asset(env, user, asset, new_balance);
     if removes_asset {
         crate::cross_asset::remove_from_user_collateral_list(env, user, asset);
     }
-    
+
     // Compute aggregate health factor with speculative state
     let health_factor_after = compute_aggregate_health_factor(env, user)?;
-    
+
     // IMMEDIATELY restore original collateral
     crate::cross_asset::save_collateral_asset(env, user, asset, balance_before);
     if removes_asset && balance_before > 0 {
         crate::cross_asset::add_to_user_collateral_list(env, user, asset);
     }
-    
+
     // Validate health factor
     if health_factor_after < HEALTH_FACTOR_SCALE {
         return Err(LendingError::HealthFactorTooLow);
@@ -385,15 +385,15 @@ pub fn prepare_repay(
 
     let now = env.ledger().timestamp();
     let rate = current_borrow_rate(env);
-    
+
     let position_before = load_debt_asset(env, user, asset);
     let prev_principal = position_before.principal;
-    
+
     let settled_position = settle_and_accrue_insurance(env, &position_before, now, rate)?;
-    
+
     // Clamp amount to outstanding balance (cross-asset repay semantic)
     let clamped_amount = amount.min(settled_position.principal);
-    
+
     if clamped_amount <= 0 {
         // Nothing to repay (position already zero)
         return Ok(PreparedRepay {
@@ -408,16 +408,17 @@ pub fn prepare_repay(
             prepared_at: now,
         });
     }
-    
+
     let current_index = touch_borrow_index(env, now, rate);
-    
-    let position_after = repay_amount_indexed(&settled_position, current_index, now, clamped_amount)
-        .map_err(|_| LendingError::Overflow)?;
-    
+
+    let position_after =
+        repay_amount_indexed(&settled_position, current_index, now, clamped_amount)
+            .map_err(|_| LendingError::Overflow)?;
+
     let principal_reduction = prev_principal
         .checked_sub(position_after.principal)
         .unwrap_or(0);
-    
+
     let removes_asset = position_after.principal == 0;
 
     Ok(PreparedRepay {
@@ -451,12 +452,9 @@ pub fn prepare_repay(
 /// # Panics
 /// If prepared_at timestamp is significantly older than current time
 /// (indicates stale prepared operation - should re-prepare).
-pub fn commit_borrow(
-    env: &Env,
-    prepared: PreparedBorrow,
-) -> Result<i128, LendingError> {
+pub fn commit_borrow(env: &Env, prepared: PreparedBorrow) -> Result<i128, LendingError> {
     let now = env.ledger().timestamp();
-    
+
     // Sanity check: prepared operation shouldn't be too old
     // (oracle prices may have changed, health factor may no longer be valid)
     const MAX_PREPARE_AGE_SECS: u64 = 60; // 1 minute
@@ -465,15 +463,20 @@ pub fn commit_borrow(
     }
 
     // Write all state mutations atomically (no validation, all checks passed in prepare)
-    
+
     // 1. Update debt position
-    save_debt_asset(env, &prepared.user, &prepared.asset, &prepared.position_after);
-    
+    save_debt_asset(
+        env,
+        &prepared.user,
+        &prepared.asset,
+        &prepared.position_after,
+    );
+
     // 2. Add to user's debt asset list if new position
     if prepared.position_before.principal == 0 {
         add_to_user_debt_list(env, &prepared.user, &prepared.asset);
     }
-    
+
     // 3. Update total debt counters
     let total_debt_asset: i128 = env
         .storage()
@@ -487,7 +490,7 @@ pub fn commit_borrow(
         &DataKey::TotalDebtAsset(prepared.asset.clone()),
         &new_total_debt_asset,
     );
-    
+
     let total_debt_protocol: i128 = env
         .storage()
         .persistent()
@@ -499,18 +502,23 @@ pub fn commit_borrow(
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_protocol);
-    
+
     // 4. Update isolation debt if applicable
     if crate::is_asset_isolated(env, &prepared.asset) {
         crate::increment_isolation_debt(env, &prepared.asset, prepared.principal_delta)?;
     }
-    
+
     // 5. Extend TTL
     extend_debt_asset_ttl(env, &prepared.user, &prepared.asset);
-    
+
     // 6. Emit event
-    crate::events::emit_borrow(env, &prepared.user, prepared.amount, prepared.position_after.principal);
-    
+    crate::events::emit_borrow(
+        env,
+        &prepared.user,
+        prepared.amount,
+        prepared.position_after.principal,
+    );
+
     Ok(prepared.position_after.principal)
 }
 
@@ -520,12 +528,9 @@ pub fn commit_borrow(
 ///
 /// # Returns
 /// New collateral balance after withdrawal.
-pub fn commit_withdraw(
-    env: &Env,
-    prepared: PreparedWithdraw,
-) -> Result<i128, LendingError> {
+pub fn commit_withdraw(env: &Env, prepared: PreparedWithdraw) -> Result<i128, LendingError> {
     let now = env.ledger().timestamp();
-    
+
     // Sanity check: prepared operation shouldn't be too old
     const MAX_PREPARE_AGE_SECS: u64 = 60;
     if now > prepared.prepared_at.saturating_add(MAX_PREPARE_AGE_SECS) {
@@ -533,7 +538,7 @@ pub fn commit_withdraw(
     }
 
     // Write all state mutations atomically
-    
+
     // 1. Update collateral balance
     crate::cross_asset::save_collateral_asset(
         env,
@@ -541,12 +546,12 @@ pub fn commit_withdraw(
         &prepared.asset,
         prepared.balance_after,
     );
-    
+
     // 2. Remove from user's collateral list if balance now zero
     if prepared.removes_asset_from_list {
         crate::cross_asset::remove_from_user_collateral_list(env, &prepared.user, &prepared.asset);
     }
-    
+
     // 3. Update total collateral
     let total_collateral_asset: i128 = env
         .storage()
@@ -560,13 +565,13 @@ pub fn commit_withdraw(
         &DataKey::TotalCollateralAsset(prepared.asset.clone()),
         &new_total,
     );
-    
+
     // 4. Extend TTL
     crate::cross_asset::extend_collateral_asset_ttl(env, &prepared.user, &prepared.asset);
-    
+
     // 5. Emit event
     crate::events::emit_withdraw(env, &prepared.user, prepared.amount, prepared.balance_after);
-    
+
     Ok(prepared.balance_after)
 }
 
@@ -576,27 +581,29 @@ pub fn commit_withdraw(
 ///
 /// # Returns
 /// New debt principal after repayment.
-pub fn commit_repay(
-    env: &Env,
-    prepared: PreparedRepay,
-) -> Result<i128, LendingError> {
+pub fn commit_repay(env: &Env, prepared: PreparedRepay) -> Result<i128, LendingError> {
     let now = env.ledger().timestamp();
-    
+
     const MAX_PREPARE_AGE_SECS: u64 = 60;
     if now > prepared.prepared_at.saturating_add(MAX_PREPARE_AGE_SECS) {
         return Err(LendingError::OperationExpired);
     }
 
     // Write all state mutations atomically
-    
+
     // 1. Update debt position
-    save_debt_asset(env, &prepared.user, &prepared.asset, &prepared.position_after);
-    
+    save_debt_asset(
+        env,
+        &prepared.user,
+        &prepared.asset,
+        &prepared.position_after,
+    );
+
     // 2. Remove from user's debt list if balance now zero
     if prepared.removes_asset_from_list {
         crate::cross_asset::remove_from_user_debt_list(env, &prepared.user, &prepared.asset);
     }
-    
+
     // 3. Update total debt counters
     let total_debt_asset: i128 = env
         .storage()
@@ -608,7 +615,7 @@ pub fn commit_repay(
         &DataKey::TotalDebtAsset(prepared.asset.clone()),
         &new_total_asset,
     );
-    
+
     let total_debt_protocol: i128 = env
         .storage()
         .persistent()
@@ -618,21 +625,26 @@ pub fn commit_repay(
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_protocol);
-    
+
     // 4. Update isolation debt if applicable
     if crate::should_release_isolation_debt(env, &prepared.asset) {
         crate::decrement_isolation_debt(env, &prepared.asset, prepared.principal_reduction)?;
     }
-    
+
     // 5. Check and clear unhealthy timestamp if health restored
     crate::check_and_clear_unhealthy_timestamp(env, &prepared.user);
-    
+
     // 6. Extend TTL
     extend_debt_asset_ttl(env, &prepared.user, &prepared.asset);
-    
+
     // 7. Emit event
-    crate::events::emit_repay(env, &prepared.user, prepared.actual_repay_amount, prepared.position_after.principal);
-    
+    crate::events::emit_repay(
+        env,
+        &prepared.user,
+        prepared.actual_repay_amount,
+        prepared.position_after.principal,
+    );
+
     Ok(prepared.position_after.principal)
 }
 
@@ -681,23 +693,30 @@ pub fn execute_repay_two_phase(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env,
+    };
 
     #[test]
     fn test_two_phase_borrow_validates_before_write() {
         // This test verifies that prepare_borrow validates health factor
         // BEFORE any permanent state mutation occurs.
-        
+
         let env = Env::default();
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
-        
+        let contract_id = env.register(crate::LendingContract, ());
+
         // Setup would require full contract initialization
         // For now, this demonstrates the API
-        
-        // Attempt to prepare under-collateralized borrow
-        let result = prepare_borrow(&env, &user, &asset, 1_000_000);
-        
+
+        // Attempt to prepare under-collateralized borrow (prepare reads
+        // contract storage, so run inside the contract frame)
+        let result = env.as_contract(&contract_id, || {
+            prepare_borrow(&env, &user, &asset, 1_000_000)
+        });
+
         // Expect: HealthFactorTooLow error
         // Verify: No debt position written (query storage confirms)
         assert!(result.is_err());
@@ -708,7 +727,12 @@ mod tests {
         let env = Env::default();
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
-        
+        let contract_id = env.register(crate::LendingContract, ());
+
+        // Move the ledger forward so the hand-built prepared operation
+        // (prepared_at = 0) is provably stale.
+        env.ledger().set_timestamp(1_000);
+
         // Create a prepared operation manually (without validation)
         let fake_prepared = PreparedBorrow {
             user: user.clone(),
@@ -729,24 +753,25 @@ mod tests {
             current_index: 1_000_000,
             prepared_at: 0,
         };
-        
-        // Commit should fail: prepared_at too old
-        let result = commit_borrow(&env, fake_prepared);
+
+        // Commit should fail: prepared_at too old (commit reads contract
+        // storage, so run inside the contract frame)
+        let result = env.as_contract(&contract_id, || commit_borrow(&env, fake_prepared));
         assert!(matches!(result, Err(LendingError::OperationExpired)));
     }
 
     #[test]
     fn test_prepared_operation_has_timestamp_validation() {
-        let env = Env::default();
-        
+        let _env = Env::default();
+
         // Verify that committed operations check prepared_at timestamp
         // to prevent stale prepared operations from being committed
         // after oracle prices have changed.
-        
+
         // This is a critical safety property: if client prepares operation,
         // waits 10 minutes, then commits, prices may have changed and
         // validation is no longer valid.
-        
+
         // Expected: OperationExpired error if prepared_at > MAX_PREPARE_AGE
     }
 }

@@ -1,5 +1,6 @@
 use crate::rate_model::{update_and_get_rate, RateParams};
 use crate::{LendingContract, LendingContractClient, RateSmoothingState};
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};
 

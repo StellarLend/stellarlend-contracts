@@ -3,6 +3,4 @@
 use super::*;
 
 #[test]
-fn rotation_doc_test_compile_smoke() {
-    assert!(true);
-}
+fn rotation_doc_test_compile_smoke() {}
