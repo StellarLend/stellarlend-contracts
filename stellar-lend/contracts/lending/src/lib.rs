@@ -388,6 +388,33 @@ pub struct LiquidationEventV1 {
     pub shortfall: i128,
 }
 
+/// Emitted by [`LendingContract::flash_loan`] when a flash loan is
+/// successfully disbursed. Carries the schema version, the borrowed amount,
+/// the fee charged, and the initiator/receiver addresses so off-chain
+/// indexers and monitoring can observe flash-loan activity.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanEvent {
+    pub schema_version: u32,
+    pub initiator: Address,
+    pub receiver: Address,
+    pub amount: i128,
+    pub fee: i128,
+}
+
+/// Emitted by [`LendingContract::repay_flash_loan`] when a flash loan is
+/// repaid (principal plus fee). Mirrors [`FlashLoanEvent`] so indexers can
+/// pair the disbursement and repayment legs.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanRepaidEvent {
+    pub schema_version: u32,
+    pub initiator: Address,
+    pub receiver: Address,
+    pub amount: i128,
+    pub fee: i128,
+}
+
 /// Emitted by [`LendingContract::write_off_bad_debt`] whenever a governed
 /// write-off completes.  Fields sum to `amount`:
 ///

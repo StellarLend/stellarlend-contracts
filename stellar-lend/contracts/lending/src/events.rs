@@ -1,8 +1,8 @@
 //! Event definitions for the StellarLend lending protocol.
-//!
-//! All events carry a `schema_version` field to enable safe decoding
-//! across contract upgrades. See docs/EVENT_SCHEMA_VERSIONING.md for
-//! versioning policy and indexer integration guide.
+///
+/// All events carry a `schema_version` field to enable safe decoding
+/// across contract upgrades. See docs/EVENT_SCHEMA_VERSIONING.md for
+/// versioning policy and indexer integration guide.
 
 use soroban_sdk::{contracttype, Address, Env, Symbol};
 
