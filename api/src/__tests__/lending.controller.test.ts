@@ -1,43 +1,14 @@
-import { Request, Response } from 'express';
-import { LendingController, ActivityResponse } from '../controllers/lending.controller';
-import { StellarService } from '../services/stellar.service';
-import { encodeCursor } from '../utils/cursor';
-
-// Mock StellarService
-jest.mock('../services/stellar.service');
-
-describe('LendingController', () => {
-  let controller: LendingController;
-  let mockStellarService: jest.Mocked<<StellarService>;
-  let mockReq: Partial<<Request>;
-  let mockRes: Partial<Response>;
-  let jsonMock: jest.Mock;
-  let statusMock: jest.Mock;
-
-  beforeEach(() => {
-    mockStellarService = new StellarService() as jest.Mocked<<StellarService>;
-    controller = new LendingController(mockStellarService);
-
-    jsonMock = jest.fn();
-    statusMock = jest.fn().mockReturnValue({ json: jsonMock });
-    
-    mockReq = { query: {} };
-    mockRes = {
-      json: jsonMock,
-      status: statusMock,
-    };
-  });
-
-  afterEach(() => {
 /**
  * Lending Controller Tests
  *
- * Covers cursor pagination, validation, error handling, and
- * ordering guarantees for the activity endpoints.
+ * Covers cursor pagination, validation, error handling, and ordering
+ * guarantees for the activity endpoints.
  */
 
 import { Request, Response } from 'express';
+import * as handlers from '../controllers/lending.controller';
 import { LendingController } from '../controllers/lending.controller';
+import { StellarService } from '../services/stellar.service';
 import {
   encodeCursor,
   decodeCursor,
@@ -51,11 +22,31 @@ import {
 
 const mockFetchActivity = jest.fn();
 const mockFetchUserActivity = jest.fn();
+const mockBuild = {
+  deposit: jest.fn(),
+  borrow: jest.fn(),
+  repay: jest.fn(),
+  withdraw: jest.fn(),
+};
+const mockSubmitTransaction = jest.fn();
+const mockMonitorTransaction = jest.fn();
+const mockHealthCheck = jest.fn();
+const mockPingContract = jest.fn();
 
+// The controller constructs StellarService at module load time, so the mock
+// factory must read these lazily rather than capturing the bindings eagerly.
 jest.mock('../services/stellar.service', () => ({
   StellarService: jest.fn().mockImplementation(() => ({
-    fetchActivityByLedgerRange: mockFetchActivity,
-    fetchUserActivityByLedgerRange: mockFetchUserActivity,
+    fetchActivityByLedgerRange: (...args: unknown[]) => mockFetchActivity(...args),
+    fetchUserActivityByLedgerRange: (...args: unknown[]) => mockFetchUserActivity(...args),
+    buildDepositTransaction: (...args: unknown[]) => mockBuild.deposit(...args),
+    buildBorrowTransaction: (...args: unknown[]) => mockBuild.borrow(...args),
+    buildRepayTransaction: (...args: unknown[]) => mockBuild.repay(...args),
+    buildWithdrawTransaction: (...args: unknown[]) => mockBuild.withdraw(...args),
+    submitTransaction: (...args: unknown[]) => mockSubmitTransaction(...args),
+    monitorTransaction: (...args: unknown[]) => mockMonitorTransaction(...args),
+    healthCheck: (...args: unknown[]) => mockHealthCheck(...args),
+    pingContract: (...args: unknown[]) => mockPingContract(...args),
   })),
 }));
 
@@ -63,11 +54,11 @@ jest.mock('../services/stellar.service', () => ({
 // Test Helpers
 // ============================================================================
 
-function createMockRequest(query: Record<string, unknown> = {}, params: Record<string, string> = {}): Partial<Request> {
-  return {
-    query,
-    params,
-  } as Partial<Request>;
+function createMockRequest(
+  query: Record<string, unknown> = {},
+  params: Record<string, string> = {}
+): Partial<Request> {
+  return { query, params } as Partial<Request>;
 }
 
 function createMockResponse(): Partial<Response> & { json: jest.Mock; status: jest.Mock } {
@@ -140,7 +131,8 @@ describe('Cursor Utilities', () => {
     });
 
     it('should reject cursor without separator', () => {
-      expect(() => decodeCursor(Buffer.from('1000', 'utf-8').toString('base64url'))).toThrow(CursorError);
+      const bad = Buffer.from('1000', 'utf-8').toString('base64url');
+      expect(() => decodeCursor(bad)).toThrow(CursorError);
     });
 
     it('should reject cursor with non-numeric values', () => {
@@ -165,8 +157,7 @@ describe('Cursor Utilities', () => {
       expect(decoded).toEqual({ ledgerSequence: 1000, eventIndex: 6 });
     });
 
-    it('should handle event index rollover to next ledger', () => {
-      // When eventIndex reaches max, next page starts at next ledger
+    it('should handle event index rollover within the same ledger', () => {
       const cursor = nextCursor(1000, 999_999);
       const decoded = decodeCursor(cursor);
       expect(decoded).toEqual({ ledgerSequence: 1000, eventIndex: 1_000_000 });
@@ -228,59 +219,28 @@ describe('Cursor Utilities', () => {
   });
 });
 
+// ============================================================================
+// Controller Tests
+// ============================================================================
+
 describe('LendingController', () => {
   let controller: LendingController;
-  let mockStellarService: StellarService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockStellarService = new StellarService('https://rpc.test', 'CONTRACT_ID');
-    controller = new LendingController(mockStellarService);
+    controller = new LendingController(new StellarService());
   });
 
-  describe('getActivity', () => {
-    const mockActivities = [
-      {
-        id: '1',
-        type: 'borrow' as const,
-        ledgerSequence: 5000,
-        eventIndex: 2,
-        timestamp: new Date('2024-01-01T00:00:00Z'),
-        amount: '100.0000000',
-        asset: 'USDC',
-        account: 'GACCOUNT1',
-        txHash: 'TX1',
-      },
-      {
-        id: '2',
-        type: 'deposit' as const,
-        ledgerSequence: 5000,
-        eventIndex: 1,
-        timestamp: new Date('2024-01-01T00:01:00Z'),
-        amount: '200.0000000',
-        asset: 'XLM',
-        account: 'GACCOUNT2',
-        txHash: 'TX2',
-      },
-      {
-        id: '3',
-        type: 'repay' as const,
-        ledgerSequence: 4999,
-        eventIndex: 0,
-        timestamp: new Date('2024-01-01T00:02:00Z'),
-        amount: '50.0000000',
-        asset: 'USDC',
-        account: 'GACCOUNT3',
-        txHash: 'TX3',
-      },
-    ];
   describe('GET /api/lending/activity', () => {
     it('should return first page without cursor', async () => {
-      const events = [
+      // The service is asked for limit+1 items so the controller can detect
+      // that another page exists; only `limit` items are returned to the client.
+      const page = [
         createMockEvent({ ledgerSequence: 1000, eventIndex: 0 }),
         createMockEvent({ ledgerSequence: 1000, eventIndex: 1 }),
       ];
-      mockFetchActivity.mockResolvedValue({ events, hasMore: true });
+      const lookahead = createMockEvent({ ledgerSequence: 1000, eventIndex: 2 });
+      mockFetchActivity.mockResolvedValue({ events: [...page, lookahead], hasMore: true });
 
       const req = createMockRequest({ limit: '2' });
       const res = createMockResponse();
@@ -290,7 +250,7 @@ describe('LendingController', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: events,
+          data: page,
           pagination: expect.objectContaining({
             hasNextPage: true,
             nextCursor: expect.any(String),
@@ -299,7 +259,7 @@ describe('LendingController', () => {
         })
       );
 
-      // Verify next cursor encodes correct position
+      // The next cursor must encode the position just past the last returned item.
       const responseData = (res.json as jest.Mock).mock.calls[0][0];
       const decoded = decodeCursor(responseData.pagination.nextCursor);
       expect(decoded).toEqual({ ledgerSequence: 1000, eventIndex: 2 });
@@ -354,6 +314,22 @@ describe('LendingController', () => {
       await controller.getActivity(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'INVALID_CURSOR' })
+      );
+    });
+
+    it('should return 400 for an out-of-range cursor', async () => {
+      const bad = Buffer.from('99999999999:0', 'utf-8').toString('base64url');
+      const req = createMockRequest({ cursor: bad });
+      const res = createMockResponse();
+
+      await controller.getActivity(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'INVALID_CURSOR' })
+      );
     });
 
     it('should use default page size when limit omitted', async () => {
@@ -367,6 +343,8 @@ describe('LendingController', () => {
       expect(mockFetchActivity).toHaveBeenCalledWith(
         expect.objectContaining({
           limit: DEFAULT_PAGE_SIZE + 1,
+          startLedger: null,
+          startEventIndex: null,
         })
       );
     });
@@ -383,6 +361,19 @@ describe('LendingController', () => {
         expect.objectContaining({
           limit: MAX_PAGE_SIZE + 1,
         })
+      );
+    });
+
+    it('should fall back to the default page size for a hostile limit', async () => {
+      mockFetchActivity.mockResolvedValue({ events: [], hasMore: false });
+
+      const req = createMockRequest({ limit: 'not-a-number' });
+      const res = createMockResponse();
+
+      await controller.getActivity(req as Request, res as Response);
+
+      expect(mockFetchActivity).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: DEFAULT_PAGE_SIZE + 1 })
       );
     });
 
@@ -418,8 +409,19 @@ describe('LendingController', () => {
       );
     });
 
+    it('should not leak internal error details to the client', async () => {
+      mockFetchActivity.mockRejectedValue(new Error('postgres://user:hunter2@internal'));
+
+      const req = createMockRequest({});
+      const res = createMockResponse();
+
+      await controller.getActivity(req as Request, res as Response);
+
+      const data = (res.json as jest.Mock).mock.calls[0][0];
+      expect(JSON.stringify(data)).not.toContain('hunter2');
+    });
+
     it('should not miss or duplicate entries across pages', async () => {
-      // Simulate 5 events across 2 pages of 2
       const allEvents = [
         createMockEvent({ id: 'evt-1', ledgerSequence: 100, eventIndex: 0 }),
         createMockEvent({ id: 'evt-2', ledgerSequence: 100, eventIndex: 1 }),
@@ -428,9 +430,9 @@ describe('LendingController', () => {
         createMockEvent({ id: 'evt-5', ledgerSequence: 101, eventIndex: 1 }),
       ];
 
-      // Page 1
+      // Page 1: service returns limit+1 (3) items, client receives 2.
       mockFetchActivity.mockResolvedValueOnce({
-        events: allEvents.slice(0, 3), // 3 items (limit+1)
+        events: allEvents.slice(0, 3),
         hasMore: true,
       });
 
@@ -444,37 +446,61 @@ describe('LendingController', () => {
       expect(data1.data[1].id).toBe('evt-2');
       expect(data1.pagination.hasNextPage).toBe(true);
 
-      // Page 2 using cursor from page 1
+      // Page 2: the service is given the cursor position and returns the
+      // remaining 3 events; the client receives the first 2 of them.
       const cursor = data1.pagination.nextCursor;
+      expect(decodeCursor(cursor)).toEqual({ ledgerSequence: 100, eventIndex: 2 });
+
       mockFetchActivity.mockResolvedValueOnce({
-        events: allEvents.slice(2), // From evt-3 onwards
-        hasMore: false,
+        events: allEvents.slice(2),
+        hasMore: true,
       });
 
       const req2 = createMockRequest({ cursor, limit: '2' });
       const res2 = createMockResponse();
       await controller.getActivity(req2 as Request, res2 as Response);
 
+      expect(mockFetchActivity).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          startLedger: 100,
+          startEventIndex: 2,
+        })
+      );
+
       const data2 = (res2.json as jest.Mock).mock.calls[0][0];
-      expect(data2.data).toHaveLength(3);
+      expect(data2.data).toHaveLength(2);
       expect(data2.data[0].id).toBe('evt-3');
       expect(data2.data[1].id).toBe('evt-4');
-      expect(data2.data[2].id).toBe('evt-5');
+      expect(data2.pagination.hasNextPage).toBe(true);
 
-      // Verify no overlap between pages
-      const page1Ids = data1.data.map((e: any) => e.id);
-      const page2Ids = data2.data.map((e: any) => e.id);
-      const overlap = page1Ids.filter((id: string) => page2Ids.includes(id));
-      expect(overlap).toHaveLength(0);
+      // Page 3: the final event, with no lookahead item to signal another page.
+      const cursor2 = data2.pagination.nextCursor;
+      mockFetchActivity.mockResolvedValueOnce({
+        events: allEvents.slice(4),
+        hasMore: false,
+      });
+
+      const req3 = createMockRequest({ cursor: cursor2, limit: '2' });
+      const res3 = createMockResponse();
+      await controller.getActivity(req3 as Request, res3 as Response);
+
+      const data3 = (res3.json as jest.Mock).mock.calls[0][0];
+      expect(data3.data).toHaveLength(1);
+      expect(data3.data[0].id).toBe('evt-5');
+      expect(data3.pagination.hasNextPage).toBe(false);
+      expect(data3.pagination.nextCursor).toBeNull();
+
+      // Across all pages every event appears exactly once: no gaps, no dupes.
+      const seen = [...data1.data, ...data2.data, ...data3.data].map((e: any) => e.id);
+      expect(seen).toEqual(['evt-1', 'evt-2', 'evt-3', 'evt-4', 'evt-5']);
+      expect(new Set(seen).size).toBe(seen.length);
     });
   });
 
   describe('GET /api/lending/activity/:userAddress', () => {
     it('should return user-specific activity', async () => {
       const userAddress = 'GABC123...';
-      const events = [
-        createMockEvent({ user: userAddress, ledgerSequence: 100, eventIndex: 0 }),
-      ];
+      const events = [createMockEvent({ user: userAddress, ledgerSequence: 100, eventIndex: 0 })];
       mockFetchUserActivity.mockResolvedValue({ events, hasMore: false });
 
       const req = createMockRequest({ limit: '10' }, { userAddress });
@@ -506,14 +532,14 @@ describe('LendingController', () => {
           code: 'INVALID_ADDRESS',
         })
       );
+      // The service must not be reached with an unvalidated address.
+      expect(mockFetchUserActivity).not.toHaveBeenCalled();
     });
 
     it('should paginate user activity with cursor', async () => {
       const userAddress = 'GABC123...';
       const cursor = encodeCursor({ ledgerSequence: 100, eventIndex: 5 });
-      const events = [
-        createMockEvent({ user: userAddress, ledgerSequence: 100, eventIndex: 5 }),
-      ];
+      const events = [createMockEvent({ user: userAddress, ledgerSequence: 100, eventIndex: 5 })];
       mockFetchUserActivity.mockResolvedValue({ events, hasMore: false });
 
       const req = createMockRequest({ cursor }, { userAddress });
@@ -529,6 +555,33 @@ describe('LendingController', () => {
         })
       );
     });
+
+    it('should return 400 for an invalid cursor on user activity', async () => {
+      const req = createMockRequest({ cursor: 'garbage' }, { userAddress: 'GABC' });
+      const res = createMockResponse();
+
+      await controller.getUserActivity(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'INVALID_CURSOR' })
+      );
+      expect(mockFetchUserActivity).not.toHaveBeenCalled();
+    });
+
+    it('should handle service errors gracefully', async () => {
+      mockFetchUserActivity.mockRejectedValue(new Error('RPC timeout'));
+
+      const req = createMockRequest({}, { userAddress: 'GABC' });
+      const res = createMockResponse();
+
+      await controller.getUserActivity(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'INTERNAL_ERROR' })
+      );
+    });
   });
 });
 
@@ -538,7 +591,6 @@ describe('LendingController', () => {
 
 describe('Activity Ordering Guarantees', () => {
   it('should maintain stable ordering across ledger boundaries', () => {
-    // Events should be ordered by (ledgerSequence ASC, eventIndex ASC)
     const cursors = [
       { ledgerSequence: 100, eventIndex: 5 },
       { ledgerSequence: 100, eventIndex: 10 },
@@ -550,7 +602,6 @@ describe('Activity Ordering Guarantees', () => {
     const encoded = cursors.map(encodeCursor);
     const decoded = encoded.map(decodeCursor);
 
-    // Verify round-trip preserves order
     for (let i = 0; i < decoded.length - 1; i++) {
       const a = decoded[i];
       const b = decoded[i + 1];
@@ -561,363 +612,236 @@ describe('Activity Ordering Guarantees', () => {
   });
 
   it('should handle cursor at ledger boundary correctly', () => {
-    // Last event of ledger 100
     const endOfLedger = { ledgerSequence: 100, eventIndex: 999 };
     const next = decodeCursor(nextCursor(endOfLedger.ledgerSequence, endOfLedger.eventIndex));
 
-    // Next cursor should point to event 1000 in same ledger
-    // (or event 0 of next ledger if 1000 is the max)
     expect(next.ledgerSequence).toBe(100);
     expect(next.eventIndex).toBe(1000);
   });
 });
 
-  describe('POST /api/lending/deposit', () => {
-    it('should successfully process a deposit', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
+// ============================================================================
+// Standalone Route Handlers
+// ============================================================================
 
-    it('returns activities with pagination metadata', async () => {
-      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
+describe('Standalone lending handlers', () => {
+  const VALID_ADDRESS = 'GBO4N5HSFF3XMRRYYFGKNO6QEEIYCMDTFVUJUPNS2F5A7QQTNEQ5NWWK';
+  const body = {
+    userAddress: VALID_ADDRESS,
+    assetAddress: undefined,
+    amount: '1000000',
+    userSecret: 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I',
+  };
 
-      await controller.getActivity(mockReq as Request, mockRes as Response);
+  let next: jest.Mock;
 
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.arrayContaining([
-            expect.objectContaining({
-              id: '1',
-              ledgerSequence: 5000,
-              eventIndex: 2,
-            }),
-          ]),
-          pagination: expect.objectContaining({
-            hasMore: false,
-            limit: 20,
-            nextCursor: null,
-          }),
-        })
-      );
+  beforeEach(() => {
+    jest.clearAllMocks();
+    next = jest.fn();
+    Object.values(mockBuild).forEach(fn => fn.mockResolvedValue('tx_xdr'));
+    mockSubmitTransaction.mockResolvedValue({ success: false, status: 'failed' });
+    mockMonitorTransaction.mockResolvedValue({ success: true, status: 'success' });
+  });
+
+  const operations = [
+    { name: 'deposit', handler: handlers.deposit, build: mockBuild.deposit },
+    { name: 'borrow', handler: handlers.borrow, build: mockBuild.borrow },
+    { name: 'repay', handler: handlers.repay, build: mockBuild.repay },
+    { name: 'withdraw', handler: handlers.withdraw, build: mockBuild.withdraw },
+  ] as const;
+
+  describe.each(operations)('$name', ({ handler, build }) => {
+    it('returns 200 with the monitor result when submission succeeds', async () => {
+      mockSubmitTransaction.mockResolvedValue({
+        success: true,
+        status: 'pending',
+        transactionHash: 'hash-1',
+      });
+      const res = createMockResponse();
+
+      await handler({ body } as Partial<Request>, res as Response, next);
+
+      expect(build).toHaveBeenCalledWith(VALID_ADDRESS, undefined, '1000000', body.userSecret);
+      expect(mockMonitorTransaction).toHaveBeenCalledWith('hash-1');
+      expect(res.status).toHaveBeenCalledWith(200);
     });
 
-    it('returns nextCursor when there are more results', async () => {
-      // Return more than limit to trigger hasMore
-      const extraActivities = [
-        ...mockActivities,
-        {
-          id: '4',
-          type: 'withdraw' as const,
-          ledgerSequence: 4998,
-          eventIndex: 0,
-          timestamp: new Date('2024-01-01T00:03:00Z'),
-          amount: '75.0000000',
-          asset: 'EURC',
-          account: 'GACCOUNT4',
-          txHash: 'TX4',
-        },
-      ];
-      mockStellarService.fetchActivities.mockResolvedValue(extraActivities);
+    it('returns 400 when submission fails', async () => {
+      mockSubmitTransaction.mockResolvedValue({ success: false, status: 'failed', error: 'nope' });
+      const res = createMockResponse();
 
-      await controller.getActivity(mockReq as Request, mockRes as Response);
+      await handler({ body } as Partial<Request>, res as Response, next);
 
-      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
-      expect(response.pagination.hasMore).toBe(true);
-      expect(response.pagination.nextCursor).toBeTruthy();
-      
-      // Verify cursor points to last returned item
-      const decoded = Buffer.from(response.pagination.nextCursor!, 'base64').toString('utf-8');
-      expect(decoded).toBe('4999:0'); // Last item in the 20-item page
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(mockMonitorTransaction).not.toHaveBeenCalled();
     });
 
-    it('parses cursor and fetches from correct position', async () => {
-      const cursor = encodeCursor(5000, 1); // Start after ledger 5000, event 1
-      mockReq.query = { cursor };
-      mockStellarService.fetchActivities.mockResolvedValue([mockActivities[2]]); // Only 4999:0
+    it('forwards a build failure to the error handler', async () => {
+      build.mockRejectedValue(new Error('build failed'));
+      const res = createMockResponse();
 
-      await controller.getActivity(mockReq as Request, mockRes as Response);
+      await handler({ body } as Partial<Request>, res as Response, next);
 
-      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          fromLedger: 5000,
-          fromEventIndex: 2, // 1 + 1 = start after cursor
-          limit: 21, // limit + 1 for hasMore detection
-          order: 'desc',
-        })
-      );
-    });
-
-    it('respects custom limit parameter', async () => {
-      mockReq.query = { limit: '5' };
-      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ limit: 6 }) // 5 + 1
-      );
-
-      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
-      expect(response.pagination.limit).toBe(5);
-    });
-
-    it('caps limit at MAX_LIMIT (100)', async () => {
-      mockReq.query = { limit: '200' };
-      mockStellarService.fetchActivities.mockResolvedValue([]);
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ limit: 101 }) // 100 + 1
-      );
-    });
-
-    it('returns 400 for invalid cursor', async () => {
-      mockReq.query = { cursor: 'invalid-cursor' };
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      expect(mockRes.status).toHaveBeenCalledWith(400);
-      expect(jsonMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Invalid cursor',
-        })
-      );
-    });
-
-    it('handles empty result set', async () => {
-      mockStellarService.fetchActivities.mockResolvedValue([]);
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
-      expect(response.data).toEqual([]);
-      expect(response.pagination.hasMore).toBe(false);
-      expect(response.pagination.nextCursor).toBeNull();
-    });
-
-    it('handles service errors with 500', async () => {
-      mockStellarService.fetchActivities.mockRejectedValue(new Error('Horizon timeout'));
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(jsonMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Failed to fetch activity',
-        })
-      );
-    });
-
-    it('uses default limit when limit param is invalid', async () => {
-      mockReq.query = { limit: 'not-a-number' };
-      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
-      expect(response.pagination.limit).toBe(20);
-    });
-
-    it('uses default limit when limit param is negative', async () => {
-      mockReq.query = { limit: '-5' };
-      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      const response = jsonMock.mock.calls[0][0] as ActivityResponse;
-      expect(response.pagination.limit).toBe(20);
-    });
-
-    it('fetches with no cursor from latest ledger', async () => {
-      mockStellarService.fetchActivities.mockResolvedValue(mockActivities);
-
-      await controller.getActivity(mockReq as Request, mockRes as Response);
-
-      expect(mockStellarService.fetchActivities).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          fromLedger: undefined,
-          fromEventIndex: 0,
-        })
-      );
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+      expect(res.status).not.toHaveBeenCalled();
     });
   });
 
-  describe('POST /api/lending/borrow', () => {
-    it('should successfully process a borrow', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
+  describe('processHook', () => {
+    it('acknowledges an authenticated hook', async () => {
+      const res = createMockResponse();
 
-      mockStellarService.buildBorrowTransaction = jest.fn().mockResolvedValue(mockTxXdr);
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-      });
-      mockStellarService.monitorTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-        ledger: 12345,
-      });
+      await handlers.processHook({} as Partial<Request>, res as Response, next);
 
-      (StellarService as jest.Mock).mockImplementation(() => mockStellarService);
-
-      const response = await request(app)
-        .post('/api/lending/borrow')
-        .send({
-          userAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-          amount: '500000',
-          userSecret: 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        });
-
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ success: true, message: 'Hook authenticated' });
     });
 
-    it('should handle transaction failure', async () => {
-      mockStellarService.buildBorrowTransaction = jest.fn().mockResolvedValue('mock_tx_xdr');
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: false,
-        status: 'failed',
-        error: 'Insufficient collateral',
+    it('forwards a serialization failure to the error handler', async () => {
+      const res = createMockResponse();
+      res.json.mockImplementation(() => {
+        throw new Error('serialization failed');
       });
 
-      (StellarService as jest.Mock).mockImplementation(() => mockStellarService);
+      await handlers.processHook({} as Partial<Request>, res as Response, next);
 
-      const response = await request(app)
-        .post('/api/lending/borrow')
-        .send({
-          userAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-          amount: '500000',
-          userSecret: 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        });
-
-      expect(response.status).toBe(400);
-      expect(response.body.success).toBe(false);
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
     });
   });
 
-  describe('POST /api/lending/repay', () => {
-    it('should successfully process a repayment', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
+  describe('healthCheck', () => {
+    it('returns 200 when both dependencies are healthy', async () => {
+      mockHealthCheck.mockResolvedValue({ horizon: true, sorobanRpc: true });
+      const res = createMockResponse();
 
-      mockStellarService.buildRepayTransaction = jest.fn().mockResolvedValue(mockTxXdr);
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-      });
-      mockStellarService.monitorTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-        ledger: 12345,
-      });
+      await handlers.healthCheck({} as Partial<Request>, res as Response, next);
 
-      (StellarService as jest.Mock).mockImplementation(() => mockStellarService);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'healthy' })
+      );
+    });
 
-      const response = await request(app)
-        .post('/api/lending/repay')
-        .send({
-          userAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-          amount: '250000',
-          userSecret: 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        });
+    it('returns 503 when a dependency is down', async () => {
+      mockHealthCheck.mockResolvedValue({ horizon: true, sorobanRpc: false });
+      const res = createMockResponse();
 
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      await handlers.healthCheck({} as Partial<Request>, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'unhealthy' })
+      );
+    });
+
+    it('forwards a probe failure to the error handler', async () => {
+      mockHealthCheck.mockRejectedValue(new Error('probe exploded'));
+      const res = createMockResponse();
+
+      await handlers.healthCheck({} as Partial<Request>, res as Response, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+      expect(res.status).not.toHaveBeenCalled();
     });
   });
 
-  describe('POST /api/lending/withdraw', () => {
-    it('should successfully process a withdrawal', async () => {
-      const mockTxXdr = 'mock_tx_xdr';
-      const mockTxHash = 'mock_tx_hash';
+  describe('deepHealthCheck', () => {
+    it('returns 200 when the contract is reachable', async () => {
+      mockPingContract.mockResolvedValue({ rpc: true, contract: true, ledger: 42 });
+      const res = createMockResponse();
 
-      mockStellarService.buildWithdrawTransaction = jest.fn().mockResolvedValue(mockTxXdr);
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-      });
-      mockStellarService.monitorTransaction = jest.fn().mockResolvedValue({
-        success: true,
-        transactionHash: mockTxHash,
-        status: 'success',
-        ledger: 12345,
-      });
+      await handlers.deepHealthCheck({} as Partial<Request>, res as Response, next);
 
-      (StellarService as jest.Mock).mockImplementation(() => mockStellarService);
-
-      const response = await request(app)
-        .post('/api/lending/withdraw')
-        .send({
-          userAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-          amount: '100000',
-          userSecret: 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        });
-
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ rpc: true, contract: true, ledger: 42 })
+      );
     });
 
-    it('should handle undercollateralization error', async () => {
-      mockStellarService.buildWithdrawTransaction = jest.fn().mockResolvedValue('mock_tx_xdr');
-      mockStellarService.submitTransaction = jest.fn().mockResolvedValue({
-        success: false,
-        status: 'failed',
-        error: 'Withdrawal would violate minimum collateral ratio',
-      });
+    it('returns 503 when the contract is unreachable', async () => {
+      mockPingContract.mockResolvedValue({ rpc: true, contract: false, ledger: null });
+      const res = createMockResponse();
 
-      (StellarService as jest.Mock).mockImplementation(() => mockStellarService);
+      await handlers.deepHealthCheck({} as Partial<Request>, res as Response, next);
 
-      const response = await request(app)
-        .post('/api/lending/withdraw')
-        .send({
-          userAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-          amount: '1000000',
-          userSecret: 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        });
+      expect(res.status).toHaveBeenCalledWith(503);
+    });
 
-      expect(response.status).toBe(400);
-      expect(response.body.success).toBe(false);
+    it('forwards a probe failure to the error handler', async () => {
+      mockPingContract.mockRejectedValue(new Error('probe exploded'));
+      const res = createMockResponse();
+
+      await handlers.deepHealthCheck({} as Partial<Request>, res as Response, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
     });
   });
+});
 
-  describe('GET /api/health', () => {
-    it('should return healthy status when all services are up', async () => {
-      mockStellarService.healthCheck = jest.fn().mockResolvedValue({
-        horizon: true,
-        sorobanRpc: true,
-      });
+describe('LendingController cursor error handling', () => {
+  let controller: LendingController;
 
-      (StellarService as jest.Mock).mockImplementation(() => mockStellarService);
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFetchActivity.mockResolvedValue({ events: [] });
+    mockFetchUserActivity.mockResolvedValue({ events: [] });
+    controller = new LendingController(new StellarService('https://rpc.test', 'contract'));
+  });
 
-      const response = await request(app).get('/api/health');
+  it('maps a cursor decoding failure to 400 on the activity feed', async () => {
+    // A cursor that passes the shape check but decodes out of range.
+    const outOfRange = Buffer.from('99999999999:1').toString('base64url');
+    const res = createMockResponse();
 
-      expect(response.status).toBe(200);
-      expect(response.body.status).toBe('healthy');
-      expect(response.body.services.horizon).toBe(true);
-      expect(response.body.services.sorobanRpc).toBe(true);
+    await controller.getActivity(
+      createMockRequest({ cursor: outOfRange }) as Request,
+      res as Response
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'INVALID_CURSOR' })
+    );
+  });
+
+  it('maps a cursor decoding failure to 400 on the user feed', async () => {
+    const outOfRange = Buffer.from('99999999999:1').toString('base64url');
+    const res = createMockResponse();
+
+    await controller.getUserActivity(
+      { query: { cursor: outOfRange }, params: { userAddress: 'GABC' } } as unknown as Request,
+      res as Response
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'INVALID_CURSOR' })
+    );
+  });
+
+  it('issues a next cursor for a full page of user activity', async () => {
+    mockFetchUserActivity.mockResolvedValue({
+      events: [
+        createMockEvent({ id: 'a', ledgerSequence: 100, eventIndex: 0 }),
+        createMockEvent({ id: 'b', ledgerSequence: 100, eventIndex: 1 }),
+      ],
     });
+    const res = createMockResponse();
 
-    it('should return unhealthy status when services are down', async () => {
-      mockStellarService.healthCheck = jest.fn().mockResolvedValue({
-        horizon: false,
-        sorobanRpc: false,
-      });
+    await controller.getUserActivity(
+      { query: { limit: '1' }, params: { userAddress: 'GABC' } } as unknown as Request,
+      res as Response
+    );
 
-      (StellarService as jest.Mock).mockImplementation(() => mockStellarService);
-
-      const response = await request(app).get('/api/health');
-
-      expect(response.status).toBe(503);
-      expect(response.body.status).toBe('unhealthy');
-    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pagination: expect.objectContaining({
+          hasNextPage: true,
+          pageSize: 1,
+          nextCursor: expect.any(String),
+        }),
+      })
+    );
   });
 });

@@ -1,7 +1,8 @@
 import request from 'supertest';
 import { z } from 'zod';
-import { validateBody } from '../middleware/validation';
+import { validateBody, lendingRequestSchema } from '../middleware/validation';
 import { I128String, StellarAddress } from '../utils/validators';
+import { ValidationError } from '../utils/errors';
 
 const mockStellarService = {
   buildDepositTransaction: jest.fn(),
@@ -250,5 +251,50 @@ describe('Hook HMAC Validation', () => {
         'Invalid hook timestamp'
       );
     });
+  });
+});
+
+describe('validateBody error shaping', () => {
+  const makeRes = () => ({}) as any;
+
+  it('labels a root-level schema failure as "body"', () => {
+    const next = jest.fn();
+    // A non-object payload produces a Zod issue with an empty path, which must
+    // still be reported with a usable field label.
+    validateBody(lendingRequestSchema)(
+      { body: 'not-an-object' } as any,
+      makeRes(),
+      next
+    );
+
+    const error = next.mock.calls[0][0];
+    expect(error).toBeInstanceOf(ValidationError);
+    expect(error.message).toMatch(/^body: /);
+  });
+
+  it('reports the dotted path for a nested field failure', () => {
+    const next = jest.fn();
+
+    validateBody(lendingRequestSchema)(
+      { body: { userAddress: VALID_USER_ADDRESS, amount: '1', userSecret: 's', assetAddress: 'bad' } } as any,
+      makeRes(),
+      next
+    );
+
+    expect(next.mock.calls[0][0].message).toMatch(/assetAddress: /);
+  });
+
+  it('passes a non-Zod failure straight through', () => {
+    const next = jest.fn();
+    const boom = new Error('schema exploded');
+    const exploding = {
+      parse: () => {
+        throw boom;
+      },
+    };
+
+    validateBody(exploding as any)({ body: {} } as any, makeRes(), next);
+
+    expect(next).toHaveBeenCalledWith(boom);
   });
 });
