@@ -693,7 +693,10 @@ pub fn execute_repay_two_phase(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env,
+    };
 
     #[test]
     fn test_two_phase_borrow_validates_before_write() {
@@ -701,23 +704,25 @@ mod tests {
         // BEFORE any permanent state mutation occurs.
 
         let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        // Setup would require full contract initialization
-        // For now, this demonstrates the API
+        env.as_contract(&contract_id, || {
+            // Attempt to prepare under-collateralized borrow
+            let result = prepare_borrow(&env, &user, &asset, 1_000_000);
 
-        // Attempt to prepare under-collateralized borrow
-        let result = prepare_borrow(&env, &user, &asset, 1_000_000);
-
-        // Expect: HealthFactorTooLow error
-        // Verify: No debt position written (query storage confirms)
-        assert!(result.is_err());
+            // Expect: HealthFactorTooLow error or NotInitialized
+            // Verify: No debt position written (query storage confirms)
+            assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_two_phase_commit_without_prepare_fails() {
         let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        env.ledger().set_timestamp(1_000);
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
 
@@ -742,9 +747,11 @@ mod tests {
             prepared_at: 0,
         };
 
-        // Commit should fail: prepared_at too old
-        let result = commit_borrow(&env, fake_prepared);
-        assert!(matches!(result, Err(LendingError::OperationExpired)));
+        env.as_contract(&contract_id, || {
+            // Commit should fail: prepared_at too old
+            let result = commit_borrow(&env, fake_prepared);
+            assert!(matches!(result, Err(LendingError::OperationExpired)));
+        });
     }
 
     #[test]

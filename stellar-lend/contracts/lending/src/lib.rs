@@ -4451,6 +4451,7 @@ pub(crate) mod test {
     #[test]
     fn test_set_price_rejects_older_timestamp_after_update() {
         let (env, client, admin, _user) = setup();
+        env.ledger().set_timestamp(1_000);
         let keypair = chrono_keypair();
         let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
         client.set_oracle_pubkey(&pubkey);

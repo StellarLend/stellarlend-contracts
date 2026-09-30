@@ -21,7 +21,7 @@ fn setup_test_env() -> (Env, Address, Address, LendingContractClient<'static>) {
 
     env.ledger().set(LedgerInfo {
         timestamp: 10000,
-        protocol_version: 20,
+        protocol_version: 25,
         sequence_number: 1,
         network_id: [0; 32],
         base_reserve: 10,
@@ -30,13 +30,13 @@ fn setup_test_env() -> (Env, Address, Address, LendingContractClient<'static>) {
         max_entry_ttl: 3110400,
     });
 
-    let contract_id = env.register_contract(None, LendingContract);
+    let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    let asset = Address::generate(&env);
+    let asset = env.register_stellar_asset_contract_v2(admin).address();
 
     (env, contract_id, asset, client)
 }
@@ -58,132 +58,113 @@ fn test_invariant_passes_balanced_state() {
 #[test]
 #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
 fn test_invariant_panics_on_accounting_drift() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
+    let (env, contract_id, asset, _client) = setup_test_env();
 
-    // Create intentional mismatch
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &1000i128);
-    // Token balance would be different (e.g., 900)
-
-    // This should panic due to drift
-    invariants::check_invariant_before(&env, &asset);
+    env.as_contract(&contract_id, || {
+        // Create intentional mismatch
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &1000i128);
+        // Token balance is 0, TotalDeposits is 1000 -> drift detected
+        invariants::check_invariant_before(&env, &asset);
+    });
 }
 
 #[test]
 fn test_deposit_has_invariant_checks() {
-    let (env, _contract_id, _asset, _client) = setup_test_env();
-    let _user = Address::generate(&env);
-
+    let (_env, _contract_id, _asset, _client) = setup_test_env();
     // Verify deposit function exists and accepts asset parameter
-    // Note: Updated signature includes asset parameter
-    // client.deposit(&user, &100, &asset).unwrap();
 }
 
 #[test]
 fn test_withdraw_has_invariant_checks() {
-    let (env, _contract_id, _asset, _client) = setup_test_env();
+    let (env, contract_id, _asset, _client) = setup_test_env();
     let user = Address::generate(&env);
 
-    // Set up initial deposit
-    env.storage()
-        .persistent()
-        .set(&DataKey::Collateral(user.clone()), &1000i128);
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &1000i128);
-
-    // Verify withdraw function exists and accepts asset parameter
-    // client.withdraw(&user, &100, &asset).unwrap();
+    env.as_contract(&contract_id, || {
+        // Set up initial deposit
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &1000i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &1000i128);
+    });
 }
 
 #[test]
 fn test_borrow_has_invariant_checks() {
-    let (env, _contract_id, _asset, _client) = setup_test_env();
+    let (env, contract_id, _asset, _client) = setup_test_env();
     let user = Address::generate(&env);
 
-    // Set up collateral
-    env.storage()
-        .persistent()
-        .set(&DataKey::Collateral(user.clone()), &10000i128);
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &10000i128);
-
-    // Verify borrow function accepts asset parameter
-    // client.borrow(&user, &100, &asset).unwrap();
+    env.as_contract(&contract_id, || {
+        // Set up collateral
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(user.clone()), &10000i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &10000i128);
+    });
 }
 
 #[test]
 fn test_repay_has_invariant_checks() {
-    let (env, _contract_id, _asset, _client) = setup_test_env();
-    let _user = Address::generate(&env);
-
-    // Set up existing debt
-    // ... setup code ...
-
-    // Verify repay function accepts asset parameter
-    // client.repay(&user, &50, &asset).unwrap();
+    let (_env, _contract_id, _asset, _client) = setup_test_env();
 }
 
 #[test]
 fn test_liquidate_checks_both_assets() {
-    let (env, _contract_id, _debt_asset, _client) = setup_test_env();
-    let _collateral_asset = Address::generate(&env);
-    let _liquidator = Address::generate(&env);
-    let _borrower = Address::generate(&env);
-
-    // Liquidate should check invariants for both debt and collateral assets
-    // This ensures no drift occurs in either token during liquidation
+    let (_env, _contract_id, _debt_asset, _client) = setup_test_env();
 }
 
 /// Demonstrates that invariant checks catch balance drift immediately.
 #[test]
 #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
 fn test_invariant_catches_external_balance_manipulation() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
+    let (env, contract_id, asset, _client) = setup_test_env();
 
-    // Set up balanced initial state
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &5000i128);
+    env.as_contract(&contract_id, || {
+        // Set up balanced initial state
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &5000i128);
 
-    // Simulate external token transfer that bypasses accounting
-    // (This would be caught by the invariant check)
-
-    // Next operation should detect the drift
-    invariants::check_invariant_before(&env, &asset);
+        // Next operation should detect the drift
+        invariants::check_invariant_before(&env, &asset);
+    });
 }
 
 /// Test that bad debt correctly reduces expected reserves.
 #[test]
 fn test_bad_debt_accounting_in_invariant() {
-    let (env, _contract_id, _asset, _client) = setup_test_env();
+    let (env, contract_id, _asset, _client) = setup_test_env();
 
-    // Set up state with bad debt
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &10000i128);
-    env.storage().persistent().set(&DataKey::BadDebt, &500i128);
-
-    // Expected balance should be: TotalDeposits - BadDebt = 9500
-    // This test verifies the invariant computation includes bad debt
+    env.as_contract(&contract_id, || {
+        // Set up state with bad debt
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &10000i128);
+        env.storage().persistent().set(&DataKey::BadDebt, &500i128);
+    });
 }
 
 #[test]
 fn test_compute_expected_reserve_single_asset() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
+    let (env, contract_id, asset, _client) = setup_test_env();
 
-    // Set up simple state
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &1000i128);
-    env.storage().persistent().set(&DataKey::BadDebt, &100i128);
+    env.as_contract(&contract_id, || {
+        // Set up simple state
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &1000i128);
+        env.storage().persistent().set(&DataKey::BadDebt, &100i128);
 
-    let expected = invariants::compute_expected_reserve(&env, &asset);
+        let expected = invariants::compute_expected_reserve(&env, &asset);
 
-    // Expected: 1000 (deposits) - 100 (bad debt) = 900
-    assert_eq!(expected, 900);
+        // Expected: 1000 (deposits) - 100 (bad debt) = 900
+        assert_eq!(expected, 900);
+    });
 }
 
 #[test]

@@ -482,46 +482,56 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        (env, contract_id)
+    }
+
     #[test]
     fn test_no_flash_loan_active_initially() {
-        let env = Env::default();
-        assert!(!is_flash_loan_active(&env));
-        assert!(get_active_flash_loan(&env).is_none());
+        let (env, contract_id) = setup();
+        env.as_contract(&contract_id, || {
+            assert!(!is_flash_loan_active(&env));
+            assert!(get_active_flash_loan(&env).is_none());
+        });
     }
 
     #[test]
     fn test_initiate_flash_loan_creates_record() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        initiate_flash_loan(
-            &env,
-            request_id.clone(),
-            initiator.clone(),
-            receiver.clone(),
-            asset.clone(),
-            1000,
-            10,
-            5000,
-        );
+        env.as_contract(&contract_id, || {
+            initiate_flash_loan(
+                &env,
+                request_id.clone(),
+                initiator.clone(),
+                receiver.clone(),
+                asset.clone(),
+                1000,
+                10,
+                5000,
+            );
 
-        assert!(is_flash_loan_active(&env));
+            assert!(is_flash_loan_active(&env));
 
-        let record = get_active_flash_loan(&env).unwrap();
-        assert_eq!(record.status, FlashLoanStatus::Initiated);
-        assert_eq!(record.amount, 1000);
-        assert_eq!(record.fee, 10);
-        assert_eq!(record.treasury_before, 5000);
-        assert_eq!(record.required_treasury_after, 5010);
+            let record = get_active_flash_loan(&env).unwrap();
+            assert_eq!(record.status, FlashLoanStatus::Initiated);
+            assert_eq!(record.amount, 1000);
+            assert_eq!(record.fee, 10);
+            assert_eq!(record.treasury_before, 5000);
+            assert_eq!(record.required_treasury_after, 5010);
+        });
     }
 
     #[test]
     #[should_panic(expected = "FlashLoanReentrancy")]
     fn test_cannot_initiate_nested_flash_loan() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
@@ -529,110 +539,118 @@ mod tests {
         let request_id1 = BytesN::from_array(&env, &[1u8; 32]);
         let request_id2 = BytesN::from_array(&env, &[2u8; 32]);
 
-        initiate_flash_loan(
-            &env,
-            request_id1,
-            initiator.clone(),
-            receiver.clone(),
-            asset.clone(),
-            1000,
-            10,
-            5000,
-        );
+        env.as_contract(&contract_id, || {
+            initiate_flash_loan(
+                &env,
+                request_id1,
+                initiator.clone(),
+                receiver.clone(),
+                asset.clone(),
+                1000,
+                10,
+                5000,
+            );
 
-        // Try to initiate second flash loan (should panic)
-        initiate_flash_loan(
-            &env,
-            request_id2,
-            initiator.clone(),
-            receiver,
-            asset,
-            2000,
-            20,
-            5000,
-        );
+            // Try to initiate second flash loan (should panic)
+            initiate_flash_loan(
+                &env,
+                request_id2,
+                initiator.clone(),
+                receiver,
+                asset,
+                2000,
+                20,
+                5000,
+            );
+        });
     }
 
     #[test]
     fn test_full_flash_loan_lifecycle() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        // 1. Initiate
-        initiate_flash_loan(
-            &env,
-            request_id.clone(),
-            initiator,
-            receiver,
-            asset,
-            1000,
-            10,
-            5000,
-        );
-        assert_eq!(
-            get_active_flash_loan(&env).unwrap().status,
-            FlashLoanStatus::Initiated
-        );
+        env.as_contract(&contract_id, || {
+            // 1. Initiate
+            initiate_flash_loan(
+                &env,
+                request_id.clone(),
+                initiator,
+                receiver,
+                asset,
+                1000,
+                10,
+                5000,
+            );
+            assert_eq!(
+                get_active_flash_loan(&env).unwrap().status,
+                FlashLoanStatus::Initiated
+            );
 
-        // 2. Mark callback executing
-        mark_callback_executing(&env);
-        assert_eq!(
-            get_active_flash_loan(&env).unwrap().status,
-            FlashLoanStatus::CallbackExecuting
-        );
+            // 2. Mark callback executing
+            mark_callback_executing(&env);
+            assert_eq!(
+                get_active_flash_loan(&env).unwrap().status,
+                FlashLoanStatus::CallbackExecuting
+            );
 
-        // 3. Record repayment
-        record_repayment_received(&env, 1010);
-        let record = get_active_flash_loan(&env).unwrap();
-        assert_eq!(record.status, FlashLoanStatus::RepaymentReceived);
-        assert_eq!(record.repaid_amount, Some(1010));
+            // 3. Record repayment
+            record_repayment_received(&env, 1010);
+            let record = get_active_flash_loan(&env).unwrap();
+            assert_eq!(record.status, FlashLoanStatus::RepaymentReceived);
+            assert_eq!(record.repaid_amount, Some(1010));
 
-        // 4. Mark callback completed
-        mark_callback_completed(&env);
-        assert_eq!(
-            get_active_flash_loan(&env).unwrap().status,
-            FlashLoanStatus::CallbackCompleted
-        );
+            // 4. Mark callback completed
+            mark_callback_completed(&env);
+            assert_eq!(
+                get_active_flash_loan(&env).unwrap().status,
+                FlashLoanStatus::CallbackCompleted
+            );
 
-        // 5. Complete flash loan
-        complete_flash_loan(&env);
-        assert!(!is_flash_loan_active(&env));
+            // 5. Complete flash loan
+            complete_flash_loan(&env);
+            assert!(!is_flash_loan_active(&env));
 
-        // 6. Verify record moved to history
-        let history = get_flash_loan_history(&env, &request_id).unwrap();
-        assert_eq!(history.status, FlashLoanStatus::Completed);
+            // 6. Verify record moved to history
+            let history = get_flash_loan_history(&env, &request_id).unwrap();
+            assert_eq!(history.status, FlashLoanStatus::Completed);
+        });
     }
 
     #[test]
     fn test_flash_loan_request_id_is_unique() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        let id1 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
-        let id2 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
+        env.as_contract(&contract_id, || {
+            let id1 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
+            let id2 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
 
-        // Same parameters, but different nonces → different IDs
-        assert_ne!(id1, id2);
+            // Same parameters, but different nonces → different IDs
+            assert_ne!(id1, id2);
+        });
     }
 
     #[test]
     fn test_validate_invariants_passes_for_valid_state() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        initiate_flash_loan(&env, request_id, initiator, receiver, asset, 1000, 10, 5000);
-        mark_callback_executing(&env);
-        record_repayment_received(&env, 1010);
+        env.as_contract(&contract_id, || {
+            initiate_flash_loan(&env, request_id, initiator, receiver, asset, 1000, 10, 5000);
+            mark_callback_executing(&env);
+            record_repayment_received(&env, 1010);
 
-        // Should not panic
-        validate_flash_loan_invariants(&env);
+            // Should not panic
+            validate_flash_loan_invariants(&env);
+        });
     }
 }

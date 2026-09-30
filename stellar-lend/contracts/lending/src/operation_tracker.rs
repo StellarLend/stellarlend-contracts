@@ -537,167 +537,180 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        let user = Address::generate(&env);
+        (env, contract_id, user)
+    }
+
     #[test]
     fn test_sequence_starts_at_zero() {
-        let env = Env::default();
-        let user = Address::generate(&env);
-
-        assert_eq!(get_user_sequence(&env, &user), 0);
+        let (env, contract_id, user) = setup();
+        env.as_contract(&contract_id, || {
+            assert_eq!(get_user_sequence(&env, &user), 0);
+        });
     }
 
     #[test]
     fn test_sequence_increments() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
+        env.as_contract(&contract_id, || {
+            let seq1 = increment_user_sequence(&env, &user);
+            assert_eq!(seq1, 1);
 
-        let seq1 = increment_user_sequence(&env, &user);
-        assert_eq!(seq1, 1);
+            let seq2 = increment_user_sequence(&env, &user);
+            assert_eq!(seq2, 2);
 
-        let seq2 = increment_user_sequence(&env, &user);
-        assert_eq!(seq2, 2);
-
-        assert_eq!(get_user_sequence(&env, &user), 2);
+            assert_eq!(get_user_sequence(&env, &user), 2);
+        });
     }
 
     #[test]
     fn test_sequence_validation_success() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
+        env.as_contract(&contract_id, || {
+            // Current sequence is 0
+            assert!(validate_sequence(&env, &user, 0).is_ok());
 
-        // Current sequence is 0
-        assert!(validate_sequence(&env, &user, 0).is_ok());
+            increment_user_sequence(&env, &user);
 
-        increment_user_sequence(&env, &user);
-
-        // Current sequence is now 1
-        assert!(validate_sequence(&env, &user, 1).is_ok());
+            // Current sequence is now 1
+            assert!(validate_sequence(&env, &user, 1).is_ok());
+        });
     }
 
     #[test]
     fn test_sequence_validation_mismatch() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
+        env.as_contract(&contract_id, || {
+            // Try to submit with sequence 5 when current is 0
+            let result = validate_sequence(&env, &user, 5);
+            assert!(result.is_err());
 
-        // Try to submit with sequence 5 when current is 0
-        let result = validate_sequence(&env, &user, 5);
-        assert!(result.is_err());
-
-        if let Err(OperationTrackerError::SequenceMismatch { expected, provided }) = result {
-            assert_eq!(expected, 0);
-            assert_eq!(provided, 5);
-        } else {
-            panic!("Expected SequenceMismatch error");
-        }
+            if let Err(OperationTrackerError::SequenceMismatch { expected, provided }) = result {
+                assert_eq!(expected, 0);
+                assert_eq!(provided, 5);
+            } else {
+                panic!("Expected SequenceMismatch error");
+            }
+        });
     }
 
     #[test]
     fn test_operation_registration() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        // Register new operation
-        let result = register_operation(&env, &op_id, &user, 3600);
-        assert!(result.is_ok());
+        env.as_contract(&contract_id, || {
+            // Register new operation
+            let result = register_operation(&env, &op_id, &user, 3600);
+            assert!(result.is_ok());
 
-        // Verify record exists
-        let record = get_operation_record(&env, &op_id).unwrap();
-        assert_eq!(record.status, OperationStatus::Pending);
-        assert_eq!(record.initiator, user);
+            // Verify record exists
+            let record = get_operation_record(&env, &op_id).unwrap();
+            assert_eq!(record.status, OperationStatus::Pending);
+            assert_eq!(record.initiator, user);
+        });
     }
 
     #[test]
     fn test_duplicate_operation_rejected() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        // Register operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
+        env.as_contract(&contract_id, || {
+            // Register operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
 
-        // Mark as executing
-        mark_executing(&env, &op_id, &user).unwrap();
+            // Mark as executing
+            mark_executing(&env, &op_id, &user).unwrap();
 
-        // Try to register again - should fail
-        let result = register_operation(&env, &op_id, &user, 3600);
-        assert!(matches!(
-            result,
-            Err(OperationTrackerError::OperationInProgress)
-        ));
+            // Try to register again - should fail
+            let result = register_operation(&env, &op_id, &user, 3600);
+            assert!(matches!(
+                result,
+                Err(OperationTrackerError::OperationInProgress)
+            ));
+        });
     }
 
     #[test]
     fn test_completed_operation_idempotent() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        // Register and complete operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
-        mark_executing(&env, &op_id, &user).unwrap();
-        complete_operation(&env, &op_id, OperationResult::Deposit(1000), &user).unwrap();
+        env.as_contract(&contract_id, || {
+            // Register and complete operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
+            mark_executing(&env, &op_id, &user).unwrap();
+            complete_operation(&env, &op_id, OperationResult::Deposit(1000), &user).unwrap();
 
-        // Check idempotency
-        let cached = check_idempotent(&env, &op_id);
-        assert!(cached.is_some());
-        assert_eq!(cached.unwrap(), OperationResult::Deposit(1000));
+            // Check idempotency
+            let cached = check_idempotent(&env, &op_id);
+            assert!(cached.is_some());
+            assert_eq!(cached.unwrap(), OperationResult::Deposit(1000));
 
-        // Verify sequence incremented
-        assert_eq!(get_user_sequence(&env, &user), 1);
+            // Verify sequence incremented
+            assert_eq!(get_user_sequence(&env, &user), 1);
+        });
     }
 
     #[test]
     fn test_failed_operation_allows_retry() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        // Register and fail operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
-        mark_executing(&env, &op_id, &user).unwrap();
-        fail_operation(&env, &op_id, &user).unwrap();
+        env.as_contract(&contract_id, || {
+            // Register and fail operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
+            mark_executing(&env, &op_id, &user).unwrap();
+            fail_operation(&env, &op_id, &user).unwrap();
 
-        // Should allow retry with same ID
-        let result = register_operation(&env, &op_id, &user, 3600);
-        assert!(result.is_ok());
+            // Should allow retry with same ID
+            let result = register_operation(&env, &op_id, &user, 3600);
+            assert!(result.is_ok());
 
-        // Verify sequence NOT incremented (operation failed)
-        assert_eq!(get_user_sequence(&env, &user), 0);
+            // Verify sequence NOT incremented (operation failed)
+            assert_eq!(get_user_sequence(&env, &user), 0);
+        });
     }
 
     #[test]
     fn test_operation_cancellation() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        // Register operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
+        env.as_contract(&contract_id, || {
+            // Register operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
 
-        // Cancel it
-        let result = cancel_operation(&env, &op_id, &user);
-        assert!(result.is_ok());
+            // Cancel it
+            let result = cancel_operation(&env, &op_id, &user);
+            assert!(result.is_ok());
 
-        // Verify status
-        let record = get_operation_record(&env, &op_id).unwrap();
-        assert_eq!(record.status, OperationStatus::Cancelled);
+            // Verify status
+            let record = get_operation_record(&env, &op_id).unwrap();
+            assert_eq!(record.status, OperationStatus::Cancelled);
+        });
     }
 
     #[test]
     fn test_unauthorized_access_rejected() {
-        let env = Env::default();
-        let user1 = Address::generate(&env);
+        let (env, contract_id, user1) = setup();
         let user2 = Address::generate(&env);
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
 
-        // User1 registers operation
-        register_operation(&env, &op_id, &user1, 3600).unwrap();
+        env.as_contract(&contract_id, || {
+            // User1 registers operation
+            register_operation(&env, &op_id, &user1, 3600).unwrap();
 
-        // User2 tries to mark executing - should fail
-        let result = mark_executing(&env, &op_id, &user2);
-        assert!(matches!(
-            result,
-            Err(OperationTrackerError::UnauthorizedOperationAccess)
-        ));
+            // User2 tries to mark executing - should fail
+            let result = mark_executing(&env, &op_id, &user2);
+            assert!(matches!(
+                result,
+                Err(OperationTrackerError::UnauthorizedOperationAccess)
+            ));
+        });
     }
 }

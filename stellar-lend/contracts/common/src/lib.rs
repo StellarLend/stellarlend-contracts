@@ -135,7 +135,7 @@ pub enum LendingError {
 /// ```
 #[inline]
 pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
-    if rate_bps < 0 || rate_bps > BPS_DENOM {
+    if !(0..=BPS_DENOM).contains(&rate_bps) {
         return None;
     }
     value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
@@ -156,7 +156,7 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 /// ```
 #[inline]
 pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
-    if rate_bps <= 0 || rate_bps > BPS_DENOM {
+    if !(1..=BPS_DENOM).contains(&rate_bps) {
         return None;
     }
     value.checked_mul(BPS_DENOM)?.checked_div(rate_bps)
