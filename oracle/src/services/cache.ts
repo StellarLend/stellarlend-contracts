@@ -315,7 +315,7 @@ export class PriceCache {
      * Check if we have a usable cached price (fresh or within stale TTL).
      */
     hasPrice(asset: string): boolean {
-        return this.cache.has(`{this.keyPrefix}${asset.toUpperCase()}`);
+        return this.cache.has(`${this.keyPrefix}${asset.toUpperCase()}`);
     }
 
     /**
