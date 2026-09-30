@@ -22,9 +22,11 @@ they cover (`#[cfg(test)]` mod in `src/`).
 - [ ] Tests do not use `unwrap()` or `expect()` on `Result`/`Option` values that
       could plausibly fail — use explicit assertions instead.
 - [ ] `cargo test` passes locally with no new failures beyond the pre-existing
-      baseline (currently: `borrow_test::test_borrow_zero_collateral_rejected`,
-      `borrow_test::test_coverage_extremes`, `math_safety_test::test_borrow_amount_zero_fails`,
-      and 7 `pause_test` failures).
+      baseline (currently: `borrow_health_factor_test::borrow_zero_collateral_rejected`,
+      `borrow_health_factor_test::borrow_rejects_when_weighted_collateral_multiplication_overflows`,
+      `zero_amount_semantics_test::borrow_zero_returns_invalid_amount`,
+      and pause-related failures in `granular_pause_ops_test`, `cross_asset_test`,
+      and `liquidate_pause_test`).
 - [ ] New test modules are registered in `lib.rs` under `#[cfg(test)]`.
 
 **Relevant docs**: [BORROW_TESTS.md](BORROW_TESTS.md),
@@ -56,7 +58,7 @@ least one test each if the PR touches the relevant code paths.
 
 ### Repay semantics
 
-- [ ] Borrow-system `repay` returns `RepayAmountTooHigh` on overpay (no silent clamp).
+- [ ] Borrow-system `repay` returns `RepayAmountTooHigh` (error 1012) on overpay (no silent clamp).
 - [ ] Cross-asset `repay_asset` silently clamps overpay to the outstanding balance.
 - [ ] `get_debt_balance()` after a full repay returns 0; `health_factor` returns sentinel.
 - [ ] Interest is settled before principal on every borrow-system repay.
@@ -185,12 +187,12 @@ oracle reads, admin controls, or pause logic. Delete items that do not apply.
 These failures exist on `main` and are **not** a blocker for new PRs. Do not mask
 or skip them; investigate separately.
 
-| Test | Likely cause |
-|------|--------------|
-| `borrow_test::test_borrow_zero_collateral_rejected` | Borrow guard logic mismatch |
-| `borrow_test::test_coverage_extremes` | Extreme-value edge case in borrow module |
-| `math_safety_test::test_borrow_amount_zero_fails` | Math-safety module validation gap |
-| `pause_test::test_comprehensive_pause_state_matrix` | Pause matrix authorization |
-| `pause_test::test_cross_asset_*_pause_matrix` (×3) | Cross-asset pause coverage |
-| `pause_test::test_oracle_pause_*` (×2) | Oracle pause interaction |
-| `pause_test::test_unauthorized_pause_bypass_attempts` | Auth bypass test expectation |
+| Test                                                                                          | Likely cause                             |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `borrow_health_factor_test::borrow_zero_collateral_rejected`                                  | Borrow guard logic mismatch              |
+| `borrow_health_factor_test::borrow_rejects_when_weighted_collateral_multiplication_overflows` | Extreme-value edge case in borrow module |
+| `zero_amount_semantics_test::borrow_zero_returns_invalid_amount`                              | Math-safety / zero-amount validation gap |
+| `granular_pause_ops_test::unauthorized_caller_rejected`                                       | Pause authorization rejection            |
+| `cross_asset_test::test_deposit_collateral_asset_paused`                                      | Cross-asset pause behavior               |
+| `cross_asset_test::test_borrow_asset_paused`                                                  | Cross-asset pause behavior               |
+| `liquidate_pause_test::liquidate_blocked_when_global_pause`                                   | Global pause interaction                 |

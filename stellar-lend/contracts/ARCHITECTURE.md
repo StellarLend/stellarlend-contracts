@@ -8,7 +8,7 @@ This note documents the contract boundaries under `stellar-lend/contracts/` and 
 
 `contracts/amm` is a separate optional deployment for AMM integration. It is not the source of truth for lending positions.
 
-`contracts/hello-world` is legacy and not canonical for deployment. It is not included in the active workspace at `stellar-lend/Cargo.toml`, while `contracts/lending`, `contracts/amm`, `contracts/bridge`, and `contracts/common` are.
+`contracts/hello-world` is legacy and not canonical for deployment. It remains in the active workspace at `stellar-lend/Cargo.toml` only so it compiles against the same shared Soroban SDK pin as the maintained contracts.
 
 ## Boundary Map
 
@@ -19,6 +19,39 @@ This note documents the contract boundaries under `stellar-lend/contracts/` and 
 | `hello-world` | Older all-in-one prototype with overlapping responsibilities | No |
 | `bridge` | Bridge-specific contract | Separate concern |
 | `common` | Shared library code | Library only |
+
+## Workspace Dependency Pinning
+
+The active Rust workspace is defined in `stellar-lend/Cargo.toml`. Soroban SDK
+and other shared Rust dependencies must be pinned once under
+`[workspace.dependencies]` and inherited by member crates with
+`{ workspace = true }`.
+
+Current workspace members:
+
+- `contracts/common`
+- `contracts/hello-world`
+- `contracts/lending`
+- `contracts/multisig`
+
+Policy:
+
+- do not pin `soroban-sdk` independently inside member crates
+- do not introduce a second Soroban SDK version through direct crate-level version specs
+- keep shared test dependencies, such as `proptest`, in the workspace dependency table when more than one member uses them
+- treat `contracts/hello-world` as a compatibility consumer of the shared pin, not as the canonical deployment artifact
+
+### Soroban SDK Version Bump Procedure
+
+When upgrading Soroban-related dependencies:
+
+1. Update the pinned versions in `stellar-lend/Cargo.toml` under `[workspace.dependencies]`.
+2. Keep member crates on `workspace = true` instead of adding crate-local versions.
+3. Refresh `Cargo.lock` from the workspace root and verify only the intended Soroban versions remain selected.
+4. Run `cargo build --workspace` and `cargo test --workspace` from `stellar-lend/` before merging.
+
+This keeps `Env`, `Address`, test utilities, and generated host types aligned
+across all workspace members and makes upgrade review a single-file audit.
 
 ## Ownership Boundaries
 
@@ -46,11 +79,28 @@ This is the contract users, liquidators, and token contracts should treat as aut
 - AMM operation history
 - its own upgrade state
 
+### AMM Initial Liquidity Minting
+
+The `amm` implementation hardens pool initialization against "donation attacks" (where the first depositor inflates the share value to steal from subsequent depositors). On the first deposit (when `total_supply == 0`), the AMM mints `sqrt(amount_0 * amount_1)` shares, but subtracts and permanently locks a `MINIMUM_LIQUIDITY` amount (e.g., 1000 units) to a dead address. This enforces a minimum pool value and makes inflating the LP share price prohibitively expensive.
+
+This invariant is enforced in the `add_liquidity` execution path, which issues the initial `MINIMUM_LIQUIDITY` shares to a dead address before returning the remaining `sqrt(x*y) - MINIMUM_LIQUIDITY` shares to the initial depositor. Subsequent deposits mint shares proportionally using `min(amount_0 * total_supply / reserve_0, amount_1 * total_supply / reserve_1)`.
+
 It does not own lending solvency state, debt balances, or collateral balances.
+
+### Constant-product invariant
+
+The AMM implementation enforces a constant-product invariant guard on all
+mutating operations (swaps and liquidity changes). Each path computes the
+pool product `k = reserve_a * reserve_b` before and after the mutation and
+asserts the expected monotonic direction: swaps and liquidity additions must
+not decrease `k` (fees are retained in the pool), while liquidity removals
+must not increase `k`. This check is implemented in the helper
+`assert_k_monotonic` in the `contracts/amm` crate to detect rounding or
+implementation errors and revert on violation.
 
 ### `hello-world`
 
-`hello-world` combines lending, AMM, bridge, governance, analytics, and monitoring concerns in one crate. Because it is outside the active workspace and duplicates functionality now split across maintained crates, it should be treated as historical/reference code rather than the deployment artifact.
+`hello-world` combines lending, AMM, bridge, governance, analytics, and monitoring concerns in one crate. Because it remains in the active workspace only for compatibility and duplicates functionality now split across maintained crates, it should be treated as historical/reference code rather than the deployment artifact.
 
 ## Trust Boundaries
 
@@ -176,6 +226,77 @@ Important existing bounds include:
 - `lending` flash-loan fee: `0..=1000`
 - `amm` slippage bounded by configured `max_slippage`
 - positive-amount checks on swap and liquidity inputs
+
+## AMM Swap: `min_out` and `deadline` Parameters
+
+`AmmContract::swap` now requires two additional safety parameters that **must
+be supplied by every caller**:
+
+```
+pub fn swap(
+    env:       Env,
+    caller:    Address,
+    asset_in:  Address,
+    asset_out: Address,
+    amount_in: i128,
+    min_out:   i128,   // NEW – minimum acceptable output (>= 0)
+    deadline:  u64,    // NEW – latest valid ledger timestamp (seconds)
+) -> Result<SwapResult, AmmError>
+```
+
+### Guard ordering (both checked before any state mutation)
+
+| # | Condition | Error |
+|---|-----------|-------|
+| 1 | `env.ledger().timestamp() > deadline` | `DeadlineExpired` |
+| 2 | `amount_out < min_out` | `SlippageExceeded` |
+
+The deadline is checked **before** the slippage floor. This means a transaction
+that is both stale and would produce sub-minimum output will surface
+`DeadlineExpired`, not `SlippageExceeded`.
+
+### Security rationale
+
+- **`deadline`** rejects transactions that were signed for a different market
+  state but sat in the mempool long enough for prices to move against the
+  caller. Pass the current ledger timestamp plus a small grace window (e.g.,
+  30–60 seconds / ledger-time equivalent).
+- **`min_out`** provides a hard slippage floor that prevents sandwich attacks:
+  a block-producer cannot insert trades that move the price against the caller
+  beyond the declared tolerance.
+
+### Caller migration guide
+
+Callers that previously invoked `swap(caller, asset_in, asset_out, amount_in)`
+must now supply `min_out` and `deadline`.
+
+**Recommended derivation** (off-chain, before building the transaction):
+
+```
+// 1. Simulate the swap to get expected_out.
+// 2. Apply your slippage tolerance (e.g. 50 bps = 0.5 %).
+let min_out  = expected_out * (10_000 - slippage_bps) / 10_000;
+
+// 3. Set deadline to now + grace_window (in ledger-time seconds).
+let deadline = current_ledger_timestamp + 60;  // 60-second window
+```
+
+To **opt out** of a guard (not recommended in production):
+- Pass `min_out = 0` to skip the slippage check.
+- Pass `deadline = u64::MAX` to skip the deadline check.
+
+**`scripts/init.sh` hint**: the `--amm-min-out-bps` flag (default `50`) is
+printed during AMM initialisation as a documentation hint for the suggested
+slippage tolerance. It is not stored on-chain.
+
+### Error reference
+
+| Error | Meaning |
+|-------|---------|
+| `AmmError::InvalidAmount (4)` | `amount_in <= 0` |
+| `AmmError::InvalidMinOut (5)` | `min_out < 0` |
+| `AmmError::DeadlineExpired (6)` | ledger timestamp > `deadline` |
+| `AmmError::SlippageExceeded (7)` | `amount_out < min_out` |
 
 ## Recommendation
 

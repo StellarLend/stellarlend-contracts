@@ -152,4 +152,92 @@ describe('CoinGeckoProvider', () => {
             expect(provider.isEnabled).toBe(true);
         });
     });
+
+    describe('Rate-limit (429) & Cooldown Handling', () => {
+        const createMockAxiosError = (status: number, headers: Record<string, string> = {}) => {
+            const error = new Error(`Request failed with status code ${status}`);
+            (error as any).response = {
+                status,
+                headers,
+            };
+            return error;
+        };
+
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('should handle 429 with numeric Retry-After header', async () => {
+            const error = createMockAxiosError(429, { 'retry-after': '30' });
+            mockedAxios.get.mockRejectedValueOnce(error);
+
+            // Fetch should throw error
+            await expect(provider.fetchPrice('XLM')).rejects.toThrow();
+
+            // Cooldown must be set to 30 seconds
+            expect(provider.isCooledDown).toBe(true);
+            expect(provider.cooldownUntil).toBe(Date.now() + 30000);
+
+            // Subsequent fetch should reject immediately without axios get call
+            await expect(provider.fetchPrice('XLM')).rejects.toThrow(/cooldown/);
+            expect(mockedAxios.get).toHaveBeenCalledTimes(1); // Still 1
+
+            // Advance timers by 31 seconds
+            vi.advanceTimersByTime(31000);
+            expect(provider.isCooledDown).toBe(false);
+
+            // Now it should try fetching again
+            mockedAxios.get.mockResolvedValueOnce({
+                data: { stellar: { usd: 0.16 } },
+            });
+            const result = await provider.fetchPrice('XLM');
+            expect(result.price).toBe(0.16);
+            expect(mockedAxios.get).toHaveBeenCalledTimes(2);
+        });
+
+        it('should handle 429 with Date-based Retry-After header', async () => {
+            const retryDate = new Date(Date.now() + 45000);
+            retryDate.setMilliseconds(0);
+            const error = createMockAxiosError(429, { 'retry-after': retryDate.toUTCString() });
+            mockedAxios.get.mockRejectedValueOnce(error);
+
+            await expect(provider.fetchPrice('XLM')).rejects.toThrow();
+
+            expect(provider.isCooledDown).toBe(true);
+            // Allowing 10ms tolerance for timing difference in test
+            expect(Math.abs(provider.cooldownUntil - retryDate.getTime())).toBeLessThan(10);
+
+            // Subsequent call skips API request
+            await expect(provider.fetchPrice('XLM')).rejects.toThrow(/cooldown/);
+            expect(mockedAxios.get).toHaveBeenCalledTimes(1);
+        });
+
+        it('should handle 429 without Retry-After header using a default 60s cooldown', async () => {
+            const error = createMockAxiosError(429); // no headers
+            mockedAxios.get.mockRejectedValueOnce(error);
+
+            await expect(provider.fetchPrice('XLM')).rejects.toThrow();
+
+            expect(provider.isCooledDown).toBe(true);
+            expect(provider.cooldownUntil).toBe(Date.now() + 60000);
+        });
+
+        it('should support cooldowns during batch fetchPrices', async () => {
+            const error = createMockAxiosError(429, { 'retry-after': '120' });
+            mockedAxios.get.mockRejectedValueOnce(error);
+
+            await expect(provider.fetchPrices(['XLM', 'BTC'])).rejects.toThrow();
+
+            expect(provider.isCooledDown).toBe(true);
+            expect(provider.cooldownUntil).toBe(Date.now() + 120000);
+
+            // Subsequent batch fetch should reject immediately
+            await expect(provider.fetchPrices(['XLM', 'BTC'])).rejects.toThrow(/cooldown/);
+            expect(mockedAxios.get).toHaveBeenCalledTimes(1);
+        });
+    });
 });

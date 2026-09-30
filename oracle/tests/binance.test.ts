@@ -34,6 +34,7 @@ describe('BinanceProvider', () => {
                     symbol: 'XLMUSDT',
                     lastPrice: '0.15000000',
                     closeTime: 1705900000000, // ms
+                    quoteVolume: '5000000.00',
                 },
             };
 
@@ -45,6 +46,7 @@ describe('BinanceProvider', () => {
             expect(result.price).toBe(0.15);
             expect(result.source).toBe('binance');
             expect(result.timestamp).toBe(1705900000);
+            expect(result.volume24h).toBe(5_000_000n);
         });
 
         it('should throw error for unsupported asset', async () => {
@@ -64,9 +66,9 @@ describe('BinanceProvider', () => {
         it('should fetch multiple prices in batch call', async () => {
             const mockResponse = {
                 data: [
-                    { symbol: 'XLMUSDT', price: '0.15000000' },
-                    { symbol: 'BTCUSDT', price: '50000.00000000' },
-                    { symbol: 'ETHUSDT', price: '3000.00000000' },
+                    { symbol: 'XLMUSDT', lastPrice: '0.15000000', closeTime: 1705900000000, quoteVolume: '1000000.00' },
+                    { symbol: 'BTCUSDT', lastPrice: '50000.00000000', closeTime: 1705900000000, quoteVolume: '500000000.00' },
+                    { symbol: 'ETHUSDT', lastPrice: '3000.00000000', closeTime: 1705900000000, quoteVolume: '200000000.00' },
                 ],
             };
 
@@ -83,7 +85,7 @@ describe('BinanceProvider', () => {
         it('should skip unsupported assets', async () => {
             const mockResponse = {
                 data: [
-                    { symbol: 'XLMUSDT', price: '0.15000000' },
+                    { symbol: 'XLMUSDT', lastPrice: '0.15000000', closeTime: 1705900000000, quoteVolume: '1000000.00' },
                 ],
             };
 

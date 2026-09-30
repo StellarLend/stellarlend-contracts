@@ -1,5 +1,30 @@
 # Upgrade and Storage Migration Safety Suite - Implementation Summary
 
+## Lending contract upgrade governance (issue #971)
+
+The canonical lending crate (`stellar-lend/contracts/lending`) now implements timelocked multisig WASM upgrade governance in `src/upgrade.rs`:
+
+| Entrypoint | Role | Description |
+|---|---|---|
+| `upgrade_init` | admin | Bootstrap current WASM hash, version `0`, and approval threshold |
+| `upgrade_propose` | admin | Record pending WASM hash with `MIN_THRESHOLD_DELAY_LEDGERS` ETA |
+| `upgrade_approve` | approver | Collect approvals toward the snapshotted threshold |
+| `upgrade_execute` | approver | `update_current_contract_wasm` after timelock + threshold |
+| `upgrade_add_approver` / `upgrade_remove_approver` | admin | Manage approver set (max 32) |
+| `upgrade_set_required_approvals` | admin | Change live threshold for **future** proposals only |
+
+Tests: `cargo test -p stellarlend-lending --lib upgrade_governance`
+
+Worked example (threshold = 1):
+
+```rust
+client.upgrade_init(&admin, &current_hash, &1);
+let id = client.upgrade_propose(&admin, &new_hash, &1);
+client.upgrade_approve(&admin, &id);
+// advance ledger to proposal.eta_ledger
+client.upgrade_execute(&admin, &id);
+```
+
 ## Overview
 
 Implemented a comprehensive test suite for contract upgrade and storage migration safety in the StellarLend lending protocol. The suite validates that contract upgrades preserve user state, handle failures gracefully, and support safe rollback operations.

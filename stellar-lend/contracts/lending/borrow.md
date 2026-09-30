@@ -64,7 +64,7 @@ repay(user, 1_000);
 
 ## Overview
 
-The borrow function allows users to borrow assets from the StellarLend protocol by providing collateral. The system enforces minimum collateral ratios, tracks interest accrual, and respects protocol-level constraints such as debt ceilings and pause states.
+The borrow function allows users to borrow assets from the StellarLend protocol against deposited collateral. The system accrues interest on each borrow, enforces a post-borrow health factor of at least 1.0, and respects protocol-level constraints such as debt ceilings and pause states.
 
 ## Function Signature
 
@@ -72,60 +72,48 @@ The borrow function allows users to borrow assets from the StellarLend protocol 
 pub fn borrow(
     env: Env,
     user: Address,
-    asset: Address,
     amount: i128,
-    collateral_asset: Address,
-    collateral_amount: i128,
-) -> Result<(), BorrowError>
+) -> Result<i128, LendingError>
 ```
 
 ## Parameters
 
 - `env`: The contract environment
 - `user`: The borrower's address (must authorize the transaction)
-- `asset`: The address of the asset to borrow
 - `amount`: The amount to borrow (must be positive and above minimum)
-- `collateral_asset`: The address of the collateral asset
-- `collateral_amount`: The amount of collateral to deposit (must be positive)
 
 ## Returns
 
-- `Ok(())` on successful borrow
-- `Err(BorrowError)` on failure
+- `Ok(principal)` with the updated debt principal on success
+- `Err(LendingError)` on failure
 
 ## Error Types
 
 | Error                    | Description                                           |
 | ------------------------ | ----------------------------------------------------- |
-| `InsufficientCollateral` | Collateral ratio is below the minimum required (150%) |
-| `DebtCeilingReached`     | Protocol's total debt ceiling would be exceeded       |
-| `ProtocolPaused`         | Borrow operations are currently paused                |
-| `InvalidAmount`          | Amount or collateral is zero or negative              |
+| `InsufficientCollateral` | Post-borrow health factor would fall below 1.0        |
+| `DebtCeilingExceeded`    | Protocol's total debt ceiling would be exceeded       |
+| `InvalidAmount`          | Amount is zero or negative                            |
 | `BelowMinimumBorrow`     | Borrow amount is below the minimum threshold          |
 | `Overflow`               | Arithmetic overflow occurred during calculation       |
-| `Unauthorized`           | User did not authorize the transaction                |
-| `AssetNotSupported`      | The specified asset is not supported                  |
+
+Borrow also panics when the protocol or borrow operation is paused, or when emergency state blocks borrows.
 
 ## Security Assumptions
 
-### Collateral Ratio
+### Health Factor (Collateralization)
 
-- **Minimum Ratio**: 150% (15 000 basis points) — configurable by admin via `set_collateral_ratio`
-- Users must have collateral worth at least 1.5× their **total** debt (existing + new borrow)
-- Ratio is evaluated as:
-
-  ```
-  collateral * 10_000 / (existing_debt + amount) >= col_ratio
-  ```
-
-  Equivalently (overflow-safe form used in the contract):
+- **Liquidation threshold**: 80% (`LIQUIDATION_THRESHOLD_BPS = 8000`)
+- **Minimum health factor**: 1.0 (`HEALTH_FACTOR_SCALE = 10000`)
+- Before committing debt, `borrow` loads `DataKey::Collateral`, computes effective debt after accrual via `effective_debt` using `current_borrow_rate`, and requires:
 
   ```
-  collateral * 10_000 >= col_ratio * (existing_debt + amount)
+  collateral * LIQUIDATION_THRESHOLD_BPS >= HEALTH_FACTOR_SCALE * new_debt
   ```
 
-- The ratio is stored under the `"col_ratio"` instance-storage key; if unset the default of 15 000 bps applies
-- Prevents under-collateralised positions that could lead to protocol insolvency
+  Equivalently: `(collateral * 8000) / new_debt >= 10000`.
+
+- **Worked example**: 100 collateral and 80 debt → `100 * 8000 = 800_000 >= 10_000 * 80 = 800_000` (HF exactly 1.0). A borrow to 81 debt would fail because `800_000 < 810_000`.
 
 ### Interest Calculation
 
@@ -142,8 +130,9 @@ pub fn borrow(
 
 ### Debt Ceiling
 
-- Protocol enforces a maximum total debt limit
-- Each borrow checks if new total debt would exceed ceiling
+- Protocol enforces a maximum total debt limit via `DataKey::DebtCeiling` (set by admin through `set_debt_ceiling`)
+- Each borrow checks whether post-borrow `TotalDebt` would exceed the ceiling
+- Returns `LendingError::DebtCeilingExceeded` when `new_total_debt > ceiling`
 - Protects protocol from excessive leverage
 
 ### Minimum Borrow Threshold
@@ -159,17 +148,10 @@ pub fn borrow(
 
 ```rust
 let user = Address::from_string("GUSER...");
-let usdc = Address::from_string("GUSDC...");
-let xlm = Address::from_string("GXLM...");
 
-// Borrow 10,000 USDC with 20,000 XLM collateral (200% ratio)
-contract.borrow(
-    user.clone(),
-    usdc,
-    10_000,
-    xlm,
-    20_000
-)?;
+// Deposit collateral, then borrow up to the health-factor limit.
+contract.deposit(user.clone(), 200)?;
+contract.borrow(user.clone(), 100)?; // HF = (200 * 8000) / 100 = 16000
 ```
 
 ### Check User Position
@@ -267,31 +249,32 @@ The contract uses persistent storage for:
 
 Comprehensive tests cover:
 
-- ✅ Successful borrow with valid collateral
-- ✅ Insufficient collateral rejection
+- ✅ Successful borrow with sufficient collateral
+- ✅ Insufficient collateral / sub-1.0 health factor rejection
 - ✅ Protocol pause enforcement
 - ✅ Invalid amount validation
 - ✅ Below minimum borrow rejection
-- ✅ Debt ceiling enforcement
+- ✅ Debt ceiling enforcement (post-borrow `TotalDebt`)
 - ✅ Multiple borrows accumulation
 - ✅ Interest accrual over time
-- ✅ Collateral ratio validation
+- ✅ Health factor boundary and overflow protection
 - ✅ Pause/unpause functionality
-- ✅ Overflow protection
+
+Dedicated coverage lives in `src/borrow_health_factor_test.rs`.
 
 Run tests with:
 
 ```bash
-cargo test
+cargo test -p stellarlend-lending
 ```
 
 ## Security Considerations
 
 1. **Authorization**: User must authorize the transaction via `require_auth()`
-2. **Collateral Validation**: Strict enforcement of 150% minimum ratio
-3. **Overflow Protection**: All arithmetic uses checked operations
-4. **Debt Ceiling**: Prevents protocol over-leverage
-5. **Pause Mechanism**: Emergency stop functionality
+2. **Health factor validation**: Post-borrow HF must be `>= 1.0` using effective debt and liquidation threshold
+3. **Overflow protection**: All arithmetic uses checked operations
+4. **Debt ceiling**: Post-borrow `TotalDebt` cannot exceed `DataKey::DebtCeiling`
+5. **Pause mechanism**: Emergency stop functionality
 6. **Interest Calculation**: Uses saturating arithmetic to prevent overflow
 7. **Storage Isolation**: User positions stored separately to prevent cross-contamination
 

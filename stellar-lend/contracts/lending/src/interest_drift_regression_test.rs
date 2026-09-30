@@ -34,11 +34,7 @@ mod interest_drift_regression_tests {
         let drift = (total_interest - expected).abs();
 
         // Banker's rounding should keep drift under 20 units for this scenario
-        assert!(
-            drift <= 20,
-            "Drift too large: {} (expected <= 20)",
-            drift
-        );
+        assert!(drift <= 20, "Drift too large: {} (expected <= 20)", drift);
     }
 
     /// ✅ Test: 100-month (8+ year) accrual with drift tracking
@@ -47,7 +43,6 @@ mod interest_drift_regression_tests {
         let borrowed = 50_000i128;
         let monthly_seconds = SECONDS_PER_YEAR / 12;
         let mut total_interest = 0i128;
-        let mut _total_drift = 0i128;
 
         for _month in 0..100 {
             let result = calculate_interest_with_rounding(
@@ -59,7 +54,6 @@ mod interest_drift_regression_tests {
             .expect("should not overflow");
 
             total_interest += result.interest;
-            total_drift += result.remainder;
         }
 
         // 100 months ≈ 8.33 years
@@ -141,7 +135,12 @@ mod interest_drift_regression_tests {
         let accumulated_drift = 2i128;
         let max_allowed_drift_bps = 100; // 1% = 100 basis points
 
-        let _result = reconcile_debt_with_drift_correction(stored, fresh, accumulated_drift, max_allowed_drift_bps);
+        let _result = reconcile_debt_with_drift_correction(
+            stored,
+            fresh,
+            accumulated_drift,
+            max_allowed_drift_bps,
+        );
     }
 
     /// ✅ Test: Overflow handling on extreme horizons

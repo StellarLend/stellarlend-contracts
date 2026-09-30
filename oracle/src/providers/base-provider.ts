@@ -27,9 +27,17 @@ export abstract class BasePriceProvider {
     protected lastRequestTime: number = 0;
     protected requestCount: number = 0;
     protected windowStartTime: number = Date.now();
+    public cooldownUntil: number = 0;
 
     constructor(config: ProviderConfig) {
         this.config = config;
+    }
+
+    /**
+     * Check if the provider is currently in a rate-limit cooldown
+     */
+    get isCooledDown(): boolean {
+        return this.cooldownUntil > Date.now();
     }
 
     /**

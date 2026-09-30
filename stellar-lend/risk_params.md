@@ -27,3 +27,46 @@ You can request parameter values programmatically from `HelloContract` across st
 
 Admins update via:
 - `set_risk_params(admin, optional_min_collateral_ratio, optional_liquidation_threshold, optional_close_factor, optional_liquidation_incentive)`
+
+## Status & Traceability
+
+This document describes the **implemented** behaviour of the
+`stellar-lend/contracts/hello-world/src/risk_params.rs` module. The paced
+rate-change cap, bounds checks, and admin-only enforcement are all exercised
+in code and covered by tests.
+
+### Implementation constants (`risk_params.rs`)
+
+| Constant                 | Value (bps) | Meaning                                  |
+|--------------------------|-------------|------------------------------------------|
+| `MAX_CHANGE_BPS`         | `1_000`     | 10% per-call cap (Paced Rate Changes)     |
+| `MIN_COLLATERAL_RATIO_FLOOR` | `10_000`| 100% — minimum for any collateralized position |
+| `MAX_COLLATERAL_RATIO`   | `100_000`   | 1000% — upper bound on MCR               |
+| `MAX_LIQUIDATION_THRESHOLD` | `100_000`| 1000% — upper bound on liquidation threshold (must stay ≤ MCR) |
+| `MIN_CLOSE_FACTOR`       | `1`         | A zero close factor would block all liquidations |
+| `MAX_CLOSE_FACTOR`       | `10_000`    | 100%                                     |
+| `MIN_LIQUIDATION_INCENTIVE` | `0`      | Liquidators can still claim no bonus     |
+| `MAX_LIQUIDATION_INCENTIVE`  | `5_000` | 50%                                       |
+
+### Cap coverage
+
+The 10% delta cap is applied to **all four** parameters via `validate_change` —
+not only `min_collateral_ratio` and `liquidation_threshold`.
+
+Violations surface as `RiskParamsError::ParameterChangeTooLarge`, which the
+contract entrypoint (`HelloContract::set_risk_params`) maps to
+`RiskManagementError::ParameterChangeTooLarge`.
+
+### Regression coverage
+
+`stellar-lend/contracts/hello-world/src/risk_params_paced_change_test.rs`
+exercises:
+
+- The documented default values are set by `initialize_risk_params`.
+- A 10% upward change is accepted for every parameter.
+- A change exceeding 10% upward is rejected with `ParameterChangeTooLarge`.
+- A 10% downward change is accepted; >10% downward is rejected.
+- Out-of-range values are still rejected (e.g. `close_factor > 100%`,
+  `min_collateral_ratio < 100%`).
+- Previously-unguarded parameters (`close_factor`, `liquidation_incentive`)
+  are now pace-limited (regression guard for the historical direct-set path).

@@ -1,10 +1,11 @@
 /**
  * Logger Utility
- * 
+ *
  * Centralized logging using Winston with configurable levels
  * and structured output for the Oracle Service.
  */
 
+import { createHash } from 'crypto';
 import winston from 'winston';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
@@ -84,6 +85,19 @@ export function logPriceUpdate(
     } else {
         logger.error('Price update failed', logData);
     }
+}
+
+/**
+ * Returns a short SHA-256 prefix of a public key for safe logging.
+ * The full key is never stored or emitted; only the first 8 hex characters
+ * of the digest are used, which is enough for operator correlation without
+ * exposing operational metadata in shared log aggregators.
+ *
+ * Format: "sha256:<first-8-hex-chars>"   e.g. "sha256:a1b2c3d4"
+ */
+export function hashPublicKey(pubkey: string): string {
+    const hash = createHash('sha256').update(pubkey).digest('hex');
+    return `sha256:${hash.slice(0, 8)}`;
 }
 
 /**

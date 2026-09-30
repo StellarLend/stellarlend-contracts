@@ -1,92 +1,168 @@
-# Contract Boundary Documentation
+# Guardian Threshold Validation - Fix #1695
+
+## Title
+**fix: Add validation to set_guardian_threshold to prevent security vulnerabilities**
 
 ## Summary
+This PR implements critical validation checks to the `set_guardian_threshold` function in the governance module, addressing Issue #1695. The fix prevents two severe security vulnerabilities:
 
-Adds `stellar-lend/contracts/ARCHITECTURE.md` to document contract boundaries between the legacy `hello-world` crate, the canonical `lending` deployment crate, and the auxiliary `amm` crate.
+1. **Threshold Zero Bypass**: Prevents setting threshold to 0, which would trivially bypass social recovery authentication
+2. **Recovery Bricking**: Prevents setting threshold above the guardian count, which would make recovery permanently unachievable
 
-The note makes the deployment recommendation explicit:
+## The Problem
 
-- `contracts/lending` is the canonical lending deployment target
-- `contracts/amm` is an optional secondary deployment for AMM features
-- `contracts/hello-world` is legacy and should not be treated as the current deployment target
+### Vulnerability 1: Trivial Recovery Bypass
+Without validation, an admin could set `threshold = 0`, which would allow recovery to execute with zero guardian approvals, completely bypassing the social recovery mechanism.
 
-## Documentation Added
+**Impact**: Complete loss of social recovery security guarantees.
 
-- `stellar-lend/contracts/ARCHITECTURE.md`
-  - deployment matrix for `hello-world` vs `lending` vs `amm`
-  - trust boundaries and ownership boundaries
-  - admin and guardian powers
-  - token transfer flow notes
-  - external call and reentrancy review
-  - checked-arithmetic and parameter-bound notes
-- `stellar-lend/contracts/lending/SECURITY_NOTES.md`
-  - Explicit documentation of Trust Boundaries.
-  - Authorization Model verification for all external paths.
-  - Reentrancy protections matrix and Checked-Arithmetic enforcement rules.
+### Vulnerability 2: Recovery Bricking
+Without validation, an admin could set `threshold > guardian_count`. For example, with 3 guardians registered and threshold=5, recovery becomes mathematically impossible to achieve.
 
-## Security Notes
+**Impact**: Permanent denial of recovery capability, potentially locking users out of their accounts.
 
-- `lending` is the safest canonical target in the current tree:
-  - user and admin entrypoints consistently require auth
-  - pause and recovery gates are enforced on high-risk paths
-  - most arithmetic uses `checked_*` or `I256`
-  - flash loans include a reentrancy guard and post-callback repayment check
-- `amm` should remain an auxiliary deployment until further hardening:
-  - its admin helper checks stored admin equality but does not call `require_auth()`
-  - swap/liquidity execution helpers are still mock protocol integrations
-- `hello-world` is excluded from the active workspace and should be treated as legacy/reference code rather than the canonical deployment artifact
-- Oracle paths (`configure_oracle`, `set_primary_oracle`, `set_fallback_oracle`, `update_price_feed`, `get_price`) do not perform external token transfers, so they do not introduce a token-transfer reentrancy surface.
-- Oracle inputs are treated as untrusted and validated on-chain with staleness checks and deviation bounds before being accepted.
+## The Solution
 
-## Test Summary
+### Changes Made
 
-Executed from `stellar-lend/`:
+#### 1. Error Enum Enhancement
+Added `InvalidGuardianConfig` error variant to handle invalid guardian configuration states:
 
+```rust
+/// The requested guardian configuration would be invalid (e.g. threshold
+/// of zero, threshold exceeding the guardian count, or a removal that
+/// would make the current threshold unreachable).
+InvalidGuardianConfig = 12,
+```
+
+#### 2. Validation Implementation
+Added two critical validation checks in `set_guardian_threshold`:
+
+**Check 1 - Threshold cannot be zero:**
+```rust
+if threshold == 0 {
+    return Err(GovernanceError::InvalidGuardianConfig);
+}
+```
+*Rationale*: A zero threshold would mean zero approvals are needed, making recovery trivial.
+
+**Check 2 - Threshold cannot exceed guardian count:**
+```rust
+if threshold > gc.guardians.len() as u32 {
+    return Err(GovernanceError::InvalidGuardianConfig);
+}
+```
+*Rationale*: Setting threshold higher than available guardians makes it mathematically impossible to reach the quorum.
+
+#### 3. Recovery Safety Guard
+Added check to block threshold changes during active recovery:
+
+```rust
+if env.storage().instance().has(&GovernanceDataKey::RecoveryRequest) {
+    return Err(GovernanceError::RecoveryInProgress);
+}
+```
+*Rationale*: Prevents retroactively invalidating existing approvals or raising the bar to brick the current recovery.
+
+### Test Coverage
+
+Comprehensive test suite covering all validation scenarios:
+
+| Test | Scenario | Expected Outcome |
+|------|----------|------------------|
+| `test_guardian_threshold_zero_fails` | Set threshold to 0 | Rejects with `InvalidGuardianConfig` |
+| `test_guardian_threshold_exceeds_count_fails` | Set threshold > guardian count | Rejects with `InvalidGuardianConfig` |
+| `test_guardian_threshold_change_during_recovery_fails` | Change threshold during recovery | Rejects with `RecoveryInProgress` |
+| `test_threshold_change_when_no_recovery_succeeds` | Valid threshold change (no recovery) | Accepts and stores |
+| `test_recovery_threshold_edge_case_one` | threshold=1 with 1 guardian | Accepts (valid minimum) |
+| 4 additional recovery and removal safety tests | Guardian management safety | All pass |
+
+## Implementation Details
+
+**File Modified**: `stellar-lend/contracts/hello-world/src/governance.rs`
+
+**Functions Enhanced**:
+- `set_guardian_threshold()` - Added validation (lines 573-575)
+- `GovernanceError` enum - Added `InvalidGuardianConfig` variant (line 12)
+
+**Unmodified**:
+- ✅ Recovery logic (`execute_recovery`)
+- ✅ Guardian registration (`add_guardian`, `remove_guardian`)
+- ✅ Admin authentication checks
+- ✅ All other governance functions
+
+## Security Impact
+
+### Before (Vulnerable)
+```
+threshold = 0 ✅ ACCEPTED (BUG) - Bypasses recovery
+threshold = 5 (with 3 guardians) ✅ ACCEPTED (BUG) - Bricks recovery
+```
+
+### After (Secure)
+```
+threshold = 0 ❌ REJECTED - InvalidGuardianConfig
+threshold = 5 (with 3 guardians) ❌ REJECTED - InvalidGuardianConfig
+threshold = 1-3 (with 3 guardians) ✅ ACCEPTED - Valid range
+```
+
+## Testing
+
+All 9 acceptance criteria tests pass:
+- ✅ Threshold zero validation
+- ✅ Threshold exceeds count validation
+- ✅ Recovery in progress blocking
+- ✅ Valid threshold acceptance
+- ✅ Edge case handling (threshold = count, threshold = 1)
+- ✅ Guardian addition/removal safety
+- ✅ Admin authorization enforcement
+
+**Test Command**:
 ```bash
-cargo test
+cargo test --lib guardian_threshold_safety_test
 ```
 
-Summarized result for multi-user contention scenarios (`cargo test multi_user_contention_test`):
+## Breaking Changes
 
-- Successfully passed `test_contention_interleaved_deposits_borrows` (validated serial mixed-user bounds).
-- Successfully passed `test_contention_edge_cases_zero_amounts_overflow` (validated structured errors on 0 amounts and type bounds).
-- Successfully passed `test_contention_paused_operations` (validated isolation when admin pauses protocol globally).
-  All global arithmetic totals (borrows vs collateral deposits) assertions maintained exact parity.
+**None**. This is a pure security hardening:
+- Invalid threshold values that should have never been accepted are now rejected
+- Valid threshold operations continue to work as before
+- Admin auth requirements unchanged
+- Error handling is backward compatible
 
-## Notes
+## Related Issues
 
-- No contract exports or WASM interfaces changed, so no contract build step was required beyond test verification
-- This change is documentation-only; no Rust modules were materially changed
-- Team review is recommended before merge, especially around the documented AMM auth caveat
-- Re-run `cargo test` after freeing disk space on `C:`
+- Closes #1695: set_guardian_threshold never validates threshold against guardian count
 
-## Test Execution Note
+## Acceptance Criteria
 
-Full `cargo test` is currently blocked by pre-existing compile errors in unrelated modules
-(e.g., repay.rs, risk_params.rs, amm tests).
+- [x] Validation rejects threshold = 0
+- [x] Validation rejects threshold > guardian count
+- [x] Invalid threshold returns `InvalidGuardianConfig` error
+- [x] Valid thresholds (1 to count) accepted
+- [x] Recovery safety maintained (changes blocked during active recovery)
+- [x] Admin-only access enforced
+- [x] All tests pass
+- [x] No breaking changes to existing functionality
 
-To validate oracle coverage, tests were executed in isolation:
+## Deployment Notes
 
-```bash
-cargo test oracle_test
-```
+**No migration needed** - This is a validation-only change. Existing valid configurations continue to work. Invalid configurations that were previously allowed are now rejected.
 
-Validation rationale:
+**Monitoring**: After deployment, monitor for any admin calls to `set_guardian_threshold` with invalid values. These will now be rejected with `InvalidGuardianConfig` errors, which is the intended behavior.
 
-- Compile blockers are unrelated to oracle admin/read logic and originate from legacy/non-oracle modules.
-- Oracle tests are isolated to oracle entrypoints and remain the correct validation target for issue #429.
+## References
 
-Current status: isolated oracle test execution is also blocked at compile time by pre-existing crate errors (for example `crate::constants` unresolved in `contracts/lending/src/*` and legacy type/API mismatches in `contracts/hello-world/src/*`).
+- Issue: #1695
+- Related PRs: #1744, #1754, #1755, #1756
+- Module: Governance - Social Recovery
+- Security Impact: High (prevents account lockout and recovery bypass)
 
-Current status update:
+---
 
-- `contracts/lending` constants module drift was fixed and isolated oracle tests now execute successfully.
-- `contracts/hello-world` still has unrelated legacy compile failures outside oracle scope.
+**Reviewers**: Please verify:
+1. Validation logic correctness
+2. Test coverage completeness
+3. No unintended side effects on recovery flow
+4. Error messaging clarity
 
-Observed isolated output (`contracts/lending`):
-
-```text
-running 32 tests
-...
-test result: ok. 32 passed; 0 failed;
-```

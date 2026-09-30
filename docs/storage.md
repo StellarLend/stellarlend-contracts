@@ -2,9 +2,15 @@
 
 This document describes the persistent storage structure of the StellarLend protocol on Soroban.
 
+For cross‑asset module storage details, see [Cross‑Asset Storage Layout](../stellar-lend/contracts/hello-world/docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+
 ## Overview
 
-StellarLend uses Soroban's `persistent()` storage for all long-term data.
+StellarLend uses Soroban's `persistent()` storage for position and accounting
+state that must survive normal contract use, and `instance()` storage for
+small administrative configuration, guards, and pause state. The canonical
+lending-contract storage namespace is the `DataKey` enum in
+[`stellar-lend/contracts/lending/src/lib.rs`](../stellar-lend/contracts/lending/src/lib.rs#L37-L57).
 All keys are defined using `contracttype` enums.
 
 > [!IMPORTANT]
@@ -12,24 +18,43 @@ All keys are defined using `contracttype` enums.
 
 ## Persistent TTL Policy
 
-To keep user positions readable, the lending contract now extends the TTL for the two position-specific persistent entries:
+The lending contract defines `PERSISTENT_TTL_LEDGERS = 1_000_000` and bumps
+position storage to `min(env.storage().max_ttl(), PERSISTENT_TTL_LEDGERS)`.
+The bump threshold is `extend_to / 2 + 1`, so an entry is extended only after it
+falls below roughly half of the target lifetime.
 
-- `DataKey::Collateral(user)` — collateral balance
-- `DataKey::Debt(user)` — debt position record
+Explicit TTL extension is implemented for the two per-user position entries:
 
-The policy is:
+- `DataKey::Collateral(user)` in
+  [`extend_collateral_ttl`](../stellar-lend/contracts/lending/src/lib.rs#L765-L774)
+- `DataKey::Debt(user)` in
+  [`extend_debt_ttl`](../stellar-lend/contracts/lending/src/lib.rs#L776-L785)
 
-- `deposit`, `withdraw`, `borrow`, and `repay` extend TTL on the corresponding `col` or `debt` entry when the position changes.
-- `get_position` extends TTL for an existing collateral entry and existing debt entry during a position read.
-- `get_debt_position` extends TTL for an existing debt entry during a debt-only read.
+The current bump triggers are:
 
-This design keeps actively used positions live while limiting extra gas cost to the small set of position read/write entrypoints.
+- `deposit` and `withdraw` extend the collateral entry after a balance write.
+- `repay` extends the debt entry after a debt write.
+- `get_position` and `get_health_factor` extend existing collateral and debt
+  entries during reads.
+- `get_debt_position` extends an existing debt entry during a debt-only read.
+
+`borrow` writes `DataKey::Debt(user)` through `save_debt`, but does not
+currently call `extend_debt_ttl`; add that call if borrow-side TTL bumping is
+required by a future storage policy.
+
+Other persistent keys rely on normal Soroban storage lifetime and rent renewal
+outside these helper functions. Instance keys are tied to the contract instance
+and do not use per-key persistent TTL helpers.
 
 ### Gas trade-offs
 
-- Write-side TTL bumps are the primary mechanism and add a small storage extension cost to each position-changing call.
-- Read-side TTL bumps are only applied on explicit position queries, which preserves liveness for read-heavy users without imposing additional fees on unrelated contract calls.
-- The TTL is long-lived (up to 1,000,000 ledgers or the network maximum), so routine use keeps positions live and infrequent inactive positions are not constantly bumped.
+- Write-side TTL bumps are limited to position-changing calls that already
+  touch the affected key.
+- Read-side TTL bumps are applied only on explicit position queries, preserving
+  liveness for read-heavy users without imposing extra work on unrelated calls.
+- The TTL target is long-lived, up to 1,000,000 ledgers or the network maximum,
+  so routine use keeps positions live while inactive positions are not
+  constantly bumped.
 
 ## Storage Map
 
@@ -37,113 +62,39 @@ This design keeps actively used positions live while limiting extra gas cost to 
 
 The lending contract centralizes its storage namespace in a single
 `#[contracttype] enum DataKey`. This is the canonical key list for that module.
+Every current `DataKey` variant appears exactly once in the table below.
 
-| Key (`DataKey`) | Storage Class | Value Type | Description |
-|-----------------|---------------|------------|-------------|
-| `Admin` | `instance()` | `Address` | Contract admin authorized to update admin-controlled settings. |
-| `BorrowMinAmount` | `instance()` | `i128` | Minimum borrow amount enforced by `borrow`. |
-| `FlashActive` | `instance()` | `bool` | Reentrancy guard set during flash-loan callbacks. |
-| `FlashFeeBps` | `instance()` | `i128` | Flash-loan fee in basis points. |
-| `Collateral(Address)` | `persistent()` | `i128` | Per-user collateral balance. |
-| `Debt(Address)` | `persistent()` | `DebtPosition` | Per-user debt principal and last accrual timestamp. |
-| `Balance(Address, Address)` | `persistent()` | `i128` | Per-asset balance tracked for a specific user or callback invoker. |
-| `Treasury(Address)` | `persistent()` | `i128` | Per-asset treasury liquidity available for flash loans. |
+| Key (`DataKey`) | Storage tier | Value type | Writers / owners | TTL policy | Source |
+|-----------------|--------------|------------|------------------|------------|--------|
+| `Collateral(Address)` | `persistent()` | `i128` | `deposit`, `withdraw`, `liquidate` | Explicitly bumped by `deposit`, `withdraw`, `get_position`, and `get_health_factor` when the key exists. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L38), [`deposit`](../stellar-lend/contracts/lending/src/lib.rs#L355-L362), [`withdraw`](../stellar-lend/contracts/lending/src/lib.rs#L381-L399), [`extend_collateral_ttl`](../stellar-lend/contracts/lending/src/lib.rs#L765-L774) |
+| `Debt(Address)` | `persistent()` | `DebtPosition` | `borrow`, `repay`, `liquidate` through `save_debt` | Explicitly bumped by `repay`, `get_debt_position`, `get_position`, and `get_health_factor` when the key exists. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L39), [`save_debt`](../stellar-lend/contracts/lending/src/debt.rs#L44-L47), [`repay`](../stellar-lend/contracts/lending/src/lib.rs#L524-L536), [`extend_debt_ttl`](../stellar-lend/contracts/lending/src/lib.rs#L776-L785) |
+| `Balance(Address, Address)` | `persistent()` | `i128` | `flash_loan`, `repay_flash_loan` | No explicit TTL helper; persistent entry lifetime is managed through normal Soroban rent/renewal. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L40), [`repay_flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L576-L584), [`flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L621-L626) |
+| `Treasury(Address)` | `persistent()` | `i128` | `flash_loan`, `repay_flash_loan` | No explicit TTL helper; persistent entry lifetime is managed through normal Soroban rent/renewal. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L41), [`repay_flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L586-L591), [`flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L602-L619) |
+| `TotalDebt` | `persistent()` | `i128` | `borrow`, `repay`; read by metrics and rate calculation | No explicit TTL helper; protocol aggregate is a persistent accounting key. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L42), [`borrow`](../stellar-lend/contracts/lending/src/lib.rs#L424-L438), [`repay`](../stellar-lend/contracts/lending/src/lib.rs#L526-L535), [`current_borrow_rate`](../stellar-lend/contracts/lending/src/lib.rs#L844-L848) |
+| `TotalDeposits` | `persistent()` | `i128` | `deposit`, `withdraw`; read by metrics and rate calculation | No explicit TTL helper; protocol aggregate is a persistent accounting key. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L43), [`deposit`](../stellar-lend/contracts/lending/src/lib.rs#L338-L361), [`withdraw`](../stellar-lend/contracts/lending/src/lib.rs#L388-L398), [`get_protocol_metrics`](../stellar-lend/contracts/lending/src/lib.rs#L718-L721) |
+| `DebtCeiling` | `instance()` | `i128` | `set_debt_ceiling`; intended admin-controlled protocol limit | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L44), [`set_debt_ceiling`](../stellar-lend/contracts/lending/src/lib.rs#L548-L558) |
+| `DepositCap` | `persistent()` | `i128` | Read by `deposit`; currently falls back to `DEFAULT_DEPOSIT_CAP` when absent | No explicit TTL helper; protocol safety limit is persistent when written. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L45), [`deposit`](../stellar-lend/contracts/lending/src/lib.rs#L343-L347) |
+| `FlashActive` | `instance()` | `bool` | `flash_loan` sets and clears it; `deposit`, `withdraw`, and `repay` read it | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L46), [`flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L628-L645), [`deposit`](../stellar-lend/contracts/lending/src/lib.rs#L328-L334) |
+| `FlashFeeBps` | `instance()` | `i128` | `set_flash_fee`; read by `flash_loan` | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L47), [`get_flash_fee_bps`](../stellar-lend/contracts/lending/src/lib.rs#L241-L245), [`set_flash_fee`](../stellar-lend/contracts/lending/src/lib.rs#L561-L569) |
+| `BorrowMinAmount` | `instance()` | `i128` | `set_min_borrow`; read by `borrow` | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L48), [`set_min_borrow`](../stellar-lend/contracts/lending/src/lib.rs#L305-L311), [`get_min_borrow`](../stellar-lend/contracts/lending/src/lib.rs#L314-L318) |
+| `Admin` | `instance()` | `Address` | `initialize`, `accept_admin`; read by admin-gated functions | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L49), [`initialize`](../stellar-lend/contracts/lending/src/lib.rs#L157-L162), [`get_admin`](../stellar-lend/contracts/lending/src/lib.rs#L165-L166), [`accept_admin`](../stellar-lend/contracts/lending/src/lib.rs#L264-L267) |
+| `PendingAdmin` | `instance()` | `Address` | `propose_admin`, `accept_admin` | Instance storage; removed after successful admin acceptance. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L50), [`propose_admin`](../stellar-lend/contracts/lending/src/lib.rs#L248-L254), [`accept_admin`](../stellar-lend/contracts/lending/src/lib.rs#L257-L267) |
+| `OraclePubKey` | `instance()` | `BytesN<32>` | `set_oracle_pubkey`; read by `set_price` | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L51), [`set_oracle_pubkey`](../stellar-lend/contracts/lending/src/lib.rs#L169-L175), [`set_price`](../stellar-lend/contracts/lending/src/lib.rs#L205-L209) |
+| `OraclePrice(Address)` | `persistent()` | `PriceRecord` | `set_price`; read by `get_price_record` | No explicit TTL helper; price records are persistent but can become stale by timestamp validation policy. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L52), [`set_price`](../stellar-lend/contracts/lending/src/lib.rs#L216-L219), [`get_price_record`](../stellar-lend/contracts/lending/src/lib.rs#L223-L224) |
+| `EmergencyState` | `instance()` | `EmergencyState` | `initialize`, `set_emergency_state` through `set_emergency_state_internal` | Instance storage; defaults to `Normal` if absent. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L53), [`initialize`](../stellar-lend/contracts/lending/src/lib.rs#L157-L162), [`get_emergency_state`](../stellar-lend/contracts/lending/src/lib.rs#L812-L816), [`set_emergency_state_internal`](../stellar-lend/contracts/lending/src/lib.rs#L819-L822) |
+| `Guardian` | `instance()` | `Address` | `set_guardian`; read by shutdown authorization | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L54), [`set_guardian`](../stellar-lend/contracts/lending/src/lib.rs#L270-L273), [`get_guardian`](../stellar-lend/contracts/lending/src/lib.rs#L276-L277) |
+| `PauseState(PauseType)` | `instance()` | `PauseState` | Pause state per operation; read by `pause_is_active` | Instance storage; expires logically through `expires_at_ledger`, not a persistent TTL helper. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L55), [`pause_is_active`](../stellar-lend/contracts/lending/src/lib.rs#L787-L790) |
+| `RateParams` | `instance()` | `rate_model::RateParams` | Borrow-rate configuration; read by `current_borrow_rate` | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L56), [`current_borrow_rate`](../stellar-lend/contracts/lending/src/lib.rs#L836-L840) |
 
 Notes:
+
 - `Address` payload order for `Balance(asset, user)` is asset first, user second.
-- New lending keys must be appended to `DataKey`; never reuse an existing variant for a different value type.
-
-### 2. Cross-Asset Core (`cross_asset.rs`)
-
-| Key (Symbol/Type) | Value Type | Description |
-|-------------------|------------|-------------|
-| `admin` | `Address` | Protocol admin address authorized to manage assets. |
-| `configs` | `Map<AssetKey, AssetConfig>` | Configuration for each supported asset (factors, caps, prices). |
-| `positions` | `Map<UserAssetKey, AssetPosition>` | Per-user, per-asset collateral and debt balances. |
-| `supplies` | `Map<AssetKey, i128>` | Total supply (deposits) for each asset. |
-| `borrows` | `Map<AssetKey, i128>` | Total borrows (debt) for each asset. |
-| `assets` | `Vec<AssetKey>` | List of all registered assets in the protocol. |
-
-### 3. Risk Management (`risk_management.rs`)
-
-| Key (`RiskDataKey`) | Value Type | Description |
-|---------------------|------------|-------------|
-| `RiskConfig` | `RiskConfig` | Global risk parameters (MCR, liquidation threshold, close factor). |
-| `Admin` | `Address` | Admin address for risk management operations. |
-| `EmergencyPause` | `bool` | Global flag to halt all protocol operations. |
-
-### 4. Deposit Module (`deposit.rs`)
-
-| Key (`DepositDataKey`) | Value Type | Description |
-|------------------------|------------|-------------|
-| `CollateralBalance(Address)` | `i128` | Per-user cumulative collateral balance (deprecated in favor of `cross_asset` positions). |
-| `AssetParams(Address)` | `AssetParams` | Legacy asset parameters. |
-| `Position(Address)` | `Position` | User's unified position (legacy module). |
-| `ProtocolAnalytics` | `ProtocolAnalytics` | Aggregate protocol metrics (deposits, borrows, TVL). |
-| `UserAnalytics(Address)` | `UserAnalytics` | Detailed per-user activity and risk metrics. |
-
-### 5. Interest Rate Module (`interest_rate.rs`)
-
-| Key (`InterestRateDataKey`) | Value Type | Description |
-|-----------------------------|------------|-------------|
-| `InterestRateConfig` | `InterestRateConfig` | Kink-based model parameters (base rate, kink, multipliers). |
-| `Admin` | `Address` | Admin address for interest rate adjustments. |
-
-### 6. Oracle Module (`oracle.rs`)
-
-| Key (`OracleDataKey`) | Value Type | Description |
-|-----------------------|------------|-------------|
-| `PriceFeed(Address)` | `PriceFeed` | Latest price, timestamp, and provider for an asset. |
-| `FallbackOracle(Address)` | `Address` | Designated fallback price provider for an asset. |
-| `PriceCache(Address)` | `CachedPrice` | TTL-bounded price cache for gas efficiency. |
-| `OracleConfig` | `OracleConfig` | Global oracle safety parameters (deviation, staleness). |
-
-### 7. Flash Loan Module (`flash_loan.rs`)
-
-| Key (`FlashLoanDataKey`) | Value Type | Description |
-|--------------------------|------------|-------------|
-| `FlashLoanConfig` | `FlashLoanConfig` | Fee basis points and amount limits. |
-| `ActiveFlashLoan(Addr, Addr)` | `FlashLoanRecord` | Reentrancy guard and transient loan record. |
-
-### 8. Analytics Module (`analytics.rs`)
-
-| Key (`AnalyticsDataKey`) | Value Type | Description |
-|--------------------------|------------|-------------|
-| `ProtocolMetrics` | `ProtocolMetrics` | Cached protocol-wide stats snapshot. |
-| `UserMetrics(Address)` | `UserMetrics` | Cached per-user stats snapshot. |
-| `ActivityLog` | `Vec<ActivityEntry>` | Global activity history (max 10,000 entries). |
-| `TotalUsers` | `u64` | Total number of unique users. |
-| `TotalTransactions` | `u64` | Global transaction counter. |
-
----
-
-## Type Definitions
-
-### Core Structs
-
-#### `AssetPosition`
-```rust
-pub struct AssetPosition {
-    pub collateral: i128,        // Asset's native units
-    pub debt_principal: i128,    // Principal borrowed
-    pub accrued_interest: i128,  // Accumulated interest
-    pub last_updated: u64,       // Timestamp of last update
-}
-```
-
-#### `RiskConfig`
-```rust
-pub struct RiskConfig {
-    pub min_collateral_ratio: i128,  // Basis points (11000 = 110%)
-    pub liquidation_threshold: i128, // Basis points
-    pub close_factor: i128,          // Basis points
-    pub liquidation_incentive: i128, // Basis points
-    pub pause_switches: Map<Symbol, bool>,
-    pub last_update: u64,
-}
-```
-
----
+- `PauseState(PauseType)` stores one instance entry per pause operation.
+- `DebtCeiling` is currently written to `instance()` storage; if the protocol
+  later requires persistent ceiling history across instance expiration, update
+  this table and the setter together.
+- New lending keys must be appended to `DataKey`; never reuse an existing
+  variant for a different value type.
 
 ## Upgrade and Migration Strategy
 
@@ -168,14 +119,16 @@ If a storage layout change is unavoidable (e.g., merging two maps into one), fol
 
 - **No Overwrites**: Storage keys are designed to be unique. Using `contracttype` enums for keys ensures that different data types even with the same payload (like `Collateral(Address)` vs `Debt(Address)`) serialize to distinct storage slots.
 - **Multi-Address Isolation**: By including the user `Address` in the `DataKey` variant payload (e.g., `DataKey::Collateral(Address)`), we guarantee that one user's operations can never affect another's balance. This is verified by multi-user suite tests in `lib.rs`.
-- **Persistent Only**: All critical protocol state is stored in `persistent()` storage to prevent expiration (subject to rent payments).
+- **Tier by lifetime**: User positions and accounting aggregates use
+  `persistent()` storage; bounded admin/configuration and guard state uses
+  `instance()` storage.
 - **Admin Isolation**: Admin addresses are stored in module-specific keys, allowing for granular permission management or a unified global admin.
 
 ### Validation Checklist
 - [ ] All `contracttype` enums have unique variants.
-- [ ] No `temporary()` or `instance()` storage is used for critical state.
-- [ ] `AssetKey` correctly handles both Native (XLM) and Token assets.
-- [ ] Key collisions between modules are avoided by using unique Enum types for keys.
+- [ ] Critical per-user position and accounting state uses `persistent()` storage.
+- [ ] No current `DataKey` variant uses `temporary()` storage.
+- [ ] Lending storage keys stay isolated through the single canonical `DataKey` enum.
 
 ---
 

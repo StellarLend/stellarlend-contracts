@@ -253,6 +253,6 @@ client.upgrade_execute(&admin, &p_id);  // ✅
 ## Related Documentation
 
 - Full test documentation: `UPGRADE_MIGRATION_SAFETY_TESTS.md`
-- Implementation summary: `UPGRADE_MIGRATION_IMPLEMENTATION.md`
+- Implementation docs: `docs/UPGRADE_AUTHORIZATION.md`, `docs/upgrade_playbook.md`
 - Upgrade module: `stellar-lend/contracts/common/src/upgrade.rs`
 - Data store module: `stellar-lend/contracts/lending/src/data_store.rs`

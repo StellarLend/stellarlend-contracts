@@ -30,20 +30,14 @@ const BINANCE_SYMBOL_MAP: Record<string, string> = {
 };
 
 /**
- * Binance ticker price response
- */
-interface BinanceTickerResponse {
-    symbol: string;
-    price: string;
-}
-
-/**
  * Binance 24hr ticker response
  */
 interface Binance24hrTickerResponse {
     symbol: string;
     lastPrice: string;
     closeTime: number;
+    /** Quote asset volume over the last 24 hours (USD-equivalent for *USDT pairs) */
+    quoteVolume: string;
 }
 
 /**
@@ -87,6 +81,7 @@ export class BinanceProvider extends BasePriceProvider {
                 price: parseFloat(response.lastPrice),
                 timestamp: Math.floor(response.closeTime / 1000),
                 source: 'binance',
+                volume24h: BigInt(Math.round(parseFloat(response.quoteVolume) || 0)),
             };
         } catch (error) {
             logger.error(`Binance fetch failed for ${asset}`, { error });
@@ -120,15 +115,15 @@ export class BinanceProvider extends BasePriceProvider {
 
         const symbols = validAssets.map((a) => assetToSymbol.get(a)!);
         const symbolsParam = encodeURIComponent(JSON.stringify(symbols));
-        const url = `${this.config.baseUrl}/ticker/price?symbols=${symbolsParam}`;
+        const url = `${this.config.baseUrl}/ticker/24hr?symbols=${symbolsParam}`;
 
         try {
-            const response = await this.request<BinanceTickerResponse[]>(url);
+            const response = await this.request<Binance24hrTickerResponse[]>(url);
 
             // For quick lookup
-            const symbolToPrice: Map<string, number> = new Map();
+            const symbolToTicker: Map<string, Binance24hrTickerResponse> = new Map();
             for (const ticker of response) {
-                symbolToPrice.set(ticker.symbol, parseFloat(ticker.price));
+                symbolToTicker.set(ticker.symbol, ticker);
             }
 
             const results: RawPriceData[] = [];
@@ -136,14 +131,15 @@ export class BinanceProvider extends BasePriceProvider {
 
             for (const asset of validAssets) {
                 const symbol = assetToSymbol.get(asset)!;
-                const price = symbolToPrice.get(symbol);
+                const ticker = symbolToTicker.get(symbol);
 
-                if (price !== undefined) {
+                if (ticker !== undefined) {
                     results.push({
                         asset,
-                        price,
-                        timestamp: now,
+                        price: parseFloat(ticker.lastPrice),
+                        timestamp: Math.floor(ticker.closeTime / 1000) || now,
                         source: 'binance',
+                        volume24h: BigInt(Math.round(parseFloat(ticker.quoteVolume) || 0)),
                     });
                 }
             }
