@@ -1021,9 +1021,9 @@ impl AmmContract {
     /// entry points within a single multi-operation transaction:
     ///
     /// ```text
-    /// Op 1: AMM.flash_swap_a_for_b(amount_out, fee_bps)
+    /// Op 1: AMM.flash_swap_a_for_b(caller, amount_out, params)
     /// Op 2: <caller runs arbitrary logic on asset A received elsewhere>
-    /// Op 3: AMM.repay_flash_swap(amount_in)        // verify-k runs here
+    /// Op 3: AMM.repay_flash_swap(caller, amount_in) // verify-k runs here
     /// ```
     ///
     /// Soroban rolls back every storage write in the whole transaction if
@@ -1063,7 +1063,7 @@ impl AmmContract {
     /// perturbs reserves.  See [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md).
     ///
     /// # Returns
-    /// `amount_out` — the number of asset-B units debited from the pool.
+    /// * `Ok(amount_out)` — the number of asset-B units debited from the pool.
     ///
     /// # Errors
     /// * [`AmmPoolError::ReentrantFlashSwap`] — a flash swap is already in flight.

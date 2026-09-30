@@ -398,6 +398,37 @@ fn test_params_payload_flows_through() {
     assert_eq!(rb, 900);
 }
 
+/// Explicit test validating that `flash_swap_a_for_b` returns
+/// `Result<i128, AmmPoolError>`: `Ok(amount_out)` on success and typed
+/// `AmmPoolError` variants on failure.
+#[test]
+fn test_flash_swap_returns_result_and_typed_errors() {
+    let (env, amm_id) = setup_pool(1_000, 1_000);
+    let client = AmmContractClient::new(&env, &amm_id);
+    let caller = Address::generate(&env);
+
+    // 1. Success returns Ok(amount_out)
+    let amount_out = 200_i128;
+    let res = client.try_flash_swap_a_for_b(&caller, &amount_out, &Bytes::new(&env));
+    assert_eq!(res, Ok(Ok(amount_out)));
+
+    // 2. Re-entrant flash returns ReentrantFlashSwap
+    let reentrant_res = client.try_flash_swap_a_for_b(&caller, &100_i128, &Bytes::new(&env));
+    assert_eq!(reentrant_res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
+
+    // Repay to reset active status
+    let exact_in = inverse_swap_in(1_000, 1_000, amount_out, 30);
+    client.repay_flash_swap(&caller, &exact_in);
+
+    // 3. NonPositiveAmount error
+    let zero_res = client.try_flash_swap_a_for_b(&caller, &0_i128, &Bytes::new(&env));
+    assert_eq!(zero_res, Err(Ok(AmmPoolError::NonPositiveAmount)));
+
+    // 4. InsufficientReserves error
+    let drain_res = client.try_flash_swap_a_for_b(&caller, &10_000_i128, &Bytes::new(&env));
+    assert_eq!(drain_res, Err(Ok(AmmPoolError::InsufficientReserves)));
+}
+
 // Suppress "unused import" warnings for items only referenced via the
 // contract trait / compile-time checks (kept here so external readers
 // see the full toolbox this test module relies on).
