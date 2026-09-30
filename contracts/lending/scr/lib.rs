@@ -71,6 +71,9 @@ impl LendingContract {
 
     /// Public/Internal pathway tracking current valuations using staleness bounds checks
     pub fn get_price(e: Env, asset: Address) -> i128 {
+        if !e.storage().instance().has(&DataKey::OracleAddress) {
+            panic!("Oracle source address mapping not assigned");
+        }
         let oracle_addr: Address = e
             .storage()
             .instance()
@@ -96,6 +99,9 @@ impl LendingContract {
             .unwrap_or(3600); // System default to 1 hour fallback threshold if unconfigured
 
         let current_time = e.ledger().timestamp();
+        if price_record.timestamp > current_time {
+            panic!("Oracle price rejection: future timestamp");
+        }
         if current_time > price_record.timestamp + max_age {
             panic!("Oracle price rejection: Data stream bounds breach staleness limits");
         }
@@ -125,6 +131,9 @@ impl LendingContract {
 
     /// Evaluates dynamic portfolio calculations mapping active collateral structures against systemic debt
     pub fn evaluate_valuation(e: Env, collateral_asset: Address, collateral_amount: i128, debt_asset: Address, debt_amount: i128) -> bool {
+        if collateral_amount < 0 || debt_amount < 0 {
+            panic!("Invalid amount: negative values not allowed");
+        }
         let collateral_price = Self::get_price(e.clone(), collateral_asset);
         let debt_price = Self::get_price(e.clone(), debt_asset);
 
@@ -137,6 +146,9 @@ impl LendingContract {
 
     /// Update internal mock states for off-chain or testing price pushes
     pub fn update_price_feed(e: Env, oracle: Address, asset: Address, price: i128, timestamp: u64, decimals: u32) {
+        if price <= 0 {
+            panic!("Invalid price: must be positive");
+        }
         let configured_oracle: Address = e.storage().instance().get(&DataKey::OracleAddress).unwrap();
         oracle.require_auth();
         if oracle != configured_oracle {
@@ -156,6 +168,9 @@ impl LendingContract {
     /// Deposit tokens into the lending pool
     pub fn deposit(e: Env, user: Address, amount: i128, asset: Address) {
         user.require_auth();
+        if amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Check invariant BEFORE operation
         invariants::check_invariant_before(&e, &asset);
@@ -184,6 +199,9 @@ impl LendingContract {
     /// Withdraw tokens from the lending pool
     pub fn withdraw(e: Env, user: Address, amount: i128, asset: Address) {
         user.require_auth();
+        if amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Check invariant BEFORE operation
         invariants::check_invariant_before(&e, &asset);
@@ -217,6 +235,9 @@ impl LendingContract {
     /// Borrow tokens against collateral
     pub fn borrow(e: Env, user: Address, amount: i128, asset: Address) {
         user.require_auth();
+        if amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Check invariant BEFORE operation
         invariants::check_invariant_before(&e, &asset);
@@ -239,6 +260,9 @@ impl LendingContract {
     /// Repay borrowed tokens
     pub fn repay(e: Env, user: Address, amount: i128, asset: Address) {
         user.require_auth();
+        if amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Check invariant BEFORE operation
         invariants::check_invariant_before(&e, &asset);
@@ -262,6 +286,9 @@ impl LendingContract {
     /// Borrow against cross-asset collateral
     pub fn borrow_against_collateral(e: Env, user: Address, borrow_amount: i128, borrow_asset: Address, collateral_asset: Address) {
         user.require_auth();
+        if borrow_amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Check invariant BEFORE operation for collateral asset
         invariants::check_invariant_before(&e, &collateral_asset);
@@ -289,6 +316,9 @@ impl LendingContract {
     /// Repay with cross-asset collateral
     pub fn repay_against_collateral(e: Env, user: Address, repay_amount: i128, repay_asset: Address, collateral_asset: Address) {
         user.require_auth();
+        if repay_amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Check invariant BEFORE operation for collateral asset
         invariants::check_invariant_before(&e, &collateral_asset);
@@ -312,6 +342,9 @@ impl LendingContract {
     /// Liquidate undercollateralized position
     pub fn liquidate(e: Env, liquidator: Address, borrower: Address, debt_asset: Address, collateral_asset: Address, amount: i128) {
         liquidator.require_auth();
+        if amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Check invariants BEFORE operation for BOTH assets
         invariants::check_invariant_before(&e, &debt_asset);
@@ -352,6 +385,9 @@ impl LendingContract {
     /// Flash loan (excluded from invariant checking during callback)
     pub fn flash_loan(e: Env, receiver: Address, asset: Address, amount: i128) {
         receiver.require_auth();
+        if amount <= 0 {
+            panic!("Invalid amount: must be positive");
+        }
 
         // Set flash loan guard
         e.storage().temporary().set(&DataKey::FlashActive, &true);
