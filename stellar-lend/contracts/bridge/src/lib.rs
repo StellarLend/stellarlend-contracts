@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes,
-    BytesN, Env, Map, Vec,
+    BytesN, Env, Map, Symbol, Vec,
 };
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
@@ -351,7 +351,7 @@ impl Bridge {
     ) -> BytesN<32> {
         let mut data = Bytes::new(env);
         data.extend_from_slice(INBOUND_MSG_DOMAIN);
-        data.extend_from_slice(&source_hash.to_bytes());
+        data.extend_from_slice(&source_hash.to_array());
         data.extend_from_slice(&nonce.to_le_bytes());
         env.crypto().sha256(&data).into()
     }
@@ -453,7 +453,7 @@ impl Bridge {
         if env
             .storage()
             .persistent()
-            .has(&BridgeDataKey::SourceRegistered(hash))
+            .has(&BridgeDataKey::SourceRegistered(hash.clone()))
         {
             // Already registered — idempotent, return Ok.
             return Ok(());
@@ -490,7 +490,7 @@ impl Bridge {
         if !env
             .storage()
             .persistent()
-            .has(&BridgeDataKey::SourceRegistered(hash))
+            .has(&BridgeDataKey::SourceRegistered(hash.clone()))
         {
             // Not registered — idempotent, return Ok.
             return Ok(());
@@ -597,7 +597,7 @@ impl Bridge {
 
         // 6. Emit event.
         env.events().publish(
-            (symbol_short!("inbound_msg"), symbol_short!("consumed")),
+            (Symbol::new(&env, "inbound_msg"), symbol_short!("consumed")),
             InboundMessageConsumedEvent {
                 message_id,
                 source,
@@ -913,91 +913,6 @@ impl Bridge {
     // Inbound epoch validation
     // -----------------------------------------------------------------------
 
-    /// Reject a `signed_epoch` that belongs to a retired validator set.
-    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
-        let current = Self::load_epoch(&env);
-        if signed_epoch < current {
-            return Err(BridgeError::RetiredEpoch);
-        }
-        Ok(())
-    }
-
-    // -----------------------------------------------------------------------
-    // Validator pause / unpause
-    // -----------------------------------------------------------------------
-
-    /// Guardian-gated pause of a single validator.
-    ///
-    /// The guardian must sign `SHA-256("BRIDGE_PAUSE:" || pk_bytes)`.
-    pub fn pause_validator(
-        env: Env,
-        validator: BytesN<32>,
-        signature: BytesN<64>,
-    ) -> Result<(), BridgeError> {
-        let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
-
-        let validators = Self::load_validators(&env);
-        if !validators.iter().any(|v| v == validator) {
-            return Err(BridgeError::UnknownValidator);
-        }
-
-        let mut paused = Self::load_paused(&env);
-        if paused.contains_key(validator.clone()) {
-            return Err(BridgeError::AlreadyPaused);
-        }
-
-        // Fail-closed: refuse if pausing would make quorum unreachable.
-        let mut active_count: u32 = 0;
-        for pk in validators.iter() {
-            if !paused.contains_key(pk) {
-                active_count += 1;
-            }
-        }
-        let new_active = active_count.saturating_sub(1);
-        let new_threshold = (new_active * 2) / 3 + 1;
-        if new_active < new_threshold {
-            return Err(BridgeError::PauseWouldBreakQuorum);
-        }
-
-        // Verify guardian signature over action-bound payload.
-        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
-        let payload = Self::build_tagged_payload(&env, PAUSE_PAYLOAD_TAG, &validator);
-        let payload_hash = env.crypto().sha256(&payload);
-        env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
-
-        paused.set(validator, true);
-        Self::save_paused(&env, &paused);
-        Ok(())
-    }
-
-    /// Guardian-gated unpause of a single validator.
-    ///
-    /// The guardian must sign `SHA-256("BRIDGE_UNPAUSE:" || pk_bytes)`.
-    pub fn unpause_validator(
-        env: Env,
-        validator: BytesN<32>,
-        signature: BytesN<64>,
-    ) -> Result<(), BridgeError> {
-        let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
-
-        let validators = Self::load_validators(&env);
-        if !validators.iter().any(|v| v == validator) {
-            return Err(BridgeError::UnknownValidator);
-        }
-
-        let payload = concat_prefixed(UNPAUSE_PAYLOAD_TAG, &v_bytes);
-        guardian
-            .verify(&payload, signature)
-            .map_err(|_| BridgeError::InvalidGuardianSignature)?;
-
-        self.paused_validators.remove(&v_bytes);
-        Ok(ValidatorEvent::Unpaused {
-            validator: v_bytes,
-            epoch: self.epoch,
-        })
-    }
-
     /// Rejects an inbound message whose `signed_epoch` is not aligned with
     /// the bridge's currently active epoch.
     ///
@@ -1067,10 +982,10 @@ impl Bridge {
     ///
     /// # Errors
     ///
-    /// Returns [`anyhow::Error`] whose string contains one of:
+    /// Returns [`BridgeError`] which evaluates to:
     ///
-    /// * `"retired validator set"` when `signed_epoch < self.epoch`.
-    /// * `"not-yet-active"` when `signed_epoch` lies strictly above the
+    /// * `RetiredEpoch` when `signed_epoch < self.epoch`.
+    /// * `InvalidEpoch` when `signed_epoch` lies strictly above the
     ///   tolerance-adjusted upper bound.
     ///
     /// # Arguments
@@ -1080,36 +995,93 @@ impl Bridge {
     /// # Returns
     /// `Ok(())` iff `signed_epoch` is the bridge's currently active epoch
     /// (within the explicit tolerance).
-    pub fn validate_inbound_epoch(&self, signed_epoch: u64) -> Result<()> {
-        // Lower bound: retire any signed_epoch that pre-dates the current set,
-        // so a retired validator set cannot have its messages replayed.
-        if signed_epoch < self.epoch {
-            return Err(anyhow!(
-                "message signed by retired validator set (epoch too old): \
-                 signed_epoch={} < self.epoch={}",
-                signed_epoch,
-                self.epoch
-            ));
+    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
+        let current = Self::load_epoch(&env);
+        if signed_epoch < current {
+            return Err(BridgeError::RetiredEpoch);
         }
-
-        // Upper bound: refuse signed_epoch that points at a future validator
-        // set the bridge has not yet rotated into. saturating_add prevents
-        // u64 overflow from being weaponised into a comparison that always
-        // either panics or — worse — passes by wrapping to a small value.
-        let max_accepted_epoch = self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE);
+        let max_accepted_epoch = current.saturating_add(INBOUND_EPOCH_TOLERANCE);
         if signed_epoch > max_accepted_epoch {
-            return Err(anyhow!(
-                "message signed by not-yet-active validator set (epoch too far in the future): \
-                 signed_epoch={} > max_accepted_epoch={} (= self.epoch={} + INBOUND_EPOCH_TOLERANCE={})",
-                signed_epoch,
-                max_accepted_epoch,
-                self.epoch,
-                INBOUND_EPOCH_TOLERANCE
-            ));
+            return Err(BridgeError::InvalidEpoch);
         }
-
         Ok(())
     }
+
+    // -----------------------------------------------------------------------
+    // Validator pause / unpause
+    // -----------------------------------------------------------------------
+
+    /// Guardian-gated pause of a single validator.
+    ///
+    /// The guardian must sign `SHA-256("BRIDGE_PAUSE:" || pk_bytes)`.
+    pub fn pause_validator(
+        env: Env,
+        validator: BytesN<32>,
+        signature: BytesN<64>,
+    ) -> Result<(), BridgeError> {
+        let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
+
+        let validators = Self::load_validators(&env);
+        if !validators.iter().any(|v| v == validator) {
+            return Err(BridgeError::UnknownValidator);
+        }
+
+        let mut paused = Self::load_paused(&env);
+        if paused.contains_key(validator.clone()) {
+            return Err(BridgeError::AlreadyPaused);
+        }
+
+        // Fail-closed: refuse if pausing would make quorum unreachable.
+        let mut active_count: u32 = 0;
+        for pk in validators.iter() {
+            if !paused.contains_key(pk) {
+                active_count += 1;
+            }
+        }
+        let new_active = active_count.saturating_sub(1);
+        let new_threshold = (new_active * 2) / 3 + 1;
+        if new_active < new_threshold {
+            return Err(BridgeError::PauseWouldBreakQuorum);
+        }
+
+        // Verify guardian signature over action-bound payload.
+        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
+        let payload = Self::build_tagged_payload(&env, PAUSE_PAYLOAD_TAG, &validator);
+        let payload_hash = env.crypto().sha256(&payload);
+        env.crypto()
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
+
+        paused.set(validator, true);
+        Self::save_paused(&env, &paused);
+        Ok(())
+    }
+
+    /// Guardian-gated unpause of a single validator.
+    ///
+    /// The guardian must sign `SHA-256("BRIDGE_UNPAUSE:" || pk_bytes)`.
+    pub fn unpause_validator(
+        env: Env,
+        validator: BytesN<32>,
+        signature: BytesN<64>,
+    ) -> Result<(), BridgeError> {
+        let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
+
+        let validators = Self::load_validators(&env);
+        if !validators.iter().any(|v| v == validator) {
+            return Err(BridgeError::UnknownValidator);
+        }
+
+        let mut paused = Self::load_paused(&env);
+        let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
+        let payload_hash = env.crypto().sha256(&payload);
+        env.crypto()
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
+
+        paused.remove(validator);
+        Self::save_paused(&env, &paused);
+        Ok(())
+    }
+
 
     /// Build a tagged payload: `tag_bytes || pk_bytes` as a `Bytes`.
     fn build_tagged_payload(env: &Env, tag: &[u8], pk: &BytesN<32>) -> Bytes {
@@ -1279,28 +1251,6 @@ impl Bridge {
         }
         (window_start, total)
     }
-}
-
-/// Helper: build a payload of the form `prefix || suffix` without an
-/// intermediate allocation beyond the result vector.
-fn concat_prefixed(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(prefix.len() + suffix.len());
-    out.extend_from_slice(prefix);
-    out.extend_from_slice(suffix);
-    out
-}
-
-/// Lowercase hex encoder for the `Display` impl of `ValidatorEvent`. Inlined
-/// here (rather than pulling in the `hex` crate as a runtime dependency)
-/// because event formatting is the only consumer and the format is trivial.
-fn lowercase_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
 }
 
 #[cfg(test)]

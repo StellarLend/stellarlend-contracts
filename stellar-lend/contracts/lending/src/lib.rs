@@ -150,7 +150,7 @@ mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
 
-#[cfg(test))]
+#[cfg(test)]
 mod config_roundtrip_test;
 #[cfg(test)]
 mod utilization_history_test;
