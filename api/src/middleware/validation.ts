@@ -3,11 +3,22 @@ import { z, ZodError, ZodSchema } from 'zod';
 import { ValidationError } from '../utils/errors';
 import { I128String, PositiveI128String, StellarAddress } from '../utils/validators';
 
+/**
+ * Validates the request body against a provided Zod schema.
+ * Enforces strong input boundaries by stripping unrecognized fields
+ * and properly handling async validation rules.
+ *
+ * Invariants:
+ * 1. Invalid inputs deterministically fail before reaching controllers.
+ * 2. Unrecognized fields are stripped, preventing mass-assignment.
+ * 3. Supports asynchronous validations (e.g. state-transition checks).
+ * 4. Fails safely without leaking sensitive payload data.
+ */
 export const validateBody =
-  (schema: ZodSchema) => (req: Request, res: Response, next: NextFunction) => {
+  (schema: ZodSchema) => async (req: Request, res: Response, next: NextFunction) => {
     try {
-      req.body = schema.parse(req.body);
-      next();
+      req.body = await schema.parseAsync(req.body);
+      return next();
     } catch (error) {
       if (error instanceof ZodError) {
         const errorMessages = error.issues
