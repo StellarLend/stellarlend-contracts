@@ -46,7 +46,8 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     let amm_client = AmmContractClient::new(&env, &amm_id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    amm_client.init_pool(&ra, &rb, &token_a, &token_b);
+    let admin = Address::generate(&env);
+    amm_client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     (env, amm_id)
 }
 
