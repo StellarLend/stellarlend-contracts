@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { StellarService } from '../services/stellar.service';
+@import { StellarService } from '../services/stellar.service';
 import { DepositRequest, BorrowRequest, RepayRequest, WithdrawRequest } from '../types';
 import logger from '../utils/logger';
 import {
@@ -11,8 +11,6 @@ import {
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
-
-const stellarService = new StellarService();
 
 export interface ActivityResponse {
   data: Array<{
@@ -42,13 +40,13 @@ export class LendingController {
 
   /**
    * GET /api/lending/activity
-   * 
+   *
    * Returns paginated lending activity with cursor-based pagination.
-   * 
+   *
    * Query params:
    * - cursor: base64(ledger_sequence:event_index) — start after this position
    * - limit: items per page (default 20, max 100)
-   * 
+   *
    * The cursor guarantees stable ordering: new events arriving after the cursor
    * won't cause duplicates or gaps in the result set.
    */
@@ -117,12 +115,12 @@ export class LendingController {
 
   private parseLimit(limitParam: unknown): number {
     if (!limitParam) return DEFAULT_LIMIT;
-    
+
     const parsed = parseInt(limitParam as string, 10);
     if (isNaN(parsed) || parsed <= 0) {
       return DEFAULT_LIMIT;
     }
-    
+
     return Math.min(parsed, MAX_LIMIT);
   }
 
@@ -132,13 +130,13 @@ export class LendingController {
     }
 
     const cursor = cursorParam as string;
-    
+
     if (!isValidCursor(cursor)) {
       throw new Error(`Cursor decode failed: Invalid cursor format`);
     }
 
     const { ledgerSequence, eventIndex } = decodeCursor(cursor);
-    
+
     // For pagination, we want to start AFTER the cursor position
     // So we increment the event index within the same ledger
     return {
@@ -168,123 +166,9 @@ export const deposit = async (req: Request, res: Response, next: NextFunction) =
       return res.status(200).json(monitorResult);
     }
 
-    return res.status(400).json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const borrow = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { userAddress, assetAddress, amount, userSecret }: BorrowRequest = req.body;
-
-    logger.info('Processing borrow request', { userAddress, amount });
-
-    const txXdr = await stellarService.buildBorrowTransaction(
-      userAddress,
-      assetAddress,
-      amount,
-      userSecret
-    );
-
-    const result = await stellarService.submitTransaction(txXdr);
-
-    if (result.success && result.transactionHash) {
-      const monitorResult = await stellarService.monitorTransaction(result.transactionHash);
-      return res.status(200).json(monitorResult);
-    }
-
-    return res.status(400).json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const repay = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { userAddress, assetAddress, amount, userSecret }: RepayRequest = req.body;
-
-    logger.info('Processing repay request', { userAddress, amount });
-
-    const txXdr = await stellarService.buildRepayTransaction(
-      userAddress,
-      assetAddress,
-      amount,
-      userSecret
-    );
-
-    const result = await stellarService.submitTransaction(txXdr);
-
-    if (result.success && result.transactionHash) {
-      const monitorResult = await stellarService.monitorTransaction(result.transactionHash);
-      return res.status(200).json(monitorResult);
-    }
-
-    return res.status(400).json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const withdraw = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { userAddress, assetAddress, amount, userSecret }: WithdrawRequest = req.body;
-
-    logger.info('Processing withdraw request', { userAddress, amount });
-
-    const txXdr = await stellarService.buildWithdrawTransaction(
-      userAddress,
-      assetAddress,
-      amount,
-      userSecret
-    );
-
-    const result = await stellarService.submitTransaction(txXdr);
-
-    if (result.success && result.transactionHash) {
-      const monitorResult = await stellarService.monitorTransaction(result.transactionHash);
-      return res.status(200).json(monitorResult);
-    }
-
-    return res.status(400).json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const processHook = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    return res.status(200).json({ success: true, message: 'Hook authenticated' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const healthCheck = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const services = await stellarService.healthCheck();
-    const isHealthy = services.horizon && services.sorobanRpc;
-
-    res.status(isHealthy ? 200 : 503).json({
-      status: isHealthy ? 'healthy' : 'unhealthy',
-      timestamp: new Date().toISOString(),
-      services,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deepHealthCheck = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await stellarService.pingContract();
-    const isHealthy = result.rpc && result.contract;
-
-    res.status(isHealthy ? 200 : 503).json({
-      rpc: result.rpc,
-      contract: result.contract,
-      ledger: result.ledger,
-      timestamp: new Date().toISOString(),
+    return res.status(400).json({
+      success: false,
+      error: result.error || 'Transaction submission failed',
     });
   } catch (error) {
     next(error);
