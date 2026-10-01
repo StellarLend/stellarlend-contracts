@@ -2,9 +2,6 @@
 //!
 //! This example demonstrates how to use the reserve invariant checking system
 //! in the lending contract.
-
-#![cfg(test)]
-
 use soroban_sdk::{Address, Env};
 
 /// Example 1: Basic invariant check pattern
@@ -314,3 +311,5 @@ fn example_performance_impact() {
     // - Sampling (check 1 in 10 operations)
     // - Check only high-risk operations
 }
+
+fn main() {}

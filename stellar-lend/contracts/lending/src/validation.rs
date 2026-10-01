@@ -255,11 +255,7 @@ pub fn validate_health_factor(health_factor: i128) -> Result<(), ValidationError
 pub fn validate_timestamp(env: &Env, timestamp: u64) -> Result<(), ValidationError> {
     let current = env.ledger().timestamp();
 
-    let deviation = if timestamp > current {
-        timestamp - current
-    } else {
-        current - timestamp
-    };
+    let deviation = timestamp.abs_diff(current);
 
     if deviation > MAX_TIMESTAMP_DEVIATION_SECS {
         return Err(ValidationError::InvalidTimestamp);
@@ -356,7 +352,8 @@ pub fn validate_oracle_signature(
     pubkey: &BytesN<32>,
 ) -> Result<(), ValidationError> {
     // Verify Ed25519 signature
-    env.crypto().ed25519_verify(pubkey, message, signature);
+    env.crypto()
+        .ed25519_verify(pubkey, &message.clone().into(), signature);
 
     // Note: ed25519_verify panics on failure in Soroban
     // If we reach here, signature is valid
@@ -748,6 +745,7 @@ mod tests {
     #[test]
     fn test_validate_timestamp() {
         let env = Env::default();
+        env.ledger().set_timestamp(1_000_000);
         let current = env.ledger().timestamp();
 
         // Current timestamp is valid
@@ -767,6 +765,7 @@ mod tests {
     #[test]
     fn test_validate_price_freshness() {
         let env = Env::default();
+        env.ledger().set_timestamp(1_000_000);
         let current = env.ledger().timestamp();
 
         // Fresh price is valid

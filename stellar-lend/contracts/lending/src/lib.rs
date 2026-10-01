@@ -900,13 +900,20 @@ impl LendingContract {
         if timestamp > now || now > timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
             return Err(LendingError::StaleOracleTimestamp);
         }
-        // Monotonic timestamp enforcement
-        if let Some(last) = env
+        // Load the existing record once. The freshness and retry policy is:
+        // 1. A strictly older timestamp can never overwrite a newer record.
+        // 2. Two different prices can never share the same timestamp.
+        // 3. Replaying the exact current (price, timestamp) is an idempotent
+        //    retry: it is not an error, but it also does not mutate state.
+        let existing_record: Option<PriceRecord> = env
             .storage()
             .persistent()
-            .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-        {
-            if timestamp <= last.timestamp {
+            .get(&DataKey::OraclePrice(asset.clone()));
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp < last.timestamp {
+                return Err(LendingError::OracleReplay);
+            }
+            if timestamp == last.timestamp && price != last.price {
                 return Err(LendingError::OracleReplay);
             }
         }
@@ -918,12 +925,8 @@ impl LendingContract {
             .ok_or(LendingError::OraclePubkeyNotSet)?;
 
         let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
-        if !env
-            .crypto()
-            .ed25519_verify(&oracle_pubkey, &payload, &signature)
-        {
-            return Err(LendingError::InvalidOracleSignature);
-        }
+        env.crypto()
+            .ed25519_verify(&oracle_pubkey, &payload, &signature);
 
         // A retry of an already-applied update is a successful no-op. The
         // signature above proves the caller is authoritative for this payload.
@@ -1686,6 +1689,7 @@ impl LendingContract {
 
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
+
         Ok(new_balance)
     }
 
@@ -1722,6 +1726,7 @@ impl LendingContract {
 
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
+
         Ok(new_balance)
     }
 
@@ -1844,6 +1849,7 @@ impl LendingContract {
 
         // Emit borrow event
         emit_borrow(&env, &user, amount, updated.principal);
+
         Ok(updated.principal)
     }
 
@@ -4575,6 +4581,7 @@ pub(crate) mod test {
     #[test]
     fn test_set_price_rejects_older_timestamp_after_update() {
         let (env, client, admin, _user) = setup();
+        env.ledger().set_timestamp(1_000);
         let keypair = chrono_keypair();
         let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
         client.set_oracle_pubkey(&pubkey);
