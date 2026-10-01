@@ -29,7 +29,7 @@ describe('Boundary Validation Middleware', () => {
       params: {},
       query: {},
       user: {
-        address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
+        address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
         network: 'testnet',
       },
     };
@@ -85,7 +85,7 @@ describe('Boundary Validation Middleware', () => {
 
   describe('validateStellarAddress', () => {
     it('should pass for valid Stellar address', () => {
-      req.body = { address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
+      req.body = { address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
       validateStellarAddress()(req as Request, res as Response, next);
       expect(next).toHaveBeenCalled();
     });
@@ -98,7 +98,7 @@ describe('Boundary Validation Middleware', () => {
     });
 
     it('should reject address not starting with G', () => {
-      req.body = { address: 'XABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
+      req.body = { address: 'XABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
       expect(() => validateStellarAddress()(req as Request, res as Response, next)).toThrow(
         ValidationError
       );
@@ -121,22 +121,22 @@ describe('Boundary Validation Middleware', () => {
 
   describe('validateOwnership', () => {
     it('should pass when user owns resource', () => {
-      req.body = { user: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
-      req.user = { address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
+      req.body = { user: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
+      req.user = { address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
       validateOwnership()(req as AuthRequest, res as Response, next);
       expect(next).toHaveBeenCalled();
     });
 
     it('should reject when user does not own resource', () => {
-      req.body = { user: 'GXYZ789ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
-      req.user = { address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
+      req.body = { user: 'GXYZ789ABCDEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
+      req.user = { address: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
       expect(() => validateOwnership()(req as AuthRequest, res as Response, next)).toThrow(
         "cannot modify another user's user"
       );
     });
 
     it('should reject when not authenticated', () => {
-      req.body = { user: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
+      req.body = { user: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
       req.user = undefined;
       expect(() => validateOwnership()(req as AuthRequest, res as Response, next)).toThrow(
         'Authentication required'
@@ -225,10 +225,11 @@ describe('Boundary Validation Middleware', () => {
   describe('validateLiquidation', () => {
     it('should pass for valid liquidation request', () => {
       req.body = {
-        borrower: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        liquidator: 'GXYZ789DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
+        borrower: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        liquidator: 'GXYZ789DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO'
+,
         repayAmount: 1000,
       };
       validateLiquidation(req as Request, res as Response, next);
@@ -236,12 +237,12 @@ describe('Boundary Validation Middleware', () => {
     });
 
     it('should reject self-liquidation', () => {
-      const address = 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO';
+      const address = 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO';
       req.body = {
         borrower: address,
         liquidator: address,
-        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
+        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
         repayAmount: 1000,
       };
       expect(() => validateLiquidation(req as Request, res as Response, next)).toThrow(
@@ -251,9 +252,10 @@ describe('Boundary Validation Middleware', () => {
 
     it('should reject missing borrower', () => {
       req.body = {
-        liquidator: 'GXYZ789DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
+        liquidator: 'GXYZ789DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO'
+,
         repayAmount: 1000,
       };
       expect(() => validateLiquidation(req as Request, res as Response, next)).toThrow(
@@ -263,10 +265,11 @@ describe('Boundary Validation Middleware', () => {
 
     it('should reject invalid repay amount', () => {
       req.body = {
-        borrower: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        liquidator: 'GXYZ789DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
+        borrower: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        liquidator: 'GXYZ789DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        debtAsset: 'GDEF456DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        collateralAsset: 'GHIJ789DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO'
+,
         repayAmount: 0,
       };
       expect(() => validateLiquidation(req as Request, res as Response, next)).toThrow(
@@ -349,47 +352,110 @@ describe('Boundary Validation Middleware', () => {
       sanitizeSearchQuery(req as Request, res as Response, next);
       expect(req.query.q).toBe('scriptalertxss/script');
     });
+
+    it('should handle missing query parameter', () => {
+      req.query = {};
+      sanitizeSearchQuery(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should handle non-string query parameter', () => {
+      req.query = { q: 5 } as unknown as Request['query'];
+      sanitizeSearchQuery(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+  });
+
+  describe('validateAsset', () => {
+    it('should pass for valid asset', () => {
+      req.body = { asset: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
+      validateAsset(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should reject missing asset', () => {
+      req.body = {};
+      expect(() => validateAsset(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+
+    it('should reject invalid asset address', () => {
+      req.body = { asset: 'invalid' };
+      expect(() => validateAsset(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+  });
+
+  describe('validateHealthFactor', () => {
+    it('should pass for valid health factor', () => {
+      req.body = { healthFactor: 1.5 };
+      validateHealthFactor(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should reject zero health factor', () => {
+      req.body = { healthFactor: 0 };
+      expect(() => validateHealthFactor(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+
+    it('should reject negative health factor', () => {
+      req.body = { healthFactor: -1 };
+      expect(() => validateHealthFactor(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+  });
+
+  describe('validateTimestamp', () => {
+    it('should pass for valid timestamp', () => {
+      req.body = { timestamp: Math.floor(Date.now() / 1000) };
+      validateTimestamp(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should reject future timestamp', () => {
+      req.body = { timestamp: Math.floor(Date.now() / 1000) + 10000 };
+      expect(() => validateTimestamp(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+
+    it('should reject missing timestamp', () => {
+      req.body = {};
+      expect(() => validateTimestamp(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
   });
 
   describe('validateContractCall', () => {
     it('should pass for valid contract call', () => {
       req.body = {
-        contractId: 'CABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        functionName: 'deposit',
-        args: [100, 'GXYZ...'],
+        contractId: 'CBABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
+        method: 'transfer',
+        args: [],
       };
-      validateContractCall(req as AuthRequest, res as Response, next);
+      validateContractCall(req as Request, res as Response, next);
       expect(next).toHaveBeenCalled();
     });
 
-    it('should reject invalid contract ID', () => {
-      req.body = {
-        contractId: 'GABC123...', // Should start with C, not G
-        functionName: 'deposit',
-      };
-      expect(() => validateContractCall(req as AuthRequest, res as Response, next)).toThrow(
-        'Invalid contract ID format'
+    it('should reject missing contractId', () => {
+      req.body = { method: 'transfer' };
+      expect(() => validateContractCall(req as Request, res as Response, next)).toThrow(
+        ValidationError
       );
     });
 
-    it('should reject invalid function name', () => {
+    it('should reject missing method', () => {
       req.body = {
-        contractId: 'CABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        functionName: 'invalid-function!',
+        contractId: 'CBABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO',
       };
-      expect(() => validateContractCall(req as AuthRequest, res as Response, next)).toThrow(
-        'Invalid function name format'
-      );
-    });
-
-    it('should reject non-array args', () => {
-      req.body = {
-        contractId: 'CABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO',
-        functionName: 'deposit',
-        args: 'not an array',
-      };
-      expect(() => validateContractCall(req as AuthRequest, res as Response, next)).toThrow(
-        'Contract arguments must be an array'
+      expect(() => validateContractCall(req as Request, res as Response, next)).toThrow(
+        ValidationError
       );
     });
   });

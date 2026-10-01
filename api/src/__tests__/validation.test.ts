@@ -1,16 +1,10 @@
 import crypto from 'crypto';
 import request from 'supertest';
 import { z } from 'zod';
-import {
-  validateBody,
-  lendingRequestSchema,
-  depositValidation,
-  borrowValidation,
-  repayValidation,
-  withdrawValidation,
-} from '../middleware/validation';
-import { I128String, PositiveI128String, StellarAddress } from '../utils/validators';
-import logger from '../utils/logger';
+import { validateBody } from '../middleware/validation';
+import { I128String, StellarAddress } from '../utils/validators';
+import { validateBody } from '../middleware/validation';
+import { I128String, StellarAddress } from '../utils/validators';
 
 const mockStellarService = {
   buildDepositTransaction: jest.fn(),
