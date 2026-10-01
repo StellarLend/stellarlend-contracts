@@ -109,6 +109,8 @@ pub fn get_pending_admin(env: &Env) -> Option<Address> {
 // the lookup here ensures every module uses the same admin storage and
 // initialization semantics.
 ///
+/// Modules such as `interest_rate` must use this helper (or
+/// [`get_admin`]/[`has_admin`]) rather than maintaining a separate admin key.
 // The caller's own error type is provided via a conversion closure so that
 // each module can map the shared [`AdminError`] into its own domain error
 // without reintroducing a duplicate admin check.
