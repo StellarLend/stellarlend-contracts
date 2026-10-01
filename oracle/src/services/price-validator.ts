@@ -25,12 +25,20 @@ export interface ValidatorConfig {
     maxFallbackStalenessSeconds?: number;
 }
 
+/**
+/**
+ * Cached price entry with the source timestamp used for freshness checks.
+ */
 interface CachedPrice {
     price: number;
     timestamp: number;
     volume24h?: number;
 }
 
+/**
+/**
+ * Default validator configuration
+ */
 const DEFAULT_CONFIG: ValidatorConfig = {
     maxDeviationPercent: 10,
     maxStalenessSeconds: 300,
@@ -55,11 +63,6 @@ function isRepresentableScaledPrice(scaledPrice: bigint): boolean {
 /**
  * Price Validator
  */
-interface CachedPrice {
-    price: number;
-    timestamp: number;
-}
-
 interface PendingPrice {
     price: number;
     timestamp: number;

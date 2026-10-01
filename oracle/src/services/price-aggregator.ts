@@ -73,33 +73,28 @@ export class PriceAggregator {
         const resolvedConfig: Required<AggregatorConfig> = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
 
         if (!Number.isInteger(resolvedConfig.minSources) || resolvedConfig.minSources < 1) {
-            throw new Error('minSources must be an integer of at least 1');
+            throw new Error('minSources must be a positive integer');
         }
         if (!Number.isFinite(resolvedConfig.maxStalenessMs) || resolvedConfig.maxStalenessMs < 0) {
-            throw new Error('maxStalenessMs must be a finite number greater than or equal to 0');
+            throw new Error('maxStalenessMs must be a non-negative finite number');
         }
-        if (
-            !Number.isFinite(resolvedConfig.maxFallbackAgeMs) ||
-            resolvedConfig.maxFallbackAgeMs < resolvedConfig.maxStalenessMs
-        ) {
-            throw new Error(
-                'maxFallbackAgeMs must be a finite number greater than or equal to maxStalenessMs',
-            );
+        if (!Number.isFinite(resolvedConfig.maxFallbackAgeMs) || resolvedConfig.maxFallbackAgeMs < 0) {
+            throw new Error('maxFallbackAgeMs must be a non-negative finite number');
         }
-        if (!Number.isInteger(resolvedConfig.providerRetries) || resolvedConfig.providerRetries < 0) {
-            throw new Error('providerRetries must be a non-negative integer');
-        }
-        if (
-            !Number.isFinite(resolvedConfig.retryBackoffMs) ||
-            resolvedConfig.retryBackoffMs < 0
-        ) {
-            throw new Error('retryBackoffMs must be a finite number greater than or equal to 0');
+        if (resolvedConfig.maxFallbackAgeMs < resolvedConfig.maxStalenessMs) {
+            throw new Error('maxFallbackAgeMs must be greater than or equal to maxStalenessMs');
         }
         if (
             !Number.isFinite(resolvedConfig.madZScoreThreshold) ||
             resolvedConfig.madZScoreThreshold < 0
         ) {
-            throw new Error('madZScoreThreshold must be a finite number greater than or equal to 0');
+            throw new Error('madZScoreThreshold must be a non-negative finite number');
+        }
+        if (!Number.isInteger(resolvedConfig.providerRetries) || resolvedConfig.providerRetries < 0) {
+            throw new Error('providerRetries must be a non-negative integer');
+        }
+        if (!Number.isFinite(resolvedConfig.retryBackoffMs) || resolvedConfig.retryBackoffMs < 0) {
+            throw new Error('retryBackoffMs must be a non-negative finite number');
         }
 
         this.config = resolvedConfig;
@@ -116,6 +111,7 @@ export class PriceAggregator {
     async getPrice(asset: string): Promise<AggregatedPrice | null> {
         const upperAsset = asset.toUpperCase();
         const now = Date.now();
+
         const cachedPrice = this.cache.getPrice(upperAsset);
         const cachedAt = this.cacheTimestamps.get(upperAsset);
 
