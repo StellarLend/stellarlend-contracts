@@ -1,4 +1,22 @@
-import { createHash } from 'crypto';
+/**
+ * Contract Updater Service
+ *
+ * Submits signed price-update transactions to the StellarLend on-chain
+ * contract via Soroban RPC.  Invariants:
+ *
+ * I-1  Every public write method validates its inputs before touching the network.
+ * I-2  The admin secret key is NEVER included in log output or error messages.
+ * I-3  The retry loop uses exponential back-off and terminates after maxRetries.
+ * I-4  The transaction-poll loop is bounded by txPollTimeoutMs; it throws after
+ *      that deadline rather than spinning forever.
+ * I-5  updatePrices processes assets sequentially; a failure for one asset does
+ *      NOT abort subsequent assets.
+ *
+ * Two entry points share the same on-chain submission path:
+ *  - updatePrice / updatePrices : validated, never throws, returns ContractUpdateResult.
+ *  - submitPriceUpdate          : idempotent, per-asset serialized, stale-checked,
+ *                                 adapter-based; throws on failure.
+ */
 
 /**
  * Contract Updater — deterministic, failure-safe price upload orchestration.

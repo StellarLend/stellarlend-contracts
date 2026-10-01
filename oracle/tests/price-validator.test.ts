@@ -2,7 +2,7 @@
  * Tests for Price Validator Service
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { PriceValidator, createValidator } from '../src/services/price-validator.js';
 import { DEFAULT_PRICE_BOUNDS } from '../src/config.js';
 import type { RawPriceData } from '../src/types/index.js';
@@ -356,6 +356,261 @@ describe('PriceValidator', () => {
             const result = validator.validate(coingeckoPrice);
 
             expect(result.price?.confidence).toBeGreaterThan(0);
+        });
+    });
+
+    describe('failure paths and boundary conditions', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('should reject NaN price deterministically', () => {
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: NaN,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.price).toBeUndefined();
+            expect(result.errors.length).toBeGreaterThan(0);
+        });
+
+        it('should reject Infinity price deterministically', () => {
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: Infinity,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.price).toBeUndefined();
+        });
+
+        it('should reject negative Infinity price deterministically', () => {
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: -Infinity,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+        });
+
+        it('should reject empty asset identifier', () => {
+            const rawPrice: RawPriceData = {
+                asset: '',
+                price: 0.15,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+        });
+
+        it('should reject empty source identifier', () => {
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: '',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+        });
+
+        it('should reject future-dated timestamps beyond tolerance', () => {
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: Math.floor(Date.now() / 1000) + 3600,
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+        });
+
+        it('should accept price exactly at staleness boundary', () => {
+            const now = Math.floor(Date.now() / 1000);
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: now - 300,
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(true);
+        });
+
+        it('should reject price one second past staleness boundary', () => {
+            const now = Math.floor(Date.now() / 1000);
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: now - 301,
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.errors.some(e => e.code === 'PRICE_STALE')).toBe(true);
+        });
+
+        it('should accept price exactly at max deviation boundary', () => {
+            const initialPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 100,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'binance',
+            };
+            validator.validate(initialPrice);
+
+            const boundaryPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 110,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(boundaryPrice);
+
+            expect(result.isValid).toBe(true);
+        });
+
+        it('should reject price one unit past max deviation boundary', () => {
+            const initialPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 100,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'binance',
+            };
+            validator.validate(initialPrice);
+
+            const boundaryPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 110.01,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const result = validator.validate(boundaryPrice);
+
+            expect(result.isValid).toBe(false);
+            expect(result.errors.some(e => e.code === 'PRICE_DEVIATION_TOO_HIGH')).toBe(true);
+        });
+
+        it('should not update cache when validation fails', () => {
+            const invalidPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            validator.validate(invalidPrice);
+
+            const cacheState = validator.getCacheState();
+            expect(cacheState['XLM']).toBeUndefined();
+        });
+
+        it('should handle duplicate valid prices idempotently', () => {
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: Math.floor(Date.now() / 1000),
+                source: 'coingecko',
+            };
+
+            const first = validator.validate(rawPrice);
+            const second = validator.validate(rawPrice);
+
+            expect(first.isValid).toBe(true);
+            expect(second.isValid).toBe(true);
+            expect(validator.getCacheState()['XLM']).toBe(0.15);
+        });
+
+        it('should not mutate cache on partial failure in validateMany', () => {
+            const prices: RawPriceData[] = [
+                { asset: 'XLM', price: 0.15, timestamp: Math.floor(Date.now() / 1000), source: 'coingecko' },
+                { asset: 'BTC', price: NaN, timestamp: Math.floor(Date.now() / 1000), source: 'coingecko' },
+            ];
+
+            const results = validator.validateMany(prices);
+
+            expect(results[0].isValid).toBe(true);
+            expect(results[1].isValid).toBe(false);
+            expect(validator.getCacheState()['BTC']).toBeUndefined();
+        });
+
+        it('should reject price with trusted signer but wrong signer field', () => {
+            const kp = Keypair.random();
+            const other = Keypair.random();
+
+            const signedValidator = new PriceValidator(
+                { maxDeviationPercent: 10, maxStalenessSeconds: 300, minPrice: 0.0001, maxPrice: 1000000 },
+                DEFAULT_PRICE_BOUNDS,
+                { coingecko: [kp.publicKey()] },
+            );
+
+            const ts = Math.floor(Date.now() / 1000);
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: ts,
+                source: 'coingecko',
+                signer: other.publicKey(),
+                signature: other
+                    .sign(Buffer.from(`StellarLendOracle|XLM|0.15|${ts}|coingecko`, 'utf8'))
+                    .toString('base64'),
+            };
+
+            const result = signedValidator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
+        });
+
+        it('should reject price with tampered signature payload', () => {
+            const kp = Keypair.random();
+
+            const signedValidator = new PriceValidator(
+                { maxDeviationPercent: 10, maxStalenessSeconds: 300, minPrice: 0.0001, maxPrice: 1000000 },
+                DEFAULT_PRICE_BOUNDS,
+                { coingecko: [kp.publicKey()] },
+            );
+
+            const ts = Math.floor(Date.now() / 1000);
+            const rawPrice: RawPriceData = {
+                asset: 'XLM',
+                price: 0.15,
+                timestamp: ts,
+                source: 'coingecko',
+                signer: kp.publicKey(),
+                signature: kp
+                    .sign(Buffer.from(`StellarLendOracle|XLM|0.16|${ts}|coingecko`, 'utf8'))
+                    .toString('base64'),
+            };
+
+            const result = signedValidator.validate(rawPrice);
+
+            expect(result.isValid).toBe(false);
         });
     });
 });

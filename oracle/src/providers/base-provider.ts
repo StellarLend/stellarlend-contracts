@@ -85,6 +85,7 @@ export abstract class BasePriceProvider {
     protected lastRequestTime: number = 0;
     protected requestCount: number = 0;
     protected windowStartTime: number = Date.now();
+    private rateLimitQueue: Promise<void> = Promise.resolve();
     public cooldownUntil: number = 0;
 
     /**

@@ -1,4 +1,3 @@
-#![cfg(any())]
 //! Cross-contract flash loan repayment integration tests.
 //!
 //! Covers the end-to-end flash loan path with two concrete receiver variants:
@@ -119,6 +118,8 @@ fn setup_lending<'a>(
 
     // Disable fee by default — tests that need fee accounting override it.
     client.set_flash_fee(&0);
+    // Raise max flash limit so tests can borrow 100% of treasury.
+    client.set_max_flash_bps(&10_000);
 
     let asset = Address::generate(env);
     seed_treasury(env, &lending_id, &asset, treasury_balance);
@@ -824,4 +825,29 @@ fn test_flash_active_cleared_after_failure() {
         !read_flash_active(&env, &lending_id),
         "FlashActive must be false after failed flash loan (rollback guarantee)"
     );
+}
+
+/// Exercise the repayment entrypoint itself, independently of callback test doubles.
+#[test]
+fn test_repay_flash_loan_credits_treasury_and_debits_payer() {
+    let env = Env::default();
+    let (lending_id, client, asset, payer) = setup_lending(&env, 9_000);
+    seed_balance(&env, &lending_id, &asset, &payer, 1_005);
+
+    client.repay_flash_loan(&payer, &asset, &1_005);
+
+    assert_eq!(read_treasury(&env, &lending_id, &asset), 10_005);
+    assert_eq!(read_balance(&env, &lending_id, &asset, &payer), 0);
+}
+
+#[test]
+fn test_repay_flash_loan_insufficient_balance_preserves_state() {
+    let env = Env::default();
+    let (lending_id, client, asset, payer) = setup_lending(&env, 9_000);
+    seed_balance(&env, &lending_id, &asset, &payer, 999);
+
+    assert!(client.try_repay_flash_loan(&payer, &asset, &1_000).is_err());
+
+    assert_eq!(read_treasury(&env, &lending_id, &asset), 9_000);
+    assert_eq!(read_balance(&env, &lending_id, &asset, &payer), 999);
 }
