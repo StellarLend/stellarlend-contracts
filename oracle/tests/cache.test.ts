@@ -15,6 +15,29 @@ describe('Cache', () => {
         });
     });
 
+    describe('validation and boundaries', () => {
+        it('should throw on invalid defaultTtlSeconds', () => {
+            expect(() => createCache({ defaultTtlSeconds: -1 })).toThrow();
+            expect(() => createCache({ defaultTtlSeconds: Infinity })).toThrow();
+            expect(() => createCache({ defaultTtlSeconds: NaN })).toThrow();
+        });
+
+        it('should throw on invalid staleTtlSeconds', () => {
+            expect(() => createCache({ staleTtlSeconds: -5 })).toThrow();
+        });
+
+        it('should throw on invalid maxEntries', () => {
+            expect(() => createCache({ maxEntries: 0 })).toThrow();
+            expect(() => createCache({ maxEntries: -10 })).toThrow();
+            expect(() => createCache({ maxEntries: 1.5 })).toThrow();
+        });
+
+        it('should throw on invalid TTL in set()', () => {
+            expect(() => cache.set('key', 'val', -1)).toThrow();
+            expect(() => cache.set('key', 'val', NaN)).toThrow();
+        });
+    });
+
     describe('get/set', () => {
         it('should store and retrieve values', () => {
             cache.set('key1', 'value1');
@@ -100,6 +123,36 @@ describe('Cache', () => {
         });
     });
 
+    describe('getStale', () => {
+        it('should return undefined for missing keys', () => {
+            expect(cache.getStale('nonexistent')).toBeUndefined();
+        });
+
+        it('should return fresh data with isStale false', () => {
+            cache.set('fresh', 'value');
+            expect(cache.getStale('fresh')).toEqual({ data: 'value', isStale: false });
+        });
+
+        it('should return stale data with isStale true if within grace period', async () => {
+            cache = createCache({ defaultTtlSeconds: 0.05, staleTtlSeconds: 0.2 });
+            cache.set('stale_data', 'value');
+
+            await new Promise(r => setTimeout(r, 100));
+
+            expect(cache.getStale('stale_data')).toEqual({ data: 'value', isStale: true });
+        });
+
+        it('should return undefined and delete if past hard expiry', async () => {
+            cache = createCache({ defaultTtlSeconds: 0.05, staleTtlSeconds: 0.05 });
+            cache.set('hard_expired', 'value');
+
+            await new Promise(r => setTimeout(r, 150));
+
+            expect(cache.getStale('hard_expired')).toBeUndefined();
+            expect(cache.getStats().size).toBe(0);
+        });
+    });
+
     describe('clear', () => {
         it('should remove all entries', () => {
             cache.set('key1', 'value1');
@@ -171,6 +224,29 @@ describe('Cache', () => {
             expect(cleaned).toBe(2);
             expect(cache.getStats().size).toBe(0);
         });
+
+        it('should preserve stale entries during grace period', async () => {
+            // defaultTtl: 0.05s, staleTtl: 0.2s -> hard expiry at 0.25s
+            cache = createCache({ defaultTtlSeconds: 0.05, staleTtlSeconds: 0.2 });
+
+            cache.set('stale_but_preserved', 1);
+
+            // Wait 100ms: past freshness, but within stale grace period
+            await new Promise(r => setTimeout(r, 100));
+
+            const cleaned = cache.cleanup();
+            
+            // Should not be cleaned up yet
+            expect(cleaned).toBe(0);
+            expect(cache.getStats().size).toBe(1);
+
+            // Wait another 200ms: past hard expiry (total > 300ms)
+            await new Promise(r => setTimeout(r, 200));
+
+            const cleanedAfter = cache.cleanup();
+            expect(cleanedAfter).toBe(1);
+            expect(cache.getStats().size).toBe(0);
+        });
     });
 });
 
@@ -179,6 +255,38 @@ describe('PriceCache', () => {
 
     beforeEach(() => {
         priceCache = createPriceCache(30);
+    });
+
+    describe('getPriceWithState', () => {
+        it('should return undefined if no price', () => {
+            expect(priceCache.getPriceWithState('NONEXISTENT')).toBeUndefined();
+        });
+
+        it('should return price with isStale false when fresh', () => {
+            const now = Date.now();
+            priceCache.setPrice('FRESH', 1000n, 10, now);
+            const state = priceCache.getPriceWithState('FRESH');
+            expect(state).toEqual({
+                price: 1000n,
+                isStale: false,
+                updatedAt: now
+            });
+        });
+
+        it('should return price with isStale true when stale', async () => {
+            const shortCache = createPriceCache(0.05, 0.2);
+            const now = Date.now();
+            shortCache.setPrice('STALE', 1000n, undefined, now);
+
+            await new Promise(r => setTimeout(r, 100));
+
+            const state = shortCache.getPriceWithState('STALE');
+            expect(state).toEqual({
+                price: 1000n,
+                isStale: true,
+                updatedAt: now
+            });
+        });
     });
 
     describe('price operations', () => {
@@ -190,6 +298,20 @@ describe('PriceCache', () => {
             expect(priceCache.getPrice('XLM')).toBe(price);
         });
 
+        it('should get stale price if within grace period', async () => {
+            const shortCache = createPriceCache(0.05, 0.2);
+            shortCache.setPrice('STALE', 1000n);
+            await new Promise(r => setTimeout(r, 100));
+            expect(shortCache.getPrice('STALE')).toBe(1000n);
+        });
+
+        it('should return undefined if price is past hard expiry', async () => {
+            const shortCache = createPriceCache(0.05, 0.05);
+            shortCache.setPrice('EXPIRED', 1000n);
+            await new Promise(r => setTimeout(r, 150));
+            expect(shortCache.getPrice('EXPIRED')).toBeUndefined();
+        });
+
         it('should normalize asset symbols to uppercase', () => {
             priceCache.setPrice('xlm', 150000n);
 
@@ -197,11 +319,42 @@ describe('PriceCache', () => {
             expect(priceCache.getPrice('xlm')).toBe(150000n);
         });
 
-        it('should check if price exists', () => {
-            priceCache.setPrice('BTC', 50000000000n);
+        it('should check if price exists and include stale but not expired', async () => {
+            // Using small TTLs to test expiration
+            const shortCache = createPriceCache(0.05, 0.2);
+            shortCache.setPrice('BTC', 50000000000n);
 
-            expect(priceCache.hasPrice('BTC')).toBe(true);
-            expect(priceCache.hasPrice('ETH')).toBe(false);
+            expect(shortCache.hasPrice('BTC')).toBe(true);
+
+            // Wait 100ms - should be stale but within grace period
+            await new Promise(r => setTimeout(r, 100));
+            expect(shortCache.hasPrice('BTC')).toBe(true);
+
+            // Wait another 200ms - should cross hard expiry
+            await new Promise(r => setTimeout(r, 200));
+            expect(shortCache.hasPrice('BTC')).toBe(false);
+            
+            expect(shortCache.hasPrice('ETH')).toBe(false);
+        });
+    });
+
+    describe('setPriceIfNewer', () => {
+        it('should update price if newer', () => {
+            const olderTime = Date.now() - 1000;
+            priceCache.setPrice('XLM', 150000n, undefined, olderTime);
+
+            const result = priceCache.setPriceIfNewer('XLM', 160000n, Date.now());
+            expect(result).toBe(true);
+            expect(priceCache.getPrice('XLM')).toBe(160000n);
+        });
+
+        it('should not update price if older or equal timestamp', () => {
+            const newerTime = Date.now();
+            priceCache.setPrice('XLM', 150000n, undefined, newerTime);
+
+            const result = priceCache.setPriceIfNewer('XLM', 140000n, newerTime - 1000);
+            expect(result).toBe(false);
+            expect(priceCache.getPrice('XLM')).toBe(150000n); // Unchanged
         });
     });
 
@@ -214,6 +367,31 @@ describe('PriceCache', () => {
 
             expect(priceCache.hasPrice('XLM')).toBe(false);
             expect(priceCache.hasPrice('BTC')).toBe(false);
+        });
+    });
+
+    describe('recover', () => {
+        it('should purge hard-expired entries and return count', async () => {
+            const shortCache = createPriceCache(0.05, 0.05); // hard expiry at 0.1s
+            shortCache.setPrice('BTC', 100n);
+            shortCache.setPrice('ETH', 200n);
+
+            await new Promise(r => setTimeout(r, 150));
+
+            const recoveredCount = shortCache.recover();
+            expect(recoveredCount).toBe(2);
+            expect(shortCache.hasPrice('BTC')).toBe(false);
+        });
+
+        it('should preserve stale entries within grace period during recovery', async () => {
+            const shortCache = createPriceCache(0.05, 0.5); // hard expiry at 0.55s
+            shortCache.setPrice('BTC', 100n);
+
+            await new Promise(r => setTimeout(r, 100)); // Stale but not hard-expired
+
+            const recoveredCount = shortCache.recover();
+            expect(recoveredCount).toBe(0);
+            expect(shortCache.hasPrice('BTC')).toBe(true);
         });
     });
 

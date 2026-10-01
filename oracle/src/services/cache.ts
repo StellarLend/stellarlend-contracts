@@ -108,8 +108,7 @@ export class Cache {
         const now = Date.now();
         if (now > entry.expiresAt) {
             // Expired: check stale window
-            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
-            if (now > staleExpiresAt) {
+            if (now > (entry as CacheEntryWithHardExpiry<T>).hardExpiresAt) {
                 this.store.delete(key);
                 this.misses++;
                 return undefined;
@@ -227,7 +226,7 @@ export class Cache {
         let cleaned = 0;
 
         for (const [key, entry] of this.store) {
-            if (now > entry.expiresAt) {
+            if (now > entry.hardExpiresAt) {
                 this.store.delete(key);
                 cleaned++;
             }
@@ -320,7 +319,8 @@ export class PriceCache {
      * Check if we have a usable cached price (fresh or within stale TTL).
      */
     hasPrice(asset: string): boolean {
-        return this.cache.has(`${this.keyPrefix}${asset.toUpperCase()}`);
+        const key = `${this.keyPrefix}${asset.toUpperCase()}`;
+        return this.cache.getStale(key) !== undefined;
     }
 
     /**
