@@ -54,6 +54,8 @@ mod inverse_swap_doc_example_test;
 #[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
+mod repay_flash_swap_contract_test;
+#[cfg(test)]
 mod sqrt_precision_test;
 #[cfg(test)]
 mod stored_fee_test;
