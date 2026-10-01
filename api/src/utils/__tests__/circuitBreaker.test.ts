@@ -66,3 +66,32 @@ describe('CircuitBreaker', () => {
     expect(cb.getState()).toBe('OPEN');
   });
 });
+
+describe('CircuitBreaker window eviction', () => {
+  it('drops events that fall outside the rolling window', () => {
+    const now = 1_000_000;
+    const spy = jest.spyOn(Date, 'now').mockReturnValue(now);
+    const breaker = new CircuitBreaker({ windowMs: 1000, minRequests: 1 });
+
+    breaker.record(true);
+    breaker.record(false);
+    expect(breaker.getMetrics().total).toBe(2);
+
+    // Move past the window so the oldest samples are evicted.
+    spy.mockReturnValue(now + 5000);
+
+    const metrics = breaker.getMetrics();
+    expect(metrics.total).toBe(0);
+    expect(metrics.failureRate).toBe(0);
+
+    spy.mockRestore();
+  });
+
+  it('reports a zero failure rate before any sample is recorded', () => {
+    const breaker = new CircuitBreaker();
+
+    expect(breaker.getMetrics()).toEqual(
+      expect.objectContaining({ total: 0, failures: 0, failureRate: 0 })
+    );
+  });
+});
