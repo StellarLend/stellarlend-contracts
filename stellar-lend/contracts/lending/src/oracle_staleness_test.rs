@@ -1,6 +1,7 @@
 use super::*;
 use crate::debt::{save_debt, DebtPosition, INDEX_SCALE};
 use ed25519_dalek::{Keypair, Signer};
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, Symbol};

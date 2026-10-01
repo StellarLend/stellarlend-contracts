@@ -6,6 +6,13 @@
 #   cd stellar-lend && cargo audit
 # If an advisory has been fixed upstream in a crate we can update to,
 # remove the ignore entry, update the crate, and re-test.
+#
+# Every entry below must carry a one-line rationale explaining why the
+# advisory does not apply to code we actually ship. cargo-audit reports
+# warning-severity advisories without failing the build, so an advisory can
+# appear in `cargo audit` output while being absent from this list. When
+# adding an entry, also confirm the advisory is not merely a tolerated
+# warning: either it is unignored and explained here, or it is removed.
 
 [advisories]
 ignore = [
@@ -29,6 +36,7 @@ ignore = [
     # ── Contract dev-dependency (test-only, not in production WASM) ──
     "RUSTSEC-2022-0093",  # ed25519-dalek v1.0.1 - Double-signature oracle attack on decoupled Keypair API; used only as a test dev-dependency in lending crate to generate test keypairs, never exposed to adversarial oracle inputs
     "RUSTSEC-2024-0344",  # curve25519-dalek - Timing variability in Scalar::sub via compiler branch insertion; contracts run in WASM interpreter (not native), timing side-channels are not observable
+    "RUSTSEC-2026-0097",  # rand 0.7.3 - Unsound only when a custom logger itself calls rand::rng() and ThreadRng reseeds inside it; rand 0.7 is a dev-dependency of contracts/lending used solely in #[cfg(test)] keypair generation via OsRng, and no custom logger is installed
 
     # ── No upgrade path available ──
     "RUSTSEC-2023-0071",  # rsa v0.9.x - Marvin Attack timing side-channel on RSA decryption; no fixed release in the 0.9.x line, upgrading to 0.10+ is a breaking change blocked by upstream Soroban SDK

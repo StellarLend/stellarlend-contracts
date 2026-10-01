@@ -191,10 +191,16 @@ async function withdrawCollateral(
   }
 }
 
+function logTransactionFailure(operation: string, status: number): void {
+  console.error(`❌ ${operation} failed: API reported failure`);
+  console.error(`   Status: ${status}`);
+}
+
 /**
  * Handle API errors
  */
 function handleError(operation: string, error: unknown): void {
+  // Exception messages and response bodies may echo credentials; log safe metadata only.
   if (axios.isAxiosError(error)) {
     const axiosError = error as AxiosError;
     if (axiosError.response) {
