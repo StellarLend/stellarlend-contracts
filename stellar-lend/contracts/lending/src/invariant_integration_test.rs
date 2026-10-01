@@ -1,225 +1,206 @@
-//! Integration tests for reserve invariant checking.
+//! Integration coverage for the reserve-invariant module (`invariants.rs`).
 //!
-//! These tests verify that:
-//! 1. Invariants pass when balances match accounting
-//! 2. Invariants panic when drift is detected
-//! 3. All state-changing operations have invariant checks
+//! These tests drive the canonical `LendingContract` and then assert on the
+//! reserve invariant using a **real** SEP-41 token balance, so the checkpoint
+//! helpers exercise the token-client path rather than a hand-written accounting
+//! value. A mocked `TokenClient` that always returns the expected number proves
+//! nothing; minting real units and moving them with `transfer` does.
+//!
+//! ## Why these checks are not wired into the entrypoints
+//!
+//! `compute_expected_reserve` models only `TotalDeposits - BadDebt`, and the
+//! legacy single-asset flows invalidate that model in both directions:
+//!
+//! * `deposit`/`withdraw` mutate `TotalDeposits` without moving a single token,
+//!   so the accounting ledger and the contract's token balance necessarily
+//!   diverge.
+//! * `liquidate` moves both tokens (repayment in, seized collateral out)
+//!   without touching `TotalDeposits`.
+//!
+//! Enabling `check_invariant_*` inside those paths therefore makes every call
+//! trap. The checks stay opt-in and are exercised directly here;
+//! [`legacy_deposit_mutates_accounting_without_moving_tokens`] is the regression
+//! guard for that decision — if the legacy path ever starts moving tokens, the
+//! wiring decision can be revisited.
 
-#![cfg(test)]
-
-use crate::{invariants, DataKey, LendingContract, LendingContractClient};
-use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, LedgerInfo},
+    testutils::Address as _,
+    token::{Client as TokenClient, StellarAssetClient},
     Address, Env,
 };
 
-/// Set up a test environment with a lending contract and mock token.
-fn setup_test_env() -> (Env, Address, Address, LendingContractClient) {
+use crate::{invariants, DataKey, LendingContract, LendingContractClient};
+
+/// Register an initialized lending contract.
+fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-
-    env.ledger().set(LedgerInfo {
-        timestamp: 10000,
-        protocol_version: 20,
-        sequence_number: 1,
-        network_id: [0; 32],
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
-
-    let contract_id = env.register_contract(None, LendingContract);
-    let client = LendingContractClient::new(&env, &contract_id);
-
+    let id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &id);
     let admin = Address::generate(&env);
+    let user = Address::generate(&env);
     client.initialize(&admin);
+    (env, client, admin, user)
+}
 
-    let asset = Address::generate(&env);
+/// Register a real SEP-41 asset and return its address.
+fn new_asset(env: &Env) -> Address {
+    env.register_stellar_asset_contract_v2(Address::generate(env))
+        .address()
+}
 
-    (env, contract_id, asset, client)
+fn balance(env: &Env, asset: &Address, who: &Address) -> i128 {
+    TokenClient::new(env, asset).balance(who)
+}
+
+fn expected_reserve(env: &Env, id: &Address, asset: &Address) -> i128 {
+    env.as_contract(id, || invariants::compute_expected_reserve(env, asset))
+}
+
+fn set_accounting(env: &Env, id: &Address, total_deposits: i128, bad_debt: i128) {
+    env.as_contract(id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &total_deposits);
+        env.storage().persistent().set(&DataKey::BadDebt, &bad_debt);
+    });
 }
 
 #[test]
-fn test_invariant_passes_balanced_state() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
+fn expected_reserve_is_zero_when_nothing_is_accounted() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+    assert_eq!(expected_reserve(&env, &client.address, &asset), 0);
+}
 
-    // Set balanced state: 1000 in accounting
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &1000i128);
+#[test]
+fn expected_reserve_is_total_deposits_minus_bad_debt() {
+    let (env, client, _admin, _user) = setup();
+    set_accounting(&env, &client.address, 1_000, 100);
+    assert_eq!(
+        expected_reserve(&env, &client.address, &new_asset(&env)),
+        900
+    );
+}
 
-    // Note: In production, token balance would match
-    // This test demonstrates the structure
-    // invariants::check_invariant_before(&env, &asset);
+#[test]
+fn checkpoints_hold_when_held_balance_matches_accounting_exactly() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+    StellarAssetClient::new(&env, &asset).mint(&client.address, &1_000);
+    set_accounting(&env, &client.address, 1_000, 0);
+
+    env.as_contract(&client.address, || {
+        // Exact equality is the boundary: neither checkpoint may panic.
+        invariants::check_invariant_before(&env, &asset);
+        invariants::check_invariant_after(&env, &asset);
+    });
+}
+
+#[test]
+fn checkpoints_hold_for_zero_reserves_and_zero_accounting() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+
+    env.as_contract(&client.address, || {
+        invariants::check_invariant_before(&env, &asset);
+        invariants::check_invariant_after(&env, &asset);
+    });
+}
+
+#[test]
+fn checkpoints_hold_when_bad_debt_offsets_deposits() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+    StellarAssetClient::new(&env, &asset).mint(&client.address, &600);
+    set_accounting(&env, &client.address, 1_000, 400);
+
+    env.as_contract(&client.address, || {
+        invariants::check_invariant_before(&env, &asset)
+    });
+}
+
+#[test]
+fn macro_returns_the_wrapped_body_value() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+
+    env.as_contract(&client.address, || {
+        let value = crate::with_invariant_check!(&env, &asset, { 7 + 35 });
+        assert_eq!(value, 42);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Failure paths: drift is detected
+// ---------------------------------------------------------------------------
+
+#[test]
+#[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
+fn checkpoint_rejects_a_single_unit_of_drift() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+    // One unit short of the ledger: the smallest possible drift must still fail.
+    StellarAssetClient::new(&env, &asset).mint(&client.address, &999);
+    set_accounting(&env, &client.address, 1_000, 0);
+
+    env.as_contract(&client.address, || {
+        invariants::check_invariant_before(&env, &asset)
+    });
 }
 
 #[test]
 #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
-fn test_invariant_panics_on_accounting_drift() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
+fn checkpoint_detects_an_external_transfer_out_of_the_contract() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+    let thief = Address::generate(&env);
+    StellarAssetClient::new(&env, &asset).mint(&client.address, &1_000);
+    set_accounting(&env, &client.address, 1_000, 0);
 
-    // Create intentional mismatch
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &1000i128);
-    // Token balance would be different (e.g., 900)
+    // Simulate a balance leak that bypasses the accounting ledger.
+    TokenClient::new(&env, &asset).transfer(&client.address, &thief, &1);
 
-    // This should panic due to drift
-    invariants::check_invariant_before(&env, &asset);
+    env.as_contract(&client.address, || {
+        invariants::check_invariant_after(&env, &asset)
+    });
 }
 
-#[test]
-fn test_deposit_has_invariant_checks() {
-    let (env, contract_id, asset, client) = setup_test_env();
-    let user = Address::generate(&env);
-
-    // Verify deposit function exists and accepts asset parameter
-    // Note: Updated signature includes asset parameter
-    // client.deposit(&user, &100, &asset).unwrap();
-}
-
-#[test]
-fn test_withdraw_has_invariant_checks() {
-    let (env, contract_id, asset, client) = setup_test_env();
-    let user = Address::generate(&env);
-
-    // Set up initial deposit
-    env.storage()
-        .persistent()
-        .set(&DataKey::Collateral(user.clone()), &1000i128);
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &1000i128);
-
-    // Verify withdraw function exists and accepts asset parameter
-    // client.withdraw(&user, &100, &asset).unwrap();
-}
-
-#[test]
-fn test_borrow_has_invariant_checks() {
-    let (env, contract_id, asset, client) = setup_test_env();
-    let user = Address::generate(&env);
-
-    // Set up collateral
-    env.storage()
-        .persistent()
-        .set(&DataKey::Collateral(user.clone()), &10000i128);
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &10000i128);
-
-    // Verify borrow function accepts asset parameter
-    // client.borrow(&user, &100, &asset).unwrap();
-}
-
-#[test]
-fn test_repay_has_invariant_checks() {
-    let (env, contract_id, asset, client) = setup_test_env();
-    let user = Address::generate(&env);
-
-    // Set up existing debt
-    // ... setup code ...
-
-    // Verify repay function accepts asset parameter
-    // client.repay(&user, &50, &asset).unwrap();
-}
-
-#[test]
-fn test_liquidate_checks_both_assets() {
-    let (env, contract_id, debt_asset, client) = setup_test_env();
-    let collateral_asset = Address::generate(&env);
-    let liquidator = Address::generate(&env);
-    let borrower = Address::generate(&env);
-
-    // Liquidate should check invariants for both debt and collateral assets
-    // This ensures no drift occurs in either token during liquidation
-}
-
-/// Demonstrates that invariant checks catch balance drift immediately.
 #[test]
 #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
-fn test_invariant_catches_external_balance_manipulation() {
-    let (env, contract_id, asset, client) = setup_test_env();
+fn macro_aborts_the_body_when_reserves_drift() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+    StellarAssetClient::new(&env, &asset).mint(&client.address, &1);
+    set_accounting(&env, &client.address, 2, 0);
 
-    // Set up balanced initial state
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &5000i128);
-
-    // Simulate external token transfer that bypasses accounting
-    // (This would be caught by the invariant check)
-
-    // Next operation should detect the drift
-    invariants::check_invariant_before(&env, &asset);
+    env.as_contract(&client.address, || {
+        crate::with_invariant_check!(&env, &asset, { 42 })
+    });
 }
 
-/// Test that bad debt correctly reduces expected reserves.
-#[test]
-fn test_bad_debt_accounting_in_invariant() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
-
-    // Set up state with bad debt
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &10000i128);
-    env.storage().persistent().set(&DataKey::BadDebt, &500i128);
-
-    // Expected balance should be: TotalDeposits - BadDebt = 9500
-    // This test verifies the invariant computation includes bad debt
-}
+// ---------------------------------------------------------------------------
+// Regression guard for the wiring decision
+// ---------------------------------------------------------------------------
 
 #[test]
-fn test_compute_expected_reserve_single_asset() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
+fn legacy_deposit_mutates_accounting_without_moving_tokens() {
+    let (env, client, _admin, user) = setup();
+    let asset = new_asset(&env);
 
-    // Set up simple state
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDeposits, &1000i128);
-    env.storage().persistent().set(&DataKey::BadDebt, &100i128);
+    let before = balance(&env, &asset, &client.address);
+    client.deposit(&user, &100);
+    let after = balance(&env, &asset, &client.address);
 
-    let expected = invariants::compute_expected_reserve(&env, &asset);
-
-    // Expected: 1000 (deposits) - 100 (bad debt) = 900
-    assert_eq!(expected, 900);
-}
-
-#[test]
-fn test_macro_with_invariant_check() {
-    let (env, _contract_id, asset, _client) = setup_test_env();
-
-    // Demonstrate usage of with_invariant_check! macro
-    // let result = with_invariant_check!(env, asset, {
-    //     // ... state-changing operation ...
-    //     42
-    // });
-    // assert_eq!(result, 42);
-}
-
-/// Stress test: rapid sequence of operations should maintain invariant.
-#[test]
-fn test_invariant_maintained_across_operation_sequence() {
-    let (env, contract_id, asset, client) = setup_test_env();
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
-
-    // Sequence of operations:
-    // 1. User1 deposits
-    // 2. User2 deposits
-    // 3. User1 borrows
-    // 4. User1 repays
-    // 5. User2 withdraws
-
-    // Each operation should pass invariant checks
-}
-
-/// Test that flash loans don't break invariants.
-#[test]
-fn test_flash_loan_invariant_preservation() {
-    let (env, contract_id, asset, client) = setup_test_env();
-
-    // Flash loans temporarily change balances but should restore them
-    // The invariant should hold before and after (but not during) the callback
+    assert_eq!(
+        before, after,
+        "the legacy deposit path is pure accounting; it must not move tokens"
+    );
+    assert_eq!(after, 0);
+    assert_eq!(
+        expected_reserve(&env, &client.address, &asset),
+        100,
+        "accounting rose while the held balance did not, so the reserve model \
+         cannot be satisfied on the legacy deposit path"
+    );
 }

@@ -10,6 +10,17 @@
 //! fixed-point units.  A helper [`normalize_price`] converts an asset's raw
 //! price (stored with `price_decimals` fractional digits) to that scale using
 //! checked 128-bit arithmetic.
+//!
+//! **Independent Copy & Rounding Behavior Note**:
+//! This module maintains its own independent copy of the value-aggregation math
+//! rather than sharing the `lending` crate's logic. This is because this crate
+//! must support heterogeneous oracle price scales via `INTERNAL_DECIMALS` (requiring
+//! per-asset scaling), whereas `lending` uses a uniform 7-decimal `PRICE_DIVISOR`.
+//! Furthermore, rounding behavior intentionally diverges: `lending` delays division
+//! in health factor checks and uses floor rounding everywhere else to save gas.
+//! This crate divides each asset down to 18-decimals before aggregation, necessitating
+//! **ceiling normalisation** for debt values (`normalize_price_ceil`) to ensure
+//! liabilities are never understated by truncation.
 
 #![allow(unused)]
 
