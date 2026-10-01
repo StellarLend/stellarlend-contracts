@@ -1109,6 +1109,7 @@ mod cancel_proposal_test;
 #[cfg(test)]
 mod approval_binding_test;
 
+/// Signer set shrink guard tests verifying prevention of quorum bricking.
 #[cfg(test)]
 mod signer_shrink_guard_test;
 
