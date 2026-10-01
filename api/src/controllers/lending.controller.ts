@@ -241,7 +241,6 @@ export class LendingController {
 const stellarService = new StellarService();
 
 
-
 export const deposit = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userAddress, assetAddress, amount, userSecret }: DepositRequest = req.body;
