@@ -363,16 +363,10 @@ export abstract class BasePriceProvider {
             throw new Error(`Invalid request URL for provider ${this.name}`);
         }
 
-        const response = await axios.get<T>(url, {
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers,
-            },
-            timeout: DEFAULT_REQUEST_TIMEOUT_MS,
-            httpsAgent,
-        });
-
         let attempt = 0;
+        // Exactly one upstream request per attempt: an extra request here would
+        // amplify load against rate-limited upstreams and make the outcome
+        // depend on which of the duplicated calls happened to succeed.
         // eslint-disable-next no-constant-condition
         while (true) {
             attempt++;
@@ -382,7 +376,7 @@ export abstract class BasePriceProvider {
                         'Content-Type': 'application/json',
                         ...options.headers,
                     },
-                    timeout: 30000,
+                    timeout: DEFAULT_REQUEST_TIMEOUT_MS,
                     httpsAgent,
                 });
 

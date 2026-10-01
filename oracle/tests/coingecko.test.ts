@@ -5,10 +5,14 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { CoinGeckoProvider, createCoinGeckoProvider } from '../src/providers/coingecko.js';
 
-// Mock axios
+// Mock axios.
+// `isAxiosError` must be present because BasePriceProvider.request uses it to
+// decide whether a failure is retryable; omitting it turns every rejection into
+// a TypeError and masks the real retry/cooldown behaviour under test.
 vi.mock('axios', () => ({
     default: {
         get: vi.fn(),
+        isAxiosError: vi.fn(() => false),
     },
 }));
 
@@ -21,6 +25,7 @@ describe('CoinGeckoProvider', () => {
     beforeEach(() => {
         provider = createCoinGeckoProvider();
         vi.clearAllMocks();
+        mockedAxios.isAxiosError.mockReturnValue(false);
     });
 
     afterEach(() => {
