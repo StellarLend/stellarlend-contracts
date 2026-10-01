@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import request from 'supertest';
 import { z } from 'zod';
 import {
@@ -178,6 +179,20 @@ describe('Validation Middleware', () => {
       expect(req.body).toEqual(initialBody);
     });
 
+    it('should accept the exact i128 minimum boundary', () => {
+      expect(I128String.safeParse(I128_MIN).success).toBe(true);
+    });
+
+    it('should reject values below the i128 minimum boundary', () => {
+      expect(I128String.safeParse('-170141183460469231731687303715884105729').success).toBe(false);
+    });
+
+    it('should reject non-integer and out-of-range i128 strings', () => {
+      expect(I128String.safeParse('1.5').success).toBe(false);
+      expect(I128String.safeParse('abc').success).toBe(false);
+      expect(I128String.safeParse(I128_OVERFLOW).success).toBe(false);
+    });
+
     it('should pass non-zod validator errors to next middleware', () => {
       const error = new Error('custom parser failure');
       const schema = {
@@ -280,6 +295,18 @@ describe('Validation Middleware', () => {
       );
 
       warnSpy.mockRestore();
+    });
+
+    it('should reject duplicate keys by validating the parsed body deterministically', () => {
+      const schema = z.object({ userAddress: StellarAddress }).strict();
+      const request = {
+        body: { userAddress: VALID_USER_ADDRESS, extra: 'unexpected' },
+      } as any;
+      const next = jest.fn();
+
+      validateBody(schema)(request, {} as any, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
     });
   });
 
@@ -589,6 +616,19 @@ describe('Validation Middleware', () => {
       expect(response.status).toBe(400);
       expect(mockStellarService.buildBorrowTransaction).not.toHaveBeenCalled();
     });
+
+    it('should reject malformed userAddress before controller execution', async () => {
+      const response = await request(app)
+        .post('/api/lending/borrow')
+        .send({
+          userAddress: 'invalid_address',
+          amount: '1000000',
+          userSecret: VALID_USER_SECRET,
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+    });
   });
 
   describe('Repay Validation Endpoint (/api/lending/repay)', () => {
@@ -632,6 +672,18 @@ describe('Validation Middleware', () => {
 
       expect(response.status).toBe(400);
       expect(mockStellarService.buildRepayTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should reject i128 amount overflow', async () => {
+      const response = await request(app)
+        .post('/api/lending/repay')
+        .send({
+          userAddress: VALID_USER_ADDRESS,
+          amount: I128_OVERFLOW,
+          userSecret: VALID_USER_SECRET,
+        });
+
+      expect(response.status).toBe(400);
     });
   });
 
@@ -790,6 +842,18 @@ describe('Validation Middleware', () => {
       expect(PositiveI128String).toBeDefined();
       expect(StellarAddress).toBeDefined();
     });
+
+    it('should reject zero amount', async () => {
+      const response = await request(app)
+        .post('/api/lending/withdraw')
+        .send({
+          userAddress: VALID_USER_ADDRESS,
+          amount: '0',
+          userSecret: VALID_USER_SECRET,
+        });
+
+      expect(response.status).toBe(400);
+    });
   });
 });
 
@@ -830,6 +894,52 @@ describe('Hook HMAC Validation', () => {
       expect(() => verifyHookHmac(req, mockRes, next)).toThrow(
         'Invalid hook timestamp'
       );
+    });
+  });
+
+  it('rejects a stale hook timestamp outside the replay window', () => {
+    jest.isolateModules(() => {
+      const { verifyHookHmac } = require('../middleware/auth');
+      const staleTimestamp = String(Date.now() - 3600 * 1000);
+      const req = {
+        headers: {
+          'x-hook-timestamp': staleTimestamp,
+          'x-hook-signature': 'abcd',
+        },
+        body: {},
+        rawBody: '{}',
+      } as any;
+
+      expect(() => verifyHookHmac(req, mockRes, next)).toThrow();
+    });
+  });
+
+  it('accepts a valid hook signature and rejects a tampered body', () => {
+    jest.isolateModules(() => {
+      const { verifyHookHmac } = require('../middleware/auth');
+      const secret = process.env.STELLAR_API_HOOK_SECRET as string;
+      const timestamp = String(Date.now());
+      const rawBody = JSON.stringify({ event: 'deposit', amount: '1000000' });
+      const signature = crypto
+        .createHmac('sha256', secret)
+        .update(`${timestamp}.${rawBody}`)
+        .digest('hex');
+
+      const validReq = {
+        headers: {
+          'x-hook-timestamp': timestamp,
+          'x-hook-signature': signature,
+        },
+        body: JSON.parse(rawBody),
+        rawBody,
+      } as any;
+      expect(() => verifyHookHmac(validReq, mockRes, next)).not.toThrow();
+
+      const tamperedReq = {
+        ...validReq,
+        rawBody: JSON.stringify({ event: 'deposit', amount: '9999999' }),
+      } as any;
+      expect(() => verifyHookHmac(tamperedReq, mockRes, next)).toThrow();
     });
   });
 });
