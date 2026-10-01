@@ -1,3 +1,4 @@
+
 /**
  * Oracle Configuration Management, Validation and Failure-Path Tests
  *
@@ -13,6 +14,7 @@
  * reliance on `Math.random()` or on the ambient environment.
  */
 
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OracleService } from '../src/index.js';
 import {
