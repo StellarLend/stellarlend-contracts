@@ -995,13 +995,13 @@ impl Bridge {
         Ok(())
     }
 
-    /// Build a tagged payload: `tag_bytes || pk_bytes` as a `Bytes`.
-    fn build_tagged_payload(env: &Env, tag: &[u8], pk: &BytesN<32>) -> Bytes {
-        let mut out = Bytes::new(env);
-        out.extend_from_slice(tag);
-        let arr: [u8; 32] = pk.into();
-        out.extend_from_slice(&arr);
-        out
+    /// Build a guardian-signature payload as `tag || validator_key`.
+    fn build_tagged_payload(env: &Env, tag: &[u8], validator: &BytesN<32>) -> Bytes {
+        let mut payload = Bytes::new(env);
+        payload.extend_from_slice(tag);
+        let validator_bytes: [u8; 32] = validator.into();
+        payload.extend_from_slice(&validator_bytes);
+        payload
     }
 
     // -----------------------------------------------------------------------

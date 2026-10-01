@@ -74,6 +74,7 @@ DOCUMENTED_FUNCTIONS=(
   "get_protocol_metrics"
   "get_rate_model_diagnostics"
   "get_rate_params"
+  "get_rate_model_diagnostics"
   "get_rate_smoothing_state"
   "get_required_approvals"
   "get_upgrade_approval_binding"
