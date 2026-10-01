@@ -199,7 +199,7 @@ fn test_complete_operation_increments_sequence() {
     // Verify record has completed status
     let record = get_operation_record(&env, &op_id).unwrap();
     assert_eq!(record.status, OperationStatus::Completed);
-    assert_eq!(record.result, Some(OperationResult::Deposit(1000)));
+    assert_eq!(record.result, OperationResult::Deposit(1000));
     assert!(record.executed_at.is_some());
 }
 

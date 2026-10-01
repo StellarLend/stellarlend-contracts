@@ -94,6 +94,8 @@ pub enum OperationStatus {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationResult {
+    /// No result (e.g. pending, in-flight, failed, or no value produced)
+    None,
     /// Deposit operation result: new balance
     Deposit(i128),
     /// Withdraw operation result: new balance
@@ -111,7 +113,7 @@ pub enum OperationResult {
 }
 
 /// Operation record stored for deduplication and idempotency.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationRecord {
     /// Current status of the operation
@@ -542,6 +544,13 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        let user = Address::generate(&env);
+        (env, contract_id, user)
+    }
+
     #[test]
     fn test_sequence_starts_at_zero() {
         let env = Env::default();
@@ -609,8 +618,7 @@ mod tests {
 
     #[test]
     fn test_operation_registration() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
         let contract_id = env.register(crate::LendingContract, ());
 
@@ -628,8 +636,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_operation_rejected() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
         let contract_id = env.register(crate::LendingContract, ());
 
@@ -651,8 +658,7 @@ mod tests {
 
     #[test]
     fn test_completed_operation_idempotent() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
         let contract_id = env.register(crate::LendingContract, ());
 
@@ -674,8 +680,7 @@ mod tests {
 
     #[test]
     fn test_failed_operation_allows_retry() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
         let contract_id = env.register(crate::LendingContract, ());
 
@@ -696,8 +701,7 @@ mod tests {
 
     #[test]
     fn test_operation_cancellation() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
         let contract_id = env.register(crate::LendingContract, ());
 
@@ -717,8 +721,7 @@ mod tests {
 
     #[test]
     fn test_unauthorized_access_rejected() {
-        let env = Env::default();
-        let user1 = Address::generate(&env);
+        let (env, contract_id, user1) = setup();
         let user2 = Address::generate(&env);
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
         let contract_id = env.register(crate::LendingContract, ());

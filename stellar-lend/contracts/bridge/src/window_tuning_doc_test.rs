@@ -1,5 +1,6 @@
 /// Documentation tests for bridge epoch-window tuning parameters.
 #[cfg(test)]
+#[allow(unused_imports)]
 use super::*;
 
 #[test]

@@ -482,6 +482,12 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        (env, contract_id)
+    }
+
     #[test]
     fn test_no_flash_loan_active_initially() {
         let env = Env::default();
@@ -494,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_initiate_flash_loan_creates_record() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
@@ -527,7 +533,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "FlashLoanReentrancy")]
     fn test_cannot_initiate_nested_flash_loan() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
@@ -564,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_full_flash_loan_lifecycle() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
@@ -620,7 +626,7 @@ mod tests {
 
     #[test]
     fn test_flash_loan_request_id_is_unique() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
@@ -637,7 +643,7 @@ mod tests {
 
     #[test]
     fn test_validate_invariants_passes_for_valid_state() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);

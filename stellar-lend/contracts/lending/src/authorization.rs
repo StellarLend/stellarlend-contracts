@@ -343,6 +343,8 @@ fn track_operation(
     user: &Address,
     operation_type: OperationType,
 ) -> Result<(), AuthorizationError> {
+    use soroban_sdk::xdr::ToXdr;
+
     // Generate operation ID from: user + operation_type + ledger + timestamp
     let ledger_seq = env.ledger().sequence();
     let timestamp = env.ledger().timestamp();

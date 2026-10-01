@@ -704,6 +704,7 @@ mod tests {
         // BEFORE any permanent state mutation occurs.
 
         let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
         let contract_id = env.register(crate::LendingContract, ());
@@ -725,6 +726,8 @@ mod tests {
     #[test]
     fn test_two_phase_commit_without_prepare_fails() {
         let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        env.ledger().set_timestamp(1_000);
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
         let contract_id = env.register(crate::LendingContract, ());

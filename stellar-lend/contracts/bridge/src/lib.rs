@@ -201,7 +201,7 @@ impl Bridge {
             .get::<BridgeDataKey, u64>(&BridgeDataKey::Epoch)
             .unwrap_or(0)
     }
-    fn save_epoch(env: &Env, epoch: u64) {
+    pub(crate) fn save_epoch(env: &Env, epoch: u64) {
         env.storage()
             .persistent()
             .set(&BridgeDataKey::Epoch, &epoch);
@@ -513,9 +513,9 @@ impl Bridge {
     ///
     /// The function:
     /// 1. Validates `source` is registered.
-    /// 2. Checks `nonce` equals the next expected nonce for that source.
-    /// 3. Computes the domain-separated message ID.
-    /// 4. Checks the message has not already been consumed.
+    /// 2. Computes the domain-separated message ID.
+    /// 3. Checks the message has not already been consumed.
+    /// 4. Checks `nonce` equals the next expected nonce for that source.
     /// 5. Marks the message as consumed and increments the per-source nonce.
     /// 6. Emits an [`InboundMessageConsumedEvent`].
     ///
@@ -1012,13 +1012,13 @@ impl Bridge {
         Ok(())
     }
 
-    /// Build a tagged payload: `tag_bytes || pk_bytes` as a `Bytes`.
-    fn build_tagged_payload(env: &Env, tag: &[u8], pk: &BytesN<32>) -> Bytes {
-        let mut out = Bytes::new(env);
-        out.extend_from_slice(tag);
-        let arr: [u8; 32] = pk.into();
-        out.extend_from_slice(&arr);
-        out
+    /// Build a guardian-signature payload as `tag || validator_key`.
+    fn build_tagged_payload(env: &Env, tag: &[u8], validator: &BytesN<32>) -> Bytes {
+        let mut payload = Bytes::new(env);
+        payload.extend_from_slice(tag);
+        let validator_bytes: [u8; 32] = validator.into();
+        payload.extend_from_slice(&validator_bytes);
+        payload
     }
 
     // -----------------------------------------------------------------------
@@ -1250,6 +1250,12 @@ mod validator_pause_test;
 mod rotation_churn_test;
 
 #[cfg(test)]
+mod outbound_nonce_test;
+
+#[cfg(test)]
+mod inbound_window_integration_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::Env;
@@ -1262,7 +1268,7 @@ mod tests {
     fn test_epoch_guard_after_rotation() {
         let env = fresh_env();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         // Initialize with an empty validator set. Quorum-proof signature
@@ -1296,7 +1302,7 @@ mod tests {
     #[test]
     fn test_validate_inbound_epoch_rejects_old() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
@@ -1304,6 +1310,10 @@ mod tests {
 
         // epoch 0 is current — any lower would panic but there is no lower; future ok
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
+        assert_eq!(
+            client.try_validate_inbound_epoch(&1u64),
+            Err(Ok(BridgeError::InvalidEpoch))
+        );
         // nothing to rotate to test stale epoch without ed25519 key material here;
         // the RetiredEpoch path is covered structurally by the error code existing.
     }
@@ -1311,7 +1321,7 @@ mod tests {
     #[test]
     fn test_set_inbound_cap_and_admit() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         // Result<(), _> client methods return unit on success (use try_* for Result).
@@ -1325,7 +1335,7 @@ mod tests {
     #[test]
     fn test_inbound_window_rolls_over() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         client.set_inbound_cap(&1000i128, &86400u64, &0u64);
@@ -1339,7 +1349,7 @@ mod tests {
     #[test]
     fn test_set_outbound_cap_and_admit() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         client.set_outbound_cap(&500i128, &86400u64, &0u64);
@@ -1351,7 +1361,7 @@ mod tests {
     #[test]
     fn test_fail_closed_inbound_before_cap_set() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
@@ -1360,7 +1370,7 @@ mod tests {
     #[test]
     fn test_invalid_window_size_rejected() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
@@ -1383,7 +1393,7 @@ mod replay_protection_test {
     fn setup_bridge() -> (Env, BridgeClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.set_admin(&admin);
@@ -1600,7 +1610,7 @@ mod replay_protection_test {
     #[test]
     fn non_admin_cannot_register_source() {
         let (env, _client, _admin) = setup_bridge();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
         let non_admin = Address::generate(&env);
         let src = source(&env, 1);
@@ -1612,7 +1622,7 @@ mod replay_protection_test {
     fn admin_setup_is_idempotent() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
 

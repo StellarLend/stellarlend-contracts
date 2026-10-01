@@ -16,7 +16,9 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, Ledger, LedgerInfo},
+    testutils::{
+        Address as _, AuthorizedFunction, AuthorizedInvocation, Events as _, Ledger, LedgerInfo,
+    },
     Address, BytesN, Env, IntoVal, Symbol, Vec as SorobanVec,
 };
 
@@ -264,6 +266,7 @@ fn test_stale_oracle_price_rejected() {
 #[test]
 fn test_future_oracle_price_rejected() {
     let env = Env::default();
+    env.ledger().set_timestamp(1_000_000);
     let current_time = env.ledger().timestamp();
 
     // Price from the future is invalid

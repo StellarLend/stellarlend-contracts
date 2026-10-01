@@ -28,8 +28,8 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     let client = AmmContractClient::new(&env, &id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    client.init_pool(&ra, &rb, &token_a, &token_b);
     let admin = Address::generate(&env);
+    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
@@ -263,7 +263,13 @@ fn test_liquidity_ops_preserve_fees() {
 
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    client.init_pool(&10_000, &10_000, &token_a_addr, &token_b_addr);
+    client.init_pool(
+        &token_a_admin,
+        &10_000,
+        &10_000,
+        &token_a_addr,
+        &token_b_addr,
+    );
 
     client
         .try_swap_a_for_b(&500)
@@ -311,7 +317,7 @@ fn test_reinit_resets_fees() {
 
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    client.init_pool(&20_000, &20_000, &token_a, &token_b);
+    client.init_pool(&_admin, &20_000, &20_000, &token_a, &token_b);
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "re-init must reset fee_a");
     assert_eq!(fee_b, 0, "re-init must reset fee_b");

@@ -31,7 +31,7 @@ fn setup_test_env() -> (Env, Address, Address, LendingContractClient<'static>) {
         max_entry_ttl: 3110400,
     });
 
-    let contract_id = env.register_contract(None, LendingContract);
+    let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -83,8 +83,6 @@ fn test_deposit_has_invariant_checks() {
     let _user = Address::generate(&env);
 
     // Verify deposit function exists and accepts asset parameter
-    // Note: Updated signature includes asset parameter
-    // client.deposit(&user, &100, &asset).unwrap();
 }
 
 #[test]
@@ -200,8 +198,9 @@ fn test_compute_expected_reserve_single_asset() {
         invariants::compute_expected_reserve(&env, &asset)
     });
 
-    // Expected: 1000 (deposits) - 100 (bad debt) = 900
-    assert_eq!(expected, 900);
+        // Expected: 1000 (deposits) - 100 (bad debt) = 900
+        assert_eq!(expected, 900);
+    });
 }
 
 #[test]

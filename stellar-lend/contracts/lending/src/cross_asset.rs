@@ -119,6 +119,10 @@ pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, Le
     {
         return Err(LendingError::StaleOracleTimestamp);
     }
+    // A non-positive price is never valid; treat as missing feed.
+    if record.price <= 0 {
+        return Err(LendingError::PriceFeedNotFound);
+    }
     Ok(record)
 }
 
@@ -878,8 +882,7 @@ mod tests {
 
     #[test]
     fn get_price_for_asset_success() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         let timestamp = 1_000_000u64;
         env.ledger().set_timestamp(timestamp);
         let contract_id = env.register(crate::LendingContract, ());
@@ -907,8 +910,7 @@ mod tests {
 
     #[test]
     fn get_price_for_asset_stale_fails() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         let timestamp = 1_000_000u64;
         env.ledger()
             .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
@@ -923,8 +925,7 @@ mod tests {
 
     #[test]
     fn get_price_for_asset_boundary_is_fresh() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         let timestamp = 1_000_000u64;
         env.ledger()
             .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
@@ -938,8 +939,7 @@ mod tests {
 
     #[test]
     fn get_price_for_asset_future_timestamp_fails() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         env.ledger().set_timestamp(1_000_000);
         let contract_id = env.register(crate::LendingContract, ());
         set_price(&env, &contract_id, &asset, 10_000_000, 1_000_001);
@@ -952,8 +952,7 @@ mod tests {
 
     #[test]
     fn get_price_for_asset_non_positive_price_fails() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         env.ledger().set_timestamp(1_000_000);
         let contract_id = env.register(crate::LendingContract, ());
         set_price(&env, &contract_id, &asset, 0, 1_000_000);

@@ -1,5 +1,6 @@
 /// Tests for bridge validator-pause functionality.
 #[cfg(test)]
+#[allow(unused_imports)]
 use super::*;
 
 #[test]

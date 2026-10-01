@@ -15,6 +15,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LIB="$REPO_ROOT/stellar-lend/contracts/lending/src/lib.rs"
 
+export LC_ALL=C
+
 # ----------------------------------------------------------------------------
 # Documented implemented functions (update this list when lib.rs changes)
 # ----------------------------------------------------------------------------
@@ -72,8 +74,11 @@ DOCUMENTED_FUNCTIONS=(
   "get_protocol_metrics"
   "get_rate_model_diagnostics"
   "get_rate_params"
+  "get_rate_model_diagnostics"
   "get_rate_smoothing_state"
   "get_required_approvals"
+  "get_upgrade_approval_binding"
+  "get_upgrade_approver_set_hash"
   "get_upgrade_approvers"
   "get_upgrade_approval_binding"
   "get_upgrade_approver_set_hash"

@@ -1,5 +1,6 @@
 /// Tests for inbound message capacity / cap enforcement in the bridge contract.
 #[cfg(test)]
+#[allow(unused_imports)]
 use super::*;
 
 #[test]

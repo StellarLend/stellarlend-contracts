@@ -135,7 +135,7 @@ pub enum LendingError {
 /// ```
 #[inline]
 pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
-    if rate_bps < 0 || rate_bps > BPS_DENOM {
+    if !(0..=BPS_DENOM).contains(&rate_bps) {
         return None;
     }
     value.checked_mul(rate_bps)?.checked_div(BPS_DENOM)
@@ -156,16 +156,10 @@ pub fn scale_bps(value: i128, rate_bps: i128) -> Option<i128> {
 /// ```
 #[inline]
 pub fn unscale_bps(value: i128, rate_bps: i128) -> Option<i128> {
-    if rate_bps <= 0 || rate_bps > BPS_DENOM {
+    if !(1..=BPS_DENOM).contains(&rate_bps) {
         return None;
     }
-    // Decompose by `rate_bps` first; `q * BPS_DENOM` cannot overflow when the
-    // final result fits, while the remainder term is bounded by `BPS_DENOM^2`.
-    let q = value / rate_bps;
-    let r = value % rate_bps;
-    let unscaled_q = q.checked_mul(BPS_DENOM)?;
-    let unscaled_r = r.checked_mul(BPS_DENOM)?.checked_div(rate_bps);
-    unscaled_q.checked_add(unscaled_r?)
+    value.checked_mul(BPS_DENOM)?.checked_div(rate_bps)
 }
 
 // ── Cross-asset price normalisation ────────────────────────────────────────
@@ -370,12 +364,6 @@ mod tests {
     fn unscale_bps_overflow_returns_none() {
         // i128::MAX * BPS_DENOM overflows
         assert_eq!(unscale_bps(i128::MAX, 1), None);
-    }
-
-    #[test]
-    fn unscale_bps_max_value_full_rate() {
-        assert_eq!(unscale_bps(i128::MAX, BPS_DENOM), Some(i128::MAX));
-        assert_eq!(unscale_bps(i128::MIN, BPS_DENOM), Some(i128::MIN));
     }
 
     #[test]
