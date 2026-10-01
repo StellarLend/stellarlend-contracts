@@ -71,6 +71,14 @@ jobs:
             -A clippy::manual-range-contains \
             -A clippy::unnecessary-cast
 
+      - name: Check every workspace member
+        # Guards against regressions in crates that the lending-only steps
+        # below would otherwise never compile (amm, multisig, vesting,
+        # hello-world, common, bridge, cross_asset_test, ...).
+        run: |
+          cd stellar-lend
+          cargo check --workspace --all-targets --all-features
+
   soroban-checks:
     name: Soroban Validations
     runs-on: ubuntu-latest
@@ -207,15 +215,35 @@ jobs:
           cd stellar-lend
           cargo build --verbose
 
+      - name: Build entire workspace
+        # `cargo build` above only builds the default workspace members; this
+        # step ensures every crate (amm, multisig, vesting, hello-world,
+        # common, bridge, cross_asset_test) actually compiles.
+        run: |
+          cd stellar-lend
+          cargo build --workspace --verbose
+
       - name: Run unit tests
         run: |
           cd stellar-lend
           cargo test --lib --verbose
 
+      - name: Run workspace unit tests
+        # Runs `--lib` tests across every workspace member, not just lending.
+        run: |
+          cd stellar-lend
+          cargo test --workspace --lib --verbose
+
       - name: Run integration tests
         run: |
           cd stellar-lend
           cargo test --tests --verbose
+
+      - name: Run workspace integration tests
+        # Runs `--tests` across every workspace member, not just lending.
+        run: |
+          cd stellar-lend
+          cargo test --workspace --tests --verbose
 
       # `cargo doc` runs LAST on purpose: a doc-build failure here should not
       # mask a more important test failure earlier in the same job.
@@ -223,6 +251,11 @@ jobs:
         run: |
           cd stellar-lend
           cargo doc --no-deps --verbose
+
+      - name: Build workspace documentation
+        run: |
+          cd stellar-lend
+          cargo doc --workspace --no-deps --verbose
 
       - name: Generate test report
         if: always()
@@ -233,12 +266,20 @@ jobs:
           cargo test --lib --verbose -- --nocapture > lending_test_report.txt 2>&1 || true
           tail -n 200 lending_test_report.txt
 
+      - name: Generate workspace test report
+        if: always()
+        run: |
+          cd stellar-lend || exit 0
+          cargo test --workspace --verbose -- --nocapture > workspace_test_report.txt 2>&1 || true
+          tail -n 200 workspace_test_report.txt
+
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: stellar-lend/lending_test_report.txt
+            stellar-lend/workspace_test_report.txt
 
   audit:
     name: Security Audit
