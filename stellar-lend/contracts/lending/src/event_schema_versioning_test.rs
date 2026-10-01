@@ -12,8 +12,10 @@
 #![cfg(test)]
 
 use soroban_sdk::{
+    contracttype,
     testutils::{Address as _, Events as _},
-    Address, Env, IntoVal,
+    xdr::{ContractEventBody, ToXdr},
+    Address, Env, TryFromVal,
 };
 
 use crate::events::*;
@@ -165,8 +167,7 @@ fn test_deposit_event_serialization_deterministic() {
     // They should be equal
     assert_eq!(event1, event2);
 
-    // Convert to XDR and compare (verifying deterministic serialization)
-    use soroban_sdk::xdr::ToXdr;
+    // Convert to Val and compare (simulating serialization)
     let xdr1 = event1.to_xdr(&env);
     let xdr2 = event2.to_xdr(&env);
     assert_eq!(xdr1, xdr2, "Event serialization must be deterministic");
@@ -194,7 +195,6 @@ fn test_borrow_event_serialization_deterministic() {
     };
 
     assert_eq!(event1, event2);
-    use soroban_sdk::xdr::ToXdr;
     let xdr1 = event1.to_xdr(&env);
     let xdr2 = event2.to_xdr(&env);
     assert_eq!(xdr1, xdr2, "Event serialization must be deterministic");
@@ -356,18 +356,30 @@ fn test_flash_loan_event_structure_unchanged() {
 
 #[test]
 fn test_schema_version_event_emitted_on_init() {
-    let env = Env::default();
-    let contract_id = env.register(crate::LendingContract, ());
+    use crate::{LendingContract, LendingContractClient};
 
-    // Emit schema version event
-    env.as_contract(&contract_id, || {
-        emit_schema_version(&env);
-    });
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &id);
+    let admin = Address::generate(&env);
+
+    // Actually initialize: the event must come from the real initialization
+    // path, which is where off-chain indexers look for it.
+    client.initialize(&admin);
 
     // Verify event was published
     let events = env.events().all();
+    let has_schema_event = events.events().iter().any(|event| match &event.body {
+        ContractEventBody::V0(v0) => v0.topics.iter().any(|topic| {
+            soroban_sdk::Symbol::try_from_val(&env, topic)
+                .map(|sym| sym == soroban_sdk::Symbol::new(&env, "SchemaVersionEvent"))
+                .unwrap_or(false)
+        }),
+    });
+
     assert!(
-        !events.events().is_empty(),
+        has_schema_event,
         "SchemaVersionEvent must be emitted during initialization"
     );
 }

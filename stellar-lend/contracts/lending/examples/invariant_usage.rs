@@ -2,7 +2,11 @@
 //!
 //! This example demonstrates how to use the reserve invariant checking system
 //! in the lending contract.
+
 use soroban_sdk::{Address, Env};
+use stellarlend_lending::{invariants, with_invariant_check, DataKey};
+
+fn main() {}
 
 /// Example 1: Basic invariant check pattern
 ///
@@ -12,8 +16,6 @@ use soroban_sdk::{Address, Env};
 /// 3. Check invariant after
 #[test]
 fn example_basic_invariant_pattern() {
-    use crate::invariants;
-
     let env = Env::default();
     let asset = Address::generate(&env);
 
@@ -32,8 +34,6 @@ fn example_basic_invariant_pattern() {
 /// For cleaner code, use the with_invariant_check! macro
 #[test]
 fn example_using_macro() {
-    use crate::with_invariant_check;
-
     let env = Env::default();
     let asset = Address::generate(&env);
 
@@ -51,8 +51,6 @@ fn example_using_macro() {
 /// Operations that affect multiple assets should check both
 #[test]
 fn example_multi_asset_operation() {
-    use crate::invariants;
-
     let env = Env::default();
     let debt_asset = Address::generate(&env);
     let collateral_asset = Address::generate(&env);
@@ -75,7 +73,6 @@ fn example_multi_asset_operation() {
 /// actual_balance == expected_balance
 #[test]
 fn example_invariant_formula() {
-    use crate::{invariants, DataKey};
     use soroban_sdk::token::Client as TokenClient;
 
     let env = Env::default();
@@ -98,8 +95,6 @@ fn example_invariant_formula() {
 /// Shows what components make up the expected balance
 #[test]
 fn example_expected_balance_components() {
-    use crate::DataKey;
-
     let env = Env::default();
     let asset = Address::generate(&env);
 
@@ -132,8 +127,6 @@ fn example_expected_balance_components() {
 #[test]
 #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
 fn example_drift_triggers_panic() {
-    use crate::{invariants, DataKey};
-
     let env = Env::default();
     let asset = Address::generate(&env);
 
@@ -174,8 +167,6 @@ fn example_panic_message_format() {
 /// Template for protecting new state-changing functions
 #[test]
 fn example_new_operation_template() {
-    use crate::invariants;
-
     fn my_new_operation(
         env: &Env,
         user: &Address,
@@ -260,8 +251,8 @@ fn example_debugging_violation() {
 /// How to write tests for invariant-protected operations
 #[test]
 fn example_testing_pattern() {
-    use crate::{invariants, DataKey, LendingContract, LendingContractClient};
     use soroban_sdk::testutils::Address as _;
+    use stellarlend_lending::{LendingContract, LendingContractClient};
 
     let env = Env::default();
     env.mock_all_auths();
@@ -311,5 +302,3 @@ fn example_performance_impact() {
     // - Sampling (check 1 in 10 operations)
     // - Check only high-risk operations
 }
-
-fn main() {}

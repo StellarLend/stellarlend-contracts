@@ -14,7 +14,7 @@
 //! ## Solution: Explicit Flash Loan State Machine
 //!
 //! Track full lifecycle:
-//! ```
+//! ```text
 //! [NONE]
 //!   ↓ flash_loan() called
 //! [INITIATED] (initiator, receiver, amount, fee recorded)
@@ -41,7 +41,7 @@
 //! ## Flash Loan Request ID
 //!
 //! Each flash loan is assigned a unique request ID (hash of parameters):
-//! ```rust
+//! ```text
 //! request_id = sha256(initiator || receiver || asset || amount || nonce)
 //! ```
 //!
@@ -490,7 +490,8 @@ mod tests {
 
     #[test]
     fn test_no_flash_loan_active_initially() {
-        let (env, contract_id) = setup();
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
         env.as_contract(&contract_id, || {
             assert!(!is_flash_loan_active(&env));
             assert!(get_active_flash_loan(&env).is_none());
@@ -505,6 +506,7 @@ mod tests {
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
 
+        let contract_id = env.register(crate::LendingContract, ());
         env.as_contract(&contract_id, || {
             initiate_flash_loan(
                 &env,
@@ -539,6 +541,7 @@ mod tests {
         let request_id1 = BytesN::from_array(&env, &[1u8; 32]);
         let request_id2 = BytesN::from_array(&env, &[2u8; 32]);
 
+        let contract_id = env.register(crate::LendingContract, ());
         env.as_contract(&contract_id, || {
             initiate_flash_loan(
                 &env,
@@ -573,6 +576,7 @@ mod tests {
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
 
+        let contract_id = env.register(crate::LendingContract, ());
         env.as_contract(&contract_id, || {
             // 1. Initiate
             initiate_flash_loan(
@@ -627,6 +631,7 @@ mod tests {
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
 
+        let contract_id = env.register(crate::LendingContract, ());
         env.as_contract(&contract_id, || {
             let id1 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
             let id2 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
@@ -644,6 +649,9 @@ mod tests {
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
 
+        // Flash-loan bookkeeping reads and writes contract storage, so the
+        // whole sequence runs inside the contract frame.
+        let contract_id = env.register(crate::LendingContract, ());
         env.as_contract(&contract_id, || {
             initiate_flash_loan(&env, request_id, initiator, receiver, asset, 1000, 10, 5000);
             mark_callback_executing(&env);

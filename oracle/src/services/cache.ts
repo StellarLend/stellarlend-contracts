@@ -49,10 +49,16 @@ export class Cache {
     private misses: number = 0;
 
     constructor(config: Partial<CacheConfig> = {}) {
-        this.config = { ...DEFAULT_CONFIG,...config };
+        this.config = { ...DEFAULT_CONFIG,,..config };
 
-        if (this.config.defaultTtlSeconds < 0 || this.config.staleTtlSeconds < 0) {
-            throw new Error('TTL values must be non-negative');
+        if (!this.isValidTtl(this.config.defaultTtlSeconds)) {
+            throw new Error('defaultTtlSeconds must be a non-negative finite number');
+        }
+        if (!this.isValidTtl(this.config.staleTtlSeconds)) {
+            throw new Error('staleTtlSeconds must be a non-negative finite number');
+        }
+        if (!Number.isInteger(this.config.maxEntries) || this.config.maxEntries <= 0) {
+            throw new Error('maxEntries must be a positive integer');
         }
 
         logger.info('Cache initialized', {
@@ -60,6 +66,10 @@ export class Cache {
             staleTtlSeconds: this.config.staleTtlSeconds,
             maxEntries: this.config.maxEntries,
         });
+    }
+
+    private isValidTtl(value: number): boolean {
+        return Number.isFinite(value) && value >= 0;
     }
 
     /**
@@ -117,6 +127,9 @@ export class Cache {
      */
     set<T>(key: string, value: T, ttlSeconds?: number, cachedAt?: number): void {
         const ttl = ttlSeconds ?? this.config.defaultTtlSeconds;
+        if (!this.isValidTtl(ttl)) {
+            throw new Error('TTL must be a non-negative finite number');
+        }
         const now = cachedAt ?? Date.now();
 
         // Evict oldest entries only when adding a new key (not overwriting)

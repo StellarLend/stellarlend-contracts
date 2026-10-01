@@ -71,7 +71,6 @@
 | `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` — domain-separated approval binding |
 | `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint captured for the proposal |
 | `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the current approver set |
-
 ### Oracle Price Controls
 
 | Function | Signature | Auth Required | Returns |
@@ -98,6 +97,11 @@
 | `set_liquidation_incentive_bps` | `(incentive_bps: i128)` | admin | `Result<(), LendingError>` |
 | `get_liquidation_incentive_bps` | `()` | — | `i128` |
 | `set_liquidation_threshold_bps` | `(threshold_bps: i128)` | admin | `Result<(), LendingError>` |
+| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` |
+| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` |
+| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` |
+| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` |
+| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` |
 
 ### Config Store
 
@@ -143,6 +147,16 @@
 | `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the live approver set |
 | `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint at proposal creation |
 | `get_min_upgrade_delay_ledgers` | `()` | — | `u32` — minimum timelock delay in ledgers |
+
+### Upgrade Governance
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` — cancel a pending proposal |
+| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` — proposal is in the `Cancelled` terminal state |
+| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` — stored domain-separated approval binding hash |
+| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint captured at proposal creation |
+| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the live upgrade approver set |
 
 ### Cross-Asset User Operations
 

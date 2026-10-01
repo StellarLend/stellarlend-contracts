@@ -274,10 +274,66 @@ The following functions live inside `#[cfg(test)] mod tests` and are
 | Action swap between approval and execution | `payload_hash` bound at creation and re-verified at execution                        |
 | Signer-set rotation replay         | Signer-set hash captured per proposal and included in approval authorization              |
 | Execution retry / partial dispatch | Monotonic nonce marker is consumed only after successful dispatch in the same transaction |
-| Old proposal ID reuse              | Monotonic `ProposalCount` counter — IDs never repeat                                         |
+| Upgrade execution compatibility | Contract upgrades are only possible through a passed proposal; upgraded contracts must preserve the documented API and event topics |
+
+---
+
+## Accessibility and Compatibility
+
+This module is a Soroban smart contract and has no interactive UI; keyboard, focus, screen-reader, responsive, and reduced-motion considerations do not apply. The public API documented above is stable and existing consumers are protected from accidental breaking changes. proposal ID reuse              | Monotonic `ProposalCount` counter — IDs never repeat                                         |
 | Stale proposal execution           | `expires_at` stored on every proposal; both `approve_proposal` and `execute_proposal` enforce it |
 | Rushed execution                   | Caller controls `ttl_ledgers`; integrators should set a TTL that enforces a review period    |
 | Signer-set instant takeover        | `RotateSigners` is a governed `ProposalAction` requiring threshold approvals                 |
+
+## Invariants
+
+### State and data invariants
+
+- `ProposalCount` is strictly monotonic; proposal IDs are never reused or replayed.
+- A proposal's `id`, `proposer`, `action`, `payload_hash`, and `expires_at` are fixed at creation.
+- `approvals` is a distinct list; the same signer cannot appear twice.
+- Once a proposal is `Executed`, `Expired`, or `Cancelled`, its terminal status is never changed.
+
+### Authorization invariants
+
+- Every entrypoint except `initialize` requires `caller` to be a registered signer.
+- `approve_proposal` additionally requires the domain-separated approval binding to the current signer-set hash and proposal id.
+- `execute_proposal` verifies the provided `payload_hash` before dispatch; a mismatched hash cannot execute.
+
+### Failure invariants
+
+- `expires_at` is enforced by both `approve_proposal` and `execute_proposal`; expired proposals cannot become `Passed` or be executed.
+- Invalid action payloads (`SetThreshold(0)`, `RotateSigners([])`) are rejected by `dispatch_action` and emitted as `ok: false`.
+- `cancel_proposal` only accepts `Active` proposals; passed, executed, expired, and cancelled proposals are immutable through this path.
+
+## API Contract and Compatibility
+
+The public contract for consumers is the set of entrypoints, types, storage keys, and events in this document. The following compatibility commitments apply to the `stellarlend-multisig` crate:
+
+- Public entrypoint names and signatures must remain backward compatible; adding a new entrypoint is allowed, renaming or reordering existing parameters is not.
+- `ProposalAction` variants are part of the contract. Existing variants must not be removed or have their field types changed.
+- `ProposalStatus` values and `MultisigError` variants are part of the contract. New variants may be added only in a backward-compatible manner.
+- `MultisigDataKey` persistent storage layout is part of the contract; moving keys changes state availability and is a breaking change.
+- The single `("multisig", "executed")` event is part of the contract; its topics and payload shape must remain stable.
+- The test-only view helpers are explicitly out of the compatibility contract and may change without notice.
+
+## Regression Test Contract
+
+Automated tests must cover at least the following states:
+
+- Success: initialize, create, approve, execute, cancel, rotate signers, set threshold, and invoke-contract upgrades.
+- Failure: unauthorized caller, invalid threshold, empty signer list, unknown proposal, expired proposal, already approved, already executed, already cancelled, payload hash mismatch, and invalid dispatch actions.
+- Boundary: threshold equals signer count, threshold of 1, duplicate approvals, approval after rotation, and TTL of 0.
+- Retry and terminal states: failed dispatch is recorded as `ok: false` without consuming the proposal; expired proposals cannot be approved or executed, and executed proposals cannot be replayed.
+- Permission: non-signers cannot call any governed entrypoint, signers cannot double-approve, and rotated signers cannot use approvals from the previous signer set.
+- Loading and empty states: the contract has no asynchronous loading UI; empty signer sets are invalid at initialization/rotation, while an active proposal naturally starts with zero approvals and transitions to `Passed` when the threshold is reached.
+- Accessibility: not applicable to this Soroban contract; see Accessibility and Interaction Contract.
+
+## Accessibility and Interaction Contract
+
+This contract is a Soroban smart contract with no graphical or web-based UI. It therefore has no keyboard, focus, screen-reader, responsive-layout, or reduced-motion surface and no accessibility-specific runtime behavior to verify in this crate.
+
+Integrators who build a user interface over these entrypoints are responsible for applying WCAG-compliant focus, keyboard, screen-reader, responsive, and reduced-motion behavior to their own proposal-management components. This contract does not expose any DOM, view model, or styling API.
 
 ---
 

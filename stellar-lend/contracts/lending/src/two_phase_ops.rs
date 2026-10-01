@@ -39,7 +39,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```text
 //! // Borrow operation
 //! let prepared = prepare_borrow(&env, &user, &asset, amount)?;
 //! // ← All validation (health factor, debt ceiling) completed here
@@ -707,15 +707,20 @@ mod tests {
         let contract_id = env.register(crate::LendingContract, ());
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
 
-        env.as_contract(&contract_id, || {
-            // Attempt to prepare under-collateralized borrow
-            let result = prepare_borrow(&env, &user, &asset, 1_000_000);
+        // Setup would require full contract initialization
+        // For now, this demonstrates the API
 
-            // Expect: HealthFactorTooLow error or NotInitialized
-            // Verify: No debt position written (query storage confirms)
-            assert!(result.is_err());
+        // Attempt to prepare under-collateralized borrow (prepare reads
+        // contract storage, so run inside the contract frame)
+        let result = env.as_contract(&contract_id, || {
+            prepare_borrow(&env, &user, &asset, 1_000_000)
         });
+
+        // Expect: HealthFactorTooLow error
+        // Verify: No debt position written (query storage confirms)
+        assert!(result.is_err());
     }
 
     #[test]
@@ -725,6 +730,11 @@ mod tests {
         env.ledger().set_timestamp(1_000);
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        // Move the ledger forward so the hand-built prepared operation
+        // (prepared_at = 0) is provably stale.
+        env.ledger().set_timestamp(1_000);
 
         // Create a prepared operation manually (without validation)
         let fake_prepared = PreparedBorrow {
@@ -747,11 +757,10 @@ mod tests {
             prepared_at: 0,
         };
 
-        env.as_contract(&contract_id, || {
-            // Commit should fail: prepared_at too old
-            let result = commit_borrow(&env, fake_prepared);
-            assert!(matches!(result, Err(LendingError::OperationExpired)));
-        });
+        // Commit should fail: prepared_at too old (commit reads contract
+        // storage, so run inside the contract frame)
+        let result = env.as_contract(&contract_id, || commit_borrow(&env, fake_prepared));
+        assert!(matches!(result, Err(LendingError::OperationExpired)));
     }
 
     #[test]
