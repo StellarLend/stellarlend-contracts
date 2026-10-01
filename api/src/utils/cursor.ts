@@ -7,6 +7,7 @@
  * paginated API calls. The cursor is opaque to callers.
  */
 
+/** A cursor position within the ledger stream. */
 export interface Cursor {
   ledgerSequence: number;
   eventIndex: number;
@@ -30,14 +31,16 @@ export class CursorError extends Error {
 }
 
 export function encodeCursor(cursor: Cursor): string {
-  if (cursor.ledgerSequence < 0 || cursor.ledgerSequence > MAX_LEDGER_SEQUENCE) {
-    throw new CursorError(`Invalid ledger sequence: ${cursor.ledgerSequence}`);
+  const { ledgerSequence, eventIndex } = cursor ?? ({} as Cursor);
+
+  if (!Number.isInteger(ledgerSequence) || ledgerSequence < 0 || ledgerSequence > MAX_LEDGER_SEQUENCE) {
+    throw new CursorError(`Invalid ledger sequence: ${ledgerSequence}`);
   }
-  if (cursor.eventIndex < 0 || cursor.eventIndex > MAX_EVENT_INDEX) {
-    throw new CursorError(`Invalid event index: ${cursor.eventIndex}`);
+  if (!Number.isInteger(eventIndex) || eventIndex < 0 || eventIndex > MAX_EVENT_INDEX) {
+    throw new CursorError(`Invalid event index: ${eventIndex}`);
   }
 
-  const plain = `${cursor.ledgerSequence}${CURSOR_SEPARATOR}${cursor.eventIndex}`;
+  const plain = `${ledgerSequence}${CURSOR_SEPARATOR}${eventIndex}`;
   return Buffer.from(plain, 'utf-8').toString('base64url');
 }
 
@@ -48,27 +51,35 @@ export function decodeCursor(cursorString: string): Cursor {
 
   let plain: string;
   try {
-    plain = Buffer.from(cursorString, 'base64url').toString('utf-8');
-  } catch {
-    throw new CursorError('Invalid base64 encoding');
+    const buf = Buffer.from(cursor, 'base64');
+    // Basic validation of base64 characters
+    if (/[^A-Za-z0-9+/=_-]/.test(cursor)) {
+      throw new Error('Invalid base64 characters');
+    }
+    decoded = buf.toString('utf-8');
+  } catch (error) {
+    throw new CursorError(`Cursor decode failed: ${(error as Error).message}`);
   }
 
-  const parts = plain.split(CURSOR_SEPARATOR);
+  const parts = decoded.split(CURSOR_SEPARATOR);
   if (parts.length !== 2) {
-    throw new CursorError(`Invalid cursor format: expected "ledger:event", got "${plain}"`);
+    throw new CursorError('Invalid cursor format: expected "ledger_sequence:event_index"');
   }
 
-  const ledgerSequence = parseInt(parts[0], 10);
-  const eventIndex = parseInt(parts[1], 10);
-
-  if (isNaN(ledgerSequence) || isNaN(eventIndex)) {
+  if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) {
     throw new CursorError('Cursor contains non-numeric values');
   }
 
-  if (ledgerSequence < 0 || ledgerSequence > MAX_LEDGER_SEQUENCE) {
+  const ledgerSequence = Number(parts[0]);
+  const eventIndex = Number(parts[1]);
+
+  if (!Number.isSafeInteger(ledgerSequence) || !Number.isSafeInteger(eventIndex)) {
+    throw new CursorError('Cursor contains non-numeric values');
+  }
+  if (ledgerSequence > MAX_LEDGER_SEQUENCE) {
     throw new CursorError(`Ledger sequence out of range: ${ledgerSequence}`);
   }
-  if (eventIndex < 0 || eventIndex > MAX_EVENT_INDEX) {
+  if (eventIndex > MAX_EVENT_INDEX) {
     throw new CursorError(`Event index out of range: ${eventIndex}`);
   }
 

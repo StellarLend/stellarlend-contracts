@@ -11,7 +11,7 @@ import {
   Address,
   nativeToScVal,
 } from '@stellar/stellar-sdk';
-import { Server as SorobanServer } from '@stellar/stellar-sdk/rpc';
+import { Server as SorobanServer, Api } from '@stellar/stellar-sdk/rpc';
 import axios from 'axios';
 import { config } from '../config';
 import logger from '../utils/logger';
@@ -339,6 +339,18 @@ export class StellarService {
   async fetchActivityByLedgerRange(params: FetchActivityParams): Promise<FetchActivityResult> {
     const { startLedger, startEventIndex, limit } = params;
 
+    // Boundary validation: reject non-positive limits and negative cursors so
+    // pagination cannot silently return inconsistent slices.
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new InternalServerError('limit must be a positive integer');
+    }
+    if (startLedger !== null && (!Number.isInteger(startLedger) || startLedger < 1)) {
+      throw new InternalServerError('startLedger must be a positive integer or null');
+    }
+    if (startEventIndex !== null && (!Number.isInteger(startEventIndex) || startEventIndex < 0)) {
+      throw new InternalServerError('startEventIndex must be a non-negative integer or null');
+    }
+
     // Determine start ledger for RPC call
     // If cursor provided, start from that ledger
     // Otherwise, use a reasonable lookback (e.g., last 1000 ledgers)
@@ -390,8 +402,10 @@ export class StellarService {
     });
 
     // Determine if there are more events
-    // We requested `limit` events; if we got exactly `limit`, there may be more
-    const hasMore = filteredEvents.length >= limit;
+    // We requested `limit` events; if we got more than `limit`, there are more.
+    // Using `>` (not `>=`) avoids reporting hasMore=true when the page is exactly full
+    // and no further events exist beyond it.
+    const hasMore = filteredEvents.length > limit;
 
     return {
       events: filteredEvents.slice(0, limit),
@@ -413,6 +427,13 @@ export class StellarService {
   ): Promise<FetchActivityResult> {
     const { userAddress, startLedger, startEventIndex, limit } = params;
 
+    if (typeof userAddress !== 'string' || userAddress.length === 0) {
+      throw new InternalServerError('userAddress is required');
+    }
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new InternalServerError('limit must be a positive integer');
+    }
+
     // Fetch all activity first (same as general fetch)
     const { events, hasMore: generalHasMore } = await this.fetchActivityByLedgerRange({
       startLedger,
@@ -427,9 +448,11 @@ export class StellarService {
       return event.user.toLowerCase() === userAddress.toLowerCase();
     });
 
-    // If we filtered out too many, we might need to fetch more
-    // For simplicity, we return what we have and let the client paginate
-    const hasMore = generalHasMore || userEvents.length >= limit;
+    // hasMore must reflect whether the *user-filtered* stream has more pages.
+    // If the general stream has more, we cannot be sure the user stream is exhausted,
+    // so we conservatively report hasMore=true. Otherwise, only report true when
+    // the user-filtered page is strictly larger than the requested limit.
+    const hasMore = generalHasMore || userEvents.length > limit;
 
     return {
       events: userEvents.slice(0, limit),
@@ -522,7 +545,7 @@ export class StellarService {
         txHash: event.txHash,
       };
     } catch (error) {
-      console.warn('Failed to parse event:', event.id, error);
+      logger.warn('Failed to parse event:', event.id, error);
       return null;
     }
   }
@@ -545,11 +568,17 @@ export class StellarService {
 
   /**
    * Parse address from ScVal.
+   *
+   * `ScAddress` has no meaningful `toString()` override, so calling it
+   * directly yields the literal string "[object Object]". The address must be
+   * converted back to its strkey form via `Address.fromScAddress`, otherwise
+   * every parsed event reports a bogus user and user-scoped activity queries
+   * can never match.
    */
   private parseAddress(val: xdr.ScVal | undefined): string {
     if (!val) return '';
     try {
-      return val.address().toString();
+      return Address.fromScAddress(val.address()).toString();
     } catch {
       return '';
     }
@@ -563,15 +592,22 @@ export class StellarService {
       // Assuming value is a Map with 'amount' and 'asset' keys
       // Adjust based on actual contract event structure
       const map = val.map();
+      if (!map) {
+        return { amount: '0', asset: '' };
+      }
       let amount = '0';
       let asset = '';
 
       for (const entry of map ?? []) {
         const key = entry.key().sym().toString();
         if (key === 'amount') {
-          amount = entry.val().i128().lo().toString();
+          // An i128 is a two's-complement 128-bit integer split into a signed
+          // high word and an unsigned low word. Reading `lo()` alone silently
+          // saturates at 2^64 - 1, so reassemble the full signed value.
+          const i128 = entry.val().i128();
+          amount = ((BigInt(i128.hi().toString()) << 64n) + BigInt(i128.lo().toString())).toString();
         } else if (key === 'asset') {
-          asset = entry.val().address().toString();
+          asset = Address.fromScAddress(entry.val().address()).toString();
         }
       }
 
@@ -624,6 +660,15 @@ export class StellarService {
 
     const data = event.data as unknown as AmmEventV1;
     if (data.schema_version !== 1 || data.event !== topic.kind) {
+      return null;
+    }
+
+    // Boundary validation: reject malformed payloads so downstream consumers
+    // never see a partially-populated AmmEventV1.
+    if (
+      data.event === 'swap' &&
+      (typeof data.amount_in !== 'string' || typeof data.amount_out !== 'string')
+    ) {
       return null;
     }
 

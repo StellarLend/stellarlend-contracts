@@ -14,8 +14,8 @@ fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) {
     let client = AmmContractClient::new(&env, &id);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    client.init_pool(&ra, &rb, &token_a, &token_b);
     let admin = Address::generate(&env);
+    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
@@ -121,8 +121,9 @@ fn test_symmetric_output_equal_reserves() {
     let c_ba = AmmContractClient::new(&env, &id_ba);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    c_ab.init_pool(&50_000, &50_000, &token_a, &token_b);
-    c_ba.init_pool(&50_000, &50_000, &token_a, &token_b);
+    let admin = Address::generate(&env);
+    c_ab.init_pool(&admin, &50_000, &50_000, &token_a, &token_b);
+    c_ba.init_pool(&admin, &50_000, &50_000, &token_a, &token_b);
 
     let out_ab = c_ab.swap_a_for_b(&1_000_i128);
     let out_ba = c_ba.swap_b_for_a(&1_000_i128);

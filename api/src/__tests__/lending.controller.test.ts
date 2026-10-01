@@ -639,6 +639,7 @@ describe('POST /api/lending/deposit', () => {
     });
     expect(res.status).toBe(400);
   });
+});
 
   it('returns 400 when amount is negative', async () => {
     const res = await request(app).post('/api/lending/deposit').send({

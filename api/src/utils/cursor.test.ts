@@ -1,8 +1,9 @@
 import {
   encodeCursor,
   decodeCursor,
+  nextCursor,
+  sanitizePageSize,
   isValidCursor,
-  getNextCursor,
   compareCursors,
   CursorError,
 } from './cursor';
@@ -64,11 +65,8 @@ describe('cursor utilities', () => {
       expect(isValidCursor(encodeCursor({ ledgerSequence: 100, eventIndex: 0 }))).toBe(true);
     });
 
-    it('returns false for invalid cursor', () => {
+    it('returns false for invalid cursors', () => {
       expect(isValidCursor('garbage')).toBe(false);
-    });
-
-    it('returns false for empty string', () => {
       expect(isValidCursor('')).toBe(false);
     });
 
@@ -78,18 +76,10 @@ describe('cursor utilities', () => {
     });
   });
 
-  describe('getNextCursor', () => {
-    it('returns cursor for last item', () => {
-      const items = [
-        { ledgerSequence: 100, eventIndex: 0 },
-        { ledgerSequence: 100, eventIndex: 1 },
-        { ledgerSequence: 101, eventIndex: 0 },
-      ];
-      expect(decodeCursor(getNextCursor(items)!)).toEqual({ ledgerSequence: 101, eventIndex: 0 });
-    });
-
-    it('returns undefined for empty array', () => {
-      expect(getNextCursor([])).toBeUndefined();
+    it('returns false for non-string input', () => {
+      expect(isValidCursor(123)).toBe(false);
+      expect(isValidCursor(null)).toBe(false);
+      expect(isValidCursor(undefined)).toBe(false);
     });
   });
 

@@ -13,7 +13,7 @@ use crate::liquidity_math::LiquidityMathError;
 ///
 /// # Examples
 /// ```
-/// use amm::math::try_sqrt;
+/// use stellarlend_amm::math::try_sqrt;
 /// assert_eq!(try_sqrt(25), Ok(5));
 /// assert!(try_sqrt(-1).is_err());
 /// ```
