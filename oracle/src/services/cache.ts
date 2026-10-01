@@ -259,6 +259,7 @@ export class PriceCache {
     constructor(ttlSeconds: number = 30, staleTtlSeconds: number = 300) {
         this.cache = new Cache({
             defaultTtlSeconds: ttlSeconds,
+            staleTtlSeconds,
             maxEntries: 100,
         });
     }
