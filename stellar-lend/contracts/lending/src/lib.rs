@@ -2052,6 +2052,8 @@ impl LendingContract {
     ) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         with_reentrancy_lock(&env, || {
+            invariants::check_invariant_before(&env, &debt_asset);
+            invariants::check_invariant_before(&env, &collateral_asset);
             liquidator.require_auth();
             if liquidator == borrower {
                 return Err(LendingError::SelfLiquidation);
@@ -2200,6 +2202,9 @@ impl LendingContract {
                 shortfall,
             }
             .publish(&env);
+
+            invariants::check_invariant_after(&env, &debt_asset);
+            invariants::check_invariant_after(&env, &collateral_asset);
 
             Ok(actual_repay)
         })
