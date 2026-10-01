@@ -141,9 +141,9 @@ describe('parseIntEnv', () => {
     expect(parseIntEnv(KEY, 5)).toBe(-1);
   });
 
-  it('parses integer part of a float string (parseInt semantics)', () => {
+  it('throws for a float string instead of truncating', () => {
     process.env[KEY] = '3000.99';
-    expect(parseIntEnv(KEY, 0)).toBe(3000);
+    expect(() => parseIntEnv(KEY, 0)).toThrow('must be an integer');
   });
 
   it('throws a descriptive error for a non-numeric string', () => {
