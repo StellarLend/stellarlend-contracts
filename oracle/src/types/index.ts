@@ -145,27 +145,27 @@ export interface AssetPriceBounds {
 }
 
 export interface OracleServiceConfig {
-  stellarNetwork: "testnet" | "mainnet";
-  stellarRpcUrl: string;
-  contractId: string;
-  adminSecretKey: string;
-  adminApiPort?: number;
-  adminHmacSecret?: string;
-  updateIntervalMs: number;
-  maxPriceDeviationPercent: number;
-  madZScoreThreshold: number;
-  priceStaleThresholdSeconds: number;
-  cacheTtlSeconds: number;
-  redisUrl?: string;
-  logLevel: "debug" | "info" | "warn" | "error";
-  providers: ProviderConfig[];
-  priceBounds?: Record<SupportedAsset, AssetPriceBounds>;
-  /** Freshness policy governing stale data handling. */
-  freshnessPolicy?: FreshnessPolicy;
-  /** Fallback policy governing provider fallback and aggregation. */
-  fallbackPolicy?: FallbackPolicy;
-  /** Recovery policy for interrupted operations. */
-  recoveryPolicy?: RecoveryPolicy;
+    stellarNetwork: 'testnet' | 'mainnet';
+    stellarRpcUrl: string;
+    contractId: string;
+    adminSecretKey: string;
+    adminApiPort?: number;
+    adminHmacSecret?: string;
+    updateIntervalMs: number;
+    maxPriceDeviationPercent: number;
+    madZScoreThreshold: number;
+    priceStaleThresholdSeconds: number;
+    cacheTtlSeconds: number;
+    redisUrl?: string;
+    logLevel: 'debug' | 'info' | 'warn' | 'error';
+    providers: ProviderConfig[];
+    priceBounds?: Record<SupportedAsset, AssetPriceBounds>;
+    /** Freshness policy governing stale data handling. */
+    freshnessPolicy?: FreshnessPolicy;
+    /** Fallback policy governing provider fallback and aggregation. */
+    fallbackPolicy?: FallbackPolicy;
+    /** Recovery policy for interrupted operations. */
+    recoveryPolicy?: RecoveryPolicy;
 }
 
 /**
@@ -229,16 +229,16 @@ export interface ServiceMetrics {
  * Each state maps to a distinct phase in the oracle update transaction lifecycle.
  */
 export enum PriceUpdateState {
-  IDLE = "IDLE",
-  FETCHING = "FETCHING",
-  VALIDATING = "VALIDATING",
-  AGGREGATING = "AGGREGATING",
-  SUBMITTING = "SUBMITTING",
-  SUCCESS = "SUCCESS",
-  FAILED = "FAILED",
-  RETRYING = "RETRYING",
-  CANCELLED = "CANCELLED",
-  RECOVERING = "RECOVERING",
+    IDLE = 'IDLE',
+    FETCHING = 'FETCHING',
+    VALIDATING = 'VALIDATING',
+    AGGREGATING = 'AGGREGATING',
+    SUBMITTING = 'SUBMITTING',
+    SUCCESS = 'SUCCESS',
+    FAILED = 'FAILED',
+    RETRYING = 'RETRYING',
+    CANCELLED = 'CANCELLED',
+    RECOVERING = 'RECOVERING',
 }
 
 /**
