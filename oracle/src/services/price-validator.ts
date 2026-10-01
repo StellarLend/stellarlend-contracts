@@ -18,22 +18,15 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { scalePrice } from '../config.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * Validator configuration
- */
 export interface ValidatorConfig {
     maxDeviationPercent: number;
     maxStalenessSeconds: number;
     minPrice: number;
     maxPrice: number;
-    /**
-     * Maximum age in seconds for a cached price to be used as a fallback when the
-     * live price is rejected for staleness. When not configured, it defaults to
-     * three times maxStalenessSeconds.
-     */
     maxFallbackStalenessSeconds?: number;
 }
 
+/**
 /**
  * Cached price entry with the source timestamp used for freshness checks.
  */
@@ -44,6 +37,7 @@ interface CachedPrice {
 }
 
 /**
+/**
  * Default validator configuration
  */
 const DEFAULT_CONFIG: ValidatorConfig = {
@@ -52,6 +46,20 @@ const DEFAULT_CONFIG: ValidatorConfig = {
     minPrice: 0.0000001,
     maxPrice: 1000000000,
 };
+
+/** Largest scaled price that survives a round trip through a JS number. */
+const MAX_SAFE_SCALED_PRICE = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * True when a scaled bigint price can be represented exactly as a JS number.
+ *
+ * `Number.isSafeInteger` cannot be used here: it only accepts `number`
+ * arguments and always returns `false` for a `bigint`, which would reject every
+ * price. The bound is compared in bigint arithmetic instead.
+ */
+function isRepresentableScaledPrice(scaledPrice: bigint): boolean {
+    return scaledPrice >= 0n && scaledPrice <= MAX_SAFE_SCALED_PRICE;
+}
 
 /**
  * Price Validator
@@ -203,23 +211,6 @@ export class PriceValidator {
                         lastTimestamp: cached.timestamp,
                     },
                 });
-            } else if (raw.timestamp === cached.timestamp && raw.price === cached.price) {
-                errors.push({
-                    code: 'PRICE_STALE' as ValidationErrorCode,
-                    message: `Price for ${asset} at timestamp ${raw.timestamp} is already committed`,
-                    details: { asset, timestamp: raw.timestamp, price: raw.price },
-                });
-            } else if (raw.timestamp === cached.timestamp) {
-                errors.push({
-                    code: 'PRICE_STALE' as ValidationErrorCode,
-                    message: `Price for timestamp ${raw.timestamp} conflicts with last accepted price ${cached.price} for ${asset}`,
-                    details: {
-                        asset,
-                        timestamp: raw.timestamp,
-                        cachedPrice: cached.price,
-                        price: raw.price,
-                    },
-                });
             }
 
             const deviation = Math.abs((raw.price - cached.price) / cached.price) * 100;
@@ -238,11 +229,11 @@ export class PriceValidator {
         }
 
         const scaledPrice = scalePrice(raw.price);
-        if (Number.isFinite(raw.price) && !Number.isSafeInteger(scaledPrice)) {
+        if (Number.isFinite(raw.price) && !isRepresentableScaledPrice(scaledPrice)) {
             errors.push({
                 code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
                 message: `Scaled price ${scaledPrice} for ${asset} is not a safe integer`,
-                details: { scaledPrice, maxSafeInteger: Number.MAX_SAFE_INTEGER },
+                details: { scaledPrice: scaledPrice.toString(), maxSafeInteger: Number.MAX_SAFE_INTEGER },
             });
         }
 
@@ -258,7 +249,23 @@ export class PriceValidator {
                 signature: raw.signature,
             };
 
-            this.pendingPrices.set(asset, { price: raw.price, timestamp: raw.timestamp });
+            // If configured, verify signature for this source
+            const trusted = this.trustedSigners[raw.source];
+            if (trusted && trusted.length > 0) {
+                const sigErr = this.verifySignatureIfPresent(raw, trusted);
+                if (sigErr) {
+                    return {
+                        isValid: false,
+                        errors: [sigErr],
+                    };
+                }
+            }
+
+            this.cachedPrices.set(asset, {
+                price: raw.price,
+                timestamp: raw.timestamp,
+                volume24h: raw.volume24h ? Number(raw.volume24h) : undefined,
+            });
 
             return {
                 isValid: true,
@@ -311,6 +318,54 @@ export class PriceValidator {
      */
     validateMany(prices: RawPriceData[]): ValidationResult[] {
         return prices.map((p) => this.validate(p));
+    }
+
+    /**
+     * Verify provider signature when trusted signers are configured for a source.
+     * Returns a ValidationError when verification fails, otherwise undefined.
+     */
+    private verifySignatureIfPresent(raw: RawPriceData, trusted: string[]): ValidationError | undefined {
+        if (!raw.signature || !raw.signer) {
+            return {
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                message: `Missing signature or signer for trusted source ${raw.source}`,
+            };
+        }
+
+        // Ensure signer is in trusted list
+        if (!trusted.includes(raw.signer)) {
+            return {
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                message: `Untrusted signer ${raw.signer} for source ${raw.source}`,
+            };
+        }
+
+        try {
+            const kp = Keypair.fromPublicKey(raw.signer);
+
+            // Canonical message: domain|asset|price|timestamp|source
+            const msg = `${this.signatureDomain}|${raw.asset.toUpperCase()}|${raw.price}|${raw.timestamp}|${raw.source}`;
+            const msgBuf = Buffer.from(msg, 'utf8');
+
+            const sigBuf = Buffer.from(raw.signature, 'base64');
+
+            const verified = kp.verify(msgBuf, sigBuf);
+
+            if (!verified) {
+                return {
+                    code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                    message: `Invalid signature for source ${raw.source}`,
+                };
+            }
+        } catch (err) {
+            logger.error('Signature verification error', { error: err });
+            return {
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
+                message: `Signature verification failed for ${raw.source}`,
+            };
+        }
+
+        return undefined;
     }
 
     /**
@@ -610,6 +665,7 @@ export class PriceValidator {
             });
             return false;
         }
+        return Math.max(0, Math.min(100, confidence));
     }
 
     /**

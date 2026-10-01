@@ -1,9 +1,9 @@
 /**
  * Cache Service
- * 
+ *
  * In-memory caching layer with TTL support.
  * Supports Redis too.
- * 
+ *
  * Contract:
  * - `get` returns only fresh data (not stale).
  * - `getWithState` returns data until hard expiry, with staleness flag.
@@ -49,7 +49,7 @@ export class Cache {
     private misses: number = 0;
 
     constructor(config: Partial<CacheConfig> = {}) {
-        this.config = { ...DEFAULT_CONFIG, ...config };
+        this.config = { ...DEFAULT_CONFIG,...config };
 
         if (this.config.defaultTtlSeconds < 0 || this.config.staleTtlSeconds < 0) {
             throw new Error('TTL values must be non-negative');
@@ -59,7 +59,6 @@ export class Cache {
             defaultTtlSeconds: this.config.defaultTtlSeconds,
             staleTtlSeconds: this.config.staleTtlSeconds,
             maxEntries: this.config.maxEntries,
-            staleTtlSeconds: this.config.staleTtlSeconds,
         });
     }
 
@@ -114,7 +113,7 @@ export class Cache {
     }
 
     /**
-     * Set a value in cache with optional TTL and explicit timestamp.
+     * Set a value in cache with optional TL and explicit timestamp.
      */
     set<T>(key: string, value: T, ttlSeconds?: number, cachedAt?: number): void {
         const ttl = ttlSeconds ?? this.config.defaultTtlSeconds;
@@ -162,12 +161,7 @@ export class Cache {
 
         const now = Date.now();
         if (now > entry.expiresAt) {
-            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
-            if (now > staleExpiresAt) {
-                this.store.delete(key);
-                return false;
-            }
-            return true;
+            return false;
         }
 
         return true;
@@ -220,15 +214,14 @@ export class Cache {
         let cleaned = 0;
 
         for (const [key, entry] of this.store) {
-            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
-            if (now > staleExpiresAt) {
+            if (now > entry.expiresAt) {
                 this.store.delete(key);
                 cleaned++;
             }
         }
 
         if (cleaned > 0) {
-            logger.debug(`Cleaned up ${cleaned} stale cache entries`);
+            logger.debug(`Cleaned up ${cleaned} expired cache entries`);
         }
 
         return cleaned;
@@ -255,12 +248,11 @@ export class PriceCache {
             defaultTtlSeconds: ttlSeconds,
             staleTtlSeconds,
             maxEntries: 100,
-            staleTtlSeconds: 60,
         });
     }
 
     /**
-     * Get cached price, falling back to stale data within the stale TTL.
+     * Get cached price, falling back to stale data within the stale TLL.
      * Returns undefined if no usable data exists.
      */
     getPrice(asset: string): bigint | undefined {
@@ -315,7 +307,7 @@ export class PriceCache {
      * Check if we have a usable cached price (fresh or within stale TTL).
      */
     hasPrice(asset: string): boolean {
-        return this.cache.has(`{this.keyPrefix}${asset.toUpperCase()}`);
+        return this.cache.has(`${this.keyPrefix}${asset.toUpperCase()}`);
     }
 
     /**
