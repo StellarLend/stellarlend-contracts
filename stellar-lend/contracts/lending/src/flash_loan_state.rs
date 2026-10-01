@@ -15,7 +15,7 @@
 //!
 //! Track full lifecycle:
 //! ```
-//! [NONE] 
+//! [NONE]
 //!   ↓ flash_loan() called
 //! [INITIATED] (initiator, receiver, amount, fee recorded)
 //!   ↓ callback invoked
@@ -136,18 +136,14 @@ pub fn generate_flash_loan_request_id(
     amount: i128,
 ) -> BytesN<32> {
     use soroban_sdk::xdr::ToXdr;
-    
+
     // Get and increment nonce
     let key = FlashLoanStateKey::FlashLoanNonce;
-    let nonce: u64 = env
-        .storage()
-        .instance()
-        .get(&key)
-        .unwrap_or(0u64);
-    
+    let nonce: u64 = env.storage().instance().get(&key).unwrap_or(0u64);
+
     let next_nonce = nonce.checked_add(1).expect("flash_loan: nonce overflow");
     env.storage().instance().set(&key, &next_nonce);
-    
+
     // Hash: initiator || receiver || asset || amount || nonce
     let mut data = Bytes::new(env);
     data.append(&initiator.to_xdr(env));
@@ -155,8 +151,8 @@ pub fn generate_flash_loan_request_id(
     data.append(&asset.to_xdr(env));
     data.append(&Bytes::from_array(env, &amount.to_be_bytes()));
     data.append(&Bytes::from_array(env, &nonce.to_be_bytes()));
-    
-    env.crypto().sha256(&data)
+
+    env.crypto().sha256(&data).into()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -198,12 +194,12 @@ pub fn initiate_flash_loan(
     if is_flash_loan_active(env) {
         panic!("FlashLoanReentrancy");
     }
-    
+
     let now = env.ledger().timestamp();
     let required_treasury_after = treasury_before
         .checked_add(fee)
         .expect("flash_loan: required treasury calculation overflow");
-    
+
     let record = FlashLoanRecord {
         request_id: request_id.clone(),
         initiator,
@@ -220,7 +216,7 @@ pub fn initiate_flash_loan(
         treasury_before,
         required_treasury_after,
     };
-    
+
     let key = FlashLoanStateKey::ActiveFlashLoan;
     env.storage().instance().set(&key, &record);
 }
@@ -230,17 +226,16 @@ pub fn initiate_flash_loan(
 /// Transitions status: Initiated → CallbackExecuting.
 pub fn mark_callback_executing(env: &Env) {
     let key = FlashLoanStateKey::ActiveFlashLoan;
-    let mut record = get_active_flash_loan(env)
-        .expect("flash_loan: no active flash loan");
-    
+    let mut record = get_active_flash_loan(env).expect("flash_loan: no active flash loan");
+
     if record.status != FlashLoanStatus::Initiated {
         panic!("flash_loan: invalid state transition to CallbackExecuting");
     }
-    
+
     let now = env.ledger().timestamp();
     record.status = FlashLoanStatus::CallbackExecuting;
     record.callback_started_at = Some(now);
-    
+
     env.storage().instance().set(&key, &record);
 }
 
@@ -252,18 +247,17 @@ pub fn mark_callback_executing(env: &Env) {
 /// - `repaid_amount`: Amount repaid via `repay_flash_loan`
 pub fn record_repayment_received(env: &Env, repaid_amount: i128) {
     let key = FlashLoanStateKey::ActiveFlashLoan;
-    let mut record = get_active_flash_loan(env)
-        .expect("flash_loan: no active flash loan");
-    
+    let mut record = get_active_flash_loan(env).expect("flash_loan: no active flash loan");
+
     if record.status != FlashLoanStatus::CallbackExecuting {
         panic!("flash_loan: invalid state transition to RepaymentReceived");
     }
-    
+
     let now = env.ledger().timestamp();
     record.status = FlashLoanStatus::RepaymentReceived;
     record.repayment_received_at = Some(now);
     record.repaid_amount = Some(repaid_amount);
-    
+
     env.storage().instance().set(&key, &record);
 }
 
@@ -272,20 +266,19 @@ pub fn record_repayment_received(env: &Env, repaid_amount: i128) {
 /// Transitions status: RepaymentReceived → CallbackCompleted.
 pub fn mark_callback_completed(env: &Env) {
     let key = FlashLoanStateKey::ActiveFlashLoan;
-    let mut record = get_active_flash_loan(env)
-        .expect("flash_loan: no active flash loan");
-    
+    let mut record = get_active_flash_loan(env).expect("flash_loan: no active flash loan");
+
     // Allow transition from CallbackExecuting (no repayment) or RepaymentReceived
     if record.status != FlashLoanStatus::CallbackExecuting
         && record.status != FlashLoanStatus::RepaymentReceived
     {
         panic!("flash_loan: invalid state transition to CallbackCompleted");
     }
-    
+
     let now = env.ledger().timestamp();
     record.status = FlashLoanStatus::CallbackCompleted;
     record.callback_completed_at = Some(now);
-    
+
     env.storage().instance().set(&key, &record);
 }
 
@@ -295,22 +288,23 @@ pub fn mark_callback_completed(env: &Env) {
 /// Moves record from active to history, clears active slot.
 pub fn complete_flash_loan(env: &Env) {
     let active_key = FlashLoanStateKey::ActiveFlashLoan;
-    let mut record = get_active_flash_loan(env)
-        .expect("flash_loan: no active flash loan");
-    
+    let mut record = get_active_flash_loan(env).expect("flash_loan: no active flash loan");
+
     if record.status != FlashLoanStatus::CallbackCompleted {
         panic!("flash_loan: invalid state transition to Completed");
     }
-    
+
     record.status = FlashLoanStatus::Completed;
-    
+
     // Move to history (with TTL)
     let history_key = FlashLoanStateKey::FlashLoanHistory(record.request_id.clone());
     env.storage().persistent().set(&history_key, &record);
-    env.storage()
-        .persistent()
-        .extend_ttl(&history_key, FLASH_LOAN_HISTORY_TTL, FLASH_LOAN_HISTORY_TTL);
-    
+    env.storage().persistent().extend_ttl(
+        &history_key,
+        FLASH_LOAN_HISTORY_TTL,
+        FLASH_LOAN_HISTORY_TTL,
+    );
+
     // Clear active flash loan
     env.storage().instance().remove(&active_key);
 }
@@ -321,21 +315,23 @@ pub fn complete_flash_loan(env: &Env) {
 /// Moves record to history for audit trail.
 pub fn fail_flash_loan(env: &Env, reason: &str) {
     let active_key = FlashLoanStateKey::ActiveFlashLoan;
-    
+
     if let Some(mut record) = get_active_flash_loan(env) {
         record.status = FlashLoanStatus::Failed;
-        
+
         // Move to history
         let history_key = FlashLoanStateKey::FlashLoanHistory(record.request_id.clone());
         env.storage().persistent().set(&history_key, &record);
-        env.storage()
-            .persistent()
-            .extend_ttl(&history_key, FLASH_LOAN_HISTORY_TTL, FLASH_LOAN_HISTORY_TTL);
-        
+        env.storage().persistent().extend_ttl(
+            &history_key,
+            FLASH_LOAN_HISTORY_TTL,
+            FLASH_LOAN_HISTORY_TTL,
+        );
+
         // Clear active flash loan
         env.storage().instance().remove(&active_key);
     }
-    
+
     // Panic to rollback transaction
     panic!("FlashLoan failed: {}", reason);
 }
@@ -344,7 +340,7 @@ pub fn fail_flash_loan(env: &Env, reason: &str) {
 ///
 /// Called automatically by Soroban's transaction rollback mechanism.
 /// Ensures FlashActive flag is always cleared after transaction completes.
-pub fn cleanup_flash_loan_on_rollback(env: &Env) {
+pub fn cleanup_flash_loan_on_rollback(_env: &Env) {
     // Soroban's instance storage is transaction-scoped, so this is
     // automatically handled. This function is here for documentation.
     //
@@ -363,10 +359,7 @@ pub fn cleanup_flash_loan_on_rollback(env: &Env) {
 /// Get flash loan execution history by request ID.
 ///
 /// Returns `None` if record has expired (TTL passed) or never existed.
-pub fn get_flash_loan_history(
-    env: &Env,
-    request_id: &BytesN<32>,
-) -> Option<FlashLoanRecord> {
+pub fn get_flash_loan_history(env: &Env, request_id: &BytesN<32>) -> Option<FlashLoanRecord> {
     let key = FlashLoanStateKey::FlashLoanHistory(request_id.clone());
     env.storage().persistent().get(&key)
 }
@@ -376,17 +369,17 @@ pub fn get_flash_loan_history(
 /// Returns detailed status information if a flash loan is in progress.
 pub fn get_active_flash_loan_details(env: &Env) -> Option<FlashLoanDebugInfo> {
     let record = get_active_flash_loan(env)?;
-    
+
     let now = env.ledger().timestamp();
     let elapsed_since_initiation = now.saturating_sub(record.initiated_at);
-    
+
     let callback_duration = record.callback_started_at.and_then(|start| {
         record
             .callback_completed_at
             .or(Some(now))
             .map(|end| end.saturating_sub(start))
     });
-    
+
     Some(FlashLoanDebugInfo {
         request_id: record.request_id,
         status: record.status,
@@ -454,7 +447,7 @@ pub fn validate_flash_loan_invariants(env: &Env) {
                 panic!("flash_loan invariant: Completed/Failed status should not be in ActiveFlashLoan");
             }
         }
-        
+
         // Invariant 2: Timestamp monotonicity
         if let (Some(started), Some(completed)) =
             (record.callback_started_at, record.callback_completed_at)
@@ -464,7 +457,7 @@ pub fn validate_flash_loan_invariants(env: &Env) {
                 "flash_loan invariant: callback_started > callback_completed"
             );
         }
-        
+
         if let (Some(started), Some(repaid)) =
             (record.callback_started_at, record.repayment_received_at)
         {
@@ -473,7 +466,7 @@ pub fn validate_flash_loan_invariants(env: &Env) {
                 "flash_loan invariant: callback_started > repayment_received"
             );
         }
-        
+
         // Invariant 3: Amounts are consistent
         assert!(record.amount > 0, "flash_loan invariant: amount <= 0");
         assert!(record.fee >= 0, "flash_loan invariant: fee < 0");
@@ -489,112 +482,175 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        (env, contract_id)
+    }
+
     #[test]
     fn test_no_flash_loan_active_initially() {
-        let env = Env::default();
-        assert!(!is_flash_loan_active(&env));
-        assert!(get_active_flash_loan(&env).is_none());
+        let (env, contract_id) = setup();
+        env.as_contract(&contract_id, || {
+            assert!(!is_flash_loan_active(&env));
+            assert!(get_active_flash_loan(&env).is_none());
+        });
     }
 
     #[test]
     fn test_initiate_flash_loan_creates_record() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        initiate_flash_loan(&env, request_id.clone(), initiator.clone(), receiver.clone(), asset.clone(), 1000, 10, 5000);
-        
-        assert!(is_flash_loan_active(&env));
-        
-        let record = get_active_flash_loan(&env).unwrap();
-        assert_eq!(record.status, FlashLoanStatus::Initiated);
-        assert_eq!(record.amount, 1000);
-        assert_eq!(record.fee, 10);
-        assert_eq!(record.treasury_before, 5000);
-        assert_eq!(record.required_treasury_after, 5010);
+
+        env.as_contract(&contract_id, || {
+            initiate_flash_loan(
+                &env,
+                request_id.clone(),
+                initiator.clone(),
+                receiver.clone(),
+                asset.clone(),
+                1000,
+                10,
+                5000,
+            );
+
+            assert!(is_flash_loan_active(&env));
+
+            let record = get_active_flash_loan(&env).unwrap();
+            assert_eq!(record.status, FlashLoanStatus::Initiated);
+            assert_eq!(record.amount, 1000);
+            assert_eq!(record.fee, 10);
+            assert_eq!(record.treasury_before, 5000);
+            assert_eq!(record.required_treasury_after, 5010);
+        });
     }
 
     #[test]
     #[should_panic(expected = "FlashLoanReentrancy")]
     fn test_cannot_initiate_nested_flash_loan() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
-        
+
         let request_id1 = BytesN::from_array(&env, &[1u8; 32]);
         let request_id2 = BytesN::from_array(&env, &[2u8; 32]);
-        
-        initiate_flash_loan(&env, request_id1, initiator.clone(), receiver.clone(), asset.clone(), 1000, 10, 5000);
-        
-        // Try to initiate second flash loan (should panic)
-        initiate_flash_loan(&env, request_id2, initiator.clone(), receiver, asset, 2000, 20, 5000);
+
+        env.as_contract(&contract_id, || {
+            initiate_flash_loan(
+                &env,
+                request_id1,
+                initiator.clone(),
+                receiver.clone(),
+                asset.clone(),
+                1000,
+                10,
+                5000,
+            );
+
+            // Try to initiate second flash loan (should panic)
+            initiate_flash_loan(
+                &env,
+                request_id2,
+                initiator.clone(),
+                receiver,
+                asset,
+                2000,
+                20,
+                5000,
+            );
+        });
     }
 
     #[test]
     fn test_full_flash_loan_lifecycle() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        // 1. Initiate
-        initiate_flash_loan(&env, request_id.clone(), initiator, receiver, asset, 1000, 10, 5000);
-        assert_eq!(get_active_flash_loan(&env).unwrap().status, FlashLoanStatus::Initiated);
-        
-        // 2. Mark callback executing
-        mark_callback_executing(&env);
-        assert_eq!(get_active_flash_loan(&env).unwrap().status, FlashLoanStatus::CallbackExecuting);
-        
-        // 3. Record repayment
-        record_repayment_received(&env, 1010);
-        let record = get_active_flash_loan(&env).unwrap();
-        assert_eq!(record.status, FlashLoanStatus::RepaymentReceived);
-        assert_eq!(record.repaid_amount, Some(1010));
-        
-        // 4. Mark callback completed
-        mark_callback_completed(&env);
-        assert_eq!(get_active_flash_loan(&env).unwrap().status, FlashLoanStatus::CallbackCompleted);
-        
-        // 5. Complete flash loan
-        complete_flash_loan(&env);
-        assert!(!is_flash_loan_active(&env));
-        
-        // 6. Verify record moved to history
-        let history = get_flash_loan_history(&env, &request_id).unwrap();
-        assert_eq!(history.status, FlashLoanStatus::Completed);
+
+        env.as_contract(&contract_id, || {
+            // 1. Initiate
+            initiate_flash_loan(
+                &env,
+                request_id.clone(),
+                initiator,
+                receiver,
+                asset,
+                1000,
+                10,
+                5000,
+            );
+            assert_eq!(
+                get_active_flash_loan(&env).unwrap().status,
+                FlashLoanStatus::Initiated
+            );
+
+            // 2. Mark callback executing
+            mark_callback_executing(&env);
+            assert_eq!(
+                get_active_flash_loan(&env).unwrap().status,
+                FlashLoanStatus::CallbackExecuting
+            );
+
+            // 3. Record repayment
+            record_repayment_received(&env, 1010);
+            let record = get_active_flash_loan(&env).unwrap();
+            assert_eq!(record.status, FlashLoanStatus::RepaymentReceived);
+            assert_eq!(record.repaid_amount, Some(1010));
+
+            // 4. Mark callback completed
+            mark_callback_completed(&env);
+            assert_eq!(
+                get_active_flash_loan(&env).unwrap().status,
+                FlashLoanStatus::CallbackCompleted
+            );
+
+            // 5. Complete flash loan
+            complete_flash_loan(&env);
+            assert!(!is_flash_loan_active(&env));
+
+            // 6. Verify record moved to history
+            let history = get_flash_loan_history(&env, &request_id).unwrap();
+            assert_eq!(history.status, FlashLoanStatus::Completed);
+        });
     }
 
     #[test]
     fn test_flash_loan_request_id_is_unique() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
-        
-        let id1 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
-        let id2 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
-        
-        // Same parameters, but different nonces → different IDs
-        assert_ne!(id1, id2);
+
+        env.as_contract(&contract_id, || {
+            let id1 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
+            let id2 = generate_flash_loan_request_id(&env, &initiator, &receiver, &asset, 1000);
+
+            // Same parameters, but different nonces → different IDs
+            assert_ne!(id1, id2);
+        });
     }
 
     #[test]
     fn test_validate_invariants_passes_for_valid_state() {
-        let env = Env::default();
+        let (env, contract_id) = setup();
         let initiator = Address::generate(&env);
         let receiver = Address::generate(&env);
         let asset = Address::generate(&env);
         let request_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        initiate_flash_loan(&env, request_id, initiator, receiver, asset, 1000, 10, 5000);
-        mark_callback_executing(&env);
-        record_repayment_received(&env, 1010);
-        
-        // Should not panic
-        validate_flash_loan_invariants(&env);
+
+        env.as_contract(&contract_id, || {
+            initiate_flash_loan(&env, request_id, initiator, receiver, asset, 1000, 10, 5000);
+            mark_callback_executing(&env);
+            record_repayment_received(&env, 1010);
+
+            // Should not panic
+            validate_flash_loan_invariants(&env);
+        });
     }
 }
