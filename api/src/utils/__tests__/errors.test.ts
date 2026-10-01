@@ -18,6 +18,7 @@ import {
   ApiError,
   ValidationError,
   UnauthorizedError,
+  ForbiddenError,
   NotFoundError,
   ConflictError,
   InternalServerError,
@@ -317,6 +318,67 @@ describe('UnauthorizedError', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ForbiddenError
+// ---------------------------------------------------------------------------
+describe('ForbiddenError', () => {
+  it('has statusCode 403', () => {
+    expect(new ForbiddenError().statusCode).toBe(403);
+  });
+
+  it('defaults message to "Forbidden"', () => {
+    expect(new ForbiddenError().message).toBe('Forbidden');
+  });
+
+  it('accepts a custom message', () => {
+    expect(new ForbiddenError('Access denied').message).toBe('Access denied');
+  });
+
+  it('custom message still has statusCode 403', () => {
+    expect(new ForbiddenError('No token').statusCode).toBe(403);
+  });
+
+  it('isOperational is true', () => {
+    expect(new ForbiddenError().isOperational).toBe(true);
+  });
+
+  it('is instanceof ForbiddenError', () => {
+    expect(new ForbiddenError()).toBeInstanceOf(ForbiddenError);
+  });
+
+  it('is instanceof ApiError', () => {
+    expect(new ForbiddenError()).toBeInstanceOf(ApiError);
+  });
+
+  it('is instanceof Error', () => {
+    expect(new ForbiddenError()).toBeInstanceOf(Error);
+  });
+
+  // Failure / boundary paths
+  it('empty string overrides default message', () => {
+    const err = new ForbiddenError('');
+    expect(err.message).toBe('');
+    expect(err.statusCode).toBe(403);
+  });
+
+  it('whitespace-only message is stored as-is', () => {
+    expect(new ForbiddenError('  ').message).toBe('  ');
+  });
+
+  it('long custom message is stored correctly', () => {
+    const long = 'a'.repeat(3_000);
+    expect(new ForbiddenError(long).message.length).toBe(3_000);
+  });
+
+  it('can be re-thrown and caught as ApiError', () => {
+    function riskyOperation() {
+      throw new ForbiddenError('re-throw test');
+    }
+    expect(() => riskyOperation()).toThrow(ApiError);
+    expect(() => riskyOperation()).toThrow('re-throw test');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // NotFoundError
 // ---------------------------------------------------------------------------
 describe('NotFoundError', () => {
@@ -491,6 +553,10 @@ describe('Cross-cutting: instanceof narrowing and error dispatch', () => {
     expect(getStatusCode(new UnauthorizedError())).toBe(401);
   });
 
+  it('getStatusCode returns 403 for ForbiddenError', () => {
+    expect(getStatusCode(new ForbiddenError())).toBe(403);
+  });
+
   it('getStatusCode returns 404 for NotFoundError', () => {
     expect(getStatusCode(new NotFoundError())).toBe(404);
   });
@@ -511,6 +577,7 @@ describe('Cross-cutting: instanceof narrowing and error dispatch', () => {
     const errors: Error[] = [
       new ValidationError('v'),
       new UnauthorizedError(),
+      new ForbiddenError(),
       new NotFoundError(),
       new ConflictError('c'),
       new InternalServerError(),
@@ -522,7 +589,8 @@ describe('Cross-cutting: instanceof narrowing and error dispatch', () => {
 
   it('subclass instances do NOT cross-pollute each other', () => {
     expect(new ValidationError('v')).not.toBeInstanceOf(UnauthorizedError);
-    expect(new UnauthorizedError()).not.toBeInstanceOf(NotFoundError);
+    expect(new UnauthorizedError()).not.toBeInstanceOf(ForbiddenError);
+    expect(new ForbiddenError()).not.toBeInstanceOf(NotFoundError);
     expect(new NotFoundError()).not.toBeInstanceOf(ConflictError);
     expect(new ConflictError('c')).not.toBeInstanceOf(InternalServerError);
     expect(new InternalServerError()).not.toBeInstanceOf(ValidationError);
@@ -568,6 +636,7 @@ describe('Cross-cutting: isOperational flag semantics', () => {
   it('all subclasses have isOperational true by default', () => {
     expect(new ValidationError('x').isOperational).toBe(true);
     expect(new UnauthorizedError().isOperational).toBe(true);
+    expect(new ForbiddenError().isOperational).toBe(true);
     expect(new NotFoundError().isOperational).toBe(true);
     expect(new ConflictError('x').isOperational).toBe(true);
     expect(new InternalServerError().isOperational).toBe(true);
@@ -599,6 +668,13 @@ describe('Regression: prototype chain correctness', () => {
   it('UnauthorizedError prototype chain', () => {
     const err = new UnauthorizedError();
     expect(err instanceof UnauthorizedError).toBe(true);
+    expect(err instanceof ApiError).toBe(true);
+    expect(err instanceof Error).toBe(true);
+  });
+
+  it('ForbiddenError prototype chain', () => {
+    const err = new ForbiddenError();
+    expect(err instanceof ForbiddenError).toBe(true);
     expect(err instanceof ApiError).toBe(true);
     expect(err instanceof Error).toBe(true);
   });
