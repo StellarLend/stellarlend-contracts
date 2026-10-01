@@ -14,9 +14,7 @@ mod migration_event_tests {
     use crate::events::{
         emit_migration, MigrationEvent, EVENT_SCHEMA_VERSION, MIGRATION_MEMO_MAX_LEN,
     };
-    use soroban_sdk::{
-        contract, contractimpl, testutils::Events as _, Address, Env, String,
-    };
+    use soroban_sdk::{contract, contractimpl, testutils::Events as _, Address, Env, String};
 
     // ── Minimal contract so env.events() has an active contract context ───────
     #[contract]
@@ -37,12 +35,7 @@ mod migration_event_tests {
     fn emit_migration_publishes_event_with_correct_fields() {
         let (env, id) = setup();
         env.as_contract(&id, || {
-            emit_migration(
-                &env,
-                1,
-                2,
-                String::from_str(&env, "add ConfigBackup key"),
-            );
+            emit_migration(&env, 1, 2, String::from_str(&env, "add ConfigBackup key"));
         });
 
         let all = env.events().all();

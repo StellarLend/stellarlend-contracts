@@ -187,49 +187,106 @@ macro_rules! with_invariant_check {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Env};
+
+    /// Register a lending-contract context plus a real SEP-41 asset so the
+    /// invariant can be checked against a genuine token balance rather than a
+    /// mocked accounting value.
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(crate::LendingContract, ());
+        let asset = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        (env, contract_id, asset)
+    }
+
+    fn set_accounting(env: &Env, total_deposits: i128, bad_debt: i128) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &total_deposits);
+        env.storage().persistent().set(&DataKey::BadDebt, &bad_debt);
+    }
 
     #[test]
-    fn test_invariant_passes_when_balanced() {
-        let env = Env::default();
-        let contract_id = env.register(crate::LendingContract, ());
-        let _asset = Address::generate(&env);
-
-        // Set up matching internal accounting (contract-scoped storage access)
+    fn expected_reserve_defaults_to_zero_with_no_accounting() {
+        let (env, contract_id, asset) = setup();
         env.as_contract(&contract_id, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::TotalDeposits, &1000i128);
+            assert_eq!(compute_expected_reserve(&env, &asset), 0);
         });
+    }
 
-        // Note: In a real test, we'd mock the token client balance
-        // For now, this demonstrates the structure
+    #[test]
+    fn expected_reserve_is_total_deposits_minus_bad_debt() {
+        let (env, contract_id, asset) = setup();
+        env.as_contract(&contract_id, || {
+            set_accounting(&env, 1_000, 100);
+            assert_eq!(compute_expected_reserve(&env, &asset), 900);
+        });
+    }
+
+    #[test]
+    fn invariant_holds_at_exact_boundary_and_checkpoint_helpers_are_silent() {
+        let (env, contract_id, asset) = setup();
+        StellarAssetClient::new(&env, &asset).mint(&contract_id, &1_000);
+        env.as_contract(&contract_id, || {
+            set_accounting(&env, 1_000, 0);
+            // Balance exactly equals accounting: neither checkpoint may panic.
+            check_invariant_before(&env, &asset);
+            check_invariant_after(&env, &asset);
+        });
+    }
+
+    #[test]
+    fn invariant_holds_when_bad_debt_offsets_deposits() {
+        let (env, contract_id, asset) = setup();
+        StellarAssetClient::new(&env, &asset).mint(&contract_id, &600);
+        env.as_contract(&contract_id, || {
+            set_accounting(&env, 1_000, 400);
+            check_invariant_before(&env, &asset);
+        });
+    }
+
+    #[test]
+    fn invariant_holds_for_zero_reserves_and_zero_accounting() {
+        let (env, contract_id, asset) = setup();
+        env.as_contract(&contract_id, || {
+            check_invariant_before(&env, &asset);
+            check_invariant_after(&env, &asset);
+        });
     }
 
     #[test]
     #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
-    fn test_invariant_panics_on_drift() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register(crate::LendingContract, ());
-
-        // Register a real token so the balance query has a valid issuer.
-        // No mint is needed: the contract balance stays 0 while TotalDeposits
-        // is written as 1000 below, which is exactly the drift the check must
-        // detect.
-        let token_admin = Address::generate(&env);
-        let asset = env.register_stellar_asset_contract(token_admin.clone());
-
-        // Mismatched accounting: TotalDeposits = 1000 but the token balance of
-        // the contract is 0. Both the write and the check run inside the same
-        // `as_contract` frame so contract storage and the current-contract
-        // address resolve correctly.
+    fn invariant_rejects_accounting_that_overstates_held_reserves() {
+        let (env, contract_id, asset) = setup();
+        // One unit short of what the ledger claims: drift of exactly 1.
+        StellarAssetClient::new(&env, &asset).mint(&contract_id, &999);
         env.as_contract(&contract_id, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::TotalDeposits, &1000i128);
-
+            set_accounting(&env, 1_000, 0);
             check_invariant_before(&env, &asset);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
+    fn invariant_rejects_accounting_that_understates_held_reserves() {
+        let (env, contract_id, asset) = setup();
+        StellarAssetClient::new(&env, &asset).mint(&contract_id, &1_000);
+        env.as_contract(&contract_id, || {
+            // Bad debt is not real outflow here, so expected (600) != actual (1000).
+            set_accounting(&env, 1_000, 400);
+            check_invariant_before(&env, &asset);
+        });
+    }
+
+    #[test]
+    fn with_invariant_check_macro_returns_the_wrapped_body_result() {
+        let (env, contract_id, asset) = setup();
+        env.as_contract(&contract_id, || {
+            let result = crate::with_invariant_check!(&env, &asset, { 42 });
+            assert_eq!(result, 42);
         });
     }
 }

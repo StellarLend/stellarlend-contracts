@@ -18,13 +18,11 @@ pub mod upgrade;
 pub mod validation;
 
 #[cfg(test)]
-mod adversarial_scenarios_test;
-#[cfg(test)]
 mod event_schema_versioning_test;
 #[cfg(test)]
 mod governance_audit_test;
 #[cfg(test)]
-mod test_token_receiver;
+mod adversarial_scenarios_test;
 
 #[cfg(test)]
 mod accrual_idempotency_test;
@@ -65,11 +63,17 @@ mod deposit_accounting_test;
 #[cfg(test)]
 mod deposit_cap_race_test;
 #[cfg(test)]
+mod diagnostics_event_test;
+#[cfg(test)]
 mod effective_supply_rate_test;
 #[cfg(test)]
 mod emergency_state_matrix_test;
 #[cfg(test)]
+mod entrypoint_failure_boundary_test;
+#[cfg(test)]
 mod error_codes_test;
+#[cfg(test)]
+mod event_schema_bounds_test;
 #[cfg(test)]
 mod flash_pause_gating_test;
 #[cfg(test)]
@@ -82,6 +86,8 @@ mod health_factor_edge_test;
 mod initialize_auth_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
+#[cfg(test)]
+mod interest_rate_regression_test;
 #[cfg(test)]
 mod invariant_integration_test;
 #[cfg(test)]
@@ -104,6 +110,8 @@ mod liquidate_perf_test;
 mod liquidate_rounding_test;
 #[cfg(any(test, feature = "fuzzing"))]
 mod liquidate_transfer_test;
+#[cfg(test)]
+mod liquidation_arithmetic_invariant_test;
 #[cfg(test)]
 mod liquidation_branch_test;
 #[cfg(test)]
@@ -156,7 +164,11 @@ mod supply_rate_split_test;
 #[cfg(test)]
 mod config_roundtrip_test;
 #[cfg(test)]
+mod upgrade_governance_test;
+#[cfg(test)]
 mod utilization_history_test;
+#[cfg(test)]
+mod utilization_math_boundary_test;
 #[cfg(test)]
 mod withdraw_overflow_test;
 use debt::{
@@ -314,10 +326,6 @@ pub enum DataKey {
     ConfigEntries,
     /// Config store: named backup snapshot.
     ConfigBackup(Symbol),
-    /// Operation tracking: per-user sequence number for operation ordering.
-    UserOperationSequence(Address),
-    /// Operation tracking: operation ID → OperationRecord mapping for deduplication.
-    OperationRecord(BytesN<32>),
 }
 
 #[contractevent]
@@ -567,9 +575,6 @@ pub enum LendingError {
     /// `receive` called with `from` equal to the token asset or the lending
     /// contract itself (prevents self-call / reentrancy attacks).
     UnauthorizedSender = 1016,
-    /// A prepared operation (prepare_borrow, prepare_withdraw) has exceeded
-    /// its maximum age and must be re-prepared with fresh validation.
-    OperationExpired = 1017,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -902,16 +907,20 @@ impl LendingContract {
         if timestamp > now || now > timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
             return Err(LendingError::StaleOracleTimestamp);
         }
-        // Monotonic timestamp enforcement. An exact retry of the current
-        // record (same price AND same timestamp) is treated as an
-        // idempotent success; any other same-timestamp or older update is
-        // rejected as a replay.
-        if let Some(last) = env
+        // Load the existing record once. The freshness and retry policy is:
+        // 1. A strictly older timestamp can never overwrite a newer record.
+        // 2. Two different prices can never share the same timestamp.
+        // 3. Replaying the exact current (price, timestamp) is an idempotent
+        //    retry: it is not an error, but it also does not mutate state.
+        let existing_record: Option<PriceRecord> = env
             .storage()
             .persistent()
-            .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-        {
-            if timestamp < last.timestamp || (timestamp == last.timestamp && price != last.price) {
+            .get(&DataKey::OraclePrice(asset.clone()));
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp < last.timestamp {
+                return Err(LendingError::OracleReplay);
+            }
+            if timestamp == last.timestamp && price != last.price {
                 return Err(LendingError::OracleReplay);
             }
         }
@@ -923,44 +932,19 @@ impl LendingContract {
             .ok_or(LendingError::OraclePubkeyNotSet)?;
 
         let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
-        // ed25519_verify traps (panics) on a bad signature in soroban-sdk 25.x.
+        // `Crypto::ed25519_verify` traps the transaction when the signature is
+        // not valid for `(oracle_pubkey, payload)`, so completing the call is
+        // itself the proof that the caller holds the oracle key for this exact
+        // payload.
         env.crypto()
             .ed25519_verify(&oracle_pubkey, &payload, &signature);
 
-        // Per-update move-cap circuit breaker.
-        // If max_move_bps is configured and a prior price record exists, reject
-        // updates that move the price beyond the configured threshold.
-        if let Some(max_move_bps) = env
-            .storage()
-            .instance()
-            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
-        {
-            if let Some(last) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-            {
-                let last_price = last.price;
-                // delta = |price - last_price| * 10_000 / last_price
-                let delta_abs = if price >= last_price {
-                    price
-                        .checked_sub(last_price)
-                        .ok_or(LendingError::Overflow)?
-                } else {
-                    last_price
-                        .checked_sub(price)
-                        .ok_or(LendingError::Overflow)?
-                };
-                let move_bps = delta_abs
-                    .checked_mul(BPS_DENOM)
-                    .ok_or(LendingError::Overflow)?
-                    .checked_div(last_price)
-                    .ok_or(LendingError::Overflow)?;
-                if move_bps > max_move_bps {
-                    return Err(LendingError::MaxMoveBpsExceeded);
-                }
+        // A retry of an already-applied update is a successful no-op. The
+        // signature above proves the caller is authoritative for this payload.
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp == last.timestamp && price == last.price {
+                return Ok(());
             }
-            // No prior record: first-ever price for this asset is exempt.
         }
 
         // Per-update move-cap circuit breaker.
@@ -971,11 +955,7 @@ impl LendingContract {
             .instance()
             .get::<DataKey, i128>(&DataKey::MaxMoveBps)
         {
-            if let Some(last) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-            {
+            if let Some(last) = existing_record.as_ref() {
                 let last_price = last.price;
                 // delta = |price - last_price| * 10_000 / last_price
                 let delta_abs = if price >= last_price {
@@ -1803,9 +1783,78 @@ impl LendingContract {
         }
 
         check_and_clear_unhealthy_timestamp(&env, &user);
-        invariants::check_invariant_after(&env, &collateral_asset);        with_reentrancy_lock(&env, || {
-            invariants::check_invariant_before(&env, &debt_asset);
-            invariants::check_invariant_before(&env, &collateral_asset);
+        Ok(updated.principal)
+    }
+
+    /// Liquidate an under-collateralized borrower position.
+    ///
+    /// The entrypoint is wrapped in the reentrancy lock so a liquidation cannot
+    /// be re-entered from the same transaction context, and it also checks the
+    /// active-flash-loan guard before mutating state.
+    ///
+    /// Self-liquidations are rejected immediately so a borrower cannot profit
+    /// from the liquidation incentive on their own collateral.
+    ///
+    /// Uses checks-effects-interactions ordering: storage is updated after
+    /// validation and before token transfers so any transfer failure reverts
+    /// the whole liquidation atomically.
+    ///
+    /// Anyone may call `liquidate` on a position whose health factor is below
+    /// the liquidation threshold (`< 1.0`).  The caller repays up to the
+    /// governed close-factor share of the borrower's debt (default 50 %) and
+    /// receives an equivalent amount of the borrower's collateral plus the
+    /// governed liquidation incentive (default 10 %).  The incentive is
+    /// minted from the borrower's collateral, not from the protocol.
+    ///
+    /// The close factor and incentive are governable risk parameters — see
+    /// [`Self::get_close_factor_bps`] / [`Self::set_close_factor_bps`] and
+    /// [`Self::get_liquidation_incentive_bps`] /
+    /// [`Self::set_liquidation_incentive_bps`] — and the liquidation
+    /// threshold is the top-level [`LIQUIDATION_THRESHOLD_BPS`] constant.
+    ///
+    /// # Rounding policy (all divisions favour protocol solvency)
+    ///
+    /// | Division                     | Rounding | Rationale |
+    /// |------------------------------|----------|-----------|
+    /// | `hf = col × THRESHOLD ÷ debt` | floor    | Lower HF → position looks more underwater → earlier liquidation |
+    /// | `max_repay = debt × close_factor_bps ÷ 10000` | floor | Smaller cap → less debt extinguished per call → more rounds remain |
+    /// | `seized = repay × (10000 + incentive_bps) ÷ 10000`  | floor | Liquidator receives *less* collateral than the exact bonus |
+    ///
+    /// All three use [`math::checked_mul_div_floor`] so every truncation
+    /// transfers the sub-unit remainder to the protocol / remaining borrowers.
+    /// # Storage read budget
+    ///
+    /// This function is expected to perform at most **8** storage reads on the hot path:
+    /// 1. Flash active flag (instance storage)
+    /// 2. Collateral amount (persistent storage)
+    /// 3. Debt position (persistent storage via `load_debt`)
+    /// 4. Bad debt (persistent storage, only when shortfall occurs)
+    /// 5. Optional oracle price reads (instance storage) – enforced by `require_fresh_valuation_prices`
+    /// 6. Close-factor parameter lookup (instance storage)
+    /// 7. Liquidation-incentive parameter lookup (instance storage)
+    /// 8. Additional reads for temporary storage used internally.
+    ///
+    /// The implementation aims to batch redundant reads where possible and avoids
+    /// re‑loading the same entry multiple times.
+    ///
+    /// The per‑call read budget is enforced by a regression test in
+    /// `liquidate_perf_test.rs`.
+    ///
+    pub fn liquidate(
+        env: Env,
+        liquidator: Address,
+        borrower: Address,
+        debt_asset: Address,
+        collateral_asset: Address,
+        amount: i128,
+    ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
+        // NOTE: the reserve-invariant checks added by #1967 are deliberately not
+        // invoked here. `invariants::compute_expected_reserve` only models
+        // `TotalDeposits - BadDebt`, so it cannot hold across a liquidation,
+        // which moves `debt_asset` into the contract and `collateral_asset` out
+        // of it. Enabling it made every liquidation trap. See `invariants.rs`.
+        with_reentrancy_lock(&env, || {
             liquidator.require_auth();
             if liquidator == borrower {
                 return Err(LendingError::SelfLiquidation);
@@ -1902,6 +1951,29 @@ impl LendingContract {
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
 
+            // Recompute the post-liquidation health factor *before* mutating any
+            // storage, using the same governed threshold (`threshold_bps`) and the
+            // same checked helper as the entry guard above.
+            //
+            // Evaluating this predicate with the hardcoded
+            // `LIQUIDATION_THRESHOLD_BPS` and a raw `checked_mul` + `/` with
+            // `unwrap_or(i128::MAX)` was wrong in two ways:
+            //   * governance drift — once an admin governed the threshold down via
+            //     `set_liquidation_threshold_bps`, the entry guard and this check
+            //     evaluated *different* predicates, so
+            //     `DataKey::FirstUnhealthyTimestamp` was cleared or retained on the
+            //     wrong one, corrupting the liquidation grace-period state machine;
+            //   * fail-open on overflow — an overflow collapsed to `i128::MAX`, i.e.
+            //     "infinitely healthy", silently clearing the grace-period
+            //     timestamp instead of aborting.
+            // Failing here now aborts before any state is written.
+            let hf_after = if new_debt > 0 {
+                math::checked_mul_div_floor(new_col, threshold_bps, new_debt)
+                    .map_err(|_| LendingError::Overflow)?
+            } else {
+                i128::MAX
+            };
+
             let updated_position = DebtPosition {
                 principal: new_debt,
                 borrow_index_snapshot: settled_position.borrow_index_snapshot,
@@ -1917,16 +1989,7 @@ impl LendingContract {
                 decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
             }
 
-            // Recompute health factor after liquidation and clear unhealthy timestamp if healthy
-            let hf_after = if new_debt > 0 {
-                new_col
-                    .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-                    .map(|v| v / new_debt)
-                    .unwrap_or(i128::MAX)
-            } else {
-                i128::MAX
-            };
-            if hf_after >= 10000 {
+            if hf_after >= HEALTH_FACTOR_SCALE {
                 let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
                 if env.storage().persistent().has(&first_unhealthy_key) {
                     env.storage().persistent().remove(&first_unhealthy_key);
@@ -3682,11 +3745,21 @@ fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
         let position = load_debt(env, user);
         let debt = position.principal;
 
+        // Mirror `liquidate`'s entry guard: consult the *governed* threshold rather
+        // than the hardcoded default, and treat an arithmetic failure as "not
+        // provably healthy" (fail-closed) so an overflow can never clear the
+        // grace-period timestamp. This is the same invariant as the post-liquidation
+        // check in `liquidate`; both decide the fate of
+        // `DataKey::FirstUnhealthyTimestamp` and must agree.
         let hf = if debt > 0 {
-            collateral
-                .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-                .map(|v| v / debt)
-                .unwrap_or(i128::MAX)
+            match math::checked_mul_div_floor(
+                collateral,
+                LendingContract::get_liquidation_threshold_bps(env.clone()),
+                debt,
+            ) {
+                Ok(hf) => hf,
+                Err(_) => return,
+            }
         } else {
             i128::MAX
         };
@@ -4286,6 +4359,11 @@ pub(crate) mod test {
         let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
         client.set_oracle_pubkey(&pubkey);
 
+        // The default test ledger closes at timestamp 0, so `timestamp - 1`
+        // would saturate back to `timestamp` and the replay would be
+        // indistinguishable from an idempotent retry. Advance the clock first so
+        // the "strictly older" premise actually holds.
+        advance_time(&env, 100);
         let asset = env.register(MockAsset, ());
         let price = 1_500_000_000i128;
         // Non-zero ledger time so `timestamp - 1` is genuinely older.

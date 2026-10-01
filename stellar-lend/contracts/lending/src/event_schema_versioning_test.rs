@@ -11,16 +11,12 @@
 
 #![cfg(test)]
 
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{contracttype, Address, Env, Vec};
-
-/// Decode a host `Val` into its canonical `ScVal` for stable comparisons.
-/// Raw `Val` payloads embed host-object allocation handles, so equality is
-/// only meaningful at the `ScVal` (XDR) level.
-fn val_to_scval(env: &Env, val: soroban_sdk::Val) -> soroban_sdk::xdr::ScVal {
-    use soroban_sdk::TryFromVal;
-    soroban_sdk::xdr::ScVal::try_from_val(env, &val).expect("Val converts to ScVal")
-}
+use soroban_sdk::{
+    contracttype,
+    testutils::{Address as _, Events as _},
+    xdr::{ContractEventBody, ToXdr},
+    Address, Env, TryFromVal,
+};
 
 use crate::events::*;
 
@@ -171,17 +167,10 @@ fn test_deposit_event_serialization_deterministic() {
     // They should be equal
     assert_eq!(event1, event2);
 
-    // Convert to XDR and compare (simulating serialization). Raw `Val`
-    // payloads embed host-object allocation handles, which differ per
-    // construction even for identical content — the stable comparison is
-    // over the canonical XDR encoding.
-    let val1: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event1, &env);
-    let val2: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event2, &env);
-    assert_eq!(
-        val_to_scval(&env, val1),
-        val_to_scval(&env, val2),
-        "Event serialization must be deterministic"
-    );
+    // Convert to Val and compare (simulating serialization)
+    let xdr1 = event1.to_xdr(&env);
+    let xdr2 = event2.to_xdr(&env);
+    assert_eq!(xdr1, xdr2, "Event serialization must be deterministic");
 }
 
 #[test]
@@ -206,13 +195,9 @@ fn test_borrow_event_serialization_deterministic() {
     };
 
     assert_eq!(event1, event2);
-    let val1: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event1, &env);
-    let val2: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event2, &env);
-    assert_eq!(
-        val_to_scval(&env, val1),
-        val_to_scval(&env, val2),
-        "Event serialization must be deterministic"
-    );
+    let xdr1 = event1.to_xdr(&env);
+    let xdr2 = event2.to_xdr(&env);
+    assert_eq!(xdr1, xdr2, "Event serialization must be deterministic");
 }
 
 // ============================================================================
@@ -371,37 +356,26 @@ fn test_flash_loan_event_structure_unchanged() {
 
 #[test]
 fn test_schema_version_event_emitted_on_init() {
-    let env = Env::default();
-    let contract_id = env.register(crate::LendingContract, ());
+    use crate::{LendingContract, LendingContractClient};
 
-    // Emit schema version event (events publish within a contract frame,
-    // mirroring how `initialize` emits it on-chain).
-    env.as_contract(&contract_id, || emit_schema_version(&env));
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &id);
+    let admin = Address::generate(&env);
+
+    // Actually initialize: the event must come from the real initialization
+    // path, which is where off-chain indexers look for it.
+    client.initialize(&admin);
 
     // Verify event was published
-    let events = soroban_sdk::testutils::Events::all(&env.events());
-    let has_schema_event = events.events().iter().any(|event| {
-        let topics: &[soroban_sdk::xdr::ScVal] = match &event.body {
-            soroban_sdk::xdr::ContractEventBody::V0(v0) => &v0.topics,
-        };
-        topics
-            .first()
-            .and_then(|topic| {
-                <soroban_sdk::Val as soroban_sdk::TryFromVal<
-                    soroban_sdk::Env,
-                    soroban_sdk::xdr::ScVal,
-                >>::try_from_val(&env, topic)
-                .ok()
-            })
-            .and_then(|topic| {
-                <soroban_sdk::Symbol as soroban_sdk::TryFromVal<
-                    soroban_sdk::Env,
-                    soroban_sdk::Val,
-                >>::try_from_val(&env, &topic)
-                .ok()
-            })
-            .map(|sym| sym == soroban_sdk::Symbol::new(&env, "SchemaVersionEvent"))
-            .unwrap_or(false)
+    let events = env.events().all();
+    let has_schema_event = events.events().iter().any(|event| match &event.body {
+        ContractEventBody::V0(v0) => v0.topics.iter().any(|topic| {
+            soroban_sdk::Symbol::try_from_val(&env, topic)
+                .map(|sym| sym == soroban_sdk::Symbol::new(&env, "SchemaVersionEvent"))
+                .unwrap_or(false)
+        }),
     });
 
     assert!(

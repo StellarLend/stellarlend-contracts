@@ -465,7 +465,11 @@ pub fn settle_accrual(
     Ok(DebtPosition {
         principal,
         borrow_index_snapshot: position.borrow_index_snapshot,
-        last_update: now,
+        // A clock that moves backwards (ledger rollback, delayed retry replayed
+        // after a newer one) must not rewrite the accrual timeline. Keep the
+        // furthest timestamp seen; `elapsed_seconds` already clamps the elapsed
+        // window to zero so no interest is invented either way.
+        last_update: position.last_update.max(now),
     })
 }
 
@@ -768,6 +772,11 @@ const KEY_ACCRUAL_LOG: &str = "accrual_log";
 /// Append a settle_accrual_split result to the persistent log and emit a
 /// `settle_accrual_split` contract event for off-chain indexers.
 ///
+/// The log is a bounded ring buffer capped at [`MAX_ACCRUAL_LOG_SIZE`] entries.
+/// When the cap is reached the oldest entry is evicted before the newest is
+/// appended, keeping persistent-storage rent cost and read/decode cost
+/// deterministically bounded regardless of protocol lifetime.
+///
 /// Call this immediately after `settle_accrual_split` so the split is
 /// recorded for both on-chain history (via `get_accrual_split_log`) and
 /// off-chain TWAP/revenue attribution consumers.
@@ -785,6 +794,18 @@ pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split
         .persistent()
         .get(&Symbol::new(env, KEY_ACCRUAL_LOG))
         .unwrap_or_else(|| Vec::new(env));
+
+    // Enforce the ring-buffer bound: evict oldest when at capacity.
+    let cap = MAX_ACCRUAL_LOG_SIZE as u32;
+    if log.len() >= cap {
+        // Remove front (oldest) entry to make room.
+        let mut trimmed: Vec<AccrualSplitEntry> = Vec::new(env);
+        for i in 1..log.len() {
+            trimmed.push_back(log.get(i).unwrap());
+        }
+        log = trimmed;
+    }
+
     log.push_back(entry.clone());
     env.storage()
         .persistent()

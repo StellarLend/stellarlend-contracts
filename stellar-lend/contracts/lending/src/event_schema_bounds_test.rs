@@ -12,18 +12,16 @@
 mod event_schema_bounds_tests {
     use crate::{
         audit_log::{
-            get_governance_audit_entries, get_governance_audit_count, record_audit_entry,
+            get_governance_audit_count, get_governance_audit_entries, record_audit_entry,
             AuditLogKey,
         },
-        debt::{record_accrual_split, get_accrual_split_log, InterestSplit},
+        debt::{get_accrual_split_log, record_accrual_split, InterestSplit},
         events::{
             EVENT_SCHEMA_VERSION, MAX_ACCRUAL_LOG_SIZE, MAX_AUDIT_PAGE_SIZE,
             MAX_EVENTS_PER_OPERATION, MAX_PENDING_PROPOSALS,
         },
     };
-    use soroban_sdk::{
-        contract, testutils::Address as _, Address, Env, String,
-    };
+    use soroban_sdk::{contract, testutils::Address as _, Address, Env, String};
 
     // ── Minimal contract context for storage ops ─────────────────────────────
     #[contract]
@@ -38,14 +36,23 @@ mod event_schema_bounds_tests {
     // ── Bound constant sanity ─────────────────────────────────────────────────
 
     #[test]
+    // The whole point of this test is to assert on compile-time constants.
+    #[allow(clippy::assertions_on_constants)]
     fn bound_constants_are_positive() {
         assert!(MAX_AUDIT_PAGE_SIZE > 0, "MAX_AUDIT_PAGE_SIZE must be > 0");
         assert!(MAX_ACCRUAL_LOG_SIZE > 0, "MAX_ACCRUAL_LOG_SIZE must be > 0");
-        assert!(MAX_PENDING_PROPOSALS > 0, "MAX_PENDING_PROPOSALS must be > 0");
-        assert!(MAX_EVENTS_PER_OPERATION > 0, "MAX_EVENTS_PER_OPERATION must be > 0");
+        assert!(
+            MAX_PENDING_PROPOSALS > 0,
+            "MAX_PENDING_PROPOSALS must be > 0"
+        );
+        assert!(
+            MAX_EVENTS_PER_OPERATION > 0,
+            "MAX_EVENTS_PER_OPERATION must be > 0"
+        );
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn max_audit_page_size_is_at_most_100() {
         // Keeps per-call read cost under control.
         assert!(
@@ -56,6 +63,7 @@ mod event_schema_bounds_tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn max_accrual_log_size_does_not_exceed_1000() {
         // Ensures the ring-buffer never grows beyond a safe persistent-rent cost.
         assert!(
@@ -260,7 +268,10 @@ mod event_schema_bounds_tests {
             // The last entry must be the most recently written.
             let newest_ts = writes * 1000;
             let newest = log.get((log.len() - 1) as u32).unwrap();
-            assert_eq!(newest.timestamp, newest_ts, "newest entry timestamp mismatch");
+            assert_eq!(
+                newest.timestamp, newest_ts,
+                "newest entry timestamp mismatch"
+            );
         });
     }
 
@@ -300,9 +311,7 @@ mod event_schema_bounds_tests {
         let (env, id) = setup();
         env.as_contract(&id, || {
             // Set a large max size so the buffer never evicts.
-            env.storage()
-                .instance()
-                .set(&AuditLogKey::MaxSize, &200u64);
+            env.storage().instance().set(&AuditLogKey::MaxSize, &200u64);
 
             let actor = Address::generate(&env);
             let action = String::from_str(&env, "gov_action");
