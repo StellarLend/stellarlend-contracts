@@ -23,54 +23,41 @@ export const DEFAULT_SERVER_ERROR_MESSAGE = 'Internal server error';
 const isValidStatusCode = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 400 && value <= 599;
 
-export const errorHandler = (
-  error: Error,\n  req: Request,
-  res: Response,
-  _next: NextFunction
-) => {
-  const safePath = typeof req?.path === 'string' ? req.path : 'unknown';
-  const safeMethod = typeof req?.method === 'string' ? req.method : 'unknown';
+export const errorHandler = (err: Error, _req: Request, res: Response, next: NextFunction) => {
+  const invalidJson = err instanceof SyntaxError && 'body' in err;
+  // Only operational client errors have messages intended for callers. An invalid
+  // status or a server failure must never turn into a success or expose internals.
+  const publicApiError =
+    err instanceof ApiError &&
+    err.isOperational === true &&
+    Number.isInteger(err.statusCode) &&
+    err.statusCode >= 400 &&
+    err.statusCode < 500 &&
+    typeof err.message === 'string' &&
+    err.message.length > 0;
+  const statusCode = invalidJson ? 400 : publicApiError ? err.statusCode : 500;
+  const message = invalidJson
+    ? 'Invalid JSON body'
+    : publicApiError
+      ? err.message
+      : 'Internal server error';
 
-  const isSyntaxError =
-    error instanceof SyntaxError && 'body' in (error as unknown as object);
-
-  const isApiError = error instanceof ApiError;
-
-  // Observability: log structured context. Stack is only logged for unexpected
-  // errors to avoid noise and to keep client errors cheap to diagnose.
-  logger.error('Error occurred:', {
-    error: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
-    path: safePath,
-    method: safeMethod,
-    statusCode: isApiError ? (error as ApiError).statusCode : isSyntaxError ? 400 : 500,
+  // Error messages, stacks, and request fields may contain user supplied secrets.
+  // The category and status diagnose the failure without logging those fields.
+  logger.error('Request failed', {
+    category: invalidJson ? 'invalid_json' : publicApiError ? 'client_error' : 'server_error',
+    statusCode,
   });
 
-  if (isSyntaxError) {
-    return res.status(400).json({
-      success: false,
-      error: (error as Error).message,
-    } as ErrorResponseBody);
+  // Express owns recovery once headers are committed; sending again corrupts the response.
+  if (res.headersSent) {
+    return next(err instanceof Error ? err : new Error('Unknown error'));
   }
 
-  if (isApiError) {
-    const apiError = error as ApiError;
-    const statusCode = isValidStatusCode(apiError.statusCode) ? apiError.statusCode : 500;
-    const message =
-      statusCode >= 500
-        ? DEFAULT_SERVER_ERROR_MESSAGE
-        : apiError.message || 'Request failed';
-
-    return res.status(statusCode).json({
-      success: false,
-      error: message,
-    } as ErrorResponseBody);
-  }
-
-  return res.status(500).json({
+  return res.status(statusCode).json({
     success: false,
-    error: DEFAULT_SERVER_ERROR_MESSAGE,
-  } as ErrorResponseBody);
+    error: message,
+  });
 };
 
 export default errorHandler;

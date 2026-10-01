@@ -41,20 +41,43 @@ export class OracleService {
     private isRunning: boolean = false;
 
     constructor(config: OracleServiceConfig) {
-        this.config = config;
+        if (config.stellarNetwork && !['testnet', 'mainnet'].includes(config.stellarNetwork)) {
+            throw new Error(`Invalid stellar network: ${config.stellarNetwork}`);
+        }
+        if (config.stellarRpcUrl) {
+            try {
+                new URL(config.stellarRpcUrl);
+            } catch {
+                throw new Error(`Invalid RPC URL: ${config.stellarRpcUrl}`);
+            }
+        }
+        if (config.contractId !== undefined && config.contractId.trim() === '') {
+            throw new Error('Contract ID cannot be empty');
+        }
+
+        // Normalize providers if single provider
+        let normalizedProviders = config.providers;
+        if (normalizedProviders && normalizedProviders.length === 1) {
+            normalizedProviders = [{ ...normalizedProviders[0], weight: 1.0 }];
+        }
+
+        this.config = {
+            ...config,
+            providers: normalizedProviders,
+        };
 
         // Configure logging
-        configureLogger(config.logLevel);
+        configureLogger(this.config.logLevel);
 
         // Create providers from configuration
-        const providers: BasePriceProvider[] = config.providers
+        const providers: BasePriceProvider[] = (this.config.providers || [])
             .filter((p) => p.enabled)
             .map((p) => {
                 switch (p.name) {
                     case 'coingecko':
-                        return new (await import('./providers/coingecko.js')).CoinGeckoProvider(p as ProviderConfig);
+                        return createCoinGeckoProvider(p as ProviderConfig);
                     case 'binance':
-                        return new (await import('./providers/binance.js')).BinanceProvider(p as ProviderConfig);
+                        return createBinanceProvider(p as ProviderConfig);
                     default:
                         logger.warn('Unknown provider in config, skipping', { provider: p.name });
                         return null;
@@ -67,41 +90,41 @@ export class OracleService {
         // Create services
         const validator = createValidator(
             {
-                maxDeviationPercent: config.maxPriceDeviationPercent,
-                maxStalenessSeconds: config.priceStaleThresholdSeconds,
+                maxDeviationPercent: Math.max(1, this.config.maxPriceDeviationPercent ?? 10),
+                maxStalenessSeconds: Math.max(1, this.config.priceStaleThresholdSeconds ?? 300),
             },
-            config.priceBounds,
+            this.config.priceBounds,
         );
 
-        const cache = createPriceCache(config.cacheTtlSeconds);
+        const cache = createPriceCache(Math.max(0, this.config.cacheTtlSeconds ?? 30));
 
         this.aggregator = createAggregator(providers, validator, cache);
 
         this.contractUpdater = createContractUpdater({
-            network: config.stellarNetwork,
-            rpcUrl: config.stellarRpcUrl,
-            contractId: config.contractId,
-            adminSecretKey: config.adminSecretKey,
+            network: this.config.stellarNetwork,
+            rpcUrl: this.config.stellarRpcUrl,
+            contractId: this.config.contractId,
+            adminSecretKey: this.config.adminSecretKey,
             maxRetries: 3,
             retryDelayMs: 1000,
         });
 
-        if (config.adminApiPort > 0) {
-            if (!config.adminHmacSecret) {
+        if (this.config.adminApiPort > 0) {
+            if (!this.config.adminHmacSecret) {
                 throw new Error('ADMIN_HMAC_SECRET is required when ADMIN_API_PORT is configured');
             }
 
             this.adminServer = new AdminServer({
-                port: config.adminApiPort,
-                hmacSecret: config.adminHmacSecret,
+                port: this.config.adminApiPort,
+                hmacSecret: this.config.adminHmacSecret,
                 validator,
             });
         }
 
         logger.info('Oracle service initialized', {
-            network: config.stellarNetwork,
-            contractId: config.contractId,
-            updateInterval: config.updateIntervalMs,
+            network: this.config.stellarNetwork,
+            contractId: this.config.contractId,
+            updateInterval: this.config.updateIntervalMs,
             providers: this.aggregator.getProviders(),
         });
     }
@@ -210,7 +233,7 @@ export class OracleService {
             isRunning: this.isRunning,
             network: this.config.stellarNetwork,
             contractId: this.config.contractId,
-            providers: this.aggregator.getProviders(),
+            providers: [...(this.config.providers || [])],
             aggregatorStats: this.aggregator.getStats(),
         };
     }
