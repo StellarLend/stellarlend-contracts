@@ -130,6 +130,23 @@ export const ASSET_MAPPINGS: AssetMapping[] = [
     },
 ];
 
+export interface AssetPriceBounds {
+    minPrice: number;
+    maxPrice: number;
+}
+
+export const DEFAULT_PRICE_BOUNDS: Record<SupportedAsset, AssetPriceBounds> = {
+    XLM: { minPrice: 0.00001, maxPrice: 1000000 },
+    USDC: { minPrice: 0.9, maxPrice: 1.1 },
+    USDT: { minPrice: 0.9, maxPrice: 1.1 },
+    BTC: { minPrice: 1000, maxPrice: 200000 },
+    ETH: { minPrice: 100, maxPrice: 20000 },
+};
+
+export function getPriceBounds(asset: string): AssetPriceBounds | undefined {
+    return DEFAULT_PRICE_BOUNDS[asset.toUpperCase() as SupportedAsset];
+}
+
 /**
  * Get asset mapping by symbol
  */
