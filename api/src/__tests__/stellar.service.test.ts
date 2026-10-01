@@ -18,6 +18,7 @@ jdest.mock('@stellar/stellar-sdk/rpc');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 const VALID_USER_ADDRESS = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDL4C46VY42OWHC3TPR2I26NNV3ZSJ';
 const VALID_USER_SECRET = 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I';
+const VALID_CONTRACT_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
 const VALID_ASSET_ADDRESS = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDL4C46VY42OWHC3TPR2I26NNV3ZSJ';
 
 describe('StellarService', () => {
@@ -83,6 +84,21 @@ describe('StellarService', () => {
       await expect(service.getAccount('invalid_address')).rejects.toThrow();
     });
 
+    it('should reject an empty account id before hitting the network', async () => {
+      await expect(service.getAccount('')).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a malformed account id before hitting the network', async () => {
+      await expect(service.getAccount('not-a-stellar-address')).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-string account id', async () => {
+      await expect(service.getAccount(undefined as unknown as string)).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
     it('should wrap non-Error rejections into InternalServerError', async () => {
       mockedAxios.get.mockRejected('string failure');
 
@@ -134,6 +150,36 @@ describe('StellarService', () => {
 
       expect(result.success).toBe(false);
       expect(result.status).toBe('failed');
+    });
+
+    it('should reject an empty transaction envelope before submitting', async () => {
+      await expect(service.submitTransaction('')).rejects.toThrow();
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-string transaction envelope', async () => {
+      await expect(
+        service.submitTransaction(undefined as unknown as string)
+      ).rejects.toThrow();
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('should not leak sensitive error details in the failure result', async () => {
+      mockedAxios.post.mockRejectedValue({
+        response: {
+          data: {
+            extras: {
+              result_codes: { transaction: 'tx_failed' },
+              envelope_xdr: 'SECRET_ENVELOPE_XDR',
+            },
+          },
+        },
+      });
+
+      const result = await service.submitTransaction('mock_tx_xdr');
+
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result)).not.toContain('SECRET_ENVELOPE_XDR');
     });
 
     it('returns failure with error message when no response body is present', async () => {
@@ -213,6 +259,23 @@ describe('StellarService', () => {
       await expect(service.monitorTransaction('tx_hash_123')).rejects.toThrow(
         'Failed to monitor transaction'
       );
+    });
+
+    it('should reject an empty transaction hash before polling', async () => {
+      await expect(service.monitorTransaction('')).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-string transaction hash', async () => {
+      await expect(
+        service.monitorTransaction(undefined as unknown as string)
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-positive timeout', async () => {
+      await expect(service.monitorTransaction('tx_hash_123', 0)).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
     });
 
     it('throws when error has no response object', async () => {
@@ -397,6 +460,61 @@ describe('StellarService', () => {
         service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
       ).rejects.toThrow('Failed to build deposit transaction');
     });
+
+    it('should reject a malformed user address before building', async () => {
+      await expect(
+        service.buildDepositTransaction('not-an-address', undefined, '1000000', VALID_USER_SECRET)
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a malformed secret key before building', async () => {
+      await expect(
+        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', 'not-a-secret')
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-positive deposit amount', async () => {
+      await expect(
+        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '0', VALID_USER_SECRET)
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-numeric deposit amount', async () => {
+      await expect(
+        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, 'abc', VALID_USER_SECRET)
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a malformed contract id when provided', async () => {
+      await expect(
+        service.buildDepositTransaction(
+          VALID_USER_ADDRESS,
+          'not-a-contract',
+          '1000000',
+          VALID_USER_SECRET
+        )
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should accept a valid contract id', async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
+      });
+
+      const result = await service.buildDepositTransaction(
+        VALID_USER_ADDRESS,
+        VALID_CONTRACT_ID,
+        '1000000',
+        VALID_USER_SECRET
+      );
+
+      expect(result).toBe('prepared_tx_xdr');
+    });
   });
 
   describe('buildBorrowTransaction', () => {
@@ -463,6 +581,61 @@ describe('StellarService', () => {
       await expect(
         service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
       ).rejects.toThrow('Failed to build borrow transaction');
+    });
+
+    it('should reject a malformed user address before building', async () => {
+      await expect(
+        service.buildBorrowTransaction('not-an-address', undefined, '1000000', VALID_USER_SECRET)
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a malformed secret key before building', async () => {
+      await expect(
+        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '1000000', 'not-a-secret')
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-positive borrow amount', async () => {
+      await expect(
+        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '0', VALID_USER_SECRET)
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-numeric borrow amount', async () => {
+      await expect(
+        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, 'abc', VALID_USER_SECRET)
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a malformed contract id when provided', async () => {
+      await expect(
+        service.buildBorrowTransaction(
+          VALID_USER_ADDRESS,
+          'not-a-contract',
+          '1000000',
+          VALID_USER_SECRET
+        )
+      ).rejects.toThrow();
+      expect(mockedAxios.get).not.toHaveBeenCalled();
+    });
+
+    it('should accept a valid contract id', async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
+      });
+
+      const result = await service.buildBorrowTransaction(
+        VALID_USER_ADDRESS,
+        VALID_CONTRACT_ID,
+        '1000000',
+        VALID_USER_SECRET
+      );
+
+      expect(result).toBe('prepared_tx_xdr');
     });
   });
 
