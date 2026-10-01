@@ -1,98 +1,40 @@
 import { Request, Response, NextFunction } from 'express';
-[import { ApiError } from '../utils/errors';
+import { ApiError } from '../utils/errors';
 import logger from '../utils/logger';
 
-/**
- * Error handling middleware.
- *
- * Invariants:
- * - Always responds with a JSON body of the shape `success: false, error: string`
- *   with a valid HTTP status code.
- * - Never exposes internal error messages or stack traces to clients for
- *   unexpected errors.
- * - ApiError status codes are clamped to the valid HTTP range [400, 599]
- *   so a malformed error cannot produce an invalid response.
- * - Malformed error objects (null, undefined, non-Error) are handled
- *   defensively without throwing.
- * - If the response has already been sent, delegate to the next error
- *   handler instead of attempting to write a second response.
- */
+export const errorHandler = (err: Error, _req: Request, res: Response, next: NextFunction) => {
+  const invalidJson = err instanceof SyntaxError && 'body' in err;
+  // Only operational client errors have messages intended for callers. An invalid
+  // status or a server failure must never turn into a success or expose internals.
+  const publicApiError =
+    err instanceof ApiError &&
+    err.isOperational === true &&
+    Number.isInteger(err.statusCode) &&
+    err.statusCode >= 400 &&
+    err.statusCode < 500 &&
+    typeof err.message === 'string' &&
+    err.message.length > 0;
+  const statusCode = invalidJson ? 400 : publicApiError ? err.statusCode : 500;
+  const message = invalidJson
+    ? 'Invalid JSON body'
+    : publicApiError
+      ? err.message
+      : 'Internal server error';
 
-const MINIMUM_STATUS_CODE = 400;
-const MAXIMUM_STATUS_CODE = 599;
-const DEFAULT_STATUS_CODE = 500;
-const DEFAULT_MESSAGE = 'Internal server error';
+  // Error messages, stacks, and request fields may contain user supplied secrets.
+  // The category and status diagnose the failure without logging those fields.
+  logger.error('Request failed', {
+    category: invalidJson ? 'invalid_json' : publicApiError ? 'client_error' : 'server_error',
+    statusCode,
+  });
 
-function isValidStatusCode(code: unknown): code is number {
-  return (
-    typeof code === 'number' &&
-    Number.isInteger(code) &&
-    code >= MINIMUM_STATUS_CODE &&
-    code <= MAXIMUM_STATUS_CODE
-  );
-}
-
-function normalizeError(raw: unknown): Error {
-  if (raw instanceof Error) {
-    return raw;
-  }
-  if (typeof raw === 'string') {
-    return new Error(raw);
-  }
-  try {
-    return new Error(JSON.stringify(raw));
-  } catch {
-    return new Error('Unknown error');
-  }
-}
-
-export const errorHandler = (
-  err: unknown,
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  const normalized = normalizeError(err);
-
-  // Observability: log structured context without leaking to the client.
-  try {
-    logger.error('Error occurred:', {
-      error: normalized.message,
-      stack: normalized.stack,
-      path: req.path,
-      method: req.method,
-    });
-  } catch {
-    // Logging must never break error response generation.
+  // Express owns recovery once headers are committed; sending again corrupts the response.
+  if (res.headersSent) {
+    return next(err instanceof Error ? err : new Error('Unknown error'));
   }
 
- // If the response has already been committed, delegate to the next
- // error handler to avoid 'Cannot set headers after they are sent'.
- if (res.headersSent) {
-    return next(normalized);
- }
-
- // JSON parsing errors from body-parser carry a 'body' property and are
- // client errors (400), not server errors.
- if (normalized instanceof SyntaxError && 'body' in (normalized as SyntaxError & { body?: unknown })) {
-    return res.status(400).json({
-      success: false,
-      error: normalized.message,
-    });
-  }
-
- if (normalized instanceof ApiError) {
-    const statusCode = isValidStatusCode(normalized.statusCode)
-      ? normalized.statusCode
-      : DEFAULT_STATUS_CODE;
-    return res.status(statusCode).json({
-      success: false,
-      error: normalized.message,
-    });
-  }
-
- return res.status(DEFAULT_STATUS_CODE).json({
+  return res.status(statusCode).json({
     success: false,
-    error: DEFAULT_MESSAGE,
+    error: message,
   });
 };
