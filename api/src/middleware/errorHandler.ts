@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-const { ApiError } = require('../utils/errors');
-const logger = require('../utils/logger').default || require('../utils/logger');
+import { ApiError } from '../utils/errors';
+import logger from '../utils/logger';
 
 /**
  * Error handler middleware.

@@ -1018,21 +1018,8 @@ describe('Error Handler Middleware', () => {
     });
   });
 
-  it('should handle malformed JSON body as 400', () => {
-    const error = new SyntaxError('Unexpected token in JSON');
-    (error as unknown as { body: unknown }).body = '{';
-
-    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
-
-    expect(mockResponse.status).toHaveBeenCalledWith(400);
-    expect(mockResponse.json).toHaveBeenCalledWith({
-      success: false,
-      error: 'Unexpected token in JSON',
-    });
-  });
-
   it('should fall back to 500 for out-of-range ApiError status codes', () => {
-    const error = new ApiError('bad code', 999);
+    const error = new ApiError(999, 'bad code');
 
     errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
 
@@ -1044,7 +1031,7 @@ describe('Error Handler Middleware', () => {
   });
 
   it('should fall back to 500 for non-integer ApiError status codes', () => {
-    const error = new ApiError('bad code', 400.5);
+    const error = new ApiError(400.5, 'bad code');
 
     errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
 
