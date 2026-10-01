@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     loadConfig,
     getAssetMapping,
+    getPriceBounds,
     isSupportedAsset,
     scalePrice,
     unscalePrice,
@@ -372,6 +373,153 @@ describe('Configuration', () => {
 
         it('should be a bigint', () => {
             expect(typeof PRICE_SCALE).toBe('bigint');
+        });
+    });
+});
+
+/**
+ * Failure-path and boundary coverage for `src/config.ts`.
+ *
+ * The suite above covers the happy path; these tests pin the rejection
+ * behaviour of the zod schema (invalid enum/url/empty required values,
+ * non-positive numerics, unknown log level) and the boundary semantics of the
+ * pure helpers, so malformed configuration can never silently produce a
+ * partially-valid service config.
+ */
+describe('Configuration failure paths and boundaries', () => {
+    const originalEnv = process.env;
+    const requiredEnv = {
+        CONTRACT_ID: 'CTEST123456789',
+        ADMIN_SECRET_KEY: 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789',
+    };
+
+    beforeEach(() => {
+        process.env = { ...originalEnv, ...requiredEnv };
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
+        vi.restoreAllMocks();
+    });
+
+    const reject = () => expect(() => loadConfig()).toThrow('Invalid environment configuration');
+
+    it('rejects an unknown STELLAR_NETWORK', () => {
+        process.env.STELLAR_NETWORK = 'invalidnet';
+        reject();
+    });
+
+    it('rejects a malformed STELLAR_RPC_URL', () => {
+        process.env.STELLAR_RPC_URL = 'not-a-url';
+        reject();
+    });
+
+    it('rejects an empty CONTRACT_ID', () => {
+        process.env.CONTRACT_ID = '';
+        reject();
+    });
+
+    it('rejects an empty ADMIN_SECRET_KEY', () => {
+        process.env.ADMIN_SECRET_KEY = '';
+        reject();
+    });
+
+    it.each([
+        ['CACHE_TTL_SECONDS', '0'],
+        ['CACHE_TTL_SECONDS', '-5'],
+        ['UPDATE_INTERVAL_MS', '0'],
+        ['MAX_PRICE_DEVIATION_PERCENT', '-1'],
+        ['MAD_Z_SCORE_THRESHOLD', '0'],
+        ['PRICE_STALENESS_THRESHOLD_SECONDS', '-1'],
+    ])('rejects non-positive %s=%s', (key, value) => {
+        process.env[key] = value;
+        reject();
+    });
+
+    it('rejects a non-numeric numeric override', () => {
+        process.env.CACHE_TTL_SECONDS = 'not-a-number';
+        reject();
+    });
+
+    it('rejects an unknown LOG_LEVEL', () => {
+        process.env.LOG_LEVEL = 'verbose';
+        reject();
+    });
+
+    it('rejects a malformed REDIS_URL', () => {
+        process.env.REDIS_URL = 'redis-not-a-url';
+        reject();
+    });
+
+    it('accepts an empty REDIS_URL as "disabled"', () => {
+        process.env.REDIS_URL = '';
+        expect(loadConfig().redisUrl).toBe('');
+    });
+
+    it('accepts the smallest positive numeric values', () => {
+        process.env.CACHE_TTL_SECONDS = '0.0001';
+        process.env.UPDATE_INTERVAL_MS = '0.5';
+        process.env.MAX_PRICE_DEVIATION_PERCENT = '0.0001';
+        process.env.MAD_Z_SCORE_THRESHOLD = '0.0001';
+        process.env.PRICE_STALENESS_THRESHOLD_SECONDS = '0.5';
+
+        const config = loadConfig();
+
+        expect(config.cacheTtlSeconds).toBeCloseTo(0.0001);
+        expect(config.updateIntervalMs).toBe(0.5);
+        expect(config.maxPriceDeviationPercent).toBeCloseTo(0.0001);
+        expect(config.madZScoreThreshold).toBeCloseTo(0.0001);
+        expect(config.priceStaleThresholdSeconds).toBe(0.5);
+    });
+
+    it('coerces numeric strings to numbers', () => {
+        process.env.CACHE_TTL_SECONDS = '45';
+        expect(typeof loadConfig().cacheTtlSeconds).toBe('number');
+    });
+
+    it('defaults MAD_Z_SCORE_THRESHOLD when unset', () => {
+        delete process.env.MAD_Z_SCORE_THRESHOLD;
+        expect(loadConfig().madZScoreThreshold).toBe(3.5);
+    });
+
+    describe('getPriceBounds', () => {
+        it('returns positive, ordered bounds for every supported asset', () => {
+            for (const asset of ['XLM', 'USDC', 'USDT', 'BTC', 'ETH']) {
+                const bounds = getPriceBounds(asset);
+                expect(bounds).toBeDefined();
+                expect(bounds!.minPrice).toBeGreaterThan(0);
+                expect(bounds!.maxPrice).toBeGreaterThan(bounds!.minPrice);
+            }
+        });
+
+        it('is case-insensitive', () => {
+            expect(getPriceBounds('xlm')).toEqual(getPriceBounds('XLM'));
+        });
+
+        it('returns undefined for an unknown asset', () => {
+            expect(getPriceBounds('DOGE')).toBeUndefined();
+        });
+
+        it('returns undefined for an empty string', () => {
+            expect(getPriceBounds('')).toBeUndefined();
+        });
+    });
+
+    describe('isSupportedAsset boundaries', () => {
+        it('rejects padded and partial symbols', () => {
+            expect(isSupportedAsset(' XLM')).toBe(false);
+            expect(isSupportedAsset('XLM ')).toBe(false);
+            expect(isSupportedAsset('XL')).toBe(false);
+        });
+    });
+
+    describe('scalePrice invalid input', () => {
+        it('throws on NaN', () => {
+            expect(() => scalePrice(Number.NaN)).toThrow();
+        });
+
+        it('throws on Infinity', () => {
+            expect(() => scalePrice(Number.POSITIVE_INFINITY)).toThrow();
         });
     });
 });
