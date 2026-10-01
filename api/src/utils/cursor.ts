@@ -1,13 +1,13 @@
 /**
- * Cursor encoding/decoding utilities for ledger-sequence based pagination.
+ * Cursor utilities for ledger-sequence-backed pagination.
  *
- * Cursor format: base64(ledger_sequence:event_index)
- * Example: "MTAwMDow" decodes to "1000:0"
+ * Cursor format: base64url(ledger_sequence:event_index)
  *
- * This provides stable ordering guarantees even when new events arrive
- * between paginated requests.
+ * Provides stable ordering guarantees even when new events arrive between
+ * paginated API calls. The cursor is opaque to callers.
  */
 
+/** A cursor position within the ledger stream. */
 export interface Cursor {
   ledgerSequence: number;
   eventIndex: number;
@@ -15,7 +15,9 @@ export interface Cursor {
 
 const CURSOR_SEPARATOR = ':';
 
+// u32 max — Stellar ledger sequences are unsigned 32-bit integers
 const MAX_LEDGER_SEQUENCE = 4_294_967_295;
+// Practical cap to prevent unbounded parsing
 const MAX_EVENT_INDEX = 1_000_000;
 
 export const DEFAULT_PAGE_SIZE = 20;
@@ -28,45 +30,26 @@ export class CursorError extends Error {
   }
 }
 
-/**
- * Encodes a ledger sequence and event index into a cursor string.
- * Supports both (seq, idx) and ({ ledgerSequence, eventIndex }) forms.
- */
-export function encodeCursor(
-  cursorOrLedger: number | Cursor,
-  eventIndex?: number
-): string {
-  let ledgerSeq: number;
-  let evtIdx: number;
+export function encodeCursor(cursor: Cursor): string {
+  const { ledgerSequence, eventIndex } = cursor ?? ({} as Cursor);
 
-  if (typeof cursorOrLedger === 'object' && cursorOrLedger !== null) {
-    ledgerSeq = cursorOrLedger.ledgerSequence;
-    evtIdx = cursorOrLedger.eventIndex;
-  } else {
-    ledgerSeq = cursorOrLedger;
-    evtIdx = eventIndex!;
+  if (!Number.isInteger(ledgerSequence) || ledgerSequence < 0 || ledgerSequence > MAX_LEDGER_SEQUENCE) {
+    throw new CursorError(`Invalid ledger sequence: ${ledgerSequence}`);
+  }
+  if (!Number.isInteger(eventIndex) || eventIndex < 0 || eventIndex > MAX_EVENT_INDEX) {
+    throw new CursorError(`Invalid event index: ${eventIndex}`);
   }
 
-  if (!Number.isInteger(ledgerSeq) || ledgerSeq < 0) {
-    throw new CursorError(`Invalid ledger sequence: ${ledgerSeq}`);
-  }
-  if (!Number.isInteger(evtIdx) || evtIdx < 0) {
-    throw new CursorError(`Invalid event index: ${evtIdx}`);
-  }
-
-  const raw = `${ledgerSeq}${CURSOR_SEPARATOR}${evtIdx}`;
-  return Buffer.from(raw, 'utf-8').toString('base64');
+  const plain = `${ledgerSequence}${CURSOR_SEPARATOR}${eventIndex}`;
+  return Buffer.from(plain, 'utf-8').toString('base64url');
 }
 
-/**
- * Decodes a cursor string into ledger sequence and event index.
- */
-export function decodeCursor(cursor: string): Cursor {
-  if (!cursor || typeof cursor !== 'string') {
-    throw new CursorError('Cursor decode failed: Cursor must be a non-empty string');
+export function decodeCursor(cursorString: string): Cursor {
+  if (!cursorString || typeof cursorString !== 'string') {
+    throw new CursorError('Cursor must be a non-empty string');
   }
 
-  let decoded: string;
+  let plain: string;
   try {
     const buf = Buffer.from(cursor, 'base64');
     // Basic validation of base64 characters
@@ -83,41 +66,48 @@ export function decodeCursor(cursor: string): Cursor {
     throw new CursorError('Invalid cursor format: expected "ledger_sequence:event_index"');
   }
 
-  const ledgerSequence = parseInt(parts[0], 10);
-  const eventIndex = parseInt(parts[1], 10);
-
-  if (isNaN(ledgerSequence) || isNaN(eventIndex) || !/^-?\d+$/.test(parts[0]) || !/^-?\d+$/.test(parts[1])) {
-    throw new CursorError('Invalid cursor: ledger sequence and event index must be integers');
+  if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) {
+    throw new CursorError('Cursor contains non-numeric values');
   }
 
-  if (ledgerSequence < 0 || eventIndex < 0) {
-    throw new CursorError('Invalid cursor: values must be non-negative');
+  const ledgerSequence = Number(parts[0]);
+  const eventIndex = Number(parts[1]);
+
+  if (!Number.isSafeInteger(ledgerSequence) || !Number.isSafeInteger(eventIndex)) {
+    throw new CursorError('Cursor contains non-numeric values');
+  }
+  if (ledgerSequence > MAX_LEDGER_SEQUENCE) {
+    throw new CursorError(`Ledger sequence out of range: ${ledgerSequence}`);
+  }
+  if (eventIndex > MAX_EVENT_INDEX) {
+    throw new CursorError(`Event index out of range: ${eventIndex}`);
   }
 
   return { ledgerSequence, eventIndex };
 }
 
-/**
- * Checks if a cursor is valid without throwing.
- */
 export function isValidCursor(value: unknown): value is string {
   if (typeof value !== 'string' || !value) return false;
-  try { decodeCursor(value); return true; } catch { return false; }
+  try {
+    decodeCursor(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function sanitizePageSize(limit: unknown): number {
+  if (limit === undefined || limit === null) return DEFAULT_PAGE_SIZE;
+
+  const parsed = typeof limit === 'string' ? parseInt(limit, 10) : Number(limit);
+  if (isNaN(parsed) || parsed < 1) return DEFAULT_PAGE_SIZE;
+
+  return Math.min(parsed, MAX_PAGE_SIZE);
 }
 
 /**
- * Extracts the next cursor from the last item in a result set.
- */
-export function getNextCursor<T extends { ledgerSequence: number; eventIndex: number }>(
-  items: T[]
-): string | undefined {
-  if (!items || items.length === 0) return undefined;
-  const last = items[items.length - 1];
-  return encodeCursor(last.ledgerSequence, last.eventIndex);
-}
-
-/**
- * Generate the next cursor from the last item in a result set
+ * Builds the cursor that points to the position *after* the given item,
+ * i.e. the start position for the next page.
  */
 export function nextCursor(lastLedgerSequence: number, lastEventIndex: number): string {
   return encodeCursor({
@@ -126,33 +116,28 @@ export function nextCursor(lastLedgerSequence: number, lastEventIndex: number): 
   });
 }
 
+// ---------------------------------------------------------------------------
+// Legacy helpers — preserved for backwards compatibility
+// ---------------------------------------------------------------------------
+
+/**
+ * @deprecated Use encodeCursor({ ledgerSequence, eventIndex }) instead.
+ */
+export function getNextCursor<T extends { ledgerSequence: number; eventIndex: number }>(
+  items: T[]
+): string | undefined {
+  if (items.length === 0) return undefined;
+  const last = items[items.length - 1];
+  return encodeCursor({ ledgerSequence: last.ledgerSequence, eventIndex: last.eventIndex });
+}
+
 /**
  * Compares two cursors for ordering.
  * Returns negative if a < b, positive if a > b, 0 if equal.
  */
 export function compareCursors(a: string, b: string): number {
-  const decodedA = decodeCursor(a);
-  const decodedB = decodeCursor(b);
-
-  if (decodedA.ledgerSequence !== decodedB.ledgerSequence) {
-    return decodedA.ledgerSequence - decodedB.ledgerSequence;
-  }
-  return decodedA.eventIndex - decodedB.eventIndex;
-}
-
-/**
- * Validate and sanitize page size parameter
- */
-export function sanitizePageSize(limit: unknown): number {
-  if (limit === undefined || limit === null) {
-    return DEFAULT_PAGE_SIZE;
-  }
-
-  const parsed = typeof limit === 'string' ? parseInt(limit, 10) : Number(limit);
-
-  if (isNaN(parsed) || parsed < 1) {
-    return DEFAULT_PAGE_SIZE;
-  }
-
-  return Math.min(parsed, MAX_PAGE_SIZE);
+  const da = decodeCursor(a);
+  const db = decodeCursor(b);
+  if (da.ledgerSequence !== db.ledgerSequence) return da.ledgerSequence - db.ledgerSequence;
+  return da.eventIndex - db.eventIndex;
 }

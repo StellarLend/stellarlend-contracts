@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger};
 
 /// Helper: set the oracle price for `asset` inside the contract's persistent storage.

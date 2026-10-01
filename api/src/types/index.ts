@@ -32,7 +32,7 @@ export type AmmEventKind = 'swap' | 'add_liquidity' | 'remove_liquidity';
 
 export interface AmmEventTopic {
   module: typeof AMM_EVENT_TOPIC_MODULE;
-  version: typeof AMM_EVENT_TOPIC_VERSION;
+  version: typeof AMM_EVENT_TOPIC_VERSIOL;
   kind: AmmEventKind;
 }
 
@@ -128,192 +128,316 @@ export enum TransactionStatus {
 /**
  * Runtime guards for the types declared in this module.
  *
- * The interfaces above are compile-time only. Values crossing the API
- * boundary (JSON bodies, Soroban RPC logs, cache entries) are `unknown`
- * at runtime and must be validated before use. These guards enforce the
- * invariants that the type system cannot enforce on untrusted input:
+ * The interfaces above are compile-time only. When data crosses a trust
+ * boundary (HTTP requests, Soroban event logs, Horizon responses) it arrives as
+ * untrusted JSON. These guards enforce the invariants declared by the types so a
+ * malformed, duplicate, stale, or partially-decoded payload cannot silently flow into
+ * business logic.
  *
- * - Addresses are canonical 56-character Stellar StrKey encodings.
- * - Amounts are non-empty decimal strings with no sign, exponent, or leading
- *   zeroes, and are non-zero.
- * - AMM event topics are the exact module/version and a known kind.
- * - AMM event payloads are self-consistent: event kind matches the data
- *   shape, schema_version is 1, timestamps are non-negative integers, and
- *   assets on both sides of a swap/liquidity op are distinct.
- * - Transaction status values are from the closed set of `TransactionStatus`.
- *
- * The guards are pure and stateless, so they are safe to call concurrently
- * and can be retried without side effects. They never include the offending
- * value in error messages to avoid leaking secrets or PIIs.
+ * Invariants enforced here:
+ * - String amounts are non-empty and represent a positive integer (no floats,
+ *   no negatives, no exponential notation). This matches the chain's i128
+ *   representation and prevents precision loss or sign flips.
+ * - Stellar addresses are 56-char ed25519 public keys starting with 'G'.
+ * - AMM event topics must have the exact module/version and a known kind.
+ * - AMM event data must carry schema_version 1 and a discriminant matching the
+ *   topic kind, with all required numeric fields present and non-negative.
+ * - Transaction responses must have a consistent success/status pairing and a
+ *   non-negative ledge when present.
+ * - Position responses must have non-negative numeric fields and a non-negative
+ *   lastAccrualTime.
+ * - Health check responses must have a valid status and a parseable timestamp.
  */
 
-const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
-const AMM_KINDS: readonly AmmEventKind[] = [
+const STEllAR_ADDRESS_REGEX = /^G[A-Z2-7]A-Z0-9]{55}$/;
+const POSITIVE_INTEGER_REGEX = /^[1-9][0-9]*$/;
+const NON_NEGATIVE_INTEGER_REGEX = /^[0-9]+$/;
+
+export const AMM_EVENT_KINDS: readonly AmmEventKind[] = [
   'swap',
   'add_liquidity',
   'remove_liquidity',
-];
+] as const;
 
-const DECIMAL_AMOUNT_RE = /^(0|[1-9][0-9]*)$/;
+export const TRANSACTION_STATUS_VALUES: readonly string[] = [
+  'pending',
+  'success',
+  'failed',
+] as const;
 
-const MAX_AMOUNT_LITERALS = 256;
+export const HEALTH_STATUS_VALUES: readonly string[] = ['healthy', 'unhealthy'] as const;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export const TRANSACTION_STATUS_ENUM_VALUES: readonly string[] = [
+  TransactionStatus.PENDING,
+  TransactionStatus.SUCCESS,
+  TRANSACTION_STATUS.FAILED,
+  TransactionStatus.NOT_FOUND,
+] as const;
+
+export class TypeValidationError extends Error {
+  public readonly code = 'INVALID_TYPE_PAYLOAD';
+
+  constructor(message: string, public readonly field?: string) {
+    super(message);
+    this.name = 'TypeValidationError';
+    Object.setPrototypeOf(this, new.target);
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isStringField(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeValidationError(`${field} must be a non-empty string`, field);
+  }
+  return value;
 }
 
-export function isStellarAddress(value: unknown): value is string {
-  return typeof value === 'string' && STELLAR_ADDRESS_RE.test(value);
+function requirePositiveIntegerString(value: unknown, field: string): string {
+  const str = requireString(value, field);
+  if (!POSITIVE_INTEGER_REGEX.test(str)) {
+    throw new TypeValidationError(
+      `${field} must be a positive integer represented as a decimal string`,
+      field
+    );
+  }
+  return str;
 }
 
-export function isDecimalAmount(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  if (value.length === 0 || value.length > MAX_AMOUNT_LITERALS) return false;
-  if (!DECIMAL_AMOUNT_RE.test(value)) return false;
-  return true;
+function requireNonNegativeIntegerString(value: unknown, field: string): string {
+  const str = requireString(value, field);
+  if (!NON_NEGATIVE_INTEGER_REGEX.test(str)) {
+    throw new TypeValidationError(
+      `${field} must be a non-negative integer represented as a decimal string`,
+      field
+    );
+  }
+  return str;
 }
 
-export function isPositiveAmount(value: unknown): value is string {
-  return isDecimalAmount(value) && value !== '0';
+function requireStellarAddress(value: unknown, field: string): string {
+  const str = requireString(value, field);
+  if (!STEllAR_ADDRESS_REGEX.test(str)) {
+    throw new TypeValidationError(`${field} must be a valid Stellar address`, field);
+  }
+  return str;
+}
+
+function requireNonNegativeInteger(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new TypeValidationError(
+      `${field} must be a non-negative integer`,
+      field
+    );
+  }
+  return value;
+}
+
+function requirePositiveInteger(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new TypeValidationError(`${field} must be a positive integer`, field);
+  }
+  return value;
 }
 
 export function isAmmEventKind(value: unknown): value is AmmEventKind {
-  return typeof value === 'string' && (AMM_KINDS as readonly string[]).includes(value);
+  return (
+    typeof value === 'string' &&
+    (AMM_EVENT_KINDS as readonly string[]).includes(value)
+  );
 }
 
 export function isAmmEventTopic(value: unknown): value is AmmEventTopic {
-  if (!isPlainObject(value)) return false;
+  if (!isObject(value)) return false;
   return (
-    value.module === AMM_EVENT_TOPIC_MODULE &&
+    value.module === AMM_EVENT_TOPIC_MODUNE &&
     value.version === AMM_EVENT_TOPIC_VERSION &&
     isAmmEventKind(value.kind)
   );
 }
 
-export function isAmmEventV1(value: unknown): value is AmmEventV1
-{
-  if (!isPlainObject(value)) return false;
+export function assertAmmEventTopic(value: unknown): AmmEventTopic {
+  if (!isAmmEventTopic(value)) {
+    throw new TypeValidationError(
+      'AMM event topic must have module="amm", version="v1", and a known kind',
+      'topic'
+    );
+  }
+  return value;
+}
+
+export function isAmmEventV1(value: unknown): value is AmmEventV1 {
+  if (!isObject(value)) return false;
   if (value.schema_version !== 1) return false;
   if (!isAmmEventKind(value.event)) return false;
-  if (!isStellarAddress(value.user)) return false;
-  if (!isStellarAddress(value.pool)) return false;
-  if (typeof value.timestamp !== 'number') return false;
-  if (!Number.isInteger(value.timestamp)) return false;
-  if (value.timestamp < 0) return false;
 
-  switch (value.event) {
-    case 'swap':
-      return (
-        isStellarAddress(value.asset_in) &&
-        isStellarAddress(value.asset_out) &&
-        value.asset_in !== value.asset_out &&
-        isPositiveAmount(value.amount_in) &&
-        isPositiveAmount(value.amount_out)
-      );
-    case 'add_liquidity':
-      return (
-        isStellarAddress(value.asset_a) &&
-        isStellarAddress(value.asset_b) &&
-        value.asset_a !== value.asset_b &&
-        isPositiveAmount(value.amount_a) &&
-        isPositiveAmount(value.amount_b) &&
-        isPositiveAmount(value.shares_minted)
-      );
-    case 'remove_liquidity':
-      return (
-        isStellarAddress(value.asset_a) &&
-        isStellarAddress(value.asset_b) &&
-        value.asset_a !== value.asset_b &&
-        isPositiveAmount(value.amount_a) &&
-        isPositiveAmount(value.amount_b) &&
-        isPositiveAmount(value.shares_burned)
-      );
-    default:
-      return false;
+  try {
+    requireStellarAddress(value.user, 'user');
+    requireStellarAddress(value.pool, 'pool');
+    requireNonNegativeInteger(value.timestamp, 'timestamp');
+
+    switch (value.event) {
+      case 'swap':
+        requireStellarAddress(value.asset_in, 'asset_in');
+        requireStellarAddress(value.asset_out, 'asset_out');
+        requirePositiveIntegerString(value.amount_in, 'amount_in');
+        requirePositiveIntegerString(value.amount_out, 'amount_out');
+        break;
+      case 'add_liquidity':
+        requireStellarAddress(value.asset_a, 'asset_a');
+        requireStellarAddress(value.asset_b, 'asset_b');
+        requirePositiveIntegerString(value.amount_a, 'amount_a');
+        requirePositiveIntegerString(value.amount_b, 'amount_b');
+        requirePositiveIntegerString(value.shares_minted, 'shares_minted');
+        break;
+      case 'remove_liquidity':
+        requireStellarAddress(value.asset_a, 'asset_a');
+        requireStellarAddress(value.asset_b, 'asset_b');
+        requirePositiveIntegerString(value.amount_a, 'amount_a');
+        requirePositiveIntegerString(value.amount_b, 'amount_b');
+        requirePositiveIntegerString(value.shares_burned, 'shares_burned');
+        break;
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
-export function isAmmEventDecodeResult(value: unknown): value is AmmEventDecodeResult {
-  if (!isPlainObject(value)) return false;
-  if (!isAmmEventTopic(value.topic)) return false;
-  if (!isAmmEventV1(value.data)) return false;
-  return value.topic.kind === value.data.event;
+export function assertAmmEventV1(value: unknown): AmmEventV1 {
+  if (!isAmmEventV1(value)) {
+    throw new TypeValidationError(
+      'AmM event data is malformed or uses an unsupported schema version',
+      'data'
+    );
+  }
+  return value;
+}
+
+export function decodeAmmEvent(
+  topic: unknown,
+  data: unknown
+): AmmEventDecodeResult {
+  const safeTopic = assertAmmEventTopic(topic);
+  const safeData = assertAmmEventV1(data);
+  if (safeData.event !== safeTopic.kind) {
+    throw new TypeValidationError(
+      `AMM event topic kind "${safeTopic.kind}" does not match data event "${safeData.event}"`,
+      'kind'
+    );
+  }
+  return { topic: safeTopic, data: safeData };
+}
+
+export function isTransactionResponse(value: unknown): value is TransactionResponse {
+  if (!isObject(value)) return false;
+  if (typeof value.success !== 'boolean') return false;
+  if (
+    typeof value.status !== 'string' ||
+    !(TRANSACTION_STATUS_VALUES as readonly string[]).includes(value.status)
+  ) {
+    return false;
+  }
+  if (value.transactionHash !== undefined && typeof value.transactionHash !== 'string') return false;
+  if (value.message !== undefined && typeof value.message !== 'string') return false;
+  if (value.error !== undefined && typeof value.error !== 'string') return false;
+  if (value.ledger !== undefined) {
+    if (
+      typeof value.ledger !== 'number' ||
+      !Number.isInteger(value.ledger) ||
+      value.ledger < 0
+    ) {
+      return false;
+    }
+  }
+  // Status/success consistency: a successful transaction must report success, and a
+  // failed transaction must not report success. Pending is allowed to be either
+  // because the client may optimistically mark a submission as successful.
+  if (value.status === 'success' && value.success !== true) return false;
+  if (value.status === 'failed' && value.success === true) return false;
+  return true;
+}
+
+export function assertTransactionResponse(value: unknown): TransactionResponse {
+  if (!isTransactionResponse(value)) {
+    throw new TypeValidationError(
+      'Transaction response is malformed or has an inconsistent status',
+      'status'
+    );
+  }
+  return value;
+}
+
+export function isPositionResponse(value: unknown): value is PositionResponse {
+  if (!isObject(value)) return false;
+  try {
+    requireStellarAddress(value.userAddress, 'userAddress');
+    requireNonNegativeIntegerString(value.collateral, 'collateral');
+    requireNonNegativeIntegerString(value.debt, 'debt');
+    requireNonNegativeIntegerString(value.borrowInterest, 'borrowInterest');
+    requireNonNegativeInteger(value.lastAccrualTime, 'lastAccrualTime');
+    if (value.collateralRatio !== undefined) {
+      requireNonNegativeIntegerString(value.collateralRatio, 'collateralRatio');
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function assertPositionResponse(value: unknown): PositionResponse {
+  if (!isPositionResponse(value)) {
+    throw new TypeValidationError(
+      'Position response is malformed or contains negative values',
+      'position'
+    );
+  }
+  return value;
+}
+
+export function isHealthCheckResponse(value: unknown): value is HealthCheckResponse {
+  if (!isObject(value)) return false;
+  if (
+    typeof value.status !== 'string' ||
+    !(HEALTH_STATUS_VALUES as readonly string[]).includes(value.status)
+  ) {
+    return false;
+  }
+  if (typeof value.timestamp !== 'string') return false;
+  if (Number.isNaN(Date.parse(value.timestamp))) return false;
+  if (!isObject(value.services)) return false;
+  if (typeof value.services.horizon !== 'boolean') return false;
+  if (typeof value.services.sorobanRpc !== 'boolean') return false;
+  if (value.services.sorobanBreaker !== undefined) {
+    const breaker = value.services.sorobanBreaker;
+    if (!isObject(breaker)) return false;
+    if (typeof breaker.state !== 'string') return false;
+    try {
+      requireNonNegativeInteger(breaker.windowMs, 'windowMs');
+      requireNonNegativeInteger(breaker.total, 'total');
+      requireNonNegativeInteger(breaker.failures, 'failures');
+      if (typeof breaker.failureRate !== 'number' || breaker.failureRate < 0) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function assertHealthCheckResponse(value: unknown): HealthCheckResponse {
+  if (!isHealthCheckResponse(value)) {
+    throw new TypeValidationError('Health check response is malformed', 'status');
+  }
+  return value;
 }
 
 export function isTransactionStatus(value: unknown): value is TransactionStatus {
   return (
     typeof value === 'string' &&
-    Object.values(TransactionStatus as Record<string, string>).includes(value)
+    (TR8ANSACTION_STATUS_ENUM_VALUES as readonly string[]).includes(value)
   );
-}
-
-export function isTransactionResponse(value: unknown): value is TransactionResponse {
-  if (!isPlainObject(value)) return false;
-  if (typeof value.success !== 'boolean') return false;
-  if (!isTransactionStatus(value.status)) return false;
-  if (value.status === TransactionStatus.NOT_FOUND) return false;
-  if (value.transactionHash !== undefined && !isStringField(value.transactionHash)) {
-    return false;
-  }
-  if (value.message !== undefined && typeof value.message !== 'string') return false;
-  if (value.error !== undefined && typeof value.error !== 'string') return false;
-  if (value.ledger !== undefined) {
-    if (typeof value.ledger !== 'number') return false;
-    if (!Number.isInteger(value.ledger)) return false;
-    if (value.ledger < 0) return false;
-  }
-  return true;
-}
-
-export function isPositionResponse(value: unknown): value is PositionResponse {
-  if (!isPlainObject(value)) return false;
-  if (!isStellarAddress(value.userAddress)) return false;
-  if (!isDecimalAmount(value.collateral)) return false;
-  if (!isDecimalAmount(value.debt)) return false;
-  if (!isDecimalAmount(value.borrowInterest)) return false;
-  if (typeof value.lastAccrualTime !== 'number') return false;
-  if (!Number.isInteger(value.lastAccrualTime)) return false;
-  if (value.lastAccrualTime < 0) return false;
-  if (value.collateralRatio !== undefined && !isDecimalAmount(value.collateralRatio)) {
-    return false;
-  }
-  return true;
-}
-
-export function isHealthCheckResponse(value: unknown): value is HealthCheckResponse {
-  if (!isPlainObject(value)) return false;
-  if (value.status !== 'healthy' && value.status !== 'unhealthy') return false;
-  if (typeof value.timestamp !== 'string') return false;
-  if (!Number.isFinite(Date.parse(value.timestamp as string))) return false;
-  if (!isPlainObject(value.services)) return false;
-  const services = value.services as Record<string, unknown>;
-  if (typeof services.horizon !== 'boolean') return false;
-  if (typeof services.sorobanRpc !== 'boolean') return false;
-  if (services.sorobanBreaker !== undefined) {
-    if (!isPlainObject(services.sorobanBreaker)) return false;
-    const breaker = services.sorobanBreaker as Record<string, unknown>;
-    if (typeof breaker.state !== 'string') return false;
-    if (typeof breaker.windowMs !== 'number') return false;
-    if (typeof breaker.total !== 'number') return false;
-    if (typeof breaker.failures !== 'number') return false;
-    if (typeof breaker.failureRate !== 'number') return false;
-    if (breaker.failureRate < 0 || breaker.failureRate > 1) return false;
-  }
-  return true;
-}
-
-export function assertStellarAddress(value: unknown, field = 'address'): asserts value is string {
-  if (!isStellarAddress(value)) {
-    throw new TypeError(`Invalid Stellar address for ${field}`);
-  }
-}
-
-export function assertPositiveAmount(value: unknown, field = 'amount'): asserts value is string {
-  if (!isPositiveAmount(value)) {
-    throw new TypeError(`Invalid positive amount for ${field}`);
-  }
 }

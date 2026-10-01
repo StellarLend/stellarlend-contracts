@@ -344,8 +344,9 @@ export const rateLimitByAddress = (
   }
 };
 
-// Cleanup old rate limit entries periodically
-setInterval(() => {
+// Cleanup old rate limit entries periodically.
+// unref() so the sweep timer never keeps the process (or a test runner) alive.
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [address, record] of rateLimitMap.entries()) {
     if (now > record.resetAt) {
@@ -353,3 +354,7 @@ setInterval(() => {
     }
   }
 }, RATE_LIMIT_WINDOW_MS);
+
+if (typeof cleanupTimer.unref === 'function') {
+  cleanupTimer.unref();
+}
