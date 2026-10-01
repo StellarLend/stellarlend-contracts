@@ -13,9 +13,7 @@
 
 /** A cursor position within the ledger stream. */
 export interface Cursor {
-  /** Ledger sequence number (monotonically increasing) */
   ledgerSequence: number;
-  /** Event index within the ledger (0-based) */
   eventIndex: number;
 }
 
@@ -163,15 +161,8 @@ export function nextCursor(lastLedgerSequence: number, lastEventIndex: number): 
  * Check if a value is a valid cursor string.
  */
 export function isValidCursor(value: unknown): value is string {
-  if (typeof value !== 'string' || !value) {
-    return false;
-  }
-  try {
-    decodeCursor(value);
-    return true;
-  } catch {
-    return false;
-  }
+  if (typeof value !== 'string' || !value) return false;
+  try { decodeCursor(value); return true; } catch { return false; }
 }
 
 /**

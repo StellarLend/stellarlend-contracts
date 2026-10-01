@@ -72,26 +72,34 @@ export class PriceAggregator {
         this.cache = cache;
         const resolvedConfig: Required<AggregatorConfig> = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
 
-        if (resolvedConfig.minSources < 1) {
-            throw new Error('minSources must be at least 1');
+        if (!Number.isInteger(resolvedConfig.minSources) || resolvedConfig.minSources < 1) {
+            throw new Error('minSources must be an integer of at least 1');
         }
-        if (resolvedConfig.maxStalenessMs < 0) {
-            throw new Error('maxStalenessMs cannot be negative');
-        }
-        if (resolvedConfig.maxFallbackAgeMs < 0) {
-            throw new Error('maxFallbackAgeMs cannot be negative');
+        if (!Number.isFinite(resolvedConfig.maxStalenessMs) || resolvedConfig.maxStalenessMs < 0) {
+            throw new Error('maxStalenessMs must be a finite number greater than or equal to 0');
         }
         if (
-            !Number.isInteger(resolvedConfig.providerRetries) ||
-            resolvedConfig.providerRetries < 0
+            !Number.isFinite(resolvedConfig.maxFallbackAgeMs) ||
+            resolvedConfig.maxFallbackAgeMs < resolvedConfig.maxStalenessMs
         ) {
+            throw new Error(
+                'maxFallbackAgeMs must be a finite number greater than or equal to maxStalenessMs',
+            );
+        }
+        if (!Number.isInteger(resolvedConfig.providerRetries) || resolvedConfig.providerRetries < 0) {
             throw new Error('providerRetries must be a non-negative integer');
         }
         if (
-            !Number.isInteger(resolvedConfig.retryBackoffMs) ||
+            !Number.isFinite(resolvedConfig.retryBackoffMs) ||
             resolvedConfig.retryBackoffMs < 0
         ) {
-            throw new Error('retryBackoffMs must be a non-negative integer');
+            throw new Error('retryBackoffMs must be a finite number greater than or equal to 0');
+        }
+        if (
+            !Number.isFinite(resolvedConfig.madZScoreThreshold) ||
+            resolvedConfig.madZScoreThreshold < 0
+        ) {
+            throw new Error('madZScoreThreshold must be a finite number greater than or equal to 0');
         }
 
         this.config = resolvedConfig;

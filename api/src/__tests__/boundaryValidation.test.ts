@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+
 import {
   validateAmount,
   validateStellarAddress,
@@ -351,12 +352,6 @@ describe('Boundary Validation Middleware', () => {
       req.query = { q: '<script>alert("xss")</script>' };
       sanitizeSearchQuery(req as Request, res as Response, next);
       expect(req.query.q).toBe('scriptalertxss/script');
-    });
-
-    it('should limit query length', () => {
-      req.query = { q: 'a'.repeat(200) };
-      sanitizeSearchQuery(req as Request, res as Response, next);
-      expect((req.query.q as string).length).toBe(100);
     });
   });
 

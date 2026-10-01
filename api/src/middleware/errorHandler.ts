@@ -2,6 +2,27 @@ import { Request, Response, NextFunction } from 'express';
 import { ApiError } from '../utils/errors';
 import logger from '../utils/logger';
 
+/**
+ * Error handler middleware.
+ *
+ * Invariants:
+ * - Client errors (4xx) expose the original message only when it is an ApiError.
+ * - Server errors (5xx) and unknown errors never leak the original message or stack.
+ * - Known ApiError status codes are preserved; out-of-range codes fall back to 500.
+ * - Malformed JSON bodies (SyntaxError with `body`) are reported as 400.
+ * - Handler is pure and deterministic: no shared mutable state, safe to retry/concurrently call.
+ */
+
+export interface ErrorResponseBody {
+  success: false;
+  error: string;
+}
+
+export const DEFAULT_SERVER_ERROR_MESSAGE = 'Internal server error';
+
+const isValidStatusCode = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 400 && value <= 599;
+
 export const errorHandler = (err: Error, _req: Request, res: Response, next: NextFunction) => {
   const invalidJson = err instanceof SyntaxError && 'body' in err;
   // Only operational client errors have messages intended for callers. An invalid
@@ -38,3 +59,5 @@ export const errorHandler = (err: Error, _req: Request, res: Response, next: Nex
     error: message,
   });
 };
+
+export default errorHandler;

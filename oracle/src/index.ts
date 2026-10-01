@@ -6,7 +6,8 @@
  * @see https://github.com/stellarlend/stellarlend-contracts
  */
 
-import { loadConfig, type OracleServiceConfig } from './config.js';
+import { pathToFileURL } from 'node:url';
+import { loadConfig, validateOracleServiceConfig, MAD_Z_SCORE_THRESHOLD, type OracleServiceConfig } from './config.js';
 import { configureLogger, logger } from './utils/logger.js';
 import {
     createCoinGeckoProvider,
@@ -22,7 +23,6 @@ import {
     type ContractUpdater,
 } from './services/index.js';
 import { AdminServer } from './services/admin-server.js';
-import type { ProviderConfig } from './types/index.js';
 
 /**
  * Default assets to fetch prices for
@@ -30,10 +30,23 @@ import type { ProviderConfig } from './types/index.js';
 const DEFAULT_ASSETS = ['XLM', 'USDC', 'BTC', 'ETH', 'SOL'];
 
 /**
+ * Read-only view of a configured provider, reported by `getStatus()`.
+ * Derived from the validated configuration so that status always reflects what
+ * was configured, independently of provider runtime state.
+ */
+export interface ProviderStatus {
+    name: string;
+    enabled: boolean;
+    priority: number;
+    weight: number;
+}
+
+/**
  * Oracle Service
  */
 export class OracleService {
     private config: OracleServiceConfig;
+    private providerStatuses: ProviderStatus[];
     private aggregator: PriceAggregator;
     private contractUpdater: ContractUpdater;
     private intervalId?: ReturnType<typeof setInterval>;
@@ -41,64 +54,52 @@ export class OracleService {
     private isRunning: boolean = false;
 
     constructor(config: OracleServiceConfig) {
-        if (config.stellarNetwork && !['testnet', 'mainnet'].includes(config.stellarNetwork)) {
-            throw new Error(`Invalid stellar network: ${config.stellarNetwork}`);
-        }
-        if (config.stellarRpcUrl) {
-            try {
-                new URL(config.stellarRpcUrl);
-            } catch {
-                throw new Error(`Invalid RPC URL: ${config.stellarRpcUrl}`);
-            }
-        }
-        if (config.contractId !== undefined && config.contractId.trim() === '') {
-            throw new Error('Contract ID cannot be empty');
-        }
-
-        // Normalize providers if single provider
-        let normalizedProviders = config.providers;
-        if (normalizedProviders && normalizedProviders.length === 1) {
-            normalizedProviders = [{ ...normalizedProviders[0], weight: 1.0 }];
-        }
-
-        this.config = {
-            ...config,
-            providers: normalizedProviders,
-        };
+        // Reject invalid configuration before any side effects are observable.
+        this.config = validateOracleServiceConfig(config);
 
         // Configure logging
         configureLogger(this.config.logLevel);
 
-        // Create providers from configuration
-        const providers: BasePriceProvider[] = (this.config.providers || [])
+        this.providerStatuses = this.config.providers
+            .map((p) => ({
+                name: p.name,
+                enabled: p.enabled,
+                priority: p.priority,
+                weight: p.weight,
+            }))
+            .sort((a, b) => a.priority - b.priority);
+
+        // Create providers from configuration. Names are constrained to the
+        // supported set by validation, so a config entry can never be dropped.
+        const providers: BasePriceProvider[] = this.config.providers
             .filter((p) => p.enabled)
             .map((p) => {
                 switch (p.name) {
                     case 'coingecko':
-                        return createCoinGeckoProvider(p as ProviderConfig);
+                        return createCoinGeckoProvider(p.apiKey);
                     case 'binance':
-                        return createBinanceProvider(p as ProviderConfig);
+                        return createBinanceProvider();
                     default:
-                        logger.warn('Unknown provider in config, skipping', { provider: p.name });
-                        return null;
+                        // Unreachable: validateOracleServiceConfig rejects unknown names.
+                        throw new Error(`Unsupported provider "${p.name}" in configuration`);
                 }
             })
-            .filter((x): x is BasePriceProvider => x !== null)
             .sort((a, b) => a.priority - b.priority);
-
 
         // Create services
         const validator = createValidator(
             {
-                maxDeviationPercent: Math.max(1, this.config.maxPriceDeviationPercent ?? 10),
-                maxStalenessSeconds: Math.max(1, this.config.priceStaleThresholdSeconds ?? 300),
+                maxDeviationPercent: this.config.maxPriceDeviationPercent,
+                maxStalenessSeconds: this.config.priceStaleThresholdSeconds,
             },
             this.config.priceBounds,
         );
 
-        const cache = createPriceCache(Math.max(0, this.config.cacheTtlSeconds ?? 30));
+        const cache = createPriceCache(this.config.cacheTtlSeconds);
 
-        this.aggregator = createAggregator(providers, validator, cache);
+        this.aggregator = createAggregator(providers, validator, cache, {
+            madZScoreThreshold: this.config.madZScoreThreshold ?? MAD_Z_SCORE_THRESHOLD,
+        });
 
         this.contractUpdater = createContractUpdater({
             network: this.config.stellarNetwork,
@@ -109,7 +110,7 @@ export class OracleService {
             retryDelayMs: 1000,
         });
 
-        if (this.config.adminApiPort > 0) {
+        if (this.config.adminApiPort !== undefined && this.config.adminApiPort > 0) {
             if (!this.config.adminHmacSecret) {
                 throw new Error('ADMIN_HMAC_SECRET is required when ADMIN_API_PORT is configured');
             }
@@ -233,7 +234,8 @@ export class OracleService {
             isRunning: this.isRunning,
             network: this.config.stellarNetwork,
             contractId: this.config.contractId,
-            providers: [...(this.config.providers || [])],
+            // Fresh copies: callers must not be able to mutate service state.
+            providers: this.providerStatuses.map((p) => ({ ...p })),
             aggregatorStats: this.aggregator.getStats(),
         };
     }
@@ -287,8 +289,27 @@ async function main(): Promise<void> {
     }
 }
 
-// Run if this is the main module
-main().catch(console.error);
+/**
+ * True when this module was executed directly (`node dist/index.js`) rather
+ * than imported. Importing the module must not boot a service or terminate the
+ * host process.
+ */
+function isDirectExecution(): boolean {
+    const entry = process.argv[1];
+    if (entry === undefined) {
+        return false;
+    }
+    try {
+        return import.meta.url === pathToFileURL(entry).href;
+    } catch {
+        return false;
+    }
+}
+
+// Run only when this module is the process entry point.
+if (isDirectExecution()) {
+    main().catch(console.error);
+}
 
 // Export for programmatic use
 export { loadConfig } from './config.js';
