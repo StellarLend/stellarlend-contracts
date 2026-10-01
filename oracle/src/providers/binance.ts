@@ -29,6 +29,9 @@ const BINANCE_SYMBOL_MAP: Record<string, string> = {
     DOGE: 'DOGEUSDT',
 };
 
+/** Maximum allowed age of a ticker before it is considered stale (ms) */
+const MAX_TICKER_AGE_MS = 5 * 60 * 1000;
+
 /**
  * Binance 24hr ticker response
  */
@@ -38,6 +41,9 @@ interface Binance24hrTickerResponse {
     closeTime: number;
     /** Quote asset volume over the last 24 hours (USD-equivalent for *USDT pairs) */
     quoteVolume: string;
+    /** Binance returns this on error responses */
+    code?: number;
+    msg?: string;
 }
 
 /**
@@ -64,6 +70,52 @@ export class BinanceProvider extends BasePriceProvider {
     }
 
     /**
+     * Parse and validate a ticker response into RawPriceData.
+     *
+     * Invariants enforced:
+     * - lastPrice must be a finite, strictly positive number.
+     * - closeTime must be a finite, positive epoch-ms value that is not
+     *   unreasonably far in the future and not older than MAX_TICKER_AGE_MS.
+     * - quoteVolume, when present, must parse to a non-negative finite number.
+     */
+    private parseTicker(asset: string, ticker: Binance24hrTickerResponse): RawPriceData {
+        if (ticker.code !== undefined) {
+            throw new Error(
+                `Binance error for ${asset}: ${ticker.msg ?? 'unknown error'} (code ${ticker.code})`,
+            );
+        }
+
+        const price = Number.parseFloat(ticker.lastPrice);
+        if (!Number.isFinite(price) || price <= 0) {
+            throw new Error(`Binance returned invalid price for ${asset}: ${ticker.lastPrice}`);
+        }
+
+        const closeTime = Number(ticker.closeTime);
+        if (!Number.isFinite(closeTime) || closeTime <= 0) {
+            throw new Error(`Binance returned invalid closeTime for ${asset}: ${ticker.closeTime}`);
+        }
+
+        const nowMs = Date.now();
+        if (closeTime > nowMs + MAX_TICKER_AGE_MS) {
+            throw new Error(`Binance returned future-dated ticker for ${asset}`);
+        }
+        if (nowMs - closeTime > MAX_TICKER_AGE_MS) {
+            throw new Error(`Binance returned stale ticker for ${asset}`);
+        }
+
+        const rawVolume = Number.parseFloat(ticker.quoteVolume);
+        const volume = Number.isFinite(rawVolume) && rawVolume > 0 ? rawVolume : 0;
+
+        return {
+            asset: asset.toUpperCase(),
+            price,
+            timestamp: Math.floor(closeTime / 1000),
+            source: 'binance',
+            volume24h: BigInt(Math.round(volume)),
+        };
+    }
+
+    /**
      * Fetch price for a specific asset
      */
     async fetchPrice(asset: string): Promise<RawPriceData> {
@@ -76,13 +128,7 @@ export class BinanceProvider extends BasePriceProvider {
         try {
             const response = await this.request<Binance24hrTickerResponse>(url);
 
-            return {
-                asset: asset.toUpperCase(),
-                price: parseFloat(response.lastPrice),
-                timestamp: Math.floor(response.closeTime / 1000),
-                source: 'binance',
-                volume24h: BigInt(Math.round(parseFloat(response.quoteVolume) || 0)),
-            };
+            return this.parseTicker(asset, response);
         } catch (error) {
             logger.error(`Binance fetch failed for ${asset}`, { error });
             throw error;
@@ -92,6 +138,12 @@ export class BinanceProvider extends BasePriceProvider {
     /**
      * Fetch prices for multiple assets
      * Uses batch ticker endpoint for efficiency
+     *
+     * Invariants:
+     * - Duplicate assets are de-duplicated so each asset appears at most once.
+     * - Unsupported assets are skipped (never silently mis-priced).
+     * - If the batch response omits an asset, that asset is omitted from the
+     *   result rather than returned with a fabricated price.
      */
     async fetchPrices(assets: string[]): Promise<RawPriceData[]> {
         const assetToSymbol: Map<string, string> = new Map();
@@ -100,8 +152,11 @@ export class BinanceProvider extends BasePriceProvider {
         for (const asset of assets) {
             try {
                 const symbol = this.getBinanceSymbol(asset);
-                assetToSymbol.set(asset.toUpperCase(), symbol);
-                validAssets.push(asset.toUpperCase());
+                const upper = asset.toUpperCase();
+                if (!assetToSymbol.has(upper)) {
+                    assetToSymbol.set(upper, symbol);
+                    validAssets.push(upper);
+                }
             } catch {
                 logger.warn(`Skipping unsupported asset: ${asset}`);
             }
@@ -120,27 +175,30 @@ export class BinanceProvider extends BasePriceProvider {
         try {
             const response = await this.request<Binance24hrTickerResponse[]>(url);
 
+            if (!Array.isArray(response)) {
+                throw new Error('Binance batch response was not an array');
+            }
+
             // For quick lookup
             const symbolToTicker: Map<string, Binance24hrTickerResponse> = new Map();
             for (const ticker of response) {
-                symbolToTicker.set(ticker.symbol, ticker);
+                if (ticker && typeof ticker.symbol === 'string') {
+                    symbolToTicker.set(ticker.symbol, ticker);
+                }
             }
 
             const results: RawPriceData[] = [];
-            const now = Math.floor(Date.now() / 1000);
 
             for (const asset of validAssets) {
                 const symbol = assetToSymbol.get(asset)!;
                 const ticker = symbolToTicker.get(symbol);
 
                 if (ticker !== undefined) {
-                    results.push({
-                        asset,
-                        price: parseFloat(ticker.lastPrice),
-                        timestamp: Math.floor(ticker.closeTime / 1000) || now,
-                        source: 'binance',
-                        volume24h: BigInt(Math.round(parseFloat(ticker.quoteVolume) || 0)),
-                    });
+                    try {
+                        results.push(this.parseTicker(asset, ticker));
+                    } catch (error) {
+                        logger.warn(`Skipping invalid ticker for ${asset}`, { error });
+                    }
                 }
             }
 
