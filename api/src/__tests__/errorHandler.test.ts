@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+
 import { errorHandler } from '../middleware/errorHandler';
 import logger from '../utils/logger';
 import {
@@ -24,6 +25,11 @@ jest.mock('../utils/logger', () => ({
   default: { error: jest.fn() },
 }));
 
+jest.mock('../utils/logger', () => ({
+  __esModule: true,
+  default: { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() },
+}));
+
 describe('Error Handler Middleware', () => {
   let mockRequest: Partial<Request>;
   let mockResponse: Partial<Response>;
@@ -38,6 +44,7 @@ describe('Error Handler Middleware', () => {
     mockResponse = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn().mockReturnThis(),
+      headersSent: false,
     };
     mockNext = jest.fn();
     jest.clearAllMocks();
@@ -844,6 +851,76 @@ describe('Error Handler Middleware', () => {
     });
   });
 
+  it('should expose specific api error classes', () => {
+    expect(new NotFoundError().statusCode).toBe(404);
+    expect(new ConflictError('Already exists').statusCode).toBe(409);
+    expect(new InternalServerError().statusCode).toBe(500);
+  });
+
+  it('should not treat a plain SyntaxError without body as a 400', () => {
+    const error = new SyntaxError('Bad syntax');
+
+    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(500);
+  });
+
+  it('should not leak internal error messages for generic errors', () => {
+    const error = new Error('DB: connection refused at 10.0.0.1');
+
+    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockResponse.json).toHaveBeenCalledWith({
+      success: false,
+      error: 'Internal server error',
+    });
+    expect(mockResponse.json).not.toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('10.0.0.1') }),
+    );
+  });
+
+  it('should clamp out-of-range ApiError status codes to 500', () => {
+    const error = new ApiError(999, 'Weird code');
+
+    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(500);
+  });
+
+  it('should clamp negative ApiError status codes to 500', () => {
+    const error = new ApiError(-1, 'Negative');
+
+    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(500);
+  });
+
+  it('should delegate to next when headers are already sent', () => {
+    mockResponse.headersSent = true;
+    const error = new Error('Late failure');
+
+    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockNext).toHaveBeenCalledWith(error);
+    expect(mockResponse.status).not.toHaveBeenCalled();
+    expect(mockResponse.json).not.toHaveBeenCalled();
+  });
+
+  it('should not throw when receiving a non-Error thrown value', () => {
+    errorHandler(
+      'string failure' as unknown,
+      mockRequest as Request,
+      mockResponse as Response,
+      mockNext,
+    );
+
+    expect(mockResponse.status).toHaveBeenCalledWith(500);
+    expect(mockResponse.json).toHaveBeenCalledWith({
+      success: false,
+      error: 'Internal server error',
+    });
+  });
+
   it('should produce the same response for repeated invocations with the same input (determinism)', () => {
     const error = new ConflictError('Already exists');
 
@@ -890,5 +967,28 @@ describe('Error Handler Middleware', () => {
       success: false,
       error: 'Resource missing',
     });
+  });
+
+  it('should not throw when receiving null', () => {
+    errorHandler(null, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(500);
+  });
+
+  it('should not throw when receiving undefined', () => {
+    errorHandler(undefined, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(500);
+  });
+
+  it('should be deterministic across repeated invocations', () => {
+    const error = new ValidationError('Invalid input');
+
+    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+
+    expect(mockResponse.status).toHaveBeenCalledTimes(2);
+    expect(mockResponse.status).toHaveBeenNthCalledWith(1, 400);
+    expect(mockResponse.status).toHaveBeenNthCalledWith(2, 400);
   });
 });
