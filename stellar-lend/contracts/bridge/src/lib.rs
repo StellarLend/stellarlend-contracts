@@ -974,16 +974,21 @@ impl Bridge {
             return Err(BridgeError::UnknownValidator);
         }
 
-        let payload = concat_prefixed(UNPAUSE_PAYLOAD_TAG, &v_bytes);
-        guardian
-            .verify(&payload, signature)
-            .map_err(|_| BridgeError::InvalidGuardianSignature)?;
+        let mut paused = Self::load_paused(&env);
+        if !paused.contains_key(validator.clone()) {
+            return Err(BridgeError::NotPaused);
+        }
 
-        self.paused_validators.remove(&v_bytes);
-        Ok(ValidatorEvent::Unpaused {
-            validator: v_bytes,
-            epoch: self.epoch,
-        })
+        // Verify guardian signature over action-bound payload.
+        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
+        let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
+        let payload_hash = env.crypto().sha256(&payload);
+        env.crypto()
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
+
+        paused.remove(validator);
+        Self::save_paused(&env, &paused);
+        Ok(())
     }
 
     /// Rejects an inbound message whose `signed_epoch` is not aligned with
@@ -1267,28 +1272,6 @@ impl Bridge {
         }
         (window_start, total)
     }
-}
-
-/// Helper: build a payload of the form `prefix || suffix` without an
-/// intermediate allocation beyond the result vector.
-fn concat_prefixed(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(prefix.len() + suffix.len());
-    out.extend_from_slice(prefix);
-    out.extend_from_slice(suffix);
-    out
-}
-
-/// Lowercase hex encoder for the `Display` impl of `ValidatorEvent`. Inlined
-/// here (rather than pulling in the `hex` crate as a runtime dependency)
-/// because event formatting is the only consumer and the format is trivial.
-fn lowercase_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
 }
 
 #[cfg(test)]
