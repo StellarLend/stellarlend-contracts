@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z, ZodError, ZodSchema } from 'zod';
 import { ValidationError } from '../utils/errors';
 import { I128String, PositiveI128String, StellarAddress } from '../utils/validators';
+import logger from '../utils/logger';
 
 /**
  * Body validation middleware.
@@ -22,14 +23,24 @@ export const validateBody =
       req.body = parsed;
       return next();
     } catch (error) {
-      if (error instanceof ZodError) {
-        const errorMessages = error.issues
-          .map(issue => `${issue.path.join('.') || 'body'}: ${issue.message}`)
-          .join(', ');
-        return next(new ValidationError(errorMessages));
+      if (
+        error instanceof Error &&
+        error.message.includes('Encountered Promise during synchronous parse') &&
+        typeof (schema as any).parseAsync === 'function'
+      ) {
+        (schema as any)
+          .parseAsync(req.body)
+          .then((validatedBody: any) => {
+            req.body = validatedBody;
+            next();
+          })
+          .catch((asyncError: unknown) => {
+            handleValidationFailure(asyncError, req, next);
+          });
+        return;
       }
 
-      return next(error);
+      handleValidationFailure(error, req, next);
     }
   };
 
@@ -38,6 +49,17 @@ export const optionalStellarAddress = z.preprocess(
   StellarAddress.optional()
 );
 
+/**
+ * Schema for core lending operations (deposit, borrow, repay, withdraw).
+ *
+ * Invariants:
+ * - `userAddress`: Must be a valid Stellar account (G...) or contract (C...) address.
+ * - `amount`: Must be a positive signed 128-bit integer string (1 <= amount <= i128::MAX).
+ *   Rejects zero, negative amounts, decimals, scientific notation, and non-numeric values.
+ * - `assetAddress`: Optional Stellar address. Normalized via optionalStellarAddress.
+ * - `userSecret`: Required transaction signing authorization credential.
+ *   Must be non-empty and non-whitespace. Raw secret values are never echoed in errors.
+ */
 export const lendingRequestSchema = z.object({
   userAddress: StellarAddress,
   amount: PositiveI128String,
@@ -50,4 +72,4 @@ export const borrowValidation = [validateBody(lendingRequestSchema)];
 export const repayValidation = [validateBody(lendingRequestSchema)];
 export const withdrawValidation = [validateBody(lendingRequestSchema)];
 
-export { I128String, StellarAddress };
+export { I128String, PositiveI128String, StellarAddress };

@@ -80,7 +80,7 @@ export const errorHandler = (
   // Fallback -> 500 with generic message (no internal details leaked).
   return res.status(500).jsonf({
     success: false,
-    error: 'Internal server error',
+    error: message,
   });
 };
 

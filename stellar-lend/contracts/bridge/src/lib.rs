@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes,
-    BytesN, Env, Map, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    Map, Vec,
 };
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
@@ -201,7 +201,7 @@ impl Bridge {
             .get::<BridgeDataKey, u64>(&BridgeDataKey::Epoch)
             .unwrap_or(0)
     }
-    fn save_epoch(env: &Env, epoch: u64) {
+    pub(crate) fn save_epoch(env: &Env, epoch: u64) {
         env.storage()
             .persistent()
             .set(&BridgeDataKey::Epoch, &epoch);
@@ -296,9 +296,7 @@ impl Bridge {
     }
 
     fn save_admin(env: &Env, admin: &Address) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Admin, admin);
+        env.storage().persistent().set(&BridgeDataKey::Admin, admin);
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), BridgeError> {
@@ -328,10 +326,10 @@ impl Bridge {
         let mut data = Bytes::new(env);
         data.extend_from_slice(SOURCE_DOMAIN_SEPARATOR);
         data.extend_from_slice(&domain.chain_id.to_le_bytes());
-        let np_len = domain.network_passphrase.len() as u32;
+        let np_len = domain.network_passphrase.len();
         data.extend_from_slice(&np_len.to_le_bytes());
         data.append(&domain.network_passphrase);
-        let cid_len = domain.contract_id.len() as u32;
+        let cid_len = domain.contract_id.len();
         data.extend_from_slice(&cid_len.to_le_bytes());
         data.append(&domain.contract_id);
         env.crypto().sha256(&data).into()
@@ -344,14 +342,11 @@ impl Bridge {
     ///          || source_domain_hash (32 bytes)
     ///          || nonce (8 bytes LE) )
     /// ```
-    fn inbound_message_id(
-        env: &Env,
-        source_hash: &BytesN<32>,
-        nonce: u64,
-    ) -> BytesN<32> {
+    fn inbound_message_id(env: &Env, source_hash: &BytesN<32>, nonce: u64) -> BytesN<32> {
         let mut data = Bytes::new(env);
         data.extend_from_slice(INBOUND_MSG_DOMAIN);
-        data.extend_from_slice(&source_hash.to_bytes());
+        let hash_arr: [u8; 32] = source_hash.into();
+        data.extend_from_slice(&hash_arr);
         data.extend_from_slice(&nonce.to_le_bytes());
         env.crypto().sha256(&data).into()
     }
@@ -450,11 +445,8 @@ impl Bridge {
     ) -> Result<(), BridgeError> {
         Self::require_admin(&env, &caller)?;
         let hash = Self::source_domain_hash(&env, &source);
-        if env
-            .storage()
-            .persistent()
-            .has(&BridgeDataKey::SourceRegistered(hash))
-        {
+        let registered = BridgeDataKey::SourceRegistered(hash);
+        if env.storage().persistent().has(&registered) {
             // Already registered — idempotent, return Ok.
             return Ok(());
         }
@@ -467,9 +459,7 @@ impl Bridge {
         if count >= MAX_SOURCE_DOMAINS {
             return Err(BridgeError::SourceDomainLimitReached);
         }
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::SourceRegistered(hash), &true);
+        env.storage().persistent().set(&registered, &true);
         env.storage()
             .persistent()
             .set(&BridgeDataKey::SourceDomainCount, &(count + 1));
@@ -487,17 +477,12 @@ impl Bridge {
     ) -> Result<(), BridgeError> {
         Self::require_admin(&env, &caller)?;
         let hash = Self::source_domain_hash(&env, &source);
-        if !env
-            .storage()
-            .persistent()
-            .has(&BridgeDataKey::SourceRegistered(hash))
-        {
+        let registered = BridgeDataKey::SourceRegistered(hash);
+        if !env.storage().persistent().has(&registered) {
             // Not registered — idempotent, return Ok.
             return Ok(());
         }
-        env.storage()
-            .persistent()
-            .remove(&BridgeDataKey::SourceRegistered(hash));
+        env.storage().persistent().remove(&registered);
         let count: u32 = env
             .storage()
             .persistent()
@@ -528,9 +513,9 @@ impl Bridge {
     ///
     /// The function:
     /// 1. Validates `source` is registered.
-    /// 2. Checks `nonce` equals the next expected nonce for that source.
-    /// 3. Computes the domain-separated message ID.
-    /// 4. Checks the message has not already been consumed.
+    /// 2. Computes the domain-separated message ID.
+    /// 3. Checks the message has not already been consumed.
+    /// 4. Checks `nonce` equals the next expected nonce for that source.
     /// 5. Marks the message as consumed and increments the per-source nonce.
     /// 6. Emits an [`InboundMessageConsumedEvent`].
     ///
@@ -545,8 +530,8 @@ impl Bridge {
     ///
     /// # Errors
     /// - [`BridgeError::UnregisteredSource`] if the source domain is not registered.
-    /// - [`BridgeError::UnexpectedNonce`] if the nonce does not match.
     /// - [`BridgeError::MessageAlreadyConsumed`] if the message was already consumed.
+    /// - [`BridgeError::UnexpectedNonce`] if the nonce does not match.
     pub fn consume_inbound_message(
         env: Env,
         source: SourceDomain,
@@ -554,52 +539,45 @@ impl Bridge {
     ) -> Result<BytesN<32>, BridgeError> {
         // 1. Validate source is registered.
         let source_hash = Self::source_domain_hash(&env, &source);
-        if !env
-            .storage()
-            .persistent()
-            .has(&BridgeDataKey::SourceRegistered(source_hash))
-        {
+        let registered = BridgeDataKey::SourceRegistered(source_hash.clone());
+        if !env.storage().persistent().has(&registered) {
             return Err(BridgeError::UnregisteredSource);
         }
 
-        // 2. Check nonce ordering.
+        // 2. Compute domain-separated message ID and check it has not
+        // already been consumed. The replay check must run before the
+        // nonce-ordering check: once a message is consumed the nonce
+        // counter has advanced past it, so a duplicate delivery would
+        // otherwise be masked as UnexpectedNonce instead of being
+        // reported as the replay it is.
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+        let consumed = BridgeDataKey::ConsumedInboundMessage(message_id.clone());
+        if env.storage().persistent().has(&consumed) {
+            return Err(BridgeError::MessageAlreadyConsumed);
+        }
+
+        // 3. Check nonce ordering.
         let expected_nonce: u64 = env
             .storage()
             .persistent()
-            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash))
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash.clone()))
             .unwrap_or(0);
         if nonce != expected_nonce {
             return Err(BridgeError::UnexpectedNonce);
         }
 
-        // 3. Compute domain-separated message ID.
-        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
-
-        // 4. Check not already consumed.
-        if env
-            .storage()
-            .persistent()
-            .has(&BridgeDataKey::ConsumedInboundMessage(message_id))
-        {
-            return Err(BridgeError::MessageAlreadyConsumed);
-        }
-
-        // 5. Mark consumed and advance nonce.
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::ConsumedInboundMessage(message_id), &true);
-        let next_nonce = nonce
-            .checked_add(1)
-            .ok_or(BridgeError::NonceOverflow)?;
+        // 4. Mark consumed and advance nonce.
+        env.storage().persistent().set(&consumed, &true);
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
         env.storage()
             .persistent()
             .set(&BridgeDataKey::InboundNonce(source_hash), &next_nonce);
 
-        // 6. Emit event.
+        // 5. Emit event.
         env.events().publish(
-            (symbol_short!("inbound_msg"), symbol_short!("consumed")),
+            (symbol_short!("inbound"), symbol_short!("consumed")),
             InboundMessageConsumedEvent {
-                message_id,
+                message_id: message_id.clone(),
                 source,
                 nonce,
             },
@@ -612,11 +590,7 @@ impl Bridge {
     ///
     /// Computes the domain-separated message ID from `source` and `nonce`
     /// and checks the storage marker.
-    pub fn is_message_consumed(
-        env: Env,
-        source: SourceDomain,
-        nonce: u64,
-    ) -> bool {
+    pub fn is_message_consumed(env: Env, source: SourceDomain, nonce: u64) -> bool {
         let source_hash = Self::source_domain_hash(&env, &source);
         let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
         env.storage()
@@ -724,13 +698,13 @@ impl Bridge {
 
         // 2. bridge_id length (4 bytes LE) + bridge_id bytes
         let id_len = bridge_id.len();
-        data.extend_from_slice(&(id_len as u32).to_le_bytes());
+        data.extend_from_slice(&id_len.to_le_bytes());
         // Append via SDK `Bytes::append` / `slice` — soroban-sdk 25 has no
         // `copy_into_slice_with_offset` (only full-length `copy_into_slice`).
         data.append(bridge_id);
 
         // 3. validator count (4 bytes LE) + each 32-byte key
-        let val_count = new_validators.len() as u32;
+        let val_count = new_validators.len();
         data.extend_from_slice(&val_count.to_le_bytes());
         for pk in new_validators.iter() {
             let arr: [u8; 32] = pk.into();
@@ -913,11 +887,46 @@ impl Bridge {
     // Inbound epoch validation
     // -----------------------------------------------------------------------
 
-    /// Reject a `signed_epoch` that belongs to a retired validator set.
+    /// Reject a `signed_epoch` that does not name the bridge's currently
+    /// active validator set.
+    ///
+    /// # Threat model (#1147)
+    ///
+    /// A naive `signed_epoch >= self.epoch` check accepts any far-future
+    /// epoch. A message claiming an epoch that the validator set has not
+    /// yet rotated into must NEVER be honoured on this bridge: once the
+    /// future epoch is reached, an attacker who pre-collected the message
+    /// can replay it. The defence is to accept only the active epoch,
+    /// optionally extended by a small explicit tolerance.
+    ///
+    /// With [`INBOUND_EPOCH_TOLERANCE`] set to `0` (the default and safe
+    /// choice) the bridge enforces **strict equality**: only an inbound
+    /// message carrying exactly [`Bridge::epoch`] is admitted. Epochs are
+    /// monotonically-incremented discrete sequence numbers, not physical
+    /// timestamps, so there is no "clock skew" to absorb and any positive
+    /// tolerance weakens replay resistance without justification.
+    ///
+    /// # Bounds
+    ///
+    /// * `signed_epoch < epoch`
+    ///   [`Err`] — retired-validator-set replay.
+    /// * `signed_epoch == epoch`
+    ///   [`Ok`] — exactly the active epoch, accepted.
+    /// * `signed_epoch > epoch.saturating_add(INBOUND_EPOCH_TOLERANCE)`
+    ///   [`Err`] — message claims to be from a validator set that has not
+    ///   yet been rotationally authorised on this bridge.
+    ///
+    /// `saturating_add` ensures that if `epoch == u64::MAX` the upper
+    /// bound also equals `u64::MAX`, so the comparison cannot be defeated
+    /// by wrapping arithmetic.
     pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
         let current = Self::load_epoch(&env);
         if signed_epoch < current {
             return Err(BridgeError::RetiredEpoch);
+        }
+        let max_accepted_epoch = current.saturating_add(INBOUND_EPOCH_TOLERANCE);
+        if signed_epoch > max_accepted_epoch {
+            return Err(BridgeError::InvalidEpoch);
         }
         Ok(())
     }
@@ -986,138 +995,30 @@ impl Bridge {
             return Err(BridgeError::UnknownValidator);
         }
 
-        let payload = concat_prefixed(UNPAUSE_PAYLOAD_TAG, &v_bytes);
-        guardian
-            .verify(&payload, signature)
-            .map_err(|_| BridgeError::InvalidGuardianSignature)?;
-
-        self.paused_validators.remove(&v_bytes);
-        Ok(ValidatorEvent::Unpaused {
-            validator: v_bytes,
-            epoch: self.epoch,
-        })
-    }
-
-    /// Rejects an inbound message whose `signed_epoch` is not aligned with
-    /// the bridge's currently active epoch.
-    ///
-    /// # Threat model (#1147)
-    ///
-    /// A naive `signed_epoch >= self.epoch` check accepts any far-future
-    /// epoch. A message claiming an epoch that the validator set has not
-    /// yet rotated into must NEVER be honoured on this bridge: once the
-    /// future epoch is reached, an attacker who pre-collected the message
-    /// can replay it. The defence is to accept only the active epoch,
-    /// optionally extended by a small explicit tolerance.
-    ///
-    /// With [`INBOUND_EPOCH_TOLERANCE`] set to `0` (the default and safe
-    /// choice) the bridge enforces **strict equality**: only an inbound
-    /// message carrying exactly [`Bridge::epoch`] is admitted. Epochs are
-    /// monotonically-incremented discrete sequence numbers, not physical
-    /// timestamps, so there is no "clock skew" to absorb and any positive
-    /// tolerance weakens replay resistance without justification.
-    ///
-    /// # Significance of the upper bound
-    ///
-    /// * `signed_epoch < self.epoch`
-    ///   [`Err`] — retired-validator-set replay.
-    /// * `signed_epoch == self.epoch`
-    ///   [`Ok`] — exactly the active epoch, accepted.
-    /// * `signed_epoch > self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE)`
-    ///   [`Err`] — message claims to be from a validator set that has not
-    ///   yet been rotationally authorised on this bridge.
-    ///
-    /// # Tolerance formula
-    ///
-    /// ```text
-    /// min_accepted_epoch = self.epoch
-    /// max_accepted_epoch = self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE)
-    /// accepted iff  min_accepted_epoch <= signed_epoch <= max_accepted_epoch
-    /// ```
-    ///
-    /// `saturating_add` ensures that if `self.epoch == u64::MAX` the upper
-    /// bound also equals `u64::MAX`, so the comparison cannot be defeated
-    /// by wrapping arithmetic. Bridge epoch numbers start at `0` and
-    /// increment by `1` per rotation, so reaching `u64::MAX` is
-    /// unreachable in any realistic deployment.
-    ///
-    /// # Worked example (tolerance = 0)
-    ///
-    /// Suppose the bridge is currently at epoch `5` and
-    /// `INBOUND_EPOCH_TOLERANCE == 0`:
-    ///
-    /// | `signed_epoch` | Outcome                       | Reason |
-    /// |---:|---|---|
-    /// | `3` | [`Err`] (retired validator set) | Lower than `self.epoch`. |
-    /// | `4` | [`Err`] (retired validator set) | Lower than `self.epoch`. |
-    /// | `5` | [`Ok`]                         | Exactly the active epoch. |
-    /// | `6` | [`Err`] (not yet active)        | `6 > 5 + 0` — a future epoch the validator set has not rotated into. |
-    /// | `u64::MAX` | [`Err`] (not yet active)  | `u64::MAX > 5.saturating_add(0) = 5`. |
-    ///
-    /// # Worked example (hypothetical tolerance = 1)
-    ///
-    /// If `INBOUND_EPOCH_TOLERANCE` were ever raised to `1`:
-    ///
-    /// | `signed_epoch` | Outcome | Reason |
-    /// |---:|---|---|
-    /// | `4` | [`Err`] | Lower than `self.epoch == 5`. |
-    /// | `5` | [`Ok`]  | `5 <= 5 <= 6`. |
-    /// | `6` | [`Ok`]  | `6 <= 5.saturating_add(1) = 6`. |
-    /// | `7` | [`Err`] | `7 > 6`. |
-    ///
-    /// # Errors
-    ///
-    /// Returns [`anyhow::Error`] whose string contains one of:
-    ///
-    /// * `"retired validator set"` when `signed_epoch < self.epoch`.
-    /// * `"not-yet-active"` when `signed_epoch` lies strictly above the
-    ///   tolerance-adjusted upper bound.
-    ///
-    /// # Arguments
-    /// * `signed_epoch` — epoch number that the inbound message claims to
-    ///   have been signed under.
-    ///
-    /// # Returns
-    /// `Ok(())` iff `signed_epoch` is the bridge's currently active epoch
-    /// (within the explicit tolerance).
-    pub fn validate_inbound_epoch(&self, signed_epoch: u64) -> Result<()> {
-        // Lower bound: retire any signed_epoch that pre-dates the current set,
-        // so a retired validator set cannot have its messages replayed.
-        if signed_epoch < self.epoch {
-            return Err(anyhow!(
-                "message signed by retired validator set (epoch too old): \
-                 signed_epoch={} < self.epoch={}",
-                signed_epoch,
-                self.epoch
-            ));
+        let mut paused = Self::load_paused(&env);
+        if !paused.contains_key(validator.clone()) {
+            return Err(BridgeError::NotPaused);
         }
 
-        // Upper bound: refuse signed_epoch that points at a future validator
-        // set the bridge has not yet rotated into. saturating_add prevents
-        // u64 overflow from being weaponised into a comparison that always
-        // either panics or — worse — passes by wrapping to a small value.
-        let max_accepted_epoch = self.epoch.saturating_add(INBOUND_EPOCH_TOLERANCE);
-        if signed_epoch > max_accepted_epoch {
-            return Err(anyhow!(
-                "message signed by not-yet-active validator set (epoch too far in the future): \
-                 signed_epoch={} > max_accepted_epoch={} (= self.epoch={} + INBOUND_EPOCH_TOLERANCE={})",
-                signed_epoch,
-                max_accepted_epoch,
-                self.epoch,
-                INBOUND_EPOCH_TOLERANCE
-            ));
-        }
+        // Verify guardian signature over action-bound payload.
+        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
+        let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
+        let payload_hash = env.crypto().sha256(&payload);
+        env.crypto()
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
 
+        paused.remove(validator);
+        Self::save_paused(&env, &paused);
         Ok(())
     }
 
-    /// Build a tagged payload: `tag_bytes || pk_bytes` as a `Bytes`.
-    fn build_tagged_payload(env: &Env, tag: &[u8], pk: &BytesN<32>) -> Bytes {
-        let mut out = Bytes::new(env);
-        out.extend_from_slice(tag);
-        let arr: [u8; 32] = pk.into();
-        out.extend_from_slice(&arr);
-        out
+    /// Build a guardian-signature payload as `tag || validator_key`.
+    fn build_tagged_payload(env: &Env, tag: &[u8], validator: &BytesN<32>) -> Bytes {
+        let mut payload = Bytes::new(env);
+        payload.extend_from_slice(tag);
+        let validator_bytes: [u8; 32] = validator.into();
+        payload.extend_from_slice(&validator_bytes);
+        payload
     }
 
     // -----------------------------------------------------------------------
@@ -1281,26 +1182,26 @@ impl Bridge {
     }
 }
 
-/// Helper: build a payload of the form `prefix || suffix` without an
-/// intermediate allocation beyond the result vector.
-fn concat_prefixed(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(prefix.len() + suffix.len());
-    out.extend_from_slice(prefix);
-    out.extend_from_slice(suffix);
-    out
-}
-
-/// Lowercase hex encoder for the `Display` impl of `ValidatorEvent`. Inlined
-/// here (rather than pulling in the `hex` crate as a runtime dependency)
-/// because event formatting is the only consumer and the format is trivial.
-fn lowercase_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
+// -----------------------------------------------------------------------
+// Test-only epoch-advance entry point.
+//
+// Production rotation goes through `rotate_validators` (quorum-proof gated).
+// The epoch-epoch guard tests (`inbound_epoch_test.rs`) only need to move the
+// stored epoch forward, so they use this `#[cfg(test)]`-gated entry point,
+// which is compiled out of the wasm build and never exported on-chain.
+// -----------------------------------------------------------------------
+#[cfg(test)]
+#[contractimpl]
+impl Bridge {
+    /// Test-only: advance the stored epoch by one (forward-only, mirroring
+    /// what a successful quorum-proof rotation does to the stored epoch).
+    pub fn advance_epoch(env: Env) -> u64 {
+        let next = Self::load_epoch(&env)
+            .checked_add(1)
+            .expect("epoch overflow");
+        Self::save_epoch(&env, next);
+        next
     }
-    out
 }
 
 #[cfg(test)]
@@ -1349,6 +1250,12 @@ mod validator_pause_test;
 mod rotation_churn_test;
 
 #[cfg(test)]
+mod outbound_nonce_test;
+
+#[cfg(test)]
+mod inbound_window_integration_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::Env;
@@ -1358,56 +1265,44 @@ mod tests {
     }
 
     #[test]
-    fn test_outbound_nonce_increments() {
+    fn test_epoch_guard_after_rotation() {
         let env = fresh_env();
-        // `next_outbound_nonce` gates itself behind the contract's own
-        // address via `require_auth()`; mock auths so the test can exercise
-        // the nonce-increment logic without wiring up a real invoker chain.
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        // new set B: 3 validators
-        let kp_b = make_keypairs(3);
-        let b_pks: Vec<PublicKey> = kp_b.iter().map(|k| k.public).collect();
-        let new_set = ValidatorSet {
-            validators: b_pks.iter().map(|p| p.to_bytes().to_vec()).collect(),
-        };
+        // Initialize with an empty validator set. Quorum-proof signature
+        // verification requires real ed25519 key material and is exercised
+        // separately; here the epoch is advanced through the test-only
+        // entry point (which mirrors a successful rotation commit).
+        let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
+        client.initialize(&validators, &Bytes::new(&env));
+        assert_eq!(client.get_epoch(), 0);
+        assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
 
-        // proofs: have >2/3 of A sign the (new_set, epoch=1) payload
-        let epoch = 1u64;
-        let payload = Bridge::quorum_proof_payload(&bridge.bridge_id, &new_set, epoch).unwrap();
+        client.advance_epoch();
+        assert_eq!(client.get_epoch(), 1);
 
-        // need threshold of A: (4*2)/3+1 = 3
-        let mut proofs = vec![];
-        for i in 0..3 {
-            let sig = kp_a[i].sign(&payload);
-            proofs.push((kp_a[i].public, sig));
-        }
-
-        // rotate should succeed
-        bridge
-            .rotate_validators(new_set.clone(), epoch, proofs)
-            .expect("rotation failed");
-        assert_eq!(bridge.epoch, 1);
-
-        // messages signed with epoch 0 should be rejected
-        assert!(bridge.validate_inbound_epoch(0).is_err());
-        // messages signed with the *current* epoch 1 are accepted
-        assert!(bridge.validate_inbound_epoch(1).is_ok());
-        // messages signed with a far-future epoch 2 are rejected (not yet
-        // actively rotated into by the validator set — see #1147 / INBOUND_EPOCH_TOLERANCE)
-        let err = bridge.validate_inbound_epoch(2).unwrap_err();
-        assert!(
-            err.to_string().contains("not-yet-active"),
-            "future epoch must be rejected with a 'not-yet-active' error, got: {err}"
-        );
+        // Messages signed with epoch 0 are rejected (retired validator set).
+        assert!(matches!(
+            client.try_validate_inbound_epoch(&0u64),
+            Err(Ok(BridgeError::RetiredEpoch))
+        ));
+        // Messages signed with the current epoch 1 are accepted.
+        assert!(client.try_validate_inbound_epoch(&1u64).is_ok());
+        // Messages signed with a far-future epoch 2 are rejected (not yet
+        // actively rotated into by the validator set — see #1147 /
+        // INBOUND_EPOCH_TOLERANCE).
+        assert!(matches!(
+            client.try_validate_inbound_epoch(&2u64),
+            Err(Ok(BridgeError::InvalidEpoch))
+        ));
     }
 
     #[test]
     fn test_validate_inbound_epoch_rejects_old() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
@@ -1415,6 +1310,10 @@ mod tests {
 
         // epoch 0 is current — any lower would panic but there is no lower; future ok
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
+        assert_eq!(
+            client.try_validate_inbound_epoch(&1u64),
+            Err(Ok(BridgeError::InvalidEpoch))
+        );
         // nothing to rotate to test stale epoch without ed25519 key material here;
         // the RetiredEpoch path is covered structurally by the error code existing.
     }
@@ -1422,7 +1321,7 @@ mod tests {
     #[test]
     fn test_set_inbound_cap_and_admit() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         // Result<(), _> client methods return unit on success (use try_* for Result).
@@ -1436,7 +1335,7 @@ mod tests {
     #[test]
     fn test_inbound_window_rolls_over() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         client.set_inbound_cap(&1000i128, &86400u64, &0u64);
@@ -1450,7 +1349,7 @@ mod tests {
     #[test]
     fn test_set_outbound_cap_and_admit() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         client.set_outbound_cap(&500i128, &86400u64, &0u64);
@@ -1462,7 +1361,7 @@ mod tests {
     #[test]
     fn test_fail_closed_inbound_before_cap_set() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
@@ -1471,7 +1370,7 @@ mod tests {
     #[test]
     fn test_invalid_window_size_rejected() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
@@ -1494,7 +1393,7 @@ mod replay_protection_test {
     fn setup_bridge() -> (Env, BridgeClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.set_admin(&admin);
@@ -1644,7 +1543,7 @@ mod replay_protection_test {
 
     #[test]
     fn unregistered_source_no_state_change() {
-        let (env, client, admin) = setup_bridge();
+        let (env, client, _admin) = setup_bridge();
         let src = source(&env, 1);
         // Do NOT register src.
 
@@ -1711,7 +1610,7 @@ mod replay_protection_test {
     #[test]
     fn non_admin_cannot_register_source() {
         let (env, _client, _admin) = setup_bridge();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
         let non_admin = Address::generate(&env);
         let src = source(&env, 1);
@@ -1723,7 +1622,7 @@ mod replay_protection_test {
     fn admin_setup_is_idempotent() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
 
@@ -1840,10 +1739,7 @@ mod replay_protection_test {
     fn inbound_msg_domain_separator_is_pinned() {
         // Pin the domain tag so a silent rename would break this test
         // and force a deliberate version bump.
-        assert_eq!(
-            INBOUND_MSG_DOMAIN,
-            b"stellarlend::bridge::inbound_msg::v1"
-        );
+        assert_eq!(INBOUND_MSG_DOMAIN, b"stellarlend::bridge::inbound_msg::v1");
     }
 
     #[test]
