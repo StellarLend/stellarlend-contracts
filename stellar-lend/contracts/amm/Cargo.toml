@@ -9,6 +9,8 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
+# soroban-sdk must be a normal dependency (not only dev-dependency) so the
+# WASM release artifact can be compiled. Fixes #1973.
 soroban-sdk = { workspace = true }
 
 [dev-dependencies]

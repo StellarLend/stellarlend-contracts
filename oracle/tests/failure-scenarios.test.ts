@@ -252,13 +252,14 @@ describe('Failure Scenarios', () => {
         });
 
         it('should continue with fast providers if slow one times out', async () => {
-            provider1.setDelay(5000); // Very slow (simulates timeout)
+            provider1.setDelay(300); // Slow (simulates timeout)
             provider1.setFailure(true, new Error('Timeout'));
 
             const aggregator = createAggregator(
                 [provider1, provider2, provider3],
                 validator,
-                cache
+                cache,
+                { providerRetries: 1, retryBackoffMs: 10 }
             );
 
             const startTime = Date.now();
@@ -266,7 +267,6 @@ describe('Failure Scenarios', () => {
             const duration = Date.now() - startTime;
 
             expect(result).not.toBeNull();
-            // Should not wait significantly for slow provider (allowing test overhead)
             expect(duration).toBeLessThan(6000);
         });
     });

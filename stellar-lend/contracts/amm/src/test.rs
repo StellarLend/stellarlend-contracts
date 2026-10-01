@@ -46,8 +46,8 @@ fn setup_with_liquidity() -> (
     soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&lp, &INIT_A);
     soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&lp, &INIT_B);
 
-    // `init_pool(a, b, ta, tb)` seeds `(reserve_a, reserve_b) = (a, b)`.
-    client.init_pool(&INIT_A, &INIT_B, &token_a, &token_b);
+    // `init_pool(admin, a, b, ta, tb)` seeds `(reserve_a, reserve_b) = (a, b)`.
+    client.init_pool(&lp, &INIT_A, &INIT_B, &token_a, &token_b);
     // First call into `add_liquidity` uses the proportional path;
     // after this, `reserve_a = 2_000_000`, `reserve_b = 3_000_000`.
     let _shares = client.add_liquidity(&lp, &INIT_A, &INIT_B);
