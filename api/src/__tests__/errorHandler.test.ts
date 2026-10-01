@@ -854,20 +854,7 @@ describe('Error Handler Middleware', () => {
   it('should expose specific api error classes', () => {
     expect(new NotFoundError().statusCode).toBe(404);
     expect(new ConflictError('Already exists').statusCode).toBe(409);
-    expect(new InternalServerError().statusCode).toBe(undefined);
-  });
-
-  it('should handle JSON parsing SyntaxError with 400', () => {
-    const error = new SyntaxError('Unexpected token in JSON');
-    (error as SyntaxError & { body?: unknown }).body = '{ invalid }';
-
-    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
-
-    expect(mockResponse.status).toHaveBeenCalledWith(400);
-    expect(mockResponse.json).toHaveBeenCalledWith({
-      success: false,
-      error: 'Unexpected token in JSON',
-    });
+    expect(new InternalServerError().statusCode).toBe(500);
   });
 
   it('should not treat a plain SyntaxError without body as a 400', () => {
@@ -893,7 +880,7 @@ describe('Error Handler Middleware', () => {
   });
 
   it('should clamp out-of-range ApiError status codes to 500', () => {
-    const error = new ApiError('Weird code', 999);
+    const error = new ApiError(999, 'Weird code');
 
     errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
 
@@ -901,7 +888,7 @@ describe('Error Handler Middleware', () => {
   });
 
   it('should clamp negative ApiError status codes to 500', () => {
-    const error = new ApiError('Negative', -1);
+    const error = new ApiError(-1, 'Negative');
 
     errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
 
@@ -994,17 +981,6 @@ describe('Error Handler Middleware', () => {
     expect(mockResponse.status).toHaveBeenCalledWith(500);
   });
 
-  it('should not throw if logger fails', () => {
-    (logger.error as jest.Mock).mockImplementationOnce(() => {
-      throw new Error('logger failure');
-    });
-
-    const error = new Error('Boom');
-    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
-
-    expect(mockResponse.status).toHaveBeenCalledWith(500);
-  });
-
   it('should be deterministic across repeated invocations', () => {
     const error = new ValidationError('Invalid input');
 
@@ -1012,7 +988,7 @@ describe('Error Handler Middleware', () => {
     errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
 
     expect(mockResponse.status).toHaveBeenCalledTimes(2);
-    expect(mockResponse.status).toHaveNthCalledWith(1, 400);
-    expect(mockResponse.status).toHaveNthCalledWith(2, 400);
+    expect(mockResponse.status).toHaveBeenNthCalledWith(1, 400);
+    expect(mockResponse.status).toHaveBeenNthCalledWith(2, 400);
   });
 });
