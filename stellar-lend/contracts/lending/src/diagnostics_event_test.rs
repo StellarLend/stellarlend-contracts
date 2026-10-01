@@ -18,11 +18,9 @@ mod diagnostics_event_tests {
     use crate::events::{
         emit_diagnostics, emit_index_accrual_diagnostic, emit_oracle_staleness_diagnostic,
         emit_rate_cache_miss_diagnostic, emit_recovery_diagnostic, DiagnosticSeverity,
-        DiagnosticsEvent, EVENT_SCHEMA_VERSION, DIAG_FIELD_MAX_LEN,
+        DiagnosticsEvent, DIAG_FIELD_MAX_LEN, EVENT_SCHEMA_VERSION,
     };
-    use soroban_sdk::{
-        contract, contractimpl, testutils::Events as _, Address, Env, String,
-    };
+    use soroban_sdk::{contract, contractimpl, testutils::Events as _, Address, Env, String};
 
     // ── Minimal contract context ──────────────────────────────────────────────
     #[contract]
@@ -199,9 +197,9 @@ mod diagnostics_event_tests {
                 String::from_str(&env, "oracle"),
                 String::from_str(&env, "info"),
                 DiagnosticSeverity::Info,
-                0,  // error_code = not applicable
-                0,  // latency_ms = not applicable
-                0,  // retry_count = not applicable
+                0, // error_code = not applicable
+                0, // latency_ms = not applicable
+                0, // retry_count = not applicable
             );
         });
         assert_eq!(env.events().all().events().len(), 1);
@@ -225,8 +223,7 @@ mod diagnostics_event_tests {
                 timestamp: env.ledger().timestamp(),
             };
             assert_eq!(
-                event.schema_version,
-                EVENT_SCHEMA_VERSION,
+                event.schema_version, EVENT_SCHEMA_VERSION,
                 "DiagnosticsEvent must carry EVENT_SCHEMA_VERSION"
             );
         });
@@ -269,11 +266,7 @@ mod diagnostics_event_tests {
     fn emit_recovery_diagnostic_publishes_one_event() {
         let (env, id) = setup();
         env.as_contract(&id, || {
-            emit_recovery_diagnostic(
-                &env,
-                String::from_str(&env, "oracle"),
-                3,
-            );
+            emit_recovery_diagnostic(&env, String::from_str(&env, "oracle"), 3);
         });
         assert_eq!(env.events().all().events().len(), 1);
     }

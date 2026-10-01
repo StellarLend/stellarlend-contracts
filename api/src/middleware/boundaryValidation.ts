@@ -41,17 +41,18 @@ export const validateAmount = (
     throw new ValidationError('Amount must be positive and non-zero');
   }
 
+  // Check for decimals before any BigInt conversion: amounts are in stroops and
+  // BigInt() throws a raw TypeError on a fractional value.
+  if (!Number.isInteger(amountNum)) {
+    throw new ValidationError('Amount must be an integer (stroops)');
+  }
+
   if (amountNum < MIN_AMOUNT) {
     throw new ValidationError(`Amount must be at least ${MIN_AMOUNT}`);
   }
 
   if (BigInt(amountNum) > MAX_AMOUNT) {
     throw new ValidationError(`Amount exceeds maximum allowed value`);
-  }
-
-  // Check for decimal places (amounts should be in stroops, no decimals)
-  if (!Number.isInteger(amountNum)) {
-    throw new ValidationError('Amount must be an integer (stroops)');
   }
 
   next();
@@ -319,8 +320,21 @@ export const validatePagination = (
   res: Response,
   next: NextFunction
 ) => {
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = parseInt(req.query.limit as string) || 10;
+  // Distinguish "absent" from an explicit 0: `|| 1` would coerce page=0 and
+  // page='0' to the default and make the range check below unreachable.
+  const rawPage = req.query.page;
+  const rawLimit = req.query.limit;
+
+  const page = rawPage === undefined ? 1 : parseInt(rawPage as string, 10);
+  const limit = rawLimit === undefined ? 10 : parseInt(rawLimit as string, 10);
+
+  if (isNaN(page)) {
+    throw new ValidationError('Page must be a valid number');
+  }
+
+  if (isNaN(limit)) {
+    throw new ValidationError('Limit must be a valid number');
+  }
 
   if (page < 1) {
     throw new ValidationError('Page must be >= 1');

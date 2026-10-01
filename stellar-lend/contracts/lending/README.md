@@ -82,6 +82,7 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `get_rate_smoothing_state` | `(env) → RateSmoothingState` | `{ schema_version: u32, current_rate_bps: i128, last_target_rate_bps: i128, last_update_ledger: u32 }` | Returns the persisted borrow-rate smoothing state without recomputing rates or mutating storage. |
 | `get_health_factor` | `(env, user: Address) → i128` | `i128` | Convenience health-factor view using the same liquidation threshold scale; returns the no-debt sentinel when debt is zero. |
 | `get_protocol_metrics` | `(env) → ProtocolMetrics` | `{ total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` | Returns aggregate borrow/supply utilization and the current ledger sequence. |
+| `get_rate_model_diagnostics` | `(env) → RateModelDiagnostics` | `RateModelDiagnostics` | Returns structured, read-only diagnostics for the borrow-rate pipeline. |
 
 ### Oracle Price Controls
 
@@ -102,6 +103,11 @@ The table below reflects the **shipping** surface of `src/lib.rs` as of this bra
 | `upgrade_propose` | `(env, caller: Address, new_wasm_hash: BytesN<32>, new_version: u32) → Result<u64, LendingError>` | admin | Timelocked WASM upgrade proposal (`MIN_THRESHOLD_DELAY_LEDGERS` ETA). |
 | `upgrade_approve` | `(env, caller: Address, proposal_id: u64) → Result<u32, LendingError>` | approver | Records an approval toward the snapshotted threshold. |
 | `upgrade_execute` | `(env, caller: Address, proposal_id: u64) → Result<(), LendingError>` | approver | Calls `update_current_contract_wasm` after timelock + threshold checks. |
+| `upgrade_cancel` | `(env, caller: Address, proposal_id: u64) → Result<(), LendingError>` | admin | Cancel a pending upgrade proposal. |
+| `is_upgrade_proposal_cancelled` | `(env, proposal_id: u64) → bool` | — | Returns whether a proposal is in the Cancelled terminal state. |
+| `get_upgrade_approval_binding` | `(env, proposal_id: u64, approver: Address) → Option<BytesN<32>>` | — | Returns the stored domain-separated approval binding hash for (proposal_id, approver). |
+| `get_upgrade_approver_set_hash` | `(env) → BytesN<32>` | — | Returns the fingerprint of the live upgrade approver set. |
+| `get_upgrade_proposal_signer_hash` | `(env, proposal_id: u64) → Option<BytesN<32>>` | — | Returns the approver-set fingerprint captured when the proposal was created. |
 | `upgrade_add_approver` / `upgrade_remove_approver` | `(env, caller, approver) → Result<(), LendingError>` | admin | Manage the authorized approver set (max 32). |
 | `upgrade_set_required_approvals` | `(env, caller, required_approvals) → Result<(), LendingError>` | admin | Updates the live threshold for future proposals only. |
 | `upgrade_status` / `current_version` / `current_wasm_hash` | view | — | Query upgrade proposal state and active version/hash. |

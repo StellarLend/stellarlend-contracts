@@ -3,9 +3,10 @@
 //! This example demonstrates how to use the reserve invariant checking system
 //! in the lending contract.
 
-#![cfg(test)]
-
 use soroban_sdk::{Address, Env};
+use stellarlend_lending::{invariants, with_invariant_check, DataKey};
+
+fn main() {}
 
 /// Example 1: Basic invariant check pattern
 ///
@@ -15,17 +16,15 @@ use soroban_sdk::{Address, Env};
 /// 3. Check invariant after
 #[test]
 fn example_basic_invariant_pattern() {
-    use crate::invariants;
-    
     let env = Env::default();
     let asset = Address::generate(&env);
-    
+
     // BEFORE the operation
     invariants::check_invariant_before(&env, &asset);
-    
+
     // Perform state-changing operation
     // ... business logic that modifies storage and transfers tokens ...
-    
+
     // AFTER the operation
     invariants::check_invariant_after(&env, &asset);
 }
@@ -35,17 +34,15 @@ fn example_basic_invariant_pattern() {
 /// For cleaner code, use the with_invariant_check! macro
 #[test]
 fn example_using_macro() {
-    use crate::with_invariant_check;
-    
     let env = Env::default();
     let asset = Address::generate(&env);
-    
+
     // Wrap operation in macro
     let result = with_invariant_check!(env, asset, {
         // ... state-changing operation ...
         42i128
     });
-    
+
     assert_eq!(result, 42);
 }
 
@@ -54,19 +51,17 @@ fn example_using_macro() {
 /// Operations that affect multiple assets should check both
 #[test]
 fn example_multi_asset_operation() {
-    use crate::invariants;
-    
     let env = Env::default();
     let debt_asset = Address::generate(&env);
     let collateral_asset = Address::generate(&env);
-    
+
     // Check BOTH assets before
     invariants::check_invariant_before(&env, &debt_asset);
     invariants::check_invariant_before(&env, &collateral_asset);
-    
+
     // Perform liquidation (transfers both debt and collateral tokens)
     // ... liquidation logic ...
-    
+
     // Check BOTH assets after
     invariants::check_invariant_after(&env, &debt_asset);
     invariants::check_invariant_after(&env, &collateral_asset);
@@ -78,20 +73,19 @@ fn example_multi_asset_operation() {
 /// actual_balance == expected_balance
 #[test]
 fn example_invariant_formula() {
-    use crate::{invariants, DataKey};
     use soroban_sdk::token::Client as TokenClient;
-    
+
     let env = Env::default();
     let asset = Address::generate(&env);
     let contract_address = env.current_contract_address();
-    
+
     // Actual balance: what the contract actually holds
     let token_client = TokenClient::new(&env, &asset);
     let actual_balance = token_client.balance(&contract_address);
-    
+
     // Expected balance: computed from internal accounting
     let expected_balance = invariants::compute_expected_reserve(&env, &asset);
-    
+
     // The invariant asserts they match exactly
     assert_eq!(actual_balance, expected_balance);
 }
@@ -101,28 +95,26 @@ fn example_invariant_formula() {
 /// Shows what components make up the expected balance
 #[test]
 fn example_expected_balance_components() {
-    use crate::DataKey;
-    
     let env = Env::default();
     let asset = Address::generate(&env);
-    
+
     // Component 1: Total deposits (user collateral)
     let total_deposits: i128 = env
         .storage()
         .persistent()
         .get(&DataKey::TotalDeposits)
         .unwrap_or(0);
-    
+
     // Component 2: Bad debt (reduces reserves)
     let bad_debt: i128 = env
         .storage()
         .persistent()
         .get(&DataKey::BadDebt)
         .unwrap_or(0);
-    
+
     // Expected balance formula
     let expected = total_deposits - bad_debt;
-    
+
     println!("Expected balance breakdown:");
     println!("  Total deposits: {}", total_deposits);
     println!("  Bad debt: -{}", bad_debt);
@@ -135,15 +127,15 @@ fn example_expected_balance_components() {
 #[test]
 #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
 fn example_drift_triggers_panic() {
-    use crate::{invariants, DataKey};
-    
     let env = Env::default();
     let asset = Address::generate(&env);
-    
+
     // Create intentional mismatch
     // Say accounting shows 10,000 but token balance is 9,500
-    env.storage().persistent().set(&DataKey::TotalDeposits, &10000i128);
-    
+    env.storage()
+        .persistent()
+        .set(&DataKey::TotalDeposits, &10000i128);
+
     // This will panic because token balance (0 in test) != expected (10000)
     invariants::check_invariant_before(&env, &asset);
 }
@@ -175,8 +167,6 @@ fn example_panic_message_format() {
 /// Template for protecting new state-changing functions
 #[test]
 fn example_new_operation_template() {
-    use crate::invariants;
-    
     fn my_new_operation(
         env: &Env,
         user: &Address,
@@ -185,20 +175,20 @@ fn example_new_operation_template() {
     ) -> Result<i128, String> {
         // STEP 1: Check invariant BEFORE
         invariants::check_invariant_before(env, asset);
-        
+
         // STEP 2: Validate inputs
         if amount <= 0 {
             return Err("Invalid amount".to_string());
         }
-        
+
         // STEP 3: Perform state changes
         // - Update internal accounting (storage)
         // - Transfer tokens
         // ... operation logic ...
-        
+
         // STEP 4: Check invariant AFTER
         invariants::check_invariant_after(env, asset);
-        
+
         // STEP 5: Return result
         Ok(amount)
     }
@@ -213,13 +203,13 @@ fn example_conditional_compilation() {
     /*
     #[cfg(feature = "invariant-checks")]
     invariants::check_invariant_before(&env, &asset);
-    
+
     // ... operation ...
-    
+
     #[cfg(feature = "invariant-checks")]
     invariants::check_invariant_after(&env, &asset);
     */
-    
+
     // Then build without checks:
     // $ cargo build --release --no-default-features
 }
@@ -261,28 +251,30 @@ fn example_debugging_violation() {
 /// How to write tests for invariant-protected operations
 #[test]
 fn example_testing_pattern() {
-    use crate::{invariants, DataKey, LendingContract, LendingContractClient};
     use soroban_sdk::testutils::Address as _;
-    
+    use stellarlend_lending::{LendingContract, LendingContractClient};
+
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let contract_id = env.register_contract(None, LendingContract);
     let client = LendingContractClient::new(&env, &contract_id);
-    
+
     let admin = Address::generate(&env);
     client.initialize(&admin);
-    
+
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
-    
+
     // Set up balanced initial state
-    env.storage().persistent().set(&DataKey::TotalDeposits, &1000i128);
+    env.storage()
+        .persistent()
+        .set(&DataKey::TotalDeposits, &1000i128);
     // (In real test, also mock token balance)
-    
+
     // Execute operation - should not panic
     // client.withdraw(&user, &100, &asset);
-    
+
     // Verify final state is still balanced
     invariants::check_invariant_after(&env, &asset);
 }

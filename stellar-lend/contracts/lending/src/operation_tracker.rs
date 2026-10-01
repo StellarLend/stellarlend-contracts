@@ -27,7 +27,7 @@
 //!
 //! ```rust
 //! // User submits operation with sequence = 5
-//! // Protocol checks: stored_sequence == 5? 
+//! // Protocol checks: stored_sequence == 5?
 //! //   → Yes: proceed, increment to 6
 //! //   → No: reject with SequenceMismatch
 //! ```
@@ -37,7 +37,7 @@
 //! Each operation can optionally include a unique operation_id (32-byte hash).
 //! The protocol stores operation_id → OperationStatus mappings with TTL.
 //!
-//! ```rust
+//! ```text
 //! pub struct OperationRecord {
 //!     pub status: OperationStatus,
 //!     pub result: OperationResult,
@@ -55,10 +55,10 @@
 //!
 //! All operations follow a state machine:
 //!
-//! ```
-//! [NONE] 
+//! ```text
+//! [NONE]
 //!   ↓ (submit with operation_id)
-//! [PENDING] 
+//! [PENDING]
 //!   ↓ (execution starts)
 //! [EXECUTING]
 //!   ↓ (success) → [COMPLETED] (return cached result on retry)
@@ -85,9 +85,17 @@ pub enum OperationStatus {
 }
 
 /// Result of a completed operation (cached for idempotency).
+///
+/// NOTE: `OperationRecord` stores this directly (not as `Option`). soroban-sdk
+/// 25.3.1's `#[contracttype]` struct conversion requires every field type to
+/// implement infallible `Into<ScVal>`, which `Option<CustomEnum>` does not —
+/// so [`OperationResult::Empty`] is the explicit "no result" marker instead
+/// of `None`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationResult {
+    /// No result (e.g. pending, in-flight, failed, or no value produced)
+    None,
     /// Deposit operation result: new balance
     Deposit(i128),
     /// Withdraw operation result: new balance
@@ -100,16 +108,18 @@ pub enum OperationResult {
     Liquidate(i128),
     /// Generic success without specific result
     Success,
+    /// No result recorded yet (operation still pending/failed/cancelled).
+    Empty,
 }
 
 /// Operation record stored for deduplication and idempotency.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationRecord {
     /// Current status of the operation
     pub status: OperationStatus,
-    /// Cached result (only valid when status == Completed)
-    pub result: Option<OperationResult>,
+    /// Cached result (OperationResult::Empty when status != Completed)
+    pub result: OperationResult,
     /// Ledger timestamp when operation was first submitted
     pub submitted_at: u64,
     /// Ledger timestamp when operation finished executing
@@ -145,10 +155,7 @@ pub const MAX_PENDING_OPERATIONS_PER_USER: u32 = 10;
 /// Returns 0 if the user has never performed an operation.
 pub fn get_user_sequence(env: &Env, user: &Address) -> u64 {
     let key = OperationTrackerKey::UserSequence(user.clone());
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(0u64)
+    env.storage().persistent().get(&key).unwrap_or(0u64)
 }
 
 /// Increment the user's sequence number and return the new value.
@@ -160,15 +167,13 @@ fn increment_user_sequence(env: &Env, user: &Address) -> u64 {
     let next = current
         .checked_add(1)
         .expect("operation_tracker: sequence overflow");
-    env.storage()
-        .persistent()
-        .set(&key, &next);
-    
+    env.storage().persistent().set(&key, &next);
+
     // Extend TTL so sequence number doesn't expire
     env.storage()
         .persistent()
         .extend_ttl(&key, OPERATION_RECORD_TTL, OPERATION_RECORD_TTL);
-    
+
     next
 }
 
@@ -201,13 +206,10 @@ pub fn validate_sequence(
 /// Load an operation record by ID.
 ///
 /// Returns `None` if no record exists or if it has expired.
-pub fn get_operation_record(
-    env: &Env,
-    operation_id: &BytesN<32>,
-) -> Option<OperationRecord> {
+pub fn get_operation_record(env: &Env, operation_id: &BytesN<32>) -> Option<OperationRecord> {
     let key = OperationTrackerKey::OperationRecord(operation_id.clone());
     let record: Option<OperationRecord> = env.storage().persistent().get(&key);
-    
+
     // Check if record has expired
     if let Some(ref rec) = record {
         let now = env.ledger().timestamp();
@@ -217,7 +219,7 @@ pub fn get_operation_record(
             return None;
         }
     }
-    
+
     record
 }
 
@@ -246,30 +248,30 @@ pub fn register_operation(
             }
         }
     }
-    
+
     let now = env.ledger().timestamp();
     let expires_at = now
         .checked_add(ttl_seconds)
         .expect("operation_tracker: expiry timestamp overflow");
-    
+
     let record = OperationRecord {
         status: OperationStatus::Pending,
-        result: None,
+        result: OperationResult::Empty,
         submitted_at: now,
         executed_at: None,
         expires_at,
         initiator: initiator.clone(),
     };
-    
+
     let key = OperationTrackerKey::OperationRecord(operation_id.clone());
     env.storage().persistent().set(&key, &record);
-    
+
     // Set TTL in ledgers (convert seconds to ledgers: ~5s per ledger)
     let ttl_ledgers = (ttl_seconds / 5).max(1) as u32;
     env.storage()
         .persistent()
         .extend_ttl(&key, ttl_ledgers, ttl_ledgers);
-    
+
     Ok(())
 }
 
@@ -285,22 +287,22 @@ pub fn mark_executing(
     caller: &Address,
 ) -> Result<(), OperationTrackerError> {
     let key = OperationTrackerKey::OperationRecord(operation_id.clone());
-    let mut record = get_operation_record(env, operation_id)
-        .ok_or(OperationTrackerError::OperationNotFound)?;
-    
+    let mut record =
+        get_operation_record(env, operation_id).ok_or(OperationTrackerError::OperationNotFound)?;
+
     // Authorization check
     if &record.initiator != caller {
         return Err(OperationTrackerError::UnauthorizedOperationAccess);
     }
-    
+
     // State validation
     if record.status == OperationStatus::Executing {
         return Err(OperationTrackerError::OperationInProgress);
     }
-    
+
     record.status = OperationStatus::Executing;
     env.storage().persistent().set(&key, &record);
-    
+
     Ok(())
 }
 
@@ -318,24 +320,24 @@ pub fn complete_operation(
     caller: &Address,
 ) -> Result<(), OperationTrackerError> {
     let key = OperationTrackerKey::OperationRecord(operation_id.clone());
-    let mut record = get_operation_record(env, operation_id)
-        .ok_or(OperationTrackerError::OperationNotFound)?;
-    
+    let mut record =
+        get_operation_record(env, operation_id).ok_or(OperationTrackerError::OperationNotFound)?;
+
     // Authorization check
     if &record.initiator != caller {
         return Err(OperationTrackerError::UnauthorizedOperationAccess);
     }
-    
+
     let now = env.ledger().timestamp();
     record.status = OperationStatus::Completed;
-    record.result = Some(result);
+    record.result = result;
     record.executed_at = Some(now);
-    
+
     env.storage().persistent().set(&key, &record);
-    
+
     // Increment user sequence number on successful completion
     increment_user_sequence(env, &record.initiator);
-    
+
     Ok(())
 }
 
@@ -350,20 +352,20 @@ pub fn fail_operation(
     caller: &Address,
 ) -> Result<(), OperationTrackerError> {
     let key = OperationTrackerKey::OperationRecord(operation_id.clone());
-    let mut record = get_operation_record(env, operation_id)
-        .ok_or(OperationTrackerError::OperationNotFound)?;
-    
+    let mut record =
+        get_operation_record(env, operation_id).ok_or(OperationTrackerError::OperationNotFound)?;
+
     // Authorization check
     if &record.initiator != caller {
         return Err(OperationTrackerError::UnauthorizedOperationAccess);
     }
-    
+
     let now = env.ledger().timestamp();
     record.status = OperationStatus::Failed;
     record.executed_at = Some(now);
-    
+
     env.storage().persistent().set(&key, &record);
-    
+
     Ok(())
 }
 
@@ -379,22 +381,22 @@ pub fn cancel_operation(
     caller: &Address,
 ) -> Result<(), OperationTrackerError> {
     let key = OperationTrackerKey::OperationRecord(operation_id.clone());
-    let mut record = get_operation_record(env, operation_id)
-        .ok_or(OperationTrackerError::OperationNotFound)?;
-    
+    let mut record =
+        get_operation_record(env, operation_id).ok_or(OperationTrackerError::OperationNotFound)?;
+
     // Authorization check
     if &record.initiator != caller {
         return Err(OperationTrackerError::UnauthorizedOperationAccess);
     }
-    
+
     // Can only cancel pending operations
     if record.status != OperationStatus::Pending {
         return Err(OperationTrackerError::InvalidOperationStatus);
     }
-    
+
     record.status = OperationStatus::Cancelled;
     env.storage().persistent().set(&key, &record);
-    
+
     Ok(())
 }
 
@@ -405,14 +407,11 @@ pub fn cancel_operation(
 /// Check if an operation is idempotent (completed and can return cached result).
 ///
 /// Returns `Some(result)` if operation already completed, `None` otherwise.
-pub fn check_idempotent(
-    env: &Env,
-    operation_id: &BytesN<32>,
-) -> Option<OperationResult> {
+pub fn check_idempotent(env: &Env, operation_id: &BytesN<32>) -> Option<OperationResult> {
     let record = get_operation_record(env, operation_id)?;
-    
-    if record.status == OperationStatus::Completed {
-        record.result
+
+    if record.status == OperationStatus::Completed && record.result != OperationResult::Empty {
+        Some(record.result)
     } else {
         None
     }
@@ -438,7 +437,7 @@ pub fn validate_operation_preconditions(
     if let Some(seq) = expected_sequence {
         validate_sequence(env, user, seq)?;
     }
-    
+
     // Validate operation ID if provided
     if let Some(ref op_id) = operation_id {
         if let Some(record) = get_operation_record(env, op_id) {
@@ -455,7 +454,7 @@ pub fn validate_operation_preconditions(
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -511,7 +510,7 @@ impl core::fmt::Display for OperationTrackerError {
 /// the same logical operation always produces the same ID.
 ///
 /// Example:
-/// ```rust
+/// ```text
 /// let op_id = generate_operation_id(
 ///     env,
 ///     &user,
@@ -526,7 +525,8 @@ pub fn generate_operation_id(
     params: &Vec<soroban_sdk::Val>,
 ) -> BytesN<32> {
     use soroban_sdk::crypto::Hash;
-    
+    use soroban_sdk::xdr::ToXdr;
+
     // Hash: user || operation_type || params
     let mut data = soroban_sdk::Bytes::new(env);
     data.append(&user.to_xdr(env));
@@ -534,8 +534,9 @@ pub fn generate_operation_id(
     for param in params.iter() {
         data.append(&param.to_xdr(env));
     }
-    
-    env.crypto().sha256(&data)
+
+    let hash: soroban_sdk::crypto::Hash<32> = env.crypto().sha256(&data);
+    hash.into()
 }
 
 #[cfg(test)]
@@ -543,167 +544,198 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        let user = Address::generate(&env);
+        (env, contract_id, user)
+    }
+
     #[test]
     fn test_sequence_starts_at_zero() {
         let env = Env::default();
         let user = Address::generate(&env);
-        
-        assert_eq!(get_user_sequence(&env, &user), 0);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            assert_eq!(get_user_sequence(&env, &user), 0);
+        });
     }
 
     #[test]
     fn test_sequence_increments() {
         let env = Env::default();
         let user = Address::generate(&env);
-        
-        let seq1 = increment_user_sequence(&env, &user);
-        assert_eq!(seq1, 1);
-        
-        let seq2 = increment_user_sequence(&env, &user);
-        assert_eq!(seq2, 2);
-        
-        assert_eq!(get_user_sequence(&env, &user), 2);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            let seq1 = increment_user_sequence(&env, &user);
+            assert_eq!(seq1, 1);
+
+            let seq2 = increment_user_sequence(&env, &user);
+            assert_eq!(seq2, 2);
+
+            assert_eq!(get_user_sequence(&env, &user), 2);
+        });
     }
 
     #[test]
     fn test_sequence_validation_success() {
         let env = Env::default();
         let user = Address::generate(&env);
-        
-        // Current sequence is 0
-        assert!(validate_sequence(&env, &user, 0).is_ok());
-        
-        increment_user_sequence(&env, &user);
-        
-        // Current sequence is now 1
-        assert!(validate_sequence(&env, &user, 1).is_ok());
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // Current sequence is 0
+            assert!(validate_sequence(&env, &user, 0).is_ok());
+
+            increment_user_sequence(&env, &user);
+
+            // Current sequence is now 1
+            assert!(validate_sequence(&env, &user, 1).is_ok());
+        });
     }
 
     #[test]
     fn test_sequence_validation_mismatch() {
         let env = Env::default();
         let user = Address::generate(&env);
-        
-        // Try to submit with sequence 5 when current is 0
-        let result = validate_sequence(&env, &user, 5);
-        assert!(result.is_err());
-        
-        if let Err(OperationTrackerError::SequenceMismatch { expected, provided }) = result {
-            assert_eq!(expected, 0);
-            assert_eq!(provided, 5);
-        } else {
-            panic!("Expected SequenceMismatch error");
-        }
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // Try to submit with sequence 5 when current is 0
+            let result = validate_sequence(&env, &user, 5);
+            assert!(result.is_err());
+
+            if let Err(OperationTrackerError::SequenceMismatch { expected, provided }) = result {
+                assert_eq!(expected, 0);
+                assert_eq!(provided, 5);
+            } else {
+                panic!("Expected SequenceMismatch error");
+            }
+        });
     }
 
     #[test]
     fn test_operation_registration() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        // Register new operation
-        let result = register_operation(&env, &op_id, &user, 3600);
-        assert!(result.is_ok());
-        
-        // Verify record exists
-        let record = get_operation_record(&env, &op_id).unwrap();
-        assert_eq!(record.status, OperationStatus::Pending);
-        assert_eq!(record.initiator, user);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // Register new operation
+            let result = register_operation(&env, &op_id, &user, 3600);
+            assert!(result.is_ok());
+
+            // Verify record exists
+            let record = get_operation_record(&env, &op_id).unwrap();
+            assert_eq!(record.status, OperationStatus::Pending);
+            assert_eq!(record.initiator, user);
+        });
     }
 
     #[test]
     fn test_duplicate_operation_rejected() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        // Register operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
-        
-        // Mark as executing
-        mark_executing(&env, &op_id, &user).unwrap();
-        
-        // Try to register again - should fail
-        let result = register_operation(&env, &op_id, &user, 3600);
-        assert!(matches!(
-            result,
-            Err(OperationTrackerError::OperationInProgress)
-        ));
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // Register operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
+
+            // Mark as executing
+            mark_executing(&env, &op_id, &user).unwrap();
+
+            // Try to register again - should fail
+            let result = register_operation(&env, &op_id, &user, 3600);
+            assert!(matches!(
+                result,
+                Err(OperationTrackerError::OperationInProgress)
+            ));
+        });
     }
 
     #[test]
     fn test_completed_operation_idempotent() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        // Register and complete operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
-        mark_executing(&env, &op_id, &user).unwrap();
-        complete_operation(&env, &op_id, OperationResult::Deposit(1000), &user).unwrap();
-        
-        // Check idempotency
-        let cached = check_idempotent(&env, &op_id);
-        assert!(cached.is_some());
-        assert_eq!(cached.unwrap(), OperationResult::Deposit(1000));
-        
-        // Verify sequence incremented
-        assert_eq!(get_user_sequence(&env, &user), 1);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // Register and complete operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
+            mark_executing(&env, &op_id, &user).unwrap();
+            complete_operation(&env, &op_id, OperationResult::Deposit(1000), &user).unwrap();
+
+            // Check idempotency
+            let cached = check_idempotent(&env, &op_id);
+            assert!(cached.is_some());
+            assert_eq!(cached.unwrap(), OperationResult::Deposit(1000));
+
+            // Verify sequence incremented
+            assert_eq!(get_user_sequence(&env, &user), 1);
+        });
     }
 
     #[test]
     fn test_failed_operation_allows_retry() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        // Register and fail operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
-        mark_executing(&env, &op_id, &user).unwrap();
-        fail_operation(&env, &op_id, &user).unwrap();
-        
-        // Should allow retry with same ID
-        let result = register_operation(&env, &op_id, &user, 3600);
-        assert!(result.is_ok());
-        
-        // Verify sequence NOT incremented (operation failed)
-        assert_eq!(get_user_sequence(&env, &user), 0);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // Register and fail operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
+            mark_executing(&env, &op_id, &user).unwrap();
+            fail_operation(&env, &op_id, &user).unwrap();
+
+            // Should allow retry with same ID
+            let result = register_operation(&env, &op_id, &user, 3600);
+            assert!(result.is_ok());
+
+            // Verify sequence NOT incremented (operation failed)
+            assert_eq!(get_user_sequence(&env, &user), 0);
+        });
     }
 
     #[test]
     fn test_operation_cancellation() {
-        let env = Env::default();
-        let user = Address::generate(&env);
+        let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        // Register operation
-        register_operation(&env, &op_id, &user, 3600).unwrap();
-        
-        // Cancel it
-        let result = cancel_operation(&env, &op_id, &user);
-        assert!(result.is_ok());
-        
-        // Verify status
-        let record = get_operation_record(&env, &op_id).unwrap();
-        assert_eq!(record.status, OperationStatus::Cancelled);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // Register operation
+            register_operation(&env, &op_id, &user, 3600).unwrap();
+
+            // Cancel it
+            let result = cancel_operation(&env, &op_id, &user);
+            assert!(result.is_ok());
+
+            // Verify status
+            let record = get_operation_record(&env, &op_id).unwrap();
+            assert_eq!(record.status, OperationStatus::Cancelled);
+        });
     }
 
     #[test]
     fn test_unauthorized_access_rejected() {
-        let env = Env::default();
-        let user1 = Address::generate(&env);
+        let (env, contract_id, user1) = setup();
         let user2 = Address::generate(&env);
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
-        
-        // User1 registers operation
-        register_operation(&env, &op_id, &user1, 3600).unwrap();
-        
-        // User2 tries to mark executing - should fail
-        let result = mark_executing(&env, &op_id, &user2);
-        assert!(matches!(
-            result,
-            Err(OperationTrackerError::UnauthorizedOperationAccess)
-        ));
+        let contract_id = env.register(crate::LendingContract, ());
+
+        env.as_contract(&contract_id, || {
+            // User1 registers operation
+            register_operation(&env, &op_id, &user1, 3600).unwrap();
+
+            // User2 tries to mark executing - should fail
+            let result = mark_executing(&env, &op_id, &user2);
+            assert!(matches!(
+                result,
+                Err(OperationTrackerError::UnauthorizedOperationAccess)
+            ));
+        });
     }
 }
