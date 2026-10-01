@@ -20,11 +20,12 @@
 //! - [`add_liquidity`] — deposit tokens, mint LP shares via donation-attack-resistant math. Returns `Result<i128, AmmPoolError>` (shares minted).
 //! - [`remove_liquidity`] — burn LP shares for proportional reserves. Returns `Result<(i128, i128), AmmPoolError>` (tokens returned).
 //! - [`swap_a_for_b`] — fee‑adjusted constant‑product swap A → B. Returns `Result<i128, AmmPoolError>` (amount_out).
+//! - [`swap_b_for_a`] — fee‑adjusted constant‑product swap B → A (mirror of `swap_a_for_b` with token roles reversed). Returns `Result<i128, AmmPoolError>` (amount_out).
 //! - [`get_reserves`] — read both reserves for inspection / tests. Returns `(i128, i128)`.
 //!
 //! Notes for downstream callers:
-//! - Input validation is enforced via `panic!` (this is a test‑grade surface, not a production safety
-//!   wrapper); callers should pre‑validate non‑negative amounts and `0 ≤ fee_bps ≤ 10000` off‑chain.
+//! - Input validation is enforced via typed `Result` errors (`AmmPoolError`); callers should
+//!   pre‑validate non‑negative amounts and `0 ≤ fee_bps ≤ 10000` off‑chain.
 //! - The k‑invariant is enforced by [`assert_k_monotonic`] after every reserve mutation.
 //! - Flash‑swap APIs — [`AmmContract::flash_swap_a_for_b`] and
 //!   [`AmmContract::repay_flash_swap`] — implement the "optimistic transfer
