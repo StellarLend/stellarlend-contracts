@@ -125,16 +125,19 @@ impl Grant {
                 if elapsed >= self.duration_secs {
                     return self.total_amount;
                 }
-                let principal = self.total_amount as u128;
-                let e = elapsed as u128;
-                let d = self.duration_secs as u128;
+                let principal = self.total_amount;
+                let e = elapsed as i128;
+                let d = self.duration_secs as i128;
                 let q = principal / d;
                 let r = principal % d;
-                let v = e * q + (e * r) / d;
+                let v = e
+                    .checked_mul(q)
+                    .and_then(|x| x.checked_add(e.checked_mul(r).map(|y| y / d).unwrap_or(0)))
+                    .unwrap_or(principal);
                 if v > principal {
                     self.total_amount
                 } else {
-                    v as i128
+                    v
                 }
             }
         }
