@@ -21,6 +21,14 @@ use crate::{
 /// numerically equivalent for a homogenously-scaled feed; the difference is
 /// purely architectural.
 ///
+/// **Independent Copy & Rounding Behavior Note**: The `lending` crate intentionally
+/// maintains its own math logic and uses standard integer (floor) division for both
+/// collateral and debt calculations to save gas and complexity. Since
+/// `compute_aggregate_health_factor` cancels out the divisor entirely until the final ratio,
+/// intermediate truncation is avoided. This intentionally diverges from the
+/// ceiling-division-for-debt approach used by `hello-world` and `cross_asset_test`,
+/// which perform division per-asset.
+///
 /// See [`docs/cross_asset.md`] for a worked example.
 const PRICE_DIVISOR: i128 = 10_000_000;
 
