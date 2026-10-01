@@ -29,7 +29,7 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let admin = Address::generate(&env);
-    client.init_pool(&ra, &rb, &token_a, &token_b);
+    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     // Zero fee so the dust boundary is purely floor-division, not fee noise.
     client.set_fee_bps(&admin, &0_i128);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };

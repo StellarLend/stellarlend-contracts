@@ -19,7 +19,9 @@ const app: Application = express();
  * 5. Parser failures (malformed JSON, oversized payloads) are reported as 400 with a safe message.
  */
 
+// Security headers and CSRP protection.
 app.use(helmet());
+
 app.use(cors());
 
 app.use(
@@ -55,16 +57,13 @@ app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Not Found' });
 });
 
-app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
-  // Normalize body-parser failures into a 400 with a safe message.
-  if (err instanceof SyntaxError || (err as { type?: string })?.type === 'entity.parse.failed') {
-    logger.warn('Request body parse failure', {
-      path: req.path,
-      method: req.method,
-      error: (err as Error).message,
-    });
-    return res.status(400).json({ error: 'Invalid request body' });
-  }
+// Centralized error handling must be last so it can catch downstream failures.
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  logger.error('Unhandled request error', {
+    message: err?.message,
+    path: req.path,
+    method: req.method,
+  });
 
   if ((err as { type?: string })?.type === 'entity.tolarge') {
     logger.warn('Request body too large', { path: req.path, method: req.method });

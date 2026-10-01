@@ -307,8 +307,7 @@ mod tests {
     fn scale_bps_max_value_no_overflow() {
         assert_eq!(scale_bps(i128::MAX, BPS_DENOM), Some(i128::MAX));
         assert_eq!(scale_bps(i128::MIN, BPS_DENOM), Some(i128::MIN));
-        let expected = (i128::MAX / BPS_DENOM) * 2
-            + ((i128::MAX % BPS_DENOM) * 2) / BPS_DENOM;
+        let expected = (i128::MAX / BPS_DENOM) * 2 + ((i128::MAX % BPS_DENOM) * 2) / BPS_DENOM;
         assert_eq!(scale_bps(i128::MAX, 2), Some(expected));
     }
 

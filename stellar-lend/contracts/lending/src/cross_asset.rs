@@ -899,7 +899,8 @@ mod tests {
         let env = Env::default();
         let asset = Address::generate(&env);
         let timestamp = 1_000_000u64;
-        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
+        env.ledger()
+            .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
         set_price(&env, &asset, 10_000_000, timestamp);
 
         assert!(matches!(
@@ -913,7 +914,8 @@ mod tests {
         let env = Env::default();
         let asset = Address::generate(&env);
         let timestamp = 1_000_000u64;
-        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
+        env.ledger()
+            .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
         set_price(&env, &asset, 10_000_000, timestamp);
 
         assert!(get_price_for_asset(&env, &asset).is_ok());

@@ -2,71 +2,39 @@ import { Request, Response, NextFunction } from 'express';
 import { ApiError } from '../utils/errors';
 import logger from '../utils/logger';
 
-/**
- * Express error handling middleware.
- *
- * Invariants:
-* -  Every error response has a deterministic shape: `{ success: false, error: string }`.
- * -  Internal error details (stack traces, messages) are never leaked to clients for unexpected
- *    errors; only sanitized messages for known `ApiError` and JSON parsing failures are returned.
- * -  Once a status code has been committed to the response (headers sent), the middleware
- *    delegates to the next error handler instead of attempting to write a second response.
- * -  The middleware is pure with respect to the request: repeated invocations with the same
- *    inputs produce the same outcome, so retries and concurrent execution cannot corrupt state.
- */
+export const errorHandler = (err: Error, _req: Request, res: Response, next: NextFunction) => {
+  const invalidJson = err instanceof SyntaxError && 'body' in err;
+  // Only operational client errors have messages intended for callers. An invalid
+  // status or a server failure must never turn into a success or expose internals.
+  const publicApiError =
+    err instanceof ApiError &&
+    err.isOperational === true &&
+    Number.isInteger(err.statusCode) &&
+    err.statusCode >= 400 &&
+    err.statusCode < 500 &&
+    typeof err.message === 'string' &&
+    err.message.length > 0;
+  const statusCode = invalidJson ? 400 : publicApiError ? err.statusCode : 500;
+  const message = invalidJson
+    ? 'Invalid JSON body'
+    : publicApiError
+      ? err.message
+      : 'Internal server error';
 
-export const errorHandler = (
-  error: Error,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void | Response => {
-  // Defensive: normalize non-Error thrown values so downstream logging and branching are safe.
-  const normalizedError =
-    error instanceof Error
-      ? error
-      : new Error(typeof error === 'string' ? error : 'Unknown error');
-
-  // Log full details internally for diagnosability, but never expose them to clients.
-  logger.error('Error occurred:', {
-    error: normalizedError.message,
-    stack: normalizedError.stack,
-    path: req.path,
-    method: req.method,
+  // Error messages, stacks, and request fields may contain user supplied secrets.
+  // The category and status diagnose the failure without logging those fields.
+  logger.error('Request failed', {
+    category: invalidJson ? 'invalid_json' : publicApiError ? 'client_error' : 'server_error',
+    statusCode,
   });
 
-  // If the response has already been committed, we cannot write a new one.
-  // Delegate to Express' default error handler to avoid double-send and corrupted output.
+  // Express owns recovery once headers are committed; sending again corrupts the response.
   if (res.headersSent) {
-    return next(normalizedError);
+    return next(err instanceof Error ? err : new Error('Unknown error'));
   }
 
-  // JSON body parsing failures are client errors and safe to report as 400.
-  if (normalizedError instanceof SyntaxError && 'body' in normalizedError) {
-    return res.status(400).json({
-      success: false,
-      error: normalizedError.message,
-    });
-  }
-
-  // Known, explicitly classified API errors carry their own status code and safe message.
-  if (normalizedError instanceof ApiError) {
-    const statusCode =
-      Number.isInteger(normalizedError.statusCode) &&
-      normalizedError.statusCode >= 400 &&
-      normalizedError.statusCode <= 599
-        ? normalizedError.statusCode
-        : 500;
-
-    return res.status(statusCode).json({
-      success: false,
-      error: normalizedError.message,
-    });
-  }
-
-  // Unexpected errors: return a generic message to avoid leaking internal details.
-  return res.status(500).json({
+  return res.status(statusCode).json({
     success: false,
-    error: 'Internal server error',
+    error: message,
   });
 };
