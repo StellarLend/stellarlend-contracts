@@ -108,6 +108,9 @@ pub fn get_pending_admin(env: &Env) -> Option<Address> {
 /// This is the shared authorization check for admin-gated modules. Keeping
 /// the lookup here ensures every module uses the same admin storage and
 /// initialization semantics.
+///
+/// Modules such as `interest_rate` must use this helper (or
+/// [`get_admin`]/[`has_admin`]) rather than maintaining a separate admin key.
 pub fn require_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
     caller.require_auth();
 

@@ -23,6 +23,7 @@ import { createPriceCache } from '../src/services/cache.js';
 import { scalePrice, unscalePrice } from '../src/config.js';
 import { BasePriceProvider } from '../src/providers/base-provider.js';
 import type { RawPriceData } from '../src/types/index.js';
+import { createProviderRegistry, ProviderRegistryError } from '../src/providers/index.js';
 
 /**
  * Mock provider for edge case testing.
@@ -442,8 +443,13 @@ describe('Edge Cases', () => {
 
             const aggregator = createAggregator([provider], validator, cache);
 
-            for (let i = 0; i < 20; i++) {
-                const result = await aggregator.getPrice('XLM');
+            const results = [];
+            for (let i = 0; i < 50; i++) {
+                results.push(await aggregator.getPrice('XLM'));
+            }
+
+            expect(results).toHaveLength(50);
+            results.forEach(result => {
                 expect(result).not.toBeNull();
                 expect(result?.asset).toBe('XLM');
             }

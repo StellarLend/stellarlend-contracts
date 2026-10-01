@@ -174,12 +174,7 @@ export class Cache {
 
         const now = Date.now();
         if (now > entry.expiresAt) {
-            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
-            if (now > staleExpiresAt) {
-                this.store.delete(key);
-                return false;
-            }
-            return true;
+            return false;
         }
 
         return true;
@@ -232,15 +227,14 @@ export class Cache {
         let cleaned = 0;
 
         for (const [key, entry] of this.store) {
-            const staleExpiresAt = entry.expiresAt + (this.config.staleTtlSeconds * 1000);
-            if (now > staleExpiresAt) {
+            if (now > entry.expiresAt) {
                 this.store.delete(key);
                 cleaned++;
             }
         }
 
         if (cleaned > 0) {
-            logger.debug(`Cleaned up ${cleaned} stale cache entries`);
+            logger.debug(`Cleaned up ${cleaned} expired cache entries`);
         }
 
         return cleaned;

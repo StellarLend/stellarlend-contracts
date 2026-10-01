@@ -433,6 +433,10 @@ describe('oracle freshness and fallback policy', () => {
     });
 
     it('skips a price that violates maxDeviationPercent and falls back to the cluster', async () => {
+        // First establish a baseline price of ~0.15 in validator cache
+        await aggregator.getPrice('XLM');
+
+        // Now set providerA to a 100% higher price (0.3 vs 0.15)
         providerA.setPrice('XLM', 0.3);
 
         const result = await aggregator.getPrice('XLM');
@@ -461,14 +465,18 @@ describe('oracle freshness and fallback policy', () => {
         try {
             providerA.setFail(true);
 
-            const failed = await aggregator.getPrice('XLM');
+            const failedPromise = aggregator.getPrice('XLM');
+            await vi.runAllTimersAsync();
+            const failed = await failedPromise;
             expect(failed?.sources.some((s) => s.source === 'providerA')).toBe(false);
 
             providerA.setFail(false);
             providerA.cooldownUntil = Date.now() - 1;
             vi.setSystemTime(Date.now() + 61_000);
 
-            const retried = await aggregator.getPrice('XLM');
+            const retriedPromise = aggregator.getPrice('XLM');
+            await vi.runAllTimersAsync();
+            const retried = await retriedPromise;
             expect(retried?.sources.some((s) => s.source === 'providerA')).toBe(true);
         } finally {
             vi.useRealTimers();
@@ -531,8 +539,11 @@ describe('oracle freshness and fallback policy', () => {
         vi.useFakeTimers();
         try {
             providerA.setFail(true);
+            providerA.cooldownUntil = Date.now() + 60_000;
 
-            const first = await aggregator.getPrice('XLM');
+            const firstPromise = aggregator.getPrice('XLM');
+            await vi.runAllTimersAsync();
+            const first = await firstPromise;
             expect(first?.sources.some((s) => s.source === 'providerA')).toBe(false);
 
             providerA.setFail(false);
@@ -613,5 +624,104 @@ describe('oracle freshness and fallback policy', () => {
         const result = await disabledAggregator.getPrice('XLM');
 
         expect(result).toBeNull();
+    });
+
+    describe('concurrent in-flight request coalescing and boundary coverage', () => {
+        it('coalesces concurrent getPrice calls for the same asset into a single fetch', async () => {
+            const fetchSpy = vi.spyOn(providerA, 'fetchPrice');
+
+            const [p1, p2, p3] = await Promise.all([
+                aggregator.getPrice('XLM'),
+                aggregator.getPrice('XLM'),
+                aggregator.getPrice('XLM'),
+            ]);
+
+            expect(p1).not.toBeNull();
+            expect(p2).not.toBeNull();
+            expect(p3).not.toBeNull();
+            expect(p1?.price).toEqual(p2?.price);
+            expect(p2?.price).toEqual(p3?.price);
+            // providerA fetchPrice should only have been called once for XLM during concurrent in-flight calls
+            expect(fetchSpy).toHaveBeenCalledTimes(1);
+            fetchSpy.mockRestore();
+        });
+
+        it('cleans up in-flight request on refresh failure so future attempts can retry', async () => {
+            providerA.setFail(true);
+            providerB.setFail(true);
+            providerC.setFail(true);
+
+            const failResult = await aggregator.getPrice('XLM');
+            expect(failResult).toBeNull();
+
+            // Restore providerA
+            providerA.setFail(false);
+            providerA.cooldownUntil = 0;
+
+            const successResult = await aggregator.getPrice('XLM');
+            expect(successResult).not.toBeNull();
+            expect(successResult?.sources.some((s) => s.source === 'providerA')).toBe(true);
+        });
+
+        it('handles filterOutliersByMAD with empty prices array', () => {
+            expect(filterOutliersByMAD([], 3.5)).toEqual([]);
+        });
+
+        it('handles filterOutliersByMAD with NaN / negative zMax gracefully', () => {
+            const prices = [pd(100), pd(101), pd(1000)];
+            expect(filterOutliersByMAD(prices, 0)).toEqual(prices);
+            expect(filterOutliersByMAD(prices, -5)).toEqual(prices);
+        });
+
+        it('falls back to stale cache when fresh fetch fails but cached price is within maxFallbackAgeMs', async () => {
+            // First populate cache
+            const initial = await aggregator.getPrice('XLM');
+            expect(initial).not.toBeNull();
+
+            // Simulate staleness beyond maxStalenessMs (e.g. 35s) but within maxFallbackAgeMs (e.g. 300s)
+            vi.useFakeTimers();
+            try {
+                vi.setSystemTime(Date.now() + 35_000);
+
+                // Make all providers fail
+                providerA.setFail(true);
+                providerB.setFail(true);
+                providerC.setFail(true);
+
+                const fallbackResultPromise = aggregator.getPrice('XLM');
+                await vi.runAllTimersAsync();
+                const fallbackResult = await fallbackResultPromise;
+
+                expect(fallbackResult).not.toBeNull();
+                expect(fallbackResult?.price).toEqual(initial?.price);
+                // Confidence decays linearly: round(100 * (1 - 35000 / 300000)) = 88
+                expect(fallbackResult?.confidence).toBe(88);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('rejects stale cache fallback if past maxFallbackAgeMs', async () => {
+            const initial = await aggregator.getPrice('XLM');
+            expect(initial).not.toBeNull();
+
+            vi.useFakeTimers();
+            try {
+                // Advance past maxFallbackAgeMs (300s -> 305s)
+                vi.setSystemTime(Date.now() + 305_000);
+
+                providerA.setFail(true);
+                providerB.setFail(true);
+                providerC.setFail(true);
+
+                const fallbackResultPromise = aggregator.getPrice('XLM');
+                await vi.runAllTimersAsync();
+                const fallbackResult = await fallbackResultPromise;
+
+                expect(fallbackResult).toBeNull();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
     });
 });
