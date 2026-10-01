@@ -80,12 +80,12 @@ fn test_claim_rejected_while_paused() {
     // Grant: 1_000 tokens, no cliff, 1_000 s duration, starts now
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
 
     advance(&env, 500);
     client.pause(&admin);
 
-    let result = client.try_claim(&grantee);
+    let claimed = client.claim(&grantee);
     assert_eq!(result, Err(Ok(VestingError::ContractPaused)));
 }
 
@@ -100,7 +100,7 @@ fn test_paused_interval_does_not_count_toward_vesting() {
     // 1_000 tokens, no cliff, 1_000 s duration
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
 
     // Advance 200 s, then pause for 300 s, then resume and advance another 200 s.
     // effective_now = (200 + 300 + 200) - 300 = 400 s  → 400 tokens vested.
@@ -122,7 +122,7 @@ fn test_without_pause_normal_vesting() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
 
     advance(&env, 400);
 
@@ -141,7 +141,7 @@ fn test_pause_spanning_cliff() {
     // cliff_secs = 100, duration = 1_000
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &100);
+    client.add_grant(&admin, &grantee, &1_000, &start, &100, &1_000);
 
     // Pause before cliff, pause for 200 s, resume, then advance 100 s past cliff.
     advance(&env, 50); // 50 s elapsed, before cliff
@@ -167,7 +167,7 @@ fn test_revoke_uses_effective_now() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
 
     advance(&env, 300);
     client.pause(&admin);
@@ -175,8 +175,8 @@ fn test_revoke_uses_effective_now() {
     client.resume(&admin);
 
     // effective_now = 300 + 200 - 200 = 300, vested = 300
-    let (vested, clawback) = client.revoke(&admin, &grantee);
-    assert_eq!(vested, 300);
+    let clawback = client.revoke(&admin, &grantee);
+    
     assert_eq!(clawback, 700);
 }
 
@@ -188,7 +188,7 @@ fn test_revoke_rejected_while_paused() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
 
     advance(&env, 300);
     client.pause(&admin);
@@ -207,7 +207,7 @@ fn test_full_vesting_after_pause_capped_at_total() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &0);
+    client.add_grant(&admin, &grantee, &1_000, &start, &0, &1_000);
 
     // Pause 500 s halfway through, then resume and advance past duration.
     advance(&env, 500);
@@ -230,10 +230,10 @@ fn test_nothing_claimable_before_cliff() {
 
     let start = env.ledger().timestamp();
     token_asset.mint(&admin, &1_000);
-    client.add_grant(&grantee, &1_000, &start, &1_000, &200);
+    client.add_grant(&admin, &grantee, &1_000, &start, &200, &1_000);
 
     advance(&env, 100); // before cliff
 
-    let result = client.try_claim(&grantee);
-    assert_eq!(result, Err(Ok(VestingError::NothingToClaim)));
+    let claimed = client.claim(&grantee);
+    assert_eq!(claimed, 0);
 }

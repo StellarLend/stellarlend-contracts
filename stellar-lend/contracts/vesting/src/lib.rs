@@ -1333,7 +1333,7 @@ pub mod sim {
 /// attribute is required because this module is declared inside `lib.rs`
 /// (not a separate directory), so Rust would otherwise look for e.g.
 /// `src/sim_tests/accelerate_test.rs`.
-#[cfg(all(test, any()))]
+#[cfg(test)]
 pub mod sim_tests {
     // Re-export sim types at this module level so that child test files can
     // write `use super::{VestingContract, VestingError, Grant}`.
@@ -1367,16 +1367,12 @@ pub mod sim_tests {
 
 // Soroban SDK integration tests (use VestingContractClient / real host)
 #[cfg(test)]
-#[cfg(any())]
 mod milestone_schedule_test;
 #[cfg(test)]
-#[cfg(any())]
 mod vesting_contract_test;
 
-// Legacy API tests — kept but gated behind a feature flag until updated
-// to use the new three-arg initialize + token transfer model.
-// Uncomment when ready:
-// #[cfg(all(test, feature = "legacy-tests"))]
-// mod pause_offset_test;
-// #[cfg(all(test, feature = "legacy-tests"))]
-// mod vested_at_overflow_test;
+// Legacy API tests
+#[cfg(test)]
+mod pause_offset_test;
+#[cfg(test)]
+mod vested_at_overflow_test;
