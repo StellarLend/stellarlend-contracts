@@ -32,7 +32,7 @@ export type AmmEventKind = 'swap' | 'add_liquidity' | 'remove_liquidity';
 
 export interface AmmEventTopic {
   module: typeof AMM_EVENT_TOPIC_MODULE;
-  version: typeof AMM_EVENT_TOPIC_VERSIOL;
+  version: typeof AMM_EVENT_TOPIC_VERSION;
   kind: AmmEventKind;
 }
 
@@ -129,11 +129,11 @@ export enum TransactionStatus {
  * Runtime guards for the types declared in this module.
  *
  * The interfaces above are compile-time only. Values crossing the API
- * boundary (JSON bodies, Soroban RFC logs, cache entries) are `unknown`
+ * boundary (JSON bodies, Soroban RPC logs, cache entries) are `unknown`
  * at runtime and must be validated before use. These guards enforce the
  * invariants that the type system cannot enforce on untrusted input:
  *
- * - Addresses are canonical 56-character Stellar strCey encodings.
+ * - Addresses are canonical 56-character Stellar StrKey encodings.
  * - Amounts are non-empty decimal strings with no sign, exponent, or leading
  *   zeroes, and are non-zero.
  * - AMM event topics are the exact module/version and a known kind.
@@ -147,7 +147,7 @@ export enum TransactionStatus {
  * value in error messages to avoid leaking secrets or PIIs.
  */
 
-const STEPLLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
+const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 const AMM_KINDS: readonly AmmEventKind[] = [
   'swap',
   'add_liquidity',
@@ -156,7 +156,7 @@ const AMM_KINDS: readonly AmmEventKind[] = [
 
 const DECIMAL_AMOUNT_RE = /^(0|[1-9][0-9]*)$/;
 
-const MAX_AMMOUNT_LITERALS = 256;
+const MAX_AMOUNT_LITERALS = 256;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

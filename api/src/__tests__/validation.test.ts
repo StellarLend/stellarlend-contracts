@@ -900,7 +900,7 @@ describe('Hook HMAC Validation', () => {
   it('rejects a stale hook timestamp outside the replay window', () => {
     jest.isolateModules(() => {
       const { verifyHookHmac } = require('../middleware/auth');
-      const staleTimestamp = String(Math.floor(Date.now() / 1000) - 3600);
+      const staleTimestamp = String(Date.now() - 3600 * 1000);
       const req = {
         headers: {
           'x-hook-timestamp': staleTimestamp,
@@ -918,7 +918,7 @@ describe('Hook HMAC Validation', () => {
     jest.isolateModules(() => {
       const { verifyHookHmac } = require('../middleware/auth');
       const secret = process.env.STELLAR_API_HOOK_SECRET as string;
-      const timestamp = String(Math.floor(Date.now() / 1000));
+      const timestamp = String(Date.now());
       const rawBody = JSON.stringify({ event: 'deposit', amount: '1000000' });
       const signature = crypto
         .createHmac('sha256', secret)

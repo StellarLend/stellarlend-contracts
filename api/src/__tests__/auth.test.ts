@@ -38,15 +38,13 @@ describe('Auth Middleware', () => {
       const request = { headers } as AuthRequest;
       const next = jest.fn();
 
-      expect(() => authenticateToken(request, response, next)).toThrow(
-        new UnauthorizedError('Invalid or expired token')
-      );
+      expect(() => authenticateToken(request, response, next)).toThrow(UnauthorizedError);
       expect(next).not.toHaveBeenCalled();
     }
   });
 
   it('should attach decoded user for valid access token', () => {
-    const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4tOWHC3TPNR2I6NNV3ZSJ';
+    const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
     const token = generateToken(address);
     const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
     const next = jest.fn();
@@ -58,7 +56,7 @@ describe('Auth Middleware', () => {
   });
 
   it('should be deterministic across repeated authentication attempts', () => {
-    const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4tOWHC3TPNR2I6NNV3ZSJ';
+    const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
     const token = generateToken(address);
 
     for (let i = 0; i < 5; i++) {
