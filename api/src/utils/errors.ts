@@ -5,11 +5,12 @@ export class ApiError extends Error {
     public isOperational = true
   ) {
     super(message);
-    this.name = new.target.name;
+    // Restore the prototype chain to the most-derived constructor so that
+    // `instanceof` works for subclasses (ValidationError, UnauthorizedError,
+    // ...). Hard-coding ApiError.prototype here collapsed every subclass
+    // onto the base type, which broke instanceof-based dispatch.
     Object.setPrototypeOf(this, new.target.prototype);
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, new.target);
-    }
+    this.name = new.target.name;
   }
 }
 
