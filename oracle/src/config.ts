@@ -357,7 +357,7 @@ function validateProvider(
         );
     }
 
-    if (!Number.isFinite(provider.weight) || provider.weight < 0 || provider.weight > 1) {
+    if (!Number.isFinite(provider.weight) || (provider.weight as number) < 0 || (provider.weight as number) > 1) {
         collector.add(`${path}.weight`, 'must be a finite number between 0 and 1 inclusive');
     }
 
@@ -406,7 +406,7 @@ function validatePriceBounds(
         if (!isPositiveFinite(value.minPrice)) {
             collector.add(`${path}.minPrice`, 'must be a finite number greater than 0');
         }
-        if (!Number.isFinite(value.maxPrice) || value.maxPrice < (value.minPrice as number)) {
+        if (!Number.isFinite(value.maxPrice) || (value.maxPrice as number) < (value.minPrice as number)) {
             collector.add(
                 `${path}.maxPrice`,
                 'must be a finite number greater than or equal to minPrice',

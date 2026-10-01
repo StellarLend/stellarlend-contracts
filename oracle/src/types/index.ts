@@ -149,7 +149,7 @@ export interface OracleServiceConfig {
     stellarRpcUrl: string;
     contractId: string;
     adminSecretKey: string;
-    adminApiPort: number;
+    adminApiPort?: number;
     adminHmacSecret?: string;
     updateIntervalMs: number;
     maxPriceDeviationPercent: number;
@@ -159,7 +159,7 @@ export interface OracleServiceConfig {
     redisUrl?: string;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     providers: ProviderConfig[];
-    priceBounds: Record<SupportedAsset, AssetPriceBounds>;
+    priceBounds?: Record<SupportedAsset, AssetPriceBounds>;
     /** Freshness policy governing stale data handling. */
     freshnessPolicy?: FreshnessPolicy;
     /** Fallback policy governing provider fallback and aggregation. */
