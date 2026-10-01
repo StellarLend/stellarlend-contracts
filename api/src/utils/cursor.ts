@@ -19,7 +19,6 @@ export interface Cursor {
   eventIndex: number;
 }
 
-/** Separator between ledger sequence and event index in cursor string */
 const CURSOR_SEPARATOR = ':';
 
 /**
@@ -39,6 +38,13 @@ export const DEFAULT_PAGE_SIZE = 20;
 
 /** Maximum page size to prevent DoS */
 export const MAX_PAGE_SIZE = 100;
+
+export class CursorError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CursorError';
+  }
+}
 
 /**
  * Custom error class for cursor operations.
@@ -73,9 +79,9 @@ export function encodeCursor(cursor: Cursor): string {
  *
  * @throws CursorError if the cursor is malformed or out of range.
  */
-export function decodeCursor(cursorString: string): Cursor {
-  if (!cursorString || typeof cursorString !== 'string') {
-    throw new CursorError('Cursor must be a non-empty string');
+export function decodeCursor(cursor: string): Cursor {
+  if (!cursor || typeof cursor !== 'string') {
+    throw new CursorError('Cursor decode failed: Cursor must be a non-empty string');
   }
 
   // base64url and base64 decode identically for the alphabet we emit, but be
@@ -87,14 +93,19 @@ export function decodeCursor(cursorString: string): Cursor {
 
   let plain: string;
   try {
-    plain = Buffer.from(cursorString, 'base64url').toString('utf-8');
-  } catch {
-    throw new CursorError('Invalid base64 encoding');
+    const buf = Buffer.from(cursor, 'base64');
+    // Basic validation of base64 characters
+    if (/[^A-Za-z0-9+/=_-]/.test(cursor)) {
+      throw new Error('Invalid base64 characters');
+    }
+    decoded = buf.toString('utf-8');
+  } catch (error) {
+    throw new CursorError(`Cursor decode failed: ${(error as Error).message}`);
   }
 
-  const parts = plain.split(CURSOR_SEPARATOR);
+  const parts = decoded.split(CURSOR_SEPARATOR);
   if (parts.length !== 2) {
-    throw new CursorError(`Invalid cursor format: expected "ledger:event", got "${plain}"`);
+    throw new CursorError('Invalid cursor format: expected "ledger_sequence:event_index"');
   }
 
   if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) {

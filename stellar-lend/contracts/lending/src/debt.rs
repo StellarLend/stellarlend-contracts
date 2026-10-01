@@ -337,8 +337,8 @@ pub fn settle_position(
 pub(crate) fn compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
-) -> BorrowRateComputation {
-    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
+) -> Result<BorrowRateComputation, DebtError> {
+    try_compute_borrow_rate_from_snapshot(env, snapshot)ilization overflow")
 }
 
 fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
@@ -616,9 +616,7 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
 /// bounded and deterministic at maximum utilization instead of feeding an
 /// out-of-range utilization to the model.
-pub(crate) fn compute_utilization_bps(
-    snapshot: &RateSnapshot,
-) -> Result<i128, DebtError> {
+pub(crate) fn compute_utilization_bps(snapshot: &RateSnapshot) -> Result<i128, DebtError> {
     if snapshot.total_supply <= 0 {
         return Ok(0);
     }
