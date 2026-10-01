@@ -14,11 +14,11 @@ dotenv.config();
 function parseIntEnv(name: string, defaultValue: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return defaultValue;
-  const parsed = parseInt(raw, 10);
-  if (isNaN(parsed)) {
+  const num = Number(raw);
+  if (!Number.isInteger(num)) {
     throw new Error(`Config: environment variable ${name} must be an integer, got "${raw}"`);
   }
-  return parsed;
+  return num;
 }
 
 /**
@@ -29,11 +29,11 @@ function parseIntEnv(name: string, defaultValue: number): number {
 function parseFloatEnv(name: string, defaultValue: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return defaultValue;
-  const parsed = parseFloat(raw);
-  if (isNaN(parsed)) {
+  const num = Number(raw);
+  if (!Number.isFinite(num)) {
     throw new Error(`Config: environment variable ${name} must be a number, got "${raw}"`);
   }
-  return parsed;
+  return num;
 }
 
 /**
