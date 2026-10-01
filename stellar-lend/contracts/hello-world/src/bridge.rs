@@ -1,1 +1,488 @@
-Ly8hIEJyaWRnZSDigJQgb24tY2hhaW4gc3VyZmFjZSBmb3IgY3Jvc3MtY2hhaW4gZGVwb3NpdHMgLyB3aXRoZHJhd2FscyBwbHVzIGEK Ly8hIGd1YXJkaWFuLWdhdGVkICpmcmVlemUqIHN3aXRjaCB1c2VkIGR1cmluZyBpbmNpZGVudCByZXNwb25zZS4K Ly8hCiAvLyMgT3ZlcnZpZXcKIC8vIQogLy8hIENyb3NzLWNoYWluIGJyaWRnaW5nIGlzIHNwbGl0IGludG8gZm91ciByb2xlczoKIC8vIQogLy8hIHwgUm9sZSB8IEZ1bmN0aW9uIHNldCB8IENhbGxlciB8CiAvLyF8LS0tLS0tfC0tLS0tLS0tLS0tLS0tfC0tLS0tLS0tfAogLy8hIHwgQWRtaW4gfCBbYHJlZ2lzdGVyX2JyaWRnZWBdLCBbYHNldF9icmlkZ2VfZmVlYF0sIFtgc2V0X2JyaWRnZV9ndWFyZGlhbmBdIHwgYEFkbWluYCAoc3RvcmVkIGluIGluc3RhbmNlIHN0b3JhZ2UpIHwKIC8vISB8IEd1YXJkaWFuIChpbmNpZGVudCByZXNwb25zZSkgfCBbYGZyZWV6ZV9icmlkZ2VgXSwgW2B1bmZyZWV6ZV9icmlkZ2VgXSB8IGBHdWFyZGlhbmAgfAogLy8hIHwgVXNlciB8IFtgYnJpZGdlX2RlcG9zaXRgXSwgW2BicmlkZ2Vfd2l0aGRyYXdgXSB8IGB1c2VyLnJlcXVpcmVfYXV0aCgpYCB8CiAvLyEgfCBWaWV3IHwgW2BnZXRfYnJpZGdlX2NvbmZpZ2BdLCBbYGxpc3RfYnJpZGdlc2BdLCBbYGlzX2JyaWRnZV9mcm96ZW5gXSB8IGFueSB8CiAvLyEKIC8vIyBGcmVlemUgc2VtYW50aWNzCiAvLyEKIC8vISBUaGUgZnJlZXplIGZsYWcgaXMgYW4gKippbmRlcGVuZGVudCoqIGluY2lkZW50LXJlc3BvbnNlIGNvbnRyb2wuIEl0IGlzCiAvLyEgZnVsbHkgZGVjb3VwbGVkIGZyb20gdmFsaWRhdG9yIHJvdGF0aW9uOiB0aGUgY29uZmlndXJlZCBbYEd1YXJkaWFuYF0gY2FuCiAvLyEgc3RvcCBvdXRib3VuZCB3aXRoZHJhd2FscyBpbW1lZGlhdGVseSwgd2l0aG91dCB3YWl0aW5nIG9uIGEgc2xvdyB2YWxpZGF0b3IKIC8vISByb3RhdGlvbiB0byBjb252ZXJnZS4KIC8vIQogLy8hIC0gKipXaGlsZSBmcm96ZW4qKiwgW2BicmlkZ2Vfd2l0aGRyYXdgXSByZXR1cm5zIFtgQnJpZGdlRXJyb3I6OkZyb3plbmBdIGFuZAogLy8hICAgcGVyZm9ybXMgKipubyoqIHN0YXRlIG11dGF0aW9uIGFuZCAqKm5vKiogdG9rZW4gdHJhbnNmZXIuIFRoZSBmcmVlemUKIC8vISAgIGV2ZW50IGl0c2VsZiB3YXMgYWxyZWFkeSBlbWl0dGVkIHdoZW4gdGhlIHN0YXRlIGNoYW5nZWQuCiAvLyEgLSAqKldoaWxlIGZyb3plbioqLCBbYGJyaWRnZV9kZXBvc2l0YF0gY29udGludWVzIHRvIGZ1bmN0aW9uIOKAlCBkZXBvc2l0cwogLy8hICAgYXJlIG5ldmVyIGJsb2NrZWQgYnkgdGhlIGZyZWV6ZS4KIC8vISAtICoqQWRtaW4qKiBhbmQgKip2aWV3Kiogb3BlcmF0aW9ucyBhcmUgdW5hZmZlY3RlZCBieSB0aGUgZnJlZXplLgogLy8hCiAvLyEgW2BHdWFyZGlhbmBdOiBCcmlkZ2VEYXRhS2V5OjpHdWFyZGlhbgogLy8hCiAvLyMgV29ya2VkIGV4YW1wbGUgKGluY2lkZW50KQogLy8hCiAvLyEgMS4gQSB2YWxpZGF0b3Itc2V0IGNvbXByb21pc2UgaXMgc3VzcGVjdGVkIGF0IGB0ID0gVGAuCiAvLyEgMi4gVGhlIGd1YXJkaWFuIGNhbGxzIGBmcmVlemVfYnJpZGdlYCB3aXRoIHRoZWlyIG93biBhZGRyZXNzIGF1dGhlbnRpY2F0ZWQuCiAvLyEgMy4gRnJvbSBgdCA9IFRgLCBldmVyeSBgYnJpZGdlX3dpdGhkcmF3YCBmYWlscyB3aXRoIGBGcm96ZW5gLiBUaGUgZnJlZXplCiAvLyEgICAgZXZlbnQgaXMgcHVibGlzaGVkIGV4YWN0bHkgb25jZSBvbiB0aGUgdHJhbnNpdGlvbi4KIC8vISA0LiBDb29yZGluYXRpb24gcHJvY2VlZHMgb24gdmFsaWRhdG9yIHJvdGF0aW9uLgogLy8hIDUuIE9uY2UgdGhlIHJvdGF0aW9uIGlzIGZpbmFsaXNlZCwgdGhlIGd1YXJkaWFuIGNhbGxzIGB1bmZyZWV6ZV9icmlkZ2VgLgogLy8hICAgIFdpdGhkcmF3YWxzIHJlc3VtZTsgdGhlIHRyYW5zaXRpb24gZXZlbnQgaXMgZW1pdHRlZCBhZ2Fpbi4KIC8vIQogLy8jIFN0b3JhZ2UgbGF5b3V0CiAvLyEKIC8vISBBbGwgbW9kdWxlIHN0YXRlIGlzIGtleWVkIGJ5IFtgQnJpZGdlRGF0YUtleWBdIHRvIGF2b2lkIGNvbGxpc2lvbnMgd2l0aAogLy8hIG90aGVyIG1vZHVsZXMnIGtleSBlbnVtcyAoc2VlIGBsaWIucnM6OnN0b3JhZ2VgLCBgbGliLnJzOjpkZXBvc2l0YCwgZXRjLikuCiAvLyEgSW5zdGFuY2Ugc3RvcmFnZSBob2xkcyB0aGUgZnJlZXplIGZsYWcsIHRoZSBndWFyZGlhbiwgdGhlIGFkbWluIGFkZHJlc3MsCiAvLyEgYW5kIGEgYFZlYzx1MzI+YCBpbmRleCBvZiByZWdpc3RlcmVkIG5ldHdvcmsgSURzICh1c2VkIGJ5IFtgbGlzdF9icmlkZ2VzYF0pLgogLy8hIFBlcnNpc3RlbnQgc3RvcmFnZSBob2xkcyBwZXItbmV0d29yayBbYEJyaWRnZUNvbmZpZ2BdIHJlY29yZHMuCgp1c2Ugc29yb2Jhbl9zZGs6Ontjb250cmFjdGVycm9yLCBjb250cmFjdHR5cGUsIHN5bWJvbF9zaG9ydCwgQWRkcmVzcywgRW52LCBNYXAsIFZlY307CgovLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCi8vIFR5cGVzCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIFN0b3JhZ2Uga2V5cyBmb3IgYnJpZGdlIHN0YXRlLgovLy8KLy8vIERlZmluZWQgbG9jYWxseSB0byBndWFyYW50ZWUgbm8gY29sbGlzaW9uIHdpdGggb3RoZXIgbW9kdWxlcycga2V5IGVudW1zCi8vLyAoYERlcG9zaXREYXRhS2V5YCwgYFJpc2tNYW5hZ2VtZW50S2V5YCwgZXRjLikuIFNvcm9iYW4ncyBzdG9yYWdlIGlzIGtleWVkCi8vLyBieSB0aGUgcmF3IGJ5dGVzIG9mIHRoZSBrZXk7IGRpc3RpbmN0IGVudW0gdHlwZXMgc2VyaWFsaXNlIHRvIGRpc3RpbmN0IGtleXMK Ly8vIGV2ZW4gaWYgdGhlIHZhcmlhbnQgbmFtZSBoYXBwZW5zIHRvIGNvaW5jaWRlLgojW2NvbnRyYWN0dHlwZV0KI1tkZXJpdmUoQ2xvbmUsIERlYnVnKV0KcHViIGVudW0gQnJpZGdlRGF0YUtleSB7CiAgICAvLy8gQWRkcmVzcyBhdXRob3Jpc2VkIHRvIGNhbGwgZnJlZXplIC8gdW5mcmVlemUgYnJpZGdlIHdpdGhkcmF3YWxzLgogICAgLy8vIFN0b3JlZCBpbiAqaW5zdGFuY2UqIHN0b3JhZ2UgKGxvdyB3cml0ZSBjb3VudCwgaGlnaCByZWFkIGNvdW50KS4KICAgIEd1YXJkaWFuLAogICAgLy8vIEFkZHJlc3MgYXV0aG9yaXNlZCB0byBhZG1pbmlzdGVyIGJyaWRnZXMgKHJlZ2lzdGVyIC8gc2V0IGZlZSAvIHNldAogICAgLy8vIGd1YXJkaWFuKS4gU3RvcmVkIGJ5IHRoZSBzaGFyZWQgYWRtaW4gbW9kdWxlIGluIGluc3RhbmNlIHN0b3JhZ2UuCiAgICAvLy8KICAgIC8vLyBgYm9vbGAgZmxhZzogd2hlbiBgdHJ1ZWAsIGBicmlkZ2Vfd2l0aGRyYXdgIGlzIHJlamVjdGVkIHdpdGgKICAgIC8vLyBbYEJyaWRnZUVycm9yOjpGcm96ZW5gXS4gU3RvcmVkIGluICppbnN0YW5jZSogc3RvcmFnZS4KICAgIElzRnJvemVuLAogICAgLy8vIGBWZWM8dTMyPmAgb2YgbmV0d29yayBJRHMgd2l0aCBhdCBsZWFzdCBvbmUgcmVnaXN0ZXJlZCBicmlkZ2UuCiAgICAvLy8gTWFpbnRhaW5lZCBzbyB0aGF0IFtgbGlzdF9icmlkZ2VzYF0gY2FuIGVudW1lcmF0ZSB3aXRob3V0IHNjYW5uaW5nLgogICAgQnJpZGdlc0luZGV4LAogICAgLy8vIFBlcnNpc3RlbnQgcGVyLW5ldHdvcmsgYnJpZGdlIGNvbmZpZ3VyYXRpb24sIG5hbWVzcGFjZWQgYnkKICAgIC8vLyBgbmV0d29ya19pZDogdTMyYCB2aWEgdGhlIGVudW0gcGF5bG9hZCBzbyB0aGF0IGVhY2ggbmV0d29yayBsaXZlcyBhdAogICAgLy8vIGEgZGlzdGluY3Qgc3RvcmFnZSBzbG90LgogICAgQnJpZGdlKHUzMiksCn0KCi8vLyBQZXItbmV0d29yayBicmlkZ2UgY29uZmlndXJhdGlvbi4KI1tjb250cmFjdHR5cGVdCiNbZGVyaXZlKENsb25lLCBEZWJ1ZyldCnB1YiBzdHJ1Y3QgQnJpZGdlQ29uZmlnIHsKICAgIC8vLyBBZGRyZXNzIG9mIHRoZSBicmlkZ2UgYWRhcHRlciBjb250cmFjdCAoZS5nLiBjb3JlIC8gV29ybWhvbGUgLyBMYXllclplcm8KICAgIC8vLyBhZGFwdGVyKS4gUmVzZXJ2ZWQgZm9yIGZ1dHVyZSB1c2U7IG5vdCBjb25zdW1lZCBieSB0aGUgZnJlZXplIGxvZ2ljLgogICAgcHViIGJyaWRnZTogQWRkcmVzcywKICAgIC8vLyBSZW1vdGUgbmV0d29yayBpZGVudGlmaWVyIGNob3NlbiBieSB0aGUgYWRtaW4gYXQgcmVnaXN0cmF0aW9uIHRpbWUuCiAgICBwdWIgbmV0d29ya19pZDogdTMyLAogICAgLy8vIEJyaWRnZSBmZWUgaW4gYmFzaXMtcG9pbnRzICgw4oCTMTAgMDAwKS4gU2VlIFtgY3JhdGU6OmJyaWRnZV9mZWVfdGVzdGBdCiAgICAvLy8gZm9yIHRoZSBwcmVjaXNlIGZlZSBhY2NvdW50aW5nIGFuZCBjb25zZXJ2YXRpb24gaW52YXJpYW50cy4KICAgIHB1YiBmZWVfYnBzOiBpMTI4LAogICAgLy8vIEFkbWluLWNvbnRyb2xsZWQgZW5hYmxlIC8gZGlzYWJsZSBzd2l0Y2guIFdoZW4gYGZhbHNlYCwgdGhlIGJyaWRnZSBpcwogICAgLy8vIGVmZmVjdGl2ZWx5IGRlY29tbWlzc2lvbmVkIChhZG1pbiBvciBnb3Zlcm5hbmNlIGNvbmNlcm4sICpub3QqIHRoZQogICAgLy8vIGZyZWV6ZSBjb250cm9sIGRlc2NyaWJlZCBieSB0aGlzIG1vZHVsZSkuCiAgICBwdWIgZW5hYmxlZDogYm9vbCwKfQoKLy8vIFN0cnVjdHVyZWQgcGF5bG9hZCBmb3IgdGhlIGBicmlkZ2VfZnJlZXplX2NoYW5nZWAgZXZlbnQuCi8vLwovLy8gIyBWZXJzaW9uaW5nCi8vLwovLy8gYHNjaGVtYV92ZXJzaW9uYCBmb2xsb3dzIHRoZSBgRVZFTlRfU0NIRU1BX1ZFUlNJT05gIGNvbnZlbnRpb24gaW4KLy8vIGBldmVudHMucnNgLiBCdW1waW5nIHRoaXMgcmVxdWlyZXMgdGhlIGR1YWwtZW1pdCBtaWdyYXRpb24gcHJvY2VkdXJlCi8vLyBkb2N1bWVudGVkIGluIGBkb2NzL0VWRU5UX1NDSEVNQV9WRVJTSU9OSU5HLm1kYC4KI1tjb250cmFjdHR5cGVdCiNbZGVyaXZlKENsb25lLCBEZWJ1ZyldCnB1YiBzdHJ1Y3QgQnJpZGdlRnJlZXplRXZlbnQgewogICAgLy8vIFNjaGVtYSB2ZXJzaW9uIGF0IGVtaXQgdGltZS4gSW5kZXhlcnMgbXVzdCByZWFkIHRoaXMgZmllbGQgZmlyc3QuCiAgICBwdWIgc2NoZW1hX3ZlcnNpb246IHUzMiwKICAgIC8vLyBOZXcgZnJlZXplIHN0YXRlIGFmdGVyIHRoZSB0cmFuc2l0aW9uIHRoYXQgdHJpZ2dlcmVkIHRoaXMgZXZlbnQuCiAgICBwdWIgaXNfZnJvemVuOiBib29sLAogICAgLy8vIEd1YXJkaWFuIGFkZHJlc3MgdGhhdCBhdXRob3Jpc2VkIHRoZSB0cmFuc2l0aW9uLiBSZWR1bmRhbnQgd2l0aCB0aGUKICAgIC8vLyBjYWxsZXIgY29udGV4dCBvbi1jaGFpbiBidXQgdXNlZnVsIGZvciBvZmYtY2hhaW4gaW5kZXhpbmcuCiAgICBwdWIgZ3VhcmRpYW46IEFkZHJlc3MsCiAgICAvLy8gTGVkZ2VyIHRpbWVzdGFtcCBhdCB0aGUgcG9pbnQgb2YgdGhlIHRyYW5zaXRpb24uCiAgICBwdWIgdGltZXN0YW1wOiB1NjQsCn0KCi8vLyBFcnJvcnMgcmV0dXJuZWQgYnkgdGhlIGJyaWRnZSBtb2R1bGUuCi8vLwovLy8gVmFyaWFudHMgYXJlIGV4cGxpY2l0bHkgbnVtYmVyZWQ7IGFwcGVuZGluZyB0byB0aGUgZW5kIG9mIGFuIGVudW0gaXMgYQovLy8gYnJlYWtpbmcgY2hhbmdlIGZvciBBQkkgY29uc3VtZXJzLCBzbyBhZGQgbmV3IHZhcmlhbnRzIG9ubHkgd2hlbiBubwovLy8gQUJJIHN0YWJpbGl0eSBpcyByZXF1aXJlZCAodGhlIGVudW0gaXMgYCNbY29udHJhY3RlcnJvcl1gLCB3aGljaCBnaXZlcyBpdAovLy8gYEVxIC8gUGFydGlhbEVxIC8gQ29weSAvIENsb25lYCBmb3IgdXNlIGFjcm9zcyB0aGUgY29udHJhY3QgYm91bmRhcnkpLgojW2NvbnRyYWN0ZXJyb3JdCiNbZGVyaXZlKENvcHksIENsb25lLCBEZWJ1ZywgRXEsIFBhcnRpYWxFcSldCnB1YiBlbnVtIEJyaWRnZUVycm9yIHsKICAgIC8vLyBgYnJpZGdlX3dpdGhkcmF3YCB3YXMgYXR0ZW1wdGVkIHdoaWxlIGBJc0Zyb3plbiA9PSB0cnVlYC4KICAgIC8vLyBObyBzdGF0ZSB3YXMgbXV0YXRlZC4KICAgIEZyb3plbiA9IDEsCiAgICAvLy8gQ2FsbGVyIGlzIG5vdCBhdXRob3Jpc2VkIGZvciB0aGlzIG9wZXJhdGlvbiAoYWRtaW4gb3IgZ3VhcmRpYW4pLgogICAgVW5hdXRob3JpemVkID0gMiwKICAgIC8vLyBUaGUgYWRtaW4gaGFzIG5vdCBiZWVuIGluaXRpYWxpc2VkLiBDYWxsIHRoZSBjb250cmFjdCdzIGBpbml0aWFsaXplYAogICAgLy8vIGJlZm9yZSBhbnkgYWRtaW4gLyBndWFyZGlhbiBvcGVyYXRpb24uCiAgICBBZG1pbk5vdEluaXRpYWxpemVkID0gMywKICAgIC8vLyBUaGUgZ3VhcmRpYW4gaGFzIG5vdCBiZWVuIGNvbmZpZ3VyZWQuIENhbGwgW2BzZXRfYnJpZGdlX2d1YXJkaWFuYF0KICAgIC8vLyBiZWZvcmUgYW55IGZyZWV6ZSAvIHVuZnJlZXplLgogICAgR3VhcmRpYW5Ob3RDb25maWd1cmVkID0gNCwKICAgIC8vLyBObyBicmlkZ2UgaXMgcmVnaXN0ZXJlZCBmb3IgdGhlIHJlcXVlc3RlZCBgbmV0d29ya19pZGAuCiAgICBOb3RGb3VuZCA9IDUsCiAgICAvLy8gQW1vdW50IG11c3QgYmUgc3RyaWN0bHkgcG9zaXRpdmU7IHplcm8gb3IgbmVnYXRpdmUgdmFsdWVzIGFyZSByZWplY3RlZC4KICAgIEludmFsaWRBbW91bnQgPSA2LAogICAgLy8vIEJyaWRnZSBmb3IgdGhpcyBgbmV0d29ya19pZGAgaXMgcmVnaXN0ZXJlZCBidXQgY3VycmVudGx5IGRpc2FibGVkLgogICAgRGlzYWJsZWQgPSA3LAogICAgLy8vIEZlZSBiYXNpcy1wb2ludHMgdmFsdWUgaXMgb3V0c2lkZSB0aGUgaW5jbHVzaXZlIGBbMCwgMTBfMDAwXWAgcmFuZ2UuCiAgICBGZWVPdXRPZlJhbmdlID0gOCwKfQoKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBFdmVudCBoZWxwZXJzCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIEVtaXQgYSBbYEJyaWRnZUZyZWV6ZUV2ZW50YF0gb24gYSBmcmVlemUtc3RhdGUgdHJhbnNpdGlvbi4KLy8vCi8vLyBUb3BpY3M6IGAoImJyaWRnZSIsICJ2MSIsICJmcmVlemUiKWAuIEluZGV4ZXJzIHNob3VsZCBzdWJzY3JpYmUgdG8KLy8vIGAoImJyaWRnZSIsICJ2MSIsICopYCB0byBjYXB0dXJlIGFsbCB2ZXJzaW9uZWQgYnJpZGdlIGV2ZW50cy4KZm4gZW1pdF9mcmVlemVfZXZlbnQoZW52OiAmRW52LCBndWFyZGlhbjogJkFkZHJlc3MsIGlzX2Zyb3plbjogYm9vbCkgewogICAgY29uc3QgU0NIRU1BX1ZFUlNJT046IHUzMiA9IDE7CgogICAgZW52LmV2ZW50cygpLnB1Ymxpc2goCiAgICAgICAgKAogICAgICAgICAgICBzeW1ib2xfc2hvcnQhKCJicmlkZ2UiKSwKICAgICAgICAgICAgc3ltYm9sX3Nob3J0ISgidjEiKSwKICAgICAgICAgICAgc3ltYm9sX3Nob3J0ISgiZnJlZXplIiksCiAgICAgICAgKSwKICAgICAgICBCcmlkZ2VGcmVlemVFdmVudCB7CiAgICAgICAgICAgIHNjaGVtYV92ZXJzaW9uOiBTQ0hFTUFfVkVSU0lPTiwKICAgICAgICAgICAgaXNfZnJvemVuLAogICAgICAgICAgICBndWFyZGlhbjogZ3VhcmRpYW4uY2xvbmUoKSwKICAgICAgICAgICAgdGltZXN0YW1wOiBlbnYubGVkZ2VyKCkudGltZXN0YW1wKCksCiAgICAgICAgfSwKICAgICk7Cn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBJbnRlcm5hbCBoZWxwZXJzCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIEVuZm9yY2UgdGhhdCBgY2FsbGVyYCBpcyB0aGUgc3RvcmVkIGd1YXJkaWFuLiBNdXN0IGNhbGwgYHJlcXVpcmVfYXV0aCgpYAovLy8gZmlyc3QgYW5kIGlzIGRpc3RpbmN0IGZyb20gYHJlcXVpcmVfYWRtaW5gIOKAlCB0aGUgZ3VhcmRpYW4gYW5kIHRoZSBhZG1pbgovLy8gYXJlICppbnRlbnRpb25hbGx5KiBkaWZmZXJlbnQgcm9sZXMgc28gdGhhdCBhIGtleSBjb21wcm9taXNlIG9uIG9uZSByb2xlCi8vLyBjYW5ub3QgdW5pbGF0ZXJhbGx5IGxpZnQgdGhlIG90aGVyJ3MgY29udHJvbHMuCmZuIHJlcXVpcmVfZ3VhcmRpYW4oZW52OiAmRW52LCBjYWxsZXI6ICZBZGRyZXNzKSAtPiBSZXN1bHQ8KCksIEJyaWRnZUVycm9yPiB7CiAgICBjYWxsZXIucmVxdWlyZV9hdXRoKCk7CiAgICBsZXQgZ3VhcmRpYW46IE9wdGlvbjxBZGRyZXNzPiA9IGVudi5zdG9yYWdlKCkuaW5zdGFuY2UoKS5nZXQoJkJyaWRnZURhdGFLZXk6Okd1YXJkaWFuKTsKICAgIG1hdGNoIGd1YXJkaWFuIHsKICAgICAgICBTb21lKGd1YXJkaWFuKSBpZiAmZ3VhcmRpYW4gPT0gY2FsbGVyID0+IE9rKCgpKSwKICAgICAgICBTb21lKF8pID0+IEVycihCcmlkZ2VFcnJvcjo6VW5hdXRob3JpemVkKSwKICAgICAgICBOb25lID0+IEVycihCcmlkZ2VFcnJvcjo6R3VhcmRpYW5Ob3RDb25maWd1cmVkKSwKICAgIH0KfQoKLy8vIEFwcGVuZCBgbmV0d29ya19pZGAgdG8gdGhlIGJyaWRnZXMgaW5kZXggKGBCcmlkZ2VzSW5kZXhgKSwgb3Igbm8tb3AgaWYgdGhlCi8vLyBuZXR3b3JrIGlzIGFscmVhZHkgcHJlc2VudC4gUHVsbGVkIG91dCBmb3IgcmVhZGFiaWxpdHkuCmZuIGFkZF90b19pbmRleChlbnY6ICZFbnYsIG5ldHdvcmtfaWQ6IHUzMikgewogICAgbGV0IGtleSA9IEJyaWRnZURhdGFLZXk6OkJyaWRnZXNJbmRleDsKICAgIGxldCBtdXQgaW5kZXg6IFZlYzx1MzI+ID0gZW52CiAgICAgICAgLnN0b3JhZ2UoKQogICAgICAgIC5pbnN0YW5jZSgpCiAgICAgICAgLmdldCgma2V5KQogICAgICAgIC51bndyYXBfb3JfZWxzZSg8fCBWZWM6Om5ldyhlbnYpKTsKICAgIC8vIFNvcm9iYW4ncyBgVmVjOjpJdGVyYXRvcmAgaXMgaW50ZW50aW9uYWxseSBsaW1pdGVkIChubyBgLmFueSgpYCBhZGFwdGVyCiAgICAvLyBpbiBgbm9fc3RkYCksIHNvIGFuIGV4cGxpY2l0IGxvb3AgaXMgcmVxdWlyZWQuCiAgICBsZXQgbXV0IGZvdW5kID0gZmFsc2U7CiAgICBmb3IgbiBpbiBpbmRleC5pdGVyKCkgewogICAgICAgIGlmIG4gPT0gbmV0d29ya19pZCB7CiAgICAgICAgICAgIGZvdW5kID0gdHJ1ZTsKICAgICAgICAgICAgYnJlYWs7CiAgICAgICAgfQogICAgfQogICAgaWYgIWZvdW5kIHsKICAgICAgICBpbmRleC5wdXNoX2JhY2sobmV0d29ya19pZCk7CiAgICAgICAgZW52LnN0b3JhZ2UoKS5pbnN0YW5jZSgpLnNldCgma2V5LCAmaW5kZXgpOwogICAgfQp9CgovLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCi8vIEFkbWluIG9wZXJhdGlvbnMKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIEluaXRpYWxpc2UgdGhlIGJyaWRnZSBtb2R1bGUuCi8vLwovLy8gU2V0cyB0aGUgYWRtaW4gYWRkcmVzczsgdGhlIGd1YXJkaWFuIGRlZmF1bHRzIHRvICp1bmNvbmZpZ3VyZWQqIGFuZCBtdXN0IGJlCi8vLyBzZXQgZXhwbGljaXRseSB2aWEgW2BzZXRfYnJpZGdlX2d1YXJkaWFuYF0gYmVmb3JlIGFueSBmcmVlemUgLyB1bmZyZWV6ZQovLy8gb3BlcmF0aW9uIHdpbGwgc3VjY2VlZC4KLy8vCi8vLyAjIENhbGxlcgovLy8gQW55IGFkZHJlc3MgbWF5IGNhbGwgdGhpcyBvbmNlOyBhZnRlciB0aGUgYWRtaW4gaXMgc2V0LCBvbmx5IHRoZSBhZG1pbgovLy8gY2FuIHVwZGF0ZSBpdC4KcHViIGZuIGluaXRpYWxpemUoZW52OiAmRW52LCBhZG1pbjogQWRkcmVzcykgewogICAgaWYgY3JhdGU6OmFkbWluOjpoYXNfYWRtaW4oZW52KSB7CiAgICAgICAgcmV0dXJuOwogICAgfQogICAgY3JhdGU6OmFkbWluOjpzZXRfYWRtaW4oZW52LCBhZG1pbiwgTm9uZSkuZXhwZWN0KCJicmlkZ2UgYWRtaW4gaW5pdGlhbGl6YXRpb24gc2hvdWxkIHN1Y2NlZWQiKTsKfQoKLy8vIFJlZ2lzdGVyIGEgYnJpZGdlIGZvciBgbmV0d29ya19pZGAgKGFkbWluIG9ubHkpLgovLy8KLy8vICMgRXJyb3JzCi8vLyAtIFtgQnJpZGdlRXJyb3I6OlVuYXV0aG9yaXplZGBdIGlmIGBjYWxsZXJgIGlzIG5vdCB0aGUgYWRtaW4uCi8vLyAtIFtgQnJpZGdlRXJyb3I6OkZlZU91dE9mUmFuZ2VgXSBpZiBgZmVlX2JwcyDiiIkgWzAsIDEwXzAwMF1gLgpwdWIgZm4gcmVnaXN0ZXJfYnJpZGdlKAogICAgZW52OiAmRW52LAogICAgY2FsbGVyOiBBZGRyZXNzLAogICAgbmV0d29ya19pZDogdTMyLAogICAgYnJpZGdlOiBBZGRyZXNzLAogICAgZmVlX2JwczogaTEyOCwKKSAtPiBSZXN1bHQ8KCksIEJyaWRnZUVycm9yPiB7CiAgICBjcmF0ZTo6YWRtaW46OnJlcXVpcmVfYWRtaW4oZW52LCAmY2FsbGVyKS5tYXBfZXJyKGd8IG1hdGNoIGcgewogICAgICAgIGNyYXRlOjphZG1pbjo6QWRtaW5FcnJvcjo6Tm90SW5pdGlhbGl6ZWQgPT4gQnJpZGdlRXJyb3I6OkFkbWluTm90SW5pdGlhbGl6ZWQsCiAgICAgICAgXyA9PiBCcmlkZ2VFcnJvcjo6VW5hdXRob3JpemVkLAogICAgfSk/OwogICAgaWYgISgwLi49MTBfMDAwKS5jb250YWlucygmZmVlX2JwcykgewogICAgICAgIHJldHVybiBFcnIoQnJpZGdlRXJyb3I6OkZlZU91dE9mUmFuZ2UpOwogICAgfQogICAgbGV0IGtleSA9IEJyaWRnZURhdGFLZXk6OkJyaWRnZShuZXR3b3JrX2lkKTsKICAgIGxldCBjZmcgPSBCcmlkZ2VDb25maWcgewogICAgICAgIGJyaWRnZSwKICAgICAgICBuZXR3b3JrX2lkLAogICAgICAgIGZlZV9icHMsCiAgICAgICAgZW5hYmxlZDogdHJ1ZSwKICAgIH07CiAgICBlbnYuc3RvcmFnZSgpLnBlcnNpc3RlbnQoKS5zZXQoJmtleSwgJmNmZyk7CiAgICBhZGRfdG9faW5kZXgoZW52LCBuZXR3b3JrX2lkKTsKICAgIE9rKCgpKQp9CgovLy8gVXBkYXRlIHRoZSBmZWUgKGluIGJhc2lzIHBvaW50cykgb24gYW4gYWxyZWFkeS1yZWdpc3RlcmVkIGJyaWRnZQovLy8gKGFkbWluIG9ubHkpLgovLy8KLy8vICMgRXJyb3JzCi8vLyAtIFtgQnJpZGdlRXJyb3I6Ok5vdEZvdW5kYF0gaWYgbm8gYnJpZGdlIGlzIHJlZ2lzdGVyZWQgZm9yIGBuZXR3b3JrX2lkYC4KLy8vIC0gW2BCcmlkZ2VFcnJvcjo6RmVlT3V0T2ZSYW5nZWBdIGlmIGBmZWVfYnBzIOKIiSBbMCwgMTBfMDAwXWAucHViIGZuIHNldF9icmlkZ2VfZmVlKAogICAgZW52OiAmRW52LAogICAgY2FsbGVyOiBBZGRyZXNzLAogICAgbmV0d29ya19pZDogdTMyLAogICAgZmVlX2JwczogaTEyOCwKKSAtPiBSZXN1bHQ8KCksIEJyaWRnZUVycm9yPiB7CiAgICBjcmF0ZTo6YWRtaW46OnJlcXVpcmVfYWRtaW4oZW52LCAmY2FsbGVyKS5tYXBfZXJyKGd8IG1hdGNoIGcgewogICAgICAgIGNyYXRlOjphZG1pbjo6QWRtaW5FcnJvcjo6Tm90SW5pdGlhbGl6ZWQgPT4gQnJpZGdlRXJyb3I6OkFkbWluTm90SW5pdGlhbGl6ZWQsCiAgICAgICAgXyA9PiBCcmlkZ2VFcnJvcjo6VW5hdXRob3JpemVkLAogICAgfSk/OwogICAgaWYgISgwLi49MTBfMDAwKS5jb250YWlucygmZmVlX2JwcykgewogICAgICAgIHJldHVybiBFcnIoQnJpZGdlRXJyb3I6OkZlZU91dE9mUmFuZ2UpOwogICAgfQogICAgbGV0IGtleSA9IEJyaWRnZURhdGFLZXk6OkJyaWRnZShuZXR3b3JrX2lkKTsKICAgIGxldCBtdXQgY2ZnOiBCcmlkZ2VDb25maWcgPSBlbnYKICAgICAgICAuc3RvcmFnZSgpCiAgICAgICAgLnBlcnNpc3RlbnQoKQogICAgICAgIC5nZXQoJmtleSkKICAgICAgICAub2tfKGJyaWRnZUVycm9yOjpOb3RGb3VuZCk/OwogICAgY2ZnLmZlZV9icHMgPSBmZWVfYnBzOwogICAgZW52LnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkuc2V0KCZrZXksICZjZmcpOwogICAgT2soKCkpCn0KCi8vLyBTZXQgb3Igcm90YXRlIHRoZSBicmlkZ2UgZ3VhcmRpYW4gKGFkbWluIG9ubHkpLgovLy8KLy8vIFRoZSBndWFyZGlhbiBpcyB0aGUgKm9ubHkqIGFkZHJlc3MgdGhhdCBtYXkgY2FsbAovLy8gW2BmcmVlemVfYnJpZGdlYF0gLyBbYHVuZnJlZXplX2JyaWRnZWBdLiBUaGUgYWRtaW4gYW5kIGd1YXJkaWFuIGFyZQovLy8gZGVsaWJlcmF0ZWx5IGRpc2pvaW50IHJvbGVzIChzZWUgW2ByZXF1aXJlX2d1YXJkaWFuYF0pLgpwdWIgZm4gc2V0X2JyaWRnZV9ndWFyZGlhbigKICAgIGVudjogJkVudiwKICAgIGNhbGxlcjogQWRkcmVzcywKICAgIGd1YXJkaWFuOiBBZGRyZXNzLAopIC0+IFJlc3VsdDwoKSwgQnJpZGdlRXJyb3I+IHsKICAgIGNyYXRlOjphZG1pbjo6cmVxdWlyZV9hZG1pbihlbnYsICZjYWxsZXIpLm1hcF9lcnIoZ3wgbWF0Y2ggZyB7CiAgICAgICAgY3JhdGU6OmFkbWluOjpBZG1pbkVycm9yOjpOb3RJbml0aWFsaXplZCA9PiBCcmlkZ2VFcnJvcjo6QWRtaW5Ob3RJbml0aWFsaXplZCwKICAgICAgICBfID0+IEJyaWRnZUVycm9yOjpVbmF1dGhvcml6ZWQsCiAgICB9KT87CiAgICBlbnYuc3RvcmFnZSgpLmluc3RhbmNlKCkuc2V0KCZCcmlkZ2VEYXRhS2V5OjpHdWFyZGlhbiwgJmd1YXJkaWFuKTsKICAgIE9rKCgpKQp9CgovLy8gRnJlZXplIGJyaWRnZSB3aXRoZHJhd2FscyAoZ3VhcmRpYW4gb25seSkuCi8vLwovLy8gIyBFcnJvcnMKLy8vIC0gW2BCcmlkZ2VFcnJvcjo6R3VhcmRpYW5Ob3RDb25maWd1cmVkYF0gaWYgbm8gZ3VhcmRpYW4gaXMgc2V0LgovLy8gLSBbYEJyaWRnZUVycm9yOjpVbmF1dGhvcml6ZWRgXSBpZiBgY2FsbGVyYCBpcyBub3QgdGhlIGd1YXJkaWFuLgpwdWIgZm4gZnJlZXplX2JyaWRnZShlbnY6ICZFbnYsIGNhbGxlcjogQWRkcmVzcykgLT4gUmVzdWx0PCgpLCBCcmlkZ2VFcnJvcj4gewogICAgcmVxdWlyZV9ndWFyZGlhbihlbnYsICZjYWxsZXIpPzsKICAgIGVudi5zdG9yYWdlKCkKICAgICAgICAuaW5zdGFuY2UoKQogICAgICAgIC5zZXQoJkJyaWRnZURhdGFLZXk6OklzRnJvemVuLCAmdHJ1ZSk7CiAgICBlbWl0X2ZyZWV6ZV9ldmVudChlbnYsICZjYWxsZXIsIHRydWUpOwogICAgT2soKCkpCn0KCi8vLyBVbmZyZWV6ZSBicmlkZ2Ugd2l0aGRyYXdhbHMgKGd1YXJkaWFuIG9ubHkpLgovLy8KLy8vICMgRXJyb3JzCi8vLyAtIFtgQnJpZGdlRXJyb3I6Okd1YXJkaWFuTm90Q29uZmlndXJlZGBdIGlmIG5vIGd1YXJkaWFuIGlzIHNldC4KLy8vIC0gW2BCcmlkZ2VFcnJvcjo6VW5hdXRob3JpemVkYF0gaWYgYGNhbGxlcmAgaXMgbm90IHRoZSBndWFyZGlhbi4KcHViIGZuIHVuZnJlZXplX2JyaWRnZShlbnY6ICZFbnYsIGNhbGxlcjogQWRkcmVzcykgLT4gUmVzdWx0PCgpLCBCcmlkZ2VFcnJvcj4gewogICAgcmVxdWlyZV9ndWFyZGlhbihlbnYsICZjYWxsZXIpPzsKICAgIGVudi5zdG9yYWdlKCkKICAgICAgICAuaW5zdGFuY2UoKQogICAgICAgIC5zZXQoJkJyaWRnZURhdGFLZXk6OklzRnJvemVuLCAmZmFsc2UpOwogICAgZW1pdF9mcmVlemVfZXZlbnQoZW52LCAmY2FsbGVyLCBmYWxzZSk7CiAgICBPaygoKSkKfQoKLy8vIFJldHVybiB0aGUgYnJpZGdlIGNvbmZpZ3VyYXRpb24gZm9yIGBuZXR3b3JrX2lkYCwgaWYgcmVnaXN0ZXJlZC4KcHViIGZuIGdldF9icmlkZ2VfY29uZmlnKGVudjogJkVudiwgbmV0d29ya19pZDogdTMyKSAtPiBPcHRpb248QnJpZGdlQ29uZmlnPiB7CiAgICBlbnYuc3RvcmFnZSgpCiAgICAgICAgLnBlcnNpc3RlbnQoKQogICAgICAgIC5nZXQoJkJyaWRnZURhdGFLZXk6OkJyaWRnZShuZXR3b3JrX2lkKSkKfQoKLy8vIFJldHVybiB0aGUgbGlzdCBvZiByZWdpc3RlcmVkIG5ldHdvcmsgSURzLgpwdWIgZm4gbGlzdF9icmlkZ2VzKGVudjogJkVudi) ->IFZlYzx1MzI+IHsKICAgIGVudi5zdG9yYWdlKCkKICAgICAgICAuaW5zdGFuY2UoKQogICAgICAgIC5nZXQoJkJyaWRnZURhdGFLZXk6OkJyaWRnZXNJbmRleCkKICAgICAgICAudW53cmFwX29yX2Vsc2UoPHx8IFZlYzo6bmV3KGVudikpCn0KCi8vLyBSZXR1cm4gd2hldGhlciBicmlkZ2Ugd2l0aGRyYXdhbHMgYXJlIGN1cnJlbnRseSBmcm96ZW4uCnB1YiBmbiBpc19icmlkZ2VfZnJvemVuKGVudjogJkVudikgLT4gYm9vbCB7CiAgICBlbnYuc3RvcmFnZSgpCiAgICAgICAgLmluc3RhbmNlKCkKICAgICAgICAuZ2V0KCZCcmlkZ2VEYXRhS2V5OjpJc0Zyb3plbikKICAgICAgICAudW53cmFwX29yX2Vsc2UoPHx8IGZhbHNlKQp9CgovLy8gRGVwb3NpdCBmdW5kcyBpbnRvIHRoZSBicmlkZ2UgZm9yIGBuZXR3b3JrX2lkYC4KLy8vCi8vLyBEZXBvc2l0cyBhcmUgbmV2ZXIgYmxvY2tlZCBieSB0aGUgZnJlZXplIGZsYWcuCi8vLwovLy8gIyBFcnJvcnMKLy8vIC0gW2BCcmlkZ2VFcnJvcjo6Tm90Rm91bmRgXSBpZiBubyBicmlkZ2UgaXMgcmVnaXN0ZXJlZCBmb3IgYG5ldHdvcmtfaWRgLgovLy8gLSBbYEJyaWRnZUVycm9yOjpEaXNhYmxlZGBdIGlmIHRoZSBicmlkZ2UgaXMgcmVnaXN0ZXJlZCBidXQgZGlzYWJsZWQuCi8vLyAtIFtgQnJpZGdlRXJyb3I6OkludmFsaWRBbW91bnRgXSBpZiBgYW1vdW50IDw9IDBgLgpwdWIgZm4gYnJpZGdlX2RlcG9zaXQoCiAgICBlbnY6ICZFbnYsCiAgICB1c2VyOiBBZGRyZXNzLAogICAgbmV0d29ya19pZDogdTMyLAogICAgYW1vdW50OiBpMTI4LAopIC0+IFJlc3VsdDwoKSwgQnJpZGdlRXJyb3I+IHsKICAgIHVzZXIucmVxdWlyZV9hdXRoKCk7CiAgICBpZiBhbW91bnQgPD0gMCB7CiAgICAgICAgcmV0dXJuIEVycihCcmlkZ2VFcnJvcjo6SW52YWxpZEFtb3VudCk7CiAgICB9CiAgICBsZXQga2V5ID0gQnJpZGdlRGF0YUtleTo6QnJpZGdlKG5ldHdvcmtfaWQpOwogICAgbGV0IGNmZzogQnJpZGdlQ29uZmlnID0gZW52CiAgICAgICAgLnN0b3JhZ2UoKQogICAgICAgIC5wZXJzaXN0ZW50KCkKICAgICAgICAuZ2V0KCZrZXkpCiAgICAgICAgLm9rX29yKEJyaWRnZUVycm9yOjpOb3RGb3VuZCk/OwogICAgaWYgIWNmZy5lbmFibGVkIHsKICAgICAgICByZXR1cm4gRXJyKEJyaWRnZUVycm9yOjpEaXNhYmxlZCk7CiAgICB9CiAgICBPaygoKSkKfQoKLy8vIFdpdGhkcmF3IGZ1bmRzIGZyb20gdGhlIGJyaWRnZSBmb3IgYG5ldHdvcmtfaWRgLgovLy8KLy8vIFdoaWxlIGZyb3plbiwgdGhpcyByZXR1cm5zIFtgQnJpZGdlRXJyb3I6OkZyb3plbmBdIGFuZCBwZXJmb3JtcyAqKm5vKioKLy8vIHN0YXRlIG11dGF0aW9uIGFuZCAqKm5vKiogdG9rZW4gdHJhbnNmZXIuCi8vLwovLy8gIyBFcnJvcnMKLy8vIC0gW2BCcmlkZ2VFcnJvcjo6RnJvemVuYF0gaWYgdGhlIGJyaWRnZSBpcyBmcm96ZW4uCi8vLyAtIFtgQnJpZGdlRXJyb3I6Ok5vdEZvdW5kYF0gaWYgbm8gYnJpZGdlIGlzIHJlZ2lzdGVyZWQgZm9yIGBuZXR3b3JrX2lkYC4KLy8vIC0gW2BCcmlkZ2VFcnJvcjo6RGlzYWJsZWRgXSBpZiB0aGUgYnJpZGdlIGlzIHJlZ2lzdGVyZWQgYnV0IGRpc2FibGVkLgovLy8gLSBbYEJyaWRnZUVycm9yOjpJbnZhbGlkQW1vdW50YF0gaWYgYGFtb3VudCA8PSAwYC4KcHViIGZuIGJyaWRnZV93aXRoZHJhdygKICAgIGVudjogJkVudiwKICAgIHVzZXI6IEFkZHJlc3MsCiAgICBuZXR3b3JrX2lkOiB1MzIsCiAgICBhbW91bnQ6IGkxMjgsCikgLT4gUmVzdWx0PCgpLCBCcmlkZ2VFcnJvcj4gewogICAgdXNlci5yZXF1aXJlX2F1dGgoKTsKICAgIGlmIGlzX2JyaWRnZV9mcm96ZW4oZW52KSB7CiAgICAgICAgcmV0dXJuIEVycihCcmlkZ2VFcnJvcjo6RnJvemVuKTsKICAgIH0KICAgIGlmIGFtb3VudCA8PSAwIHsKICAgICAgICByZXR1cm4gRXJyKEJyaWRnZUVycm9yOjpJbnZhbGlkQW1vdW50KTsKICAgIH0KICAgIGxldCBrZXkgPSBCcmlkZ2VEYXRhS2V5OjpCcmlkZ2UobmV0d29ya19pZCk7CiAgICBsZXQgY2ZnOiBCcmlkZ2VDb25maWcgPSBlbnYKICAgICAgICAuc3RvcmFnZSgpCiAgICAgICAgLnBlcnNpc3RlbnQoKQogICAgICAgIC5nZXQoJmtleSkKICAgICAgICAub2tfKEJyaWRnZUVycm9yOjpOb3RGb3VuZCk/OwogICAgaWYgIWNmZy5lbmFibGVkIHsKICAgICAgICByZXR1cm4gRXJyKEJyaWRnZUVycm9yOjpEaXNhYmxlZCk7CiAgICB9CiAgICBPaygoKSkKfQo=
+//! Bridge — on-chain surface for cross-chain deposits / withdrawals plus a
+//! guardian-gated *freeze* switch used during incident response.
+//!
+//! # Overview
+//!
+//! Cross-chain bridging is split into four roles:
+//!
+//! | Role | Function set | Caller |
+//! |------|--------------|--------|
+//! | Admin | [`register_bridge`], [`set_bridge_fee`], [`set_bridge_guardian`] | `Admin` (stored in instance storage) |
+//! | Guardian (incident response) | [`freeze_bridge`], [`unfreeze_bridge`] | `Guardian` |
+//! | User | [`bridge_deposit`], [`bridge_withdraw`] | `user.require_auth()` |
+//! | View | [`get_bridge_config`], [`list_bridges`], [`is_bridge_frozen`] | any |
+//!
+//! # Freeze semantics
+//!
+//! The freeze flag is an **independent** incident-response control. It is
+//! fully decoupled from validator rotation: the configured [`Guardian`] can
+//! stop outbound withdrawals immediately, without waiting on a slow validator
+//! rotation to converge.
+//!
+//! - **While frozen**, [`bridge_withdraw`] returns [`BridgeError::Frozen`] and
+//!   performs **no** state mutation and **no** token transfer. The freeze
+//!   event itself was already emitted when the state changed.
+//! - **While frozen**, [`bridge_deposit`] continues to function — deposits
+//!   are never blocked by the freeze.
+//! - **Admin** and **view** operations are unaffected by the freeze.
+//!
+//! [`Guardian`]: BridgeDataKey::Guardian
+//!
+//! # Worked example (incident)
+//!
+//! 1. A validator-set compromise is suspected at `t = T`.
+//! 2. The guardian calls `freeze_bridge` with their own address authenticated.
+//! 3. From `t = T`, every `bridge_withdraw` fails with `Frozen`. The freeze
+//!    event is published exactly once on the transition.
+//! 4. Coordination proceeds on validator rotation.
+//! 5. Once the rotation is finalised, the guardian calls `unfreeze_bridge`.
+//!    Withdrawals resume; the transition event is emitted again.
+//!
+//! # Storage layout
+//!
+//! All module state is keyed by [`BridgeDataKey`] to avoid collisions with
+//! other modules' key enums (see `lib.rs::storage`, `lib.rs::deposit`, etc.).
+//! Instance storage holds the freeze flag, the guardian, the admin address,
+//! and a `Vec<u32>` index of registered network IDs (used by [`list_bridges`]).
+//! Persistent storage holds per-network [`BridgeConfig`] records.
+
+use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Map, Vec};
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// Storage keys for bridge state.
+///
+/// Defined locally to guarantee no collision with other modules' key enums
+/// (`DepositDataKey`, `RiskManagementKey`, etc.). Soroban's storage is keyed
+/// by the raw bytes of the key; distinct enum types serialise to distinct keys
+/// even if the variant name happens to coincide.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum BridgeDataKey {
+    /// Address authorised to call freeze / unfreeze bridge withdrawals.
+    /// Stored in *instance* storage (low write count, high read count).
+    Guardian,
+    /// Address authorised to administer bridges (register / set fee / set
+    /// guardian). Stored by the shared admin module in instance storage.
+    ///
+    /// `bool` flag: when `true`, `bridge_withdraw` is rejected with
+    /// [`BridgeError::Frozen`]. Stored in *instance* storage.
+    IsFrozen,
+    /// `Vec<u32>` of network IDs with at least one registered bridge.
+    /// Maintained so that [`list_bridges`] can enumerate without scanning.
+    BridgesIndex,
+    /// Persistent per-network bridge configuration, namespaced by
+    /// `network_id: u32` via the enum payload so that each network lives at
+    /// a distinct storage slot.
+    Bridge(u32),
+}
+
+/// Per-network bridge configuration.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BridgeConfig {
+    /// Address of the bridge adapter contract (e.g. core / Wormhole / LayerZero
+    /// adapter). Reserved for future use; not consumed by the freeze logic.
+    pub bridge: Address,
+    /// Remote network identifier chosen by the admin at registration time.
+    pub network_id: u32,
+    /// Bridge fee in basis points (0–10 000). See [`crate::bridge_fee_test`]
+    /// for the precise fee accounting and conservation invariants.
+    pub fee_bps: i128,
+    /// Admin-controlled enable / disable switch. When `false`, the bridge is
+    /// effectively decommissioned (admin or governance concern, *not* the
+    /// freeze control described by this module).
+    pub enabled: bool,
+}
+
+/// Structured payload for the `bridge_freeze_change` event.
+///
+/// # Versioning
+///
+/// `schema_version` follows the `EVENT_SCHEMA_VERSION` convention in
+/// `events.rs`. Bumping this requires the dual-emit migration procedure
+/// documented in `docs/EVENT_SCHEMA_VERSIONING.md`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BridgeFreezeEvent {
+    /// Schema version at emit time. Indexers must read this field first.
+    pub schema_version: u32,
+    /// New freeze state after the transition that triggered this event.
+    pub is_frozen: bool,
+    /// Guardian address that authorised the transition. Redundant with the
+    /// caller context on-chain but useful for off-chain indexing.
+    pub guardian: Address,
+    /// Ledger timestamp at the point of the transition.
+    pub timestamp: u64,
+}
+
+/// Errors returned by the bridge module.
+///
+/// Variants are explicitly numbered; appending to the end of an enum is a
+/// breaking change for ABI consumers, so add new variants only when no ABI
+/// stability is required (the enum is `#[contracterror]`, which gives it
+/// `Eq / PartialEq / Copy / Clone` for use across the contract boundary).
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum BridgeError {
+    /// `bridge_withdraw` was attempted while `IsFrozen == true`.
+    /// No state was mutated.
+    Frozen = 1,
+    /// Caller is not authorised for this operation (admin or guardian).
+    Unauthorized = 2,
+    /// The admin has not been initialised. Call the contract's `initialize`
+    /// before any admin / guardian operation.
+    AdminNotInitialized = 3,
+    /// The guardian has not been configured. Call [`set_bridge_guardian`]
+    /// before any freeze / unfreeze.
+    GuardianNotConfigured = 4,
+    /// No bridge is registered for the requested `network_id`.
+    NotFound = 5,
+    /// Amount must be strictly positive; zero or negative values are rejected.
+    InvalidAmount = 6,
+    /// Bridge for this `network_id` is registered but currently disabled.
+    Disabled = 7,
+    /// Fee basis-points value is outside the inclusive `[0, 10_000]` range.
+    FeeOutOfRange = 8,
+}
+
+// ---------------------------------------------------------------------------
+// Event helpers
+// ---------------------------------------------------------------------------
+
+/// Emit a [`BridgeFreezeEvent`] on a freeze-state transition.
+///
+/// Topics: `("bridge", "v1", "freeze")`. Indexers should subscribe to
+/// `("bridge", "v1", *)` to capture all versioned bridge events.
+fn emit_freeze_event(env: &Env, guardian: &Address, is_frozen: bool) {
+    const SCHEMA_VERSION: u32 = 1;
+
+    env.events().publish(
+        (
+            symbol_short!("bridge"),
+            symbol_short!("v1"),
+            symbol_short!("freeze"),
+        ),
+        BridgeFreezeEvent {
+            schema_version: SCHEMA_VERSION,
+            is_frozen,
+            guardian: guardian.clone(),
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Enforce that `caller` is the stored guardian. Must call `require_auth()`
+/// first and is distinct from `require_admin` — the guardian and the admin
+/// are *intentionally* different roles so that a key compromise on one role
+/// cannot unilaterally lift the other's controls.
+fn require_guardian(env: &Env, caller: &Address) -> Result<(), BridgeError> {
+    caller.require_auth();
+    let guardian: Option<Address> = env.storage().instance().get(&BridgeDataKey::Guardian);
+    match guardian {
+        Some(guardian) if &guardian == caller => Ok(()),
+        Some(_) => Err(BridgeError::Unauthorized),
+        None => Err(BridgeError::GuardianNotConfigured),
+    }
+}
+
+/// Append `network_id` to the bridges index (`BridgesIndex`), or no-op if the
+/// network is already present. Pulled out for readability.
+fn add_to_index(env: &Env, network_id: u32) {
+    let key = BridgeDataKey::BridgesIndex;
+    let mut index: Vec<u32> = env
+        .storage()
+        .instance()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    // Soroban's `Vec::Iterator` is intentionally limited (no `.any()` adapter
+    // in `no_std`), so an explicit loop is required.
+    let mut found = false;
+    for n in index.iter() {
+        if n == network_id {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        index.push_back(network_id);
+        env.storage().instance().set(&key, &index);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Admin operations
+// ---------------------------------------------------------------------------
+
+/// Initialise the bridge module.
+///
+/// Sets the admin address; the guardian defaults to *unconfigured* and must be
+/// set explicitly via [`set_bridge_guardian`] before any freeze / unfreeze
+/// operation will succeed.
+///
+/// # Caller
+/// Any address may call this once; after the admin is set, only the admin
+/// can update it.
+pub fn initialize(env: &Env, admin: Address) {
+    if crate::admin::has_admin(env) {
+        return;
+    }
+    crate::admin::set_admin(env, admin, None).expect("bridge admin initialization should succeed");
+}
+
+/// Register a bridge for `network_id` (admin only).
+///
+/// # Errors
+/// - [`BridgeError::Unauthorized`] if `caller` is not the admin.
+/// - [`BridgeError::FeeOutOfRange`] if `fee_bps ∉ [0, 10_000]`.
+pub fn register_bridge(
+    env: &Env,
+    caller: Address,
+    network_id: u32,
+    bridge: Address,
+    fee_bps: i128,
+) -> Result<(), BridgeError> {
+    crate::admin::require_admin(env, &caller).map_err(|error| match error {
+        crate::admin::AdminError::NotInitialized => BridgeError::AdminNotInitialized,
+        _ => BridgeError::Unauthorized,
+    })?;
+    if !(0..=10_000).contains(&fee_bps) {
+        return Err(BridgeError::FeeOutOfRange);
+    }
+    let key = BridgeDataKey::Bridge(network_id);
+    let cfg = BridgeConfig {
+        bridge,
+        network_id,
+        fee_bps,
+        enabled: true,
+    };
+    env.storage().persistent().set(&key, &cfg);
+    add_to_index(env, network_id);
+    Ok(())
+}
+
+/// Update the fee (in basis points) on an already-registered bridge
+/// (admin only).
+///
+/// # Errors
+/// - [`BridgeError::NotFound`] if no bridge is registered for `network_id`.
+/// - [`BridgeError::FeeOutOfRange`] if `fee_bps ∉ [0, 10_000]`.
+pub fn set_bridge_fee(
+    env: &Env,
+    caller: Address,
+    network_id: u32,
+    fee_bps: i128,
+) -> Result<(), BridgeError> {
+    crate::admin::require_admin(env, &caller).map_err(|error| match error {
+        crate::admin::AdminError::NotInitialized => BridgeError::AdminNotInitialized,
+        _ => BridgeError::Unauthorized,
+    })?;
+    if !(0..=10_000).contains(&fee_bps) {
+        return Err(BridgeError::FeeOutOfRange);
+    }
+    let key = BridgeDataKey::Bridge(network_id);
+    let mut cfg: BridgeConfig = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(BridgeError::NotFound)?;
+    cfg.fee_bps = fee_bps;
+    env.storage().persistent().set(&key, &cfg);
+    Ok(())
+}
+
+/// Set or rotate the bridge guardian (admin only).
+///
+/// The guardian is the *only* address that may call
+/// [`freeze_bridge`] / [`unfreeze_bridge`]. The admin and guardian are
+/// deliberately disjoint roles (see [`require_guardian`]).
+pub fn set_bridge_guardian(
+    env: &Env,
+    caller: Address,
+    guardian: Address,
+) -> Result<(), BridgeError> {
+    crate::admin::require_admin(env, &caller).map_err(|error| match error {
+        crate::admin::AdminError::NotInitialized => BridgeError::AdminNotInitialized,
+        _ => BridgeError::Unauthorized,
+    })?;
+    env.storage()
+        .instance()
+        .set(&BridgeDataKey::Guardian, &guardian);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// User operations
+// ---------------------------------------------------------------------------
+
+/// Deposit through bridge `network_id` (user operation).
+///
+/// Always permitted — **never blocked by the freeze**. While a freeze is in
+/// place, inbound liquidity is still honoured so that user funds are not
+/// stranded on the bridge.
+pub fn bridge_deposit(
+    _env: &Env,
+    user: Address,
+    _network_id: u32,
+    _asset: Option<Address>,
+    amount: i128,
+) -> Result<i128, BridgeError> {
+    user.require_auth();
+    if amount <= 0 {
+        return Err(BridgeError::InvalidAmount);
+    }
+    // Net-fee accounting and deposit ledger writes live in the lending
+    // module; here we only validate and pass through. The freeze check is
+    // intentionally omitted — deposits are exempt.
+    Ok(amount)
+}
+
+/// Withdraw through bridge `network_id` (user operation).
+///
+/// # Freeze gate
+/// If `IsFrozen == true`, this function returns
+/// [`BridgeError::Frozen`] immediately, **before** any state mutation or
+/// token transfer. The caller is authenticated (so a malicious retry cannot
+/// induce a different code path) and `amount` / `network_id` are validated
+/// first, so a frozen call still rejects malformed inputs without ever
+/// touching storage.
+pub fn bridge_withdraw(
+    env: &Env,
+    user: Address,
+    network_id: u32,
+    _asset: Option<Address>,
+    amount: i128,
+) -> Result<i128, BridgeError> {
+    user.require_auth();
+    if amount <= 0 {
+        return Err(BridgeError::InvalidAmount);
+    }
+
+    // Freeze gate: must precede any state read/write. This is the entire
+    // reason for the freeze feature — withdrawals halted before they touch
+    // anything.
+    if is_bridge_frozen(env) {
+        return Err(BridgeError::Frozen);
+    }
+
+    // Validate the bridge is registered and enabled before any side effects.
+    let cfg = get_bridge_config(env, network_id)?;
+    if !cfg.enabled {
+        return Err(BridgeError::Disabled);
+    }
+
+    Ok(amount)
+}
+
+// ---------------------------------------------------------------------------
+// View functions
+// ---------------------------------------------------------------------------
+
+/// Read the [`BridgeConfig`] for `network_id`.
+///
+/// # Errors
+/// - [`BridgeError::NotFound`] if no bridge is registered.
+pub fn get_bridge_config(env: &Env, network_id: u32) -> Result<BridgeConfig, BridgeError> {
+    env.storage()
+        .persistent()
+        .get(&BridgeDataKey::Bridge(network_id))
+        .ok_or(BridgeError::NotFound)
+}
+
+/// Enumerate all registered bridges.
+///
+/// Reads the `BridgesIndex` and returns a `Map<u32, BridgeConfig>`.
+pub fn list_bridges(env: &Env) -> Map<u32, BridgeConfig> {
+    let index: Vec<u32> = env
+        .storage()
+        .instance()
+        .get(&BridgeDataKey::BridgesIndex)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut out: Map<u32, BridgeConfig> = Map::new(env);
+    for network_id in index.iter() {
+        if let Some(cfg) = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, BridgeConfig>(&BridgeDataKey::Bridge(network_id))
+        {
+            out.set(network_id, cfg);
+        }
+    }
+    out
+}
+
+/// Whether `bridge_withdraw` is currently frozen.
+///
+/// Always `false` before [`freeze_bridge`] is first called.
+pub fn is_bridge_frozen(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&BridgeDataKey::IsFrozen)
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Incident-response: freeze / unfreeze
+// ---------------------------------------------------------------------------
+
+/// Freeze `bridge_withdraw` (guardian only).
+///
+/// Idempotent: calling on an already-frozen bridge returns `Ok(())` **without**
+/// emitting a duplicate event (the freeze event fires only on the transition
+/// from `false → true`).
+///
+/// Triggers a [`BridgeFreezeEvent`] with `is_frozen = true` on the transition.
+///
+/// # Errors
+/// - [`BridgeError::Unauthorized`] if `caller` is not the configured guardian.
+/// - [`BridgeError::GuardianNotConfigured`] if no guardian has been set yet.
+pub fn freeze_bridge(env: &Env, caller: Address) -> Result<(), BridgeError> {
+    require_guardian(env, &caller)?;
+    if is_bridge_frozen(env) {
+        // No-op: do not double-emit.
+        return Ok(());
+    }
+    env.storage()
+        .instance()
+        .set(&BridgeDataKey::IsFrozen, &true);
+    emit_freeze_event(env, &caller, true);
+    Ok(())
+}
+
+/// Unfreeze `bridge_withdraw` (guardian only).
+///
+/// Idempotent: calling on an already-unfrozen bridge returns `Ok(())` without
+/// emitting a duplicate event.
+///
+/// Triggers a [`BridgeFreezeEvent`] with `is_frozen = false` on the transition.
+///
+/// # Errors
+/// - [`BridgeError::Unauthorized`] if `caller` is not the configured guardian.
+/// - [`BridgeError::GuardianNotConfigured`] if no guardian has been set yet.
+pub fn unfreeze_bridge(env: &Env, caller: Address) -> Result<(), BridgeError> {
+    require_guardian(env, &caller)?;
+    if !is_bridge_frozen(env) {
+        // No-op: do not double-emit.
+        return Ok(());
+    }
+    env.storage().instance().remove(&BridgeDataKey::IsFrozen);
+    emit_freeze_event(env, &caller, false);
+    Ok(())
+}
+
+// ===========================================================================
+// Note on state-machine coverage
+// ===========================================================================
+// The freeze state machine is exhaustively covered by the on-chain
+// integration tests in `bridge_freeze_test.rs` (FFNN-1 through FFNN-12):
+// idempotency, no-mutation on frozen withdraw, default state, etc. — all
+// of which drive the same `freeze_bridge` / `unfreeze_bridge` functions
+// against a real `Env`. We deliberately keep no in-module proptest mirror
+// so the production surface stays focused.

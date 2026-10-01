@@ -196,16 +196,21 @@ mod interest_rate_regression {
 
     // ── compute_borrow_rate: failure / overflow paths ──────────────────────
 
-    /// A multiplier so large it overflows `utilization × multiplier` → `Overflow`.
+    /// A multiplier so large it overflows `utilization × multiplier` → `Overflow`
+    /// instead of panicking. Utilization and kink must stay inside
+    /// `0..=BPS_DENOM`: the value-range guard runs first, so an out-of-range
+    /// utilization would return `OutOfRange` and never exercise the arithmetic
+    /// failure the test is about.
     #[test]
     fn multiplier_overflow_returns_error_not_panic() {
         let p = RateParams {
-            multiplier_bps: i128::MAX / 2,
-            kink_utilization_bps: i128::MAX / 2,
+            multiplier_bps: i128::MAX,
+            kink_utilization_bps: BPS_DENOM,
             ..RateParams::default()
         };
+        // 10_000 × i128::MAX cannot be represented, so `checked_mul` reports it.
         assert_eq!(
-            compute_borrow_rate(i128::MAX / 2, &p),
+            compute_borrow_rate(BPS_DENOM, &p),
             Err(RateModelError::Overflow)
         );
     }
