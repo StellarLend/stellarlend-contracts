@@ -27,6 +27,7 @@ export abstract class BasePriceProvider {
     protected lastRequestTime: number = 0;
     protected requestCount: number = 0;
     protected windowStartTime: number = Date.now();
+    private rateLimitQueue: Promise<void> = Promise.resolve();
     public cooldownUntil: number = 0;
 
     constructor(config: ProviderConfig) {
@@ -124,24 +125,30 @@ export abstract class BasePriceProvider {
      * Enforce rate limiting
      */
     protected async enforceRateLimit(): Promise<void> {
-        const now = Date.now();
-        const { maxRequests, windowMs } = this.config.rateLimit;
+        const reservation = this.rateLimitQueue.then(async () => {
+            const now = Date.now();
+            const { maxRequests, windowMs } = this.config.rateLimit;
 
-        if (now - this.windowStartTime >= windowMs) {
-            this.windowStartTime = now;
-            this.requestCount = 0;
-        }
+            if (now - this.windowStartTime >= windowMs) {
+                this.windowStartTime = now;
+                this.requestCount = 0;
+            }
 
-        if (this.requestCount >= maxRequests) {
-            const waitTime = windowMs - (now - this.windowStartTime);
-            logger.warn(`Rate limit reached for ${this.name}, waiting ${waitTime}ms`);
-            await this.sleep(waitTime);
-            this.windowStartTime = Date.now();
-            this.requestCount = 0;
-        }
+            if (this.requestCount >= maxRequests) {
+                const waitTime = Math.max(0, windowMs - (now - this.windowStartTime));
+                logger.warn(`Rate limit reached for ${this.name}, waiting ${waitTime}ms`);
+                await this.sleep(waitTime);
+                this.windowStartTime = Date.now();
+                this.requestCount = 0;
+            }
 
-        this.requestCount++;
-        this.lastRequestTime = now;
+            this.requestCount++;
+            this.lastRequestTime = Date.now();
+        });
+
+        // A failed wait must not leave later reservations blocked behind a rejected promise.
+        this.rateLimitQueue = reservation.then(() => undefined, () => undefined);
+        await reservation;
     }
 
     /**

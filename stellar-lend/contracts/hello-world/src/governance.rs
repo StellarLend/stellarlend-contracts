@@ -406,6 +406,7 @@ pub fn get_admin(env: &Env) -> Option<Address> {
 }
 
 /// Return the multisig configuration, or `None`.
+/// Note: The standalone `stellarlend-multisig` system is the authoritative multisig implementation for this project.
 pub fn get_multisig_config(env: &Env) -> Option<MultisigConfig> {
     env.storage()
         .instance()
@@ -831,7 +832,10 @@ pub fn approve_proposal(
 }
 
 /// Return proposal approvals (votes for this proposal).
-pub fn get_proposal_approvals(env: &Env, _proposal_id: u64) -> Option<Vec<Address>> {
+pub fn get_proposal_approvals(
+    env: &Env,
+    _proposal_id: u64,
+) -> Option<Vec<Address>> {
     // Approval tracking is not yet implemented for the can_vote test focus.
     // In production, this would return the list of approvers for a proposal.
     let _ = env;
