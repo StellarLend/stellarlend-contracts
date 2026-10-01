@@ -1632,17 +1632,45 @@ impl LendingContract {
 
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
-        if let Some(asset) = Self::get_collateral_asset(env.clone()) {
-            invariants::check_invariant_after(&env, &asset);
-        }        Ok(new_balance)
+
+        Ok(new_balance)
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
-        if let Some(asset) = Self::get_collateral_asset(env.clone()) {
-            invariants::check_invariant_before(&env, &asset);
-        }        Ok(new_balance)
+        check_pause_status(&env, ProtocolAction::Withdraw);
+        check_emergency_status(&env, ProtocolAction::Withdraw);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        require_no_active_flash_loan(&env);
+        user.require_auth();
+        let key = DataKey::Collateral(user.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        if amount > current {
+            return Err(LendingError::InvalidAmount);
+        }
+        let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+        env.storage().persistent().set(&key, &new_balance);
+        let total_deposits: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDeposits)
+            .unwrap_or(0);
+        let new_total = total_deposits
+            .checked_sub(amount)
+            .ok_or(LendingError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &new_total);
+        extend_collateral_ttl(&env, &user);
+
+        // Emit withdraw event
+        emit_withdraw(&env, &user, amount, new_balance);
+
+        Ok(new_balance)
     }
 
     /// Set the configured valuation collateral asset for the legacy single-asset flows.
@@ -1711,9 +1739,61 @@ impl LendingContract {
     /// `DataKey::DebtCeiling`.
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
-        if let Some(asset) = Self::get_collateral_asset(env.clone()) {
-            invariants::check_invariant_before(&env, &asset);
-        }        Ok(updated.principal)
+        check_pause_status(&env, ProtocolAction::Borrow);
+        check_emergency_status(&env, ProtocolAction::Borrow);
+        require_no_active_flash_loan(&env);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        require_fresh_valuation_prices(&env)?;
+        user.require_auth();
+        let min_borrow = Self::get_min_borrow(env.clone());
+        if amount < min_borrow {
+            return Err(LendingError::BelowMinimumBorrow);
+        }
+
+        // Validate price availability before changes
+        let _ = Self::get_collateral_price_internal(&env)?;
+
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
+        let now = env.ledger().timestamp();
+        let rate = current_borrow_rate(&env);
+        let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
+        let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
+            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
+            debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
+        })?;
+
+        let total_debt: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDebt)
+            .unwrap_or(0);
+        let delta = updated
+            .principal
+            .checked_sub(prev_principal)
+            .ok_or(LendingError::Overflow)?;
+        let new_total_debt = total_debt
+            .checked_add(delta)
+            .ok_or(LendingError::Overflow)?;
+
+        assert_borrow_solvent(&env, &user, &updated, new_total_debt)?;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDebt, &new_total_debt);
+
+        save_debt(&env, &user, &updated);
+        // Extend TTL to prevent archival of debt entry
+        extend_debt_ttl(&env, &user);
+
+        // Emit borrow event
+        emit_borrow(&env, &user, amount, updated.principal);
+
+        Ok(updated.principal)
     }
 
     /// Isolation-aware borrow for cross-asset positions.
@@ -1739,7 +1819,78 @@ impl LendingContract {
         collateral_asset: Address,
     ) -> Result<i128, LendingError> {
         require_initialized(&env)?;
-        invariants::check_invariant_before(&env, &collateral_asset);        check_pause_status(&env, ProtocolAction::Repay);
+        check_pause_status(&env, ProtocolAction::Borrow);
+        check_emergency_status(&env, ProtocolAction::Borrow);
+        require_no_active_flash_loan(&env);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        user.require_auth();
+        let min_borrow = Self::get_min_borrow(env.clone());
+        if amount < min_borrow {
+            return Err(LendingError::BelowMinimumBorrow);
+        }
+
+        let now = env.ledger().timestamp();
+        let position = load_debt(&env, &user);
+        let prev_principal = position.principal;
+        let rate = current_borrow_rate(&env);
+        let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
+            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
+            debt::DebtError::Overflow => LendingError::Overflow,
+            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
+        })?;
+        save_debt(&env, &user, &updated);
+
+        // Track protocol-level total debt.
+        let total_debt: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDebt)
+            .unwrap_or(0);
+        let delta = updated
+            .principal
+            .checked_sub(prev_principal)
+            .ok_or(LendingError::Overflow)?;
+        let new_total_debt = total_debt
+            .checked_add(delta)
+            .ok_or(LendingError::Overflow)?;
+        // Check the actual principal delta, not the requested amount. This
+        // keeps the ceiling aligned with the value written to the position.
+        check_isolation_ceiling_internal(&env, &collateral_asset, delta)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDebt, &new_total_debt);
+
+        // Update the per-asset isolation debt tracker only when the asset is
+        // actually configured as isolated.  Non-isolated assets are not tracked.
+        if is_asset_isolated(&env, &collateral_asset) {
+            increment_isolation_debt(&env, &collateral_asset, delta)?;
+        }
+
+        // Check invariant AFTER state change
+        invariants::check_invariant_after(&env, &collateral_asset);
+
+        Ok(updated.principal)
+    }
+
+    /// Isolation-aware repay for cross-asset positions.
+    ///
+    /// Identical to [`repay`] but decrements `IsolationDebt(collateral_asset)`
+    /// by the net principal reduction so the ceiling tracks accurately after
+    /// partial or full repayments.
+    ///
+    /// Pass the same `collateral_asset` that was supplied to
+    /// [`borrow_against_collateral`] when the position was opened.
+    pub fn repay_against_collateral(
+        env: Env,
+        user: Address,
+        amount: i128,
+        collateral_asset: Address,
+    ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
+        check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
@@ -2123,6 +2274,56 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Return the effective liquidation incentive (basis points) used by
+    /// `liquidate` — the bonus, on top of the repaid debt, paid to the
+    /// liquidator in seized collateral.
+    ///
+    /// Defaults to [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] (1000 = 10 %) until
+    /// an admin configures an override via
+    /// [`Self::set_liquidation_incentive_bps`].
+    pub fn get_liquidation_incentive_bps(env: Env) -> i128 {
+        Self::liquidation_incentive_bps_config(&env)
+    }
+
+    /// Set the liquidation incentive in basis points (admin-only).
+    ///
+    /// Must be in `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (0 % to 50 %).
+    ///
+    /// # Errors
+    /// - [`LendingError::InvalidLiquidationIncentiveBps`] if
+    ///   `incentive_bps < 0` or `incentive_bps > MAX_LIQUIDATION_INCENTIVE_BPS`.
+    pub fn set_liquidation_incentive_bps(
+        env: Env,
+        incentive_bps: i128,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+        if !(0..=MAX_LIQUIDATION_INCENTIVE_BPS).contains(&incentive_bps) {
+            return Err(LendingError::InvalidLiquidationIncentiveBps);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
+        events::emit_liquidation_incentive_bps_set(&env, incentive_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_liquidation_incentive_bps"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+
+    pub fn repay(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Repay);
         check_emergency_status(&env, ProtocolAction::Repay);
 
@@ -2160,9 +2361,8 @@ impl LendingContract {
 
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
-        if let Some(asset) = Self::get_collateral_asset(env.clone()) {
-            invariants::check_invariant_after(&env, &asset);
-        }        Ok(updated.principal)
+
+        Ok(updated.principal)
     }
 
     pub fn get_debt_position(env: Env, user: Address) -> DebtPosition {

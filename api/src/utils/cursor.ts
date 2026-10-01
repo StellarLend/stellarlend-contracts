@@ -3,12 +3,8 @@
  *
  * Cursor format: base64url(ledger_sequence:event_index)
  *
- * This provides stable ordering guarantees even when new events arrive
- * between paginated API calls. The cursor is opaque to clients and encodes
- * both the ledger sequence and the event index within that ledger.
- *
- * Canonical contract (see StellarService.fetchActivityByLedgerRange, which
- * consumes the object form).
+ * Provides stable ordering guarantees even when new events arrive between
+ * paginated API calls. The cursor is opaque to callers.
  */
 
 /** A cursor position within the ledger stream. */
@@ -19,22 +15,12 @@ export interface Cursor {
 
 const CURSOR_SEPARATOR = ':';
 
-/**
- * Maximum supported ledger sequence (u32 max).
- * Prevents integer overflow in parsing.
- */
+// u32 max — Stellar ledger sequences are unsigned 32-bit integers
 const MAX_LEDGER_SEQUENCE = 4_294_967_295;
-
-/**
- * Maximum supported event index per ledger.
- * Prevents unbounded memory allocation attacks.
- */
+// Practical cap to prevent unbounded parsing
 const MAX_EVENT_INDEX = 1_000_000;
 
-/** Default page size for activity queries */
 export const DEFAULT_PAGE_SIZE = 20;
-
-/** Maximum page size to prevent DoS */
 export const MAX_PAGE_SIZE = 100;
 
 export class CursorError extends Error {
@@ -44,20 +30,6 @@ export class CursorError extends Error {
   }
 }
 
-/**
- * Custom error class for cursor operations.
- */
-export class CursorError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CursorError';
-    Object.setPrototypeOf(this, CursorError.prototype);
-  }
-}
-
-/**
- * Encode a cursor object to an opaque base64url string.
- */
 export function encodeCursor(cursor: Cursor): string {
   const { ledgerSequence, eventIndex } = cursor ?? ({} as Cursor);
 
@@ -72,21 +44,9 @@ export function encodeCursor(cursor: Cursor): string {
   return Buffer.from(plain, 'utf-8').toString('base64url');
 }
 
-/**
- * Decode a base64url cursor string back to a Cursor object.
- *
- * @throws CursorError if the cursor is malformed or out of range.
- */
-export function decodeCursor(cursor: string): Cursor {
-  if (!cursor || typeof cursor !== 'string') {
-    throw new CursorError('Cursor decode failed: Cursor must be a non-empty string');
-  }
-
-  // base64url and base64 decode identically for the alphabet we emit, but be
-  // defensive: a cursor that is not valid base64 must not silently decode to
-  // garbage.
-  if (!/^[A-Za-z0-9_-]+={0,2}$/.test(cursorString)) {
-    throw new CursorError('Invalid base64 encoding');
+export function decodeCursor(cursorString: string): Cursor {
+  if (!cursorString || typeof cursorString !== 'string') {
+    throw new CursorError('Cursor must be a non-empty string');
   }
 
   let plain: string;
@@ -126,29 +86,28 @@ export function decodeCursor(cursor: string): Cursor {
   return { ledgerSequence, eventIndex };
 }
 
-/**
- * Validate and sanitize a page size parameter.
- *
- * Non-numeric, zero and negative values fall back to the default so that
- * hostile query strings cannot force unbounded result sets.
- */
-export function sanitizePageSize(limit: unknown): number {
-  if (limit === undefined || limit === null) {
-    return DEFAULT_PAGE_SIZE;
+export function isValidCursor(value: unknown): value is string {
+  if (typeof value !== 'string' || !value) return false;
+  try {
+    decodeCursor(value);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+export function sanitizePageSize(limit: unknown): number {
+  if (limit === undefined || limit === null) return DEFAULT_PAGE_SIZE;
 
   const parsed = typeof limit === 'string' ? parseInt(limit, 10) : Number(limit);
+  if (isNaN(parsed) || parsed < 1) return DEFAULT_PAGE_SIZE;
 
-  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 1) {
-    return DEFAULT_PAGE_SIZE;
-  }
-
-  return Math.min(Math.trunc(parsed), MAX_PAGE_SIZE);
+  return Math.min(parsed, MAX_PAGE_SIZE);
 }
 
 /**
- * Generate the cursor pointing at the position immediately after the last
- * item in a page.
+ * Builds the cursor that points to the position *after* the given item,
+ * i.e. the start position for the next page.
  */
 export function nextCursor(lastLedgerSequence: number, lastEventIndex: number): string {
   return encodeCursor({
@@ -157,24 +116,28 @@ export function nextCursor(lastLedgerSequence: number, lastEventIndex: number): 
   });
 }
 
+// ---------------------------------------------------------------------------
+// Legacy helpers — preserved for backwards compatibility
+// ---------------------------------------------------------------------------
+
 /**
- * Check if a value is a valid cursor string.
+ * @deprecated Use encodeCursor({ ledgerSequence, eventIndex }) instead.
  */
-export function isValidCursor(value: unknown): value is string {
-  if (typeof value !== 'string' || !value) return false;
-  try { decodeCursor(value); return true; } catch { return false; }
+export function getNextCursor<T extends { ledgerSequence: number; eventIndex: number }>(
+  items: T[]
+): string | undefined {
+  if (items.length === 0) return undefined;
+  const last = items[items.length - 1];
+  return encodeCursor({ ledgerSequence: last.ledgerSequence, eventIndex: last.eventIndex });
 }
 
 /**
- * Compare two cursors for ordering.
+ * Compares two cursors for ordering.
  * Returns negative if a < b, positive if a > b, 0 if equal.
  */
 export function compareCursors(a: string, b: string): number {
-  const decodedA = decodeCursor(a);
-  const decodedB = decodeCursor(b);
-
-  if (decodedA.ledgerSequence !== decodedB.ledgerSequence) {
-    return decodedA.ledgerSequence - decodedB.ledgerSequence;
-  }
-  return decodedA.eventIndex - decodedB.eventIndex;
+  const da = decodeCursor(a);
+  const db = decodeCursor(b);
+  if (da.ledgerSequence !== db.ledgerSequence) return da.ledgerSequence - db.ledgerSequence;
+  return da.eventIndex - db.eventIndex;
 }

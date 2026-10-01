@@ -26,27 +26,11 @@ import {
   AMM_EVENT_TOPIC_MODULE,
   AMM_EVENT_TOPIC_VERSION,
 } from '../types';
+import { rpc } from '@stellar/stellar-sdk';
 import { Cursor } from '../utils/cursor';
-import { CircuitBreaker } from '../utils/circuitBreaker';
+import CircuitBreaker from '../utils/circuitBreaker';
 
-/**
- * Raw event from Soroban RPC.
- *
- * Mirrors the subset of the SDK's EventResponse that event parsing actually
- * reads. `contractId` is omitted deliberately: the SDK types it as a Contract
- * object and parsing never depends on it.
- */
-interface RawContractEvent {
-  id: string;
-  type: string;
-  ledger: number;
-  ledgerClosedAt: string;
-  topic: xdr.ScVal[];
-  value: xdr.ScVal;
-  inSuccessfulContractCall: boolean;
-  txHash: string;
-}
-
+/** Raw event from Soroban RPC */
 /** Parsed activity event */
 interface ActivityEvent {
   id: string;
@@ -89,14 +73,11 @@ export class StellarService {
   private contractId: string;
   private sorobanServer: SorobanServer;
   private sorobanBreaker: CircuitBreaker;
-  private rpc: SorobanServer;
+  private rpc: rpc.Server;
   private lendingContractId: string;
 
-  constructor(
-    rpcUrl: string = config.stellar.sorobanRpcUrl,
-    lendingContractId: string = config.stellar.contractId
-  ) {
-    this.rpc = new SorobanServer(rpcUrl);
+  constructor(rpcUrl: string, lendingContractId: string) {
+    this.rpc = new rpc.Server(rpcUrl);
     this.lendingContractId = lendingContractId;
     this.horizonUrl = config.stellar.horizonUrl;
     this.sorobanRpcUrl = config.stellar.sorobanRpcUrl;
@@ -378,7 +359,7 @@ export class StellarService {
     const toLedger = currentLedger;
 
     // Build event filters for lending contract
-    const filters: Api.EventFilter[] = [
+    const filters: rpc.Api.EventFilter[] = [
       {
         type: 'contract',
         contractIds: [this.lendingContractId],
@@ -494,9 +475,9 @@ export class StellarService {
    * Extracts event type, user address, amount, asset, and assigns
    * stable event indices within each ledger.
    */
-  private parseEvents(rawEvents: RawContractEvent[]): ActivityEvent[] {
+  private parseEvents(rawEvents: rpc.Api.EventResponse[]): ActivityEvent[] {
     // Group by ledger to assign event indices
-    const ledgerGroups = new Map<number, RawContractEvent[]>();
+    const ledgerGroups = new Map<number, rpc.Api.EventResponse[]>();
 
     for (const event of rawEvents) {
       const existing = ledgerGroups.get(event.ledger) ?? [];
@@ -537,7 +518,7 @@ export class StellarService {
    * @returns Parsed event or null if unparseable
    */
   private parseSingleEvent(
-    event: RawContractEvent,
+    event: rpc.Api.EventResponse,
     ledgerSequence: number,
     eventIndex: number
   ): ActivityEvent | null {
@@ -617,7 +598,7 @@ export class StellarService {
       let amount = '0';
       let asset = '';
 
-      for (const entry of map) {
+      for (const entry of map ?? []) {
         const key = entry.key().sym().toString();
         if (key === 'amount') {
           // An i128 is a two's-complement 128-bit integer split into a signed
