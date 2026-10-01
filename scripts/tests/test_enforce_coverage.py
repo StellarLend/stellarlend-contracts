@@ -127,6 +127,38 @@ class TestThresholdConfig(unittest.TestCase):
         self.assertEqual(thresholds["flat_threshold"], 70.0)
         self.assertNotIn("contracts/vesting/src", thresholds["per_crate"])
         self.assertNotIn("contracts/hello-world/src", thresholds["per_crate"])
+        self.assertNotIn("contracts/amm/src", thresholds["per_crate"])
+
+    def test_committed_cobertura_passes_enforcement(self):
+        """The committed stellar-lend/cobertura.xml must pass enforce_coverage.py.
+
+        This catches stale cobertura.xml artifacts that contain packages excluded
+        by .tarpaulin.toml (e.g. contracts/hello-world/src at 0%) which would fail
+        the flat_threshold check and break local enforcement runs. Fixes #2046.
+        """
+        import subprocess
+
+        repo_root = Path(__file__).resolve().parents[2]
+        cobertura = repo_root / "stellar-lend" / "cobertura.xml"
+        thresholds_json = repo_root / "scripts" / "coverage_thresholds.json"
+
+        self.assertTrue(cobertura.exists(), f"cobertura.xml not found at {cobertura}")
+        self.assertTrue(thresholds_json.exists(), f"coverage_thresholds.json not found at {thresholds_json}")
+
+        enforce_script = repo_root / "scripts" / "enforce_coverage.py"
+        proc = subprocess.run(
+            [sys.executable, str(enforce_script), str(cobertura),
+             "--thresholds-json", str(thresholds_json)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"enforce_coverage.py failed against committed cobertura.xml.\n"
+            f"This means cobertura.xml contains a package that fails its threshold.\n"
+            f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}",
+        )
 
 
 
