@@ -96,6 +96,7 @@ use proptest::prelude::*;
 
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::IntoVal;
 
@@ -170,20 +171,18 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
         .prop_map(|(l, b, a)| Operation::Liquidate(l, b, a));
     let short_time = (0u32..=86_400).prop_map(Operation::AdvanceTime);
     let long_time = (86_400u32..=31_536_000).prop_map(Operation::AdvanceTime);
-    let min_borrow =
-        prop::sample::select(&[0i128, 1, 50, 250]).prop_map(|v| Operation::SetMinBorrow(v));
+    let min_borrow = prop::sample::select(&[0i128, 1, 50, 250]).prop_map(Operation::SetMinBorrow);
     let deposit_cap =
-        prop::sample::select(&[500i128, 5_000, 50_000]).prop_map(|v| Operation::SetDepositCap(v));
+        prop::sample::select(&[500i128, 5_000, 50_000]).prop_map(Operation::SetDepositCap);
     let debt_ceiling =
-        prop::sample::select(&[10_000i128, 100_000]).prop_map(|v| Operation::SetDebtCeiling(v));
+        prop::sample::select(&[10_000i128, 100_000]).prop_map(Operation::SetDebtCeiling);
     let close_factor =
-        prop::sample::select(&[2_500i128, 5_000, 7_500]).prop_map(|v| Operation::SetCloseFactor(v));
-    let incentive =
-        prop::sample::select(&[0i128, 1_000, 2_000]).prop_map(|v| Operation::SetIncentive(v));
+        prop::sample::select(&[2_500i128, 5_000, 7_500]).prop_map(Operation::SetCloseFactor);
+    let incentive = prop::sample::select(&[0i128, 1_000, 2_000]).prop_map(Operation::SetIncentive);
     let threshold =
-        prop::sample::select(&[5_000i128, 8_000, 10_000]).prop_map(|v| Operation::SetThreshold(v));
+        prop::sample::select(&[5_000i128, 8_000, 10_000]).prop_map(Operation::SetThreshold);
     let insurance =
-        prop::sample::select(&[0i128, 1_000, 5_000]).prop_map(|v| Operation::SetInsuranceShare(v));
+        prop::sample::select(&[0i128, 1_000, 5_000]).prop_map(Operation::SetInsuranceShare);
     prop::strategy::Union::new_weighted(alloc::vec![
         (5, deposit.boxed()),
         (5, withdraw.boxed()),

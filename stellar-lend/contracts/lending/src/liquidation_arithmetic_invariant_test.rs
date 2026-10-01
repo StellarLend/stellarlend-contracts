@@ -35,6 +35,12 @@ const INCENTIVE_BPS: i128 = 1_000;
 /// A seeded timestamp that is distinguishable from "absent".
 const SEEDED_UNHEALTHY_TS: u64 = 12_345;
 
+/// The governed-threshold cases below rely on a half-liquidated position at a
+/// 50 % threshold (`hf_after = 7_500`) still reading as unhealthy. Pin the
+/// premise at compile time so a future constant change breaks the build rather
+/// than silently invalidating the test.
+const _: () = assert!(HEALTH_FACTOR_SCALE > 7_500);
+
 struct Fixture {
     env: Env,
     client: LendingContractClient<'static>,
@@ -205,11 +211,8 @@ fn governed_threshold_drives_post_liquidation_timestamp_decision() {
     let (col, debt) = raw_position(&f);
     assert_eq!((col, debt), (150, 100), "post-state must be 150 / 100");
 
-    // hf_after = 150·5000/100 = 7_500 < HEALTH_FACTOR_SCALE -> still unhealthy.
-    assert!(
-        7_500 < HEALTH_FACTOR_SCALE,
-        "sanity: governed hf_after is below scale"
-    );
+    // hf_after = 150·5000/100 = 7_500 < HEALTH_FACTOR_SCALE -> still unhealthy
+    // (the premise is pinned by the `const _` assertion near the top of the file).
     assert!(
         unhealthy_timestamp_present(&f),
         "position is still unhealthy under the governed threshold, so \

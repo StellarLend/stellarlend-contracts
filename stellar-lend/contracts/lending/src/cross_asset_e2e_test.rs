@@ -12,6 +12,7 @@
 /// - Liquidation threshold is expressed in bps (8_000 = 80%).
 /// - Minimum borrow is 1_000 (raw units) by default.
 use super::*;
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
