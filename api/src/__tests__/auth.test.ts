@@ -1,1 +1,272 @@
-aW1wb3J0IGNyeXB0byBmcm9tICdjeXJ5cHRvJzsKaW1wb3J0IGp3dCBmcm9tICdqc29ud2VidG9rZW4nOwppbXBvcnQgewogIGF1dGhlbnRpY2F0ZVRva2VuLAogIGdlbmVyYXRlVG9rZW4sCiAgdmVyaWZ5SG9va0htYWMsCiAgQXV0aFJlcXVlc3QsCn0gZnJvbSAnLi4vbWlkZGxld2FyZS9hdXRoJzsKaW1wb3J0IHsgVW5hdXRob3JpemVkRXJyb3IgfSBmcm9tICcuLi91dGlscy9lcnJvcnMnOwppbXBvcnQgeyBjb25maWcgfSBmcm9tICcuLi9jb25maWcnOwppbXBvcnQgeyBUcmFuc2FjdGlvblN0YXR1cyB9IGZyb20gJy4uL3R5cGVzJzsKCmRlc2NyaWJlKCdBdXRoIE1pZGRsZXdhcmUnLCAoKSA9PiB7CiAgY29uc3QgcmVzcG9uc2UgPSB7fSBhcyBhbnk7CgogIGRlc2NyaWJlKCdhdXRoZW50aWNhdGVUb2tlbicsICgpID0+IHsKICAgIGl0KCdzaG91bGQgcmVqZWN0IHJlcXVlc3RzIHdpdGhvdXQgYWNjZXNzIHRva2VuJywgKCkgPT4gewogICAgICBjb25zdCByZXF1ZXN0ID0geyBoZWFkZXJzOiB7fSB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICBjb25zdCBuZXh0ID0gamVzdC5mbigpOwoKICAgICAgZXhwZWN0KCgpID0+IGF1dGhlbnRpY2F0ZVRva2VuKHJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KSkudG9UaHJvdygKICAgICAgICBuZXcgVW5hdXRob3JpemVkRXJyb3IoJ0FjY2VzcyB0b2tlbiByZXF1aXJlZCcpCiAgICAgICk7CiAgICAgIGV4cGVjdChuZXh0KS5ub3QudG9IYXZlQmVlbkNhbGxlZCgpOwogICAgfSk7CgogICAgaXQoJ3Nob3VsZCByZWplY3QgaW52YWxpZCBhY2Nlc3MgdG9rZW4nLCAoKSA9PiB7CiAgICAgIGNvbnN0IHJlcXVlc3QgPSB7IGhlYWRlcnM6IHsgYXV0aG9yaXphdGlvbjogJ0JlYXJlciBpbnZhbGlkJyB9IH0gYXMgQXV0aFJlcXVlc3Q7CiAgICAgIGNvbnN0IG5leHQgPSBqZXN0LmZuKCk7CgogICAgICBleHBlY3QoKCkgPT4gYXV0aGVudGljYXRlVG9rZW4ocmVxdWVzdCwgcmVzcG9uc2UsIG5leHQpKS50b1Rocm93KAogICAgICAgIG5ldyBVbmF1dGhvcml6ZWRFcnJvcignSW52YWxpZCBvciBleHBpcmVkIHRva2VuJykKICAgICAgKTsKICAgICAgZXhwZWN0KG5leHQpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7CiAgICB9KTsKCiAgICBpdCgnc2hvdWxkIHJlamVjdCB0b2tlbiBzaWduZWQgd2l0aCB3cm9uZyBzZWNyZXQnLCAoKSA9PiB7CiAgICAgIGNvbnN0IHRva2VuID0gand0LnNpZ24oeyBhZGRyZXNzOiAnR0JMWFZLV0hENFFBUEZMSE1KRFhTVkI2R0ZVRExUQzQ2Vlk0Mk9XSEMzVFBSMkkyNk5OVjNaU0onIH0sICd3cm9uZy1zZWNyZXQnKTsKICAgICAgY29uc3QgcmVxdWVzdCA9IHsgaGVhZGVyczogeyBhdXRob3JpemF0aW9uOiBgQmVhcmVyICR7dG9rZW59YCB9IH0gYXMgQXV0aFJlcXVlc3Q7CiAgICAgIGNvbnN0IG5leHQgPSBqZXN0LmZuKCk7CgogICAgICBleHBlY3QoKCkgPT4gYXV0aGVudGljYXRlVG9rZW4ocmVxdWVzdCwgcmVzcG9uc2UsIG5leHQpKS50b1Rocm93KAogICAgICAgIG5ldyBVbmF1dGhvcml6ZWRFcnJvcignSW52YWxpZCBvciBleHBpcmVkIHRva2VuJykKICAgICAgKTsKICAgICAgZXhwZWN0KG5leHQpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7CiAgICB9KTsKCiAgICBpdCgnc2hvdWxkIHJlamVjdCBleHBpcmVkIHRva2VuJywgKCkgPT4gewogICAgICBjb25zdCB0b2tlbiA9IGp3dC5zaWduKAogICAgICAgIHsgYWRkcmVzczogJ0dCTFhWS1dIRDRRQU1GTEhNSkRYU1ZCNkdGVURMVEM0NlZZNDJPV0hDM1RQUjJJNk5OVjNaU0onIH0sCiAgICAgICAgY29uZmlnLmF1dGguand0U2VjcmV0LAogICAgICAgIHsgZXhwaXJlc0luOiAtMSB9CiAgICAgICk7CiAgICAgIGNvbnN0IHJlcXVlc3QgPSB7IGhlYWRlcnM6IHsgYXV0aG9yaXphdGlvbjogYEJlYXJlciAke3Rva2VufWAgfSB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICBjb25zdCBuZXh0ID0gamVzdC5mbigpOwoKICAgICAgZXhwZWN0KCgpID0+IGF1dGhlbnRpY2F0ZVRva2VuKHJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KSkudG9UaHJvdygKICAgICAgICBuZXcgVW5hdXRob3JpemVkRXJyb3IoJ0ludmFsaWQgb3IgZXhwaXJlZCB0b2tlbicpCiAgICAgICk7CiAgICAgIGV4cGVjdChuZXh0KS5ub3QudG9IYXZlQmVlbkNhbGxlZCgpOwogICAgfSk7CgogICAgaXQoJ3Nob3VsZCByZWplY3QgbWFsZm9ybWVkIGF1dGhvcml6YXRpb24gaGVhZGVyJywgKCkgPT4gewogICAgICBjb25zdCByZXF1ZXN0ID0geyBoZWFkZXJzOiB7IGF1dGhvcml6YXRpb246ICdCZWFyZXInIH0gfSBhcyBBdXRoUmVxdWVzdDsKICAgICAgY29uc3QgbmV4dCA9IGplc3QuZm4oKTsKCiAgICAgIGV4cGVjdCgoKSA9PiBhdXRoZW50aWNhdGVUb2tlbihyZXF1ZXN0LCByZXNwb25zZSwgbmV4dCkpLnRvVGhyb3coCiAgICAgICAgbmV3IFVuYXV0aG9yaXplZEVycm9yKCdBY2Nlc3MgdG9rZW4gcmVxdWlyZWQnKQogICAgICApOwogICAgICBleHBlY3QobmV4dCkubm90LnRvSGF2ZUJlZW5DYWxsZWQoKTsKICAgIH0pOwoKICAgIGl0KCdzaG91bGQgYXR0YWNoIGRlY29kZWQgdXNlciBmb3IgdmFsaWQgYWNjZXNzIHRva2VuJywgKCkgPT4gewogICAgICBjb25zdCBhZGRyZXNzID0gJ0dCTFhWS1dIRDRRQU1GTEhNSkRYU1ZCNkdGVURMVEM0NlZZNDJPV0hDM1RQUjJJNk5OVjNaU0onOwogICAgICBjb25zdCB0b2tlbiA9IGdlbmVyYXRlVG9rZW4oYWRkcmVzcyk7CiAgICAgIGNvbnN0IHJlcXVlc3QgPSB7IGhlYWRlcnM6IHsgYXV0aG9yaXphdGlvbjogYEJlYXJlciAke3Rva2VufWAgfSB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICBjb25zdCBuZXh0ID0gamVzdC5mbigpOwoKICAgICAgYXV0aGVudGljYXRlVG9rZW4ocmVxdWVzdCwgcmVzcG9uc2UsIG5leHQpOwoKICAgICAgZXhwZWN0KHJlcXVlc3QudXNlcikuZXF1YWwoeyBhZGRyZXNzLCBpYXQ6IGV4cGVjdC5hbnkoTnVtYmVyKSwgZXhwOiBleHBlY3QuYW55KE51bWJlcikgfSk7CiAgICAgIGV4cGVjdChuZXh0KS50b0hhdmVCZWVuQ2FsbGVkVGltZXMoMSk7CiAgICB9KTsKCiAgICBpdCgnc2hvdWxkIGJlIGRldGVybWluaXN0aWMgYWNyb3NzIHJlcGVhdGVkIHZhbGlkYXRpb25zIG9mIHRoZSBzYW1lIHRva2VuJywgKCkgPT4gewogICAgICBjb25zdCBhZGRyZXNzID0gJ0dCTFhWS1dIRDRRQU1GTEhNSkRYU1ZCNkdGVURMVEM0NlZZNDJPV0hDM1RQUjJJNk5OVjNaU0onOwogICAgICBjb25zdCB0b2tlbiA9IGdlbmVyYXRlVG9rZW4oYWRkcmVzcyk7CiAgICAgIGNvbnN0IG5leHQgPSBqZXN0LmZuKCk7CgogICAgICBmb3IgKGxldCBpID0gMDsgaSA8IDU7IGkrKykgewogICAgICAgIGNvbnN0IHJlcXVlc3QgPSB7IGhlYWRlcnM6IHsgYXV0aG9yaXphdGlvbjogYEJlYXJlciAke3Rva2VufWAgfSB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICAgIGF1dGhlbnRpY2F0ZVRva2VuKHJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KTsKICAgICAgICBleHBlY3QocmVxdWVzdC51c2VyKS50b0VxdWFsKHsgYWRkcmVzcywgaWF0OiBleHBlY3QuYW55KE51bWJlciksIGV4cDogZXhwZWN0LmFueShOdW1iZXIpIH0pOwogICAgICB9CiAgICAgIGV4cGVjdChuZXh0KS50b0hhdmVCZWVuQ2FsbGVkVGltZXMoNSk7CiAgICB9KTsKICB9KTsKCiAgZGVzY3JpYmUoJ3ZlcmlmeUhvb2tIbWFjJywgKCkgPT4gewogICAgY29uc3Qgb3JpZ2luYWxIb29rU2VjcmV0ID0gY29uZmlnLmF1dGguaG9va1NlY3JldDsKCiAgICBjb25zdCBzaWduID0gKHRpbWVzdGFtcDogc3RyaW5nLCByYXdCb2R5OiBzdHJpbmcsIHNlY3JldDogc3RyaW5nKSA9PgogICAgICBjcnlwdG8uY3JlYXRlSG1hYygnc2hhMjU2Jywgc2VjcmV0KS51cGRhdGUoYCR7dGltZXN0YW1wfS4ke3Jhd0JvZHl9YCkuZGlnZXN0KCdoZXgnKTsKCiAgICBhZnRlckVhY2goKCkgPT4gewogICAgICBjb25maWcuYXV0aC5ob29rU2VjcmV0ID0gb3JpZ2luYWxIb29rU2VjcmV0OwogICAgfSk7CgogICAgaXQoJ3Nob3VsZCByZWplY3Qgd2hlbiBob29rIHNlY3JldCBpcyBub3QgY29uZmlndXJlZCcsICgpID0+IHsKICAgICAgY29uZmlnLmF1dGguaG9va1NlY3JldCA9ICcnOwogICAgICBjb25zdCByZXF1ZXN0ID0geyBoZWFkZXJzOiB7fSB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICBjb25zdCBuZXh0ID0gamVzdC5mbigpOwoKICAgICAgZXhwZWN0KCgpID0+IHZlcmlmeUhvb2tIbWFjKHJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KSkudG9UaHJvdygKICAgICAgICBuZXcgVW5hdXRob3JpemVkRXJyb3IoJ0hvb2sgYXV0aGVudGljYXRpb24gc2VjcmV0IGlzIG5vdCBjb25maWd1cmVkJykKICAgICAgKTsKICAgICAgZXhwZWN0KG5leHQpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7CiAgICB9KTsKCiAgICBpdCgnc2hvdWxkIHJlamVjdCB3aGVuIHNpZ25hdHVyZSBvciB0aW1lc3RhbXAgaGVhZGVycyBhcmUgbWlzc2luZycsICgpID0+IHsKICAgICAgY29uZmlnLmF1dGguaG9va1NlY3JldCA9ICd0ZXN0LXNlY3JldCc7CiAgICAgIGNvbnN0IG5leHQgPSBqZXN0LmZuKCk7CgogICAgICBleHBlY3QoKCkgPT4KICAgICAgICB2ZXJpZnlIb29rSG1hYyh7IGhlYWRlcnM6IHt9IH0gYXMgQXV0aFJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KQogICAgICApLnRvVGhyb3cobmV3IFVuYXV0aG9yaXplZEVycm9yKCdIb29rIHNpZ25hdHVyZSBhbmQgdGltZXN0YW1wIGhlYWRlcnMgYXJlIHJlcXVpcmVkJykpOwoKICAgICAgZXhwZWN0KCgpID0+CiAgICAgICAgdmVyaWZ5SG9va0htYWMoCiAgICAgICAgICB7IGhlYWRlcnM6IHsgJ3gtaG9vay1zaWduYXR1cmUnOiAnYWJjJyB9IH0gYXMgQXV0aFJlcXVlc3QsCiAgICAgICAgICByZXNwb25zZSwKICAgICAgICAgIG5leHQKICAgICAgICApCiAgICAgICkudG9UaHJvdyhuZXcgVW5hdXRob3JpemVkRXJyb3IoJ0hvb2sgc2lnbmF0dXJlIGFuZCB0aW1lc3RhbXAgaGVhZGVycyBhcmUgcmVxdWlyZWQnKSk7CgogICAgICBleHBlY3QobmV4dCkubm90LnRvSGF2ZUJlZW5DYWxsZWQoKTsKICAgIH0pOwoKICAgIGl0KCdzaG91bGQgcmVqZWN0IG5vbi1udW1lcmljIHRpbWVzdGFtcCcsICgpID0+IHsKICAgICAgY29uZmlnLmF1dGguaG9va1NlY3JldCA9ICd0ZXN0LXNlY3JldCc7CiAgICAgIGNvbnN0IHJlcXVlc3QgPSB7CiAgICAgICAgaGVhZGVyczogewogICAgICAgICAgJ3gtaG9vay1zaWduYXR1cmUnOiAnYWJjJywKICAgICAgICAgICd4LWhvb2stdGltZXN0YW1wJzogJ25vdC1hLW51bWJlcicsCiAgICAgICAgfSwKICAgICAgfSBhcyBBdXRoUmVxdWVzdDsKICAgICAgY29uc3QgbmV4dCA9IGplc3QuZm4oKTsKCiAgICAgIGV4cGVjdCgoKSA9PiB2ZXJpZnlIb29rSG1hYyhyZXF1ZXN0LCByZXNwb25zZSwgbmV4dCkpLnRvVGhyb3coCiAgICAgICAgbmV3IFVuYXV0aG9yaXplZEVycm9yKCdJbnZhbGlkIGhvb2sgdGltZXN0YW1wJykKICAgICAgKTsKICAgICAgZXhwZWN0KG5leHQpLm5vdC50b0hhdmVCZWVuQ2FsbGVkKCk7CiAgICB9KTsKCiAgICBpdCgnc2hvdWxkIHJlamVjdCB0aW1lc3RhbXAgb3V0c2lkZSB0aGUgYWxsb3dhYmxlIHdpbmRvdycsICgpID0+IHsKICAgICAgY29uZmlnLmF1dGguaG9va1NlY3JldCA9ICd0ZXN0LXNlY3JldCc7CiAgICAgIGNvbnN0IHN0YWxlVGltZXN0YW1wID0gU3RyaW5nKERhdGUubm93KCkgLSAxMCAqIDYwICogMTAwMCk7CiAgICAgIGNvbnN0IHJhd0JvZHkgPSBKU09OLnN0cmluZ2lmeSh7IGV2ZW50OiAndGVzdCcgfSk7CiAgICAgIGNvbnN0IHJlcXVlc3QgPSB7CiAgICAgICAgaGVhZGVyczogewogICAgICAgICAgJ3gtaG9vay1zaWduYXR1cmUnOiBzaWduKHN0YWxlVGltZXN0YW1wLCByYXdCb2R5LCAndGVzdC1zZWNyZXQnKSwKICAgICAgICAgICd4LWhvb2stdGltZXN0YW1wJzogc3RhbGVUaW1lc3RhbXAsCiAgICAgICAgfSwKICAgICAgICByYXdCb2R5LAogICAgICB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICBjb25zdCBuZXh0ID0gamVzdC5mbigpOwoKICAgICAgZXhwZWN0KCgpID0+IHZlcmlmeUhvb2tIbWFjKHJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KSkudG9UaHJvdygKICAgICAgICBuZXcgVW5hdXRob3JpemVkRXJyb3IoJ0hvb2sgdGltZXN0YW1wIG91dHNpZGUgYWxsb3dhYmxlIHdpbmRvdycpCiAgICAgICk7CiAgICAgIGV4cGVjdChuZXh0KS5ub3QudG9IYXZlQmVlbkNhbGxlZCgpOwogICAgfSk7CgogICAgaXQoJ3Nob3VsZCByZWplY3QgdGFtcGVyZWQgcGF5bG9hZCB3aXRoIHZhbGlkIHRpbWVzdGFtcCcsICgpID0+IHsKICAgICAgY29uZmlnLmF1dGguaG9va1NlY3JldCA9ICd0ZXN0LXNlY3JldCc7CiAgICAgIGNvbnN0IHRpbWVzdGFtcCA9IFN0cmluZyhEYXRlLm5vdygpKTsKICAgICAgY29uc3Qgc2lnbmF0dXJlID0gc2lnbih0aW1lc3RhbXAsICd7ImV2ZW50Ijoib3JpZ2luYWwifScsICd0ZXN0LXNlY3JldCcpOwogICAgICBjb25zdCByZXF1ZXN0ID0gewogICAgICAgIGhlYWRlcnM6IHsKICAgICAgICAgICd4LWhvb2stc2lnbmF0dXJlJzogc2lnbmF0dXJlLAogICAgICAgICAgJ3gtaG9vay10aW1lc3RhbXAnOiB0aW1lc3RhbXAsCiAgICAgICAgfSwKICAgICAgICByYXdCb2R5OiAneyJldmVudCI6InRhbXBlcmVkIn0nLAogICAgICB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICBjb25zdCBuZXh0ID0gamVzdC5mbigpOwoKICAgICAgZXhwZWN0KCgpID0+IHZlcmlmeUhvb2tIbWFjKHJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KSkudG9UaHJvdygKICAgICAgICBuZXcgVW5hdXRob3JpemVkRXJyb3IoJ0ludmFsaWQgaG9vayBzaWduYXR1cmUnKQogICAgICApOwogICAgICBleHBlY3QobmV4dCkubm90LnRvSGF2ZUJlZW5DYWxsZWQoKTsKICAgIH0pOwoKICAgIGl0KCdzaG91bGQgcmVqZWN0IG1hbGZvcm1lZCBub24taGV4IHNpZ25hdHVyZSB3aXRob3V0IHRocm93aW5nIGFuIHVuZXhwZWN0ZWQgZXJyb3InLCAoKSA9PiB7CiAgICAgIGNvbmZpZy5hdXRoLmhvb2tTZWNyZXQgPSAndGVzdC1zZWNyZXQnOwogICAgICBjb25zdCB0aW1lc3RhbXAgPSBTdHJpbmcoRGF0ZS5ub3coKSk7CiAgICAgIGNvbnN0IHJlcXVlc3QgPSB7CiAgICAgICAgaGVhZGVyczogewogICAgICAgICAgJ3gtaG9vay1zaWduYXR1cmUnOiAnbm90LWhleCcsCiAgICAgICAgICAn eC1ob29rLXRpbWVzdGFtcCc6IHRpbWVzdGFtcCwKICAgICAgICB9LAogICAgICAgIHJhd0JvZHk6ICd7fScsCiAgICAgIH0gYXMgQXV0aFJlcXVlc3Q7CiAgICAgIGNvbnN0IG5leHQgPSBqZXN0LmZuKCk7CgogICAgICBleHBlY3QoKCkgPT4gdmVyaWZ5SG9va0htYWMocmVxdWVzdCwgcmVzcG9uc2UsIG5leHQpKS50b1Rocm93KAogICAgICAgIG5ldyBVbmF1dGhvcml6ZWRFcnJvcignSW52YWxpZCBob29rIHNpZ25hdHVyZScpCiAgICAgICk7CiAgICAgIGV4cGVjdChuZXh0KS5ub3QudG9IYXZlQmVlbkNhbGxlZCgpOwogICAgfSk7CgogICAgaXQoJ3Nob3VsZCBhY2NlcHQgYSB2YWxpZCBzaWduYXR1cmUgYW5kIGNhbGwgbmV4dCcsICgpID0+IHsKICAgICAgY29uZmlnLmF1dGguaG9va1NlY3JldCA9ICd0ZXN0LXNlY3JldCc7CiAgICAgIGNvbnN0IHRpbWVzdGFtcCA9IFN0cmluZyhEYXRlLm5vdygpKTsKICAgICAgY29uc3QgcmF3Qm9keSA9IEpTT04uc3RyaW5naWZ5KHsgZXZlbnQ6ICd0ZXN0JywgZGF0YTogMTIzIH0pOwogICAgICBjb25zdCByZXF1ZXN0ID0gewogICAgICAgIGhlYWRlcnM6IHsKICAgICAgICAgICd4LWhvb2stc2lnbmF0dXJlJzogc2lnbih0aW1lc3RhbXAsIHJhd0JvZHksICd0ZXN0LXNlY3JldCcpLAogICAgICAgICAgJ3gtaG9vay10aW1lc3RhbXAnOiB0aW1lc3RhbXAsCiAgICAgICAgfSwKICAgICAgICByYXdCb2R5LAogICAgICB9IGFzIEF1dGhSZXF1ZXN0OwogICAgICBjb25zdCBuZXh0ID0gamVzdC5mbigpOwoKICAgICAgdmVyaWZ5SG9va0htYWMocmVxdWVzdCwgcmVzcG9uc2UsIG5leHQpOwoKICAgICAgZXhwZWN0KG5leHQpLnRvSGF2ZUJlZW5DYWxsZWRUaW1lcygxKTsKICAgIH0pOwoKICAgIGl0KCdzaG91bGQgYWNjZXB0IGEgc2lnbmF0dXJlIGF0IHRoZSBleGFjdCB3aW5kb3cgYm91bmRhcnknLCAoKSA9PiB7CiAgICAgIGNvbmZpZy5hdXRoLmhvb2tTZWNyZXQgPSAndGVzdC1zZWNyZXQnOwogICAgICBjb25zdCB0aW1lc3RhbXAgPSBTdHJpbmcoRGF0ZS5ub3coKSAtIDUgKiA2MCAqIDEwMDApOwogICAgICBjb25zdCByYXdCb2R5ID0gJ3t9JzsKICAgICAgY29uc3QgcmVxdWVzdCA9IHsKICAgICAgICBoZWFkZXJzOiB7CiAgICAgICAgICAn eC1ob29rLXNpZ25hdHVyZSc6IHNpZ24odGltZXN0YW1wLCByYXdCb2R5LCAndGVzdC1zZWNyZXQnKSwKICAgICAgICAgICd4LWhvb2stdGltZXN0YW1wJzogdGltZXN0YW1wLAogICAgICAgIH0sCiAgICAgICAgcmF3Qm9keSwKICAgICAgfSBhcyBBdXRoUmVxdWVzdDsKICAgICAgY29uc3QgbmV4dCA9IGplc3QuZm4oKTsKCiAgICAgIHZlcmlmeUhvb2tIbWFjKHJlcXVlc3QsIHJlc3BvbnNlLCBuZXh0KTsKCiAgICAgIGV4cGVjdChuZXh0KS50b0hhdmVCZWVuQ2FsbGVkVGltZXMoMSk7CiAgICB9KTsKCiAgICBpdCgnc2hvdWxkIGhhbmRsZSBhcnJheS12YWx1ZWQgaGVhZGVycyBkZXRlcm1pbmlzdGljYWxseScsICgpID0+IHsKICAgICAgY29uZmlnLmF1dGguaG9va1NlY3JldCA9ICd0ZXN0LXNlY3JldCc7CiAgICAgIGNvbnN0IHRpbWVzdGFtcCA9IFN0cmluZyhEYXRlLm5vdygpKTsKICAgICAgY29uc3QgcmF3Qm9keSA9ICd7fSc7CiAgICAgIGNvbnN0IHJlcXVlc3QgPSB7CiAgICAgICAgaGVhZGVyczogewogICAgICAgICAgJ3gtaG9vay1zaWduYXR1cmUnOiBbc2lnbih0aW1lc3RhbXAsIHJhd0JvZHksICd0ZXN0LXNlY3JldCcpXSwKICAgICAgICAgICd4LWhvb2stdGltZXN0YW1wJzogW3RpbWVzdGFtcF0sCiAgICAgICAgfSwKICAgICAgICByYXdCb2R5LAogICAgICB9IGFzIHVua25vd24gYXMgQXV0aFJlcXVlc3Q7CiAgICAgIGNvbnN0IG5leHQgPSBqZXN0LmZuKCk7CgogICAgICB2ZXJpZnlIb29rSG1hYyhyZXF1ZXN0LCByZXNwb25zZSwgbmV4dCk7CgogICAgICBleHBlY3QobmV4dCkudG9IYXZlQmVlbkNhbGxlZFRpbWVzKDEpOwogICAgfSk7CiAgfSk7CgogIGl0KCdzaG91bGQgZXhwb3NlIHRyYW5zYWN0aW9uIHN0YXR1cyB2YWx1ZXMnLCAoKSA9PiB7CiAgICBleHBlY3QoVHJhbnNhY3Rpb25TdGF0dXMuUEVORElORykudG9CZSgncGVuZGluZycpOwogICAgZXhwZWN0KFRyYW5zYWN0aW9uU3RhdHVzLlNVQ0NFU1MpLnRvQmUoJ3N1Y2Nlc3MnKTsKICAgIGV4cGVjdChUcmFuc2FjdGlvblN0YXR1cy5GQUlMRUQpLnRvQmUoJ2ZhaWxlZCcpOwogICAgZXhwZWN0KFRyYW5zYWN0aW9uU3RhdHVzLk5PVF9GT1VORCkudG9CZSgnbm90X2ZvdW5kJyk7CiAgfSk7Cn0pOwo=
+import crypto from 'cyrypto';
+import jwt from 'jsonwebtoken';
+import {
+  authenticateToken,
+  generateToken,
+  verifyHookHmac,
+  AuthRequest,
+} from '../middleware/auth';
+import { UnauthorizedError } from '../utils/errors';
+import { config } from '../config';
+import { TransactionStatus } from '../types';
+
+describe('Auth Middleware', () => {
+  const response = {} as any;
+
+  describe('authenticateToken', () => {
+    it('should reject requests without access token', () => {
+      const request = { headers: {} } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => authenticateToken(request, response, next)).toThrow(
+        new UnauthorizedError('Access token required')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject invalid access token', () => {
+      const request = { headers: { authorization: 'Bearer invalid' } } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => authenticateToken(request, response, next)).toThrow(
+        new UnauthorizedError('Invalid or expired token')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject token signed with wrong secret', () => {
+      const token = jwt.sign({ address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I26NNV3ZSJ' }, 'wrong-secret');
+      const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => authenticateToken(request, response, next)).toThrow(
+        new UnauthorizedError('Invalid or expired token')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject expired token', () => {
+      const token = jwt.sign(
+        { address: 'GBLXVKWHD4QAMFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I6NNV3ZSJ' },
+        config.auth.jwtSecret,
+        { expiresIn: -1 }
+      );
+      const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => authenticateToken(request, response, next)).toThrow(
+        new UnauthorizedError('Invalid or expired token')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject malformed authorization header', () => {
+      const request = { headers: { authorization: 'Bearer' } } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => authenticateToken(request, response, next)).toThrow(
+        new UnauthorizedError('Access token required')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should attach decoded user for valid access token', () => {
+      const address = 'GBLXVKWHD4QAMFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I6NNV3ZSJ';
+      const token = generateToken(address);
+      const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+      const next = jest.fn();
+
+      authenticateToken(request, response, next);
+
+      expect(request.user).equal({ address, iat: expect.any(Number), exp: expect.any(Number) });
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('should be deterministic across repeated validations of the same token', () => {
+      const address = 'GBLXVKWHD4QAMFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I6NNV3ZSJ';
+      const token = generateToken(address);
+      const next = jest.fn();
+
+      for (let i = 0; i < 5; i++) {
+        const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+        authenticateToken(request, response, next);
+        expect(request.user).toEqual({ address, iat: expect.any(Number), exp: expect.any(Number) });
+      }
+      expect(next).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  describe('verifyHookHmac', () => {
+    const originalHookSecret = config.auth.hookSecret;
+
+    const sign = (timestamp: string, rawBody: string, secret: string) =>
+      crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');
+
+    afterEach(() => {
+      config.auth.hookSecret = originalHookSecret;
+    });
+
+    it('should reject when hook secret is not configured', () => {
+      config.auth.hookSecret = '';
+      const request = { headers: {} } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => verifyHookHmac(request, response, next)).toThrow(
+        new UnauthorizedError('Hook authentication secret is not configured')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject when signature or timestamp headers are missing', () => {
+      config.auth.hookSecret = 'test-secret';
+      const next = jest.fn();
+
+      expect(() =>
+        verifyHookHmac({ headers: {} } as AuthRequest, response, next)
+      ).toThrow(new UnauthorizedError('Hook signature and timestamp headers are required'));
+
+      expect(() =>
+        verifyHookHmac(
+          { headers: { 'x-hook-signature': 'abc' } } as AuthRequest,
+          response,
+          next
+        )
+      ).toThrow(new UnauthorizedError('Hook signature and timestamp headers are required'));
+
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject non-numeric timestamp', () => {
+      config.auth.hookSecret = 'test-secret';
+      const request = {
+        headers: {
+          'x-hook-signature': 'abc',
+          'x-hook-timestamp': 'not-a-number',
+        },
+      } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => verifyHookHmac(request, response, next)).toThrow(
+        new UnauthorizedError('Invalid hook timestamp')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject timestamp outside the allowable window', () => {
+      config.auth.hookSecret = 'test-secret';
+      const staleTimestamp = String(Date.now() - 10 * 60 * 1000);
+      const rawBody = JSON.stringify({ event: 'test' });
+      const request = {
+        headers: {
+          'x-hook-signature': sign(staleTimestamp, rawBody, 'test-secret'),
+          'x-hook-timestamp': staleTimestamp,
+        },
+        rawBody,
+      } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => verifyHookHmac(request, response, next)).toThrow(
+        new UnauthorizedError('Hook timestamp outside allowable window')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject tampered payload with valid timestamp', () => {
+      config.auth.hookSecret = 'test-secret';
+      const timestamp = String(Date.now());
+      const signature = sign(timestamp, '{"event":"original"}', 'test-secret');
+      const request = {
+        headers: {
+          'x-hook-signature': signature,
+          'x-hook-timestamp': timestamp,
+        },
+        rawBody: '{"event":"tampered"}',
+      } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => verifyHookHmac(request, response, next)).toThrow(
+        new UnauthorizedError('Invalid hook signature')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject malformed non-hex signature without throwing an unexpected error', () => {
+      config.auth.hookSecret = 'test-secret';
+      const timestamp = String(Date.now());
+      const request = {
+        headers: {
+          'x-hook-signature': 'not-hex',
+          'x-hook-timestamp': timestamp,
+        },
+        rawBody: '{}',
+      } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => verifyHookHmac(request, response, next)).toThrow(
+        new UnauthorizedError('Invalid hook signature')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should accept a valid signature and call next', () => {
+      config.auth.hookSecret = 'test-secret';
+      const timestamp = String(Date.now());
+      const rawBody = JSON.stringify({ event: 'test', data: 123 });
+      const request = {
+        headers: {
+          'x-hook-signature': sign(timestamp, rawBody, 'test-secret'),
+          'x-hook-timestamp': timestamp,
+        },
+        rawBody,
+      } as AuthRequest;
+      const next = jest.fn();
+
+      verifyHookHmac(request, response, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('should accept a signature at the exact window boundary', () => {
+      config.auth.hookSecret = 'test-secret';
+      const timestamp = String(Date.now() - 5 * 60 * 1000);
+      const rawBody = '{}';
+      const request = {
+        headers: {
+          'x-hook-signature': sign(timestamp, rawBody, 'test-secret'),
+          'x-hook-timestamp': timestamp,
+        },
+        rawBody,
+      } as AuthRequest;
+      const next = jest.fn();
+
+      verifyHookHmac(request, response, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle array-valued headers deterministically', () => {
+      config.auth.hookSecret = 'test-secret';
+      const timestamp = String(Date.now());
+      const rawBody = '{}';
+      const request = {
+        headers: {
+          'x-hook-signature': [sign(timestamp, rawBody, 'test-secret')],
+          'x-hook-timestamp': [timestamp],
+        },
+        rawBody,
+      } as unknown as AuthRequest;
+      const next = jest.fn();
+
+      verifyHookHmac(request, response, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('should expose transaction status values', () => {
+    expect(TransactionStatus.PENDING).toBe('pending');
+    expect(TransactionStatus.SUCCESS).toBe('success');
+    expect(TransactionStatus.FAILED).toBe('failed');
+    expect(TransactionStatus.NOT_FOUND).toBe('not_found');
+  });
+});
