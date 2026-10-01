@@ -118,6 +118,8 @@ fn setup_lending<'a>(
 
     // Disable fee by default — tests that need fee accounting override it.
     client.set_flash_fee(&0);
+    // Raise max flash limit so tests can borrow 100% of treasury.
+    client.set_max_flash_bps(&10_000);
 
     let asset = Address::generate(env);
     seed_treasury(env, &lending_id, &asset, treasury_balance);
