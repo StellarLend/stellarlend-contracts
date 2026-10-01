@@ -11,7 +11,16 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{contracttype, Address, Env, Vec};
+
+/// Decode a host `Val` into its canonical `ScVal` for stable comparisons.
+/// Raw `Val` payloads embed host-object allocation handles, so equality is
+/// only meaningful at the `ScVal` (XDR) level.
+fn val_to_scval(env: &Env, val: soroban_sdk::Val) -> soroban_sdk::xdr::ScVal {
+    use soroban_sdk::TryFromVal;
+    soroban_sdk::xdr::ScVal::try_from_val(env, &val).expect("Val converts to ScVal")
+}
 
 use crate::events::*;
 
@@ -23,11 +32,11 @@ use crate::events::*;
 fn test_all_events_have_schema_version_field() {
     // This test ensures all event structs include schema_version
     // by attempting to construct them with the current version
-    
+
     let env = Env::default();
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
-    
+
     // DepositEvent
     let deposit = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -37,7 +46,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(deposit.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // WithdrawEvent
     let withdraw = WithdrawEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -47,7 +56,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(withdraw.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // BorrowEvent
     let borrow = BorrowEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -57,7 +66,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(borrow.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // RepayEvent
     let repay = RepayEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -67,7 +76,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(repay.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // FlashLoanEvent
     let flash_loan = FlashLoanEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -79,7 +88,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(flash_loan.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // FlashLoanRepaidEvent
     let flash_repaid = FlashLoanRepaidEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -89,7 +98,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(flash_repaid.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // DebtCeilingUpdatedEvent
     let debt_ceiling = DebtCeilingUpdatedEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -97,7 +106,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(debt_ceiling.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // FlashFeeUpdatedEvent
     let flash_fee = FlashFeeUpdatedEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -105,7 +114,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(flash_fee.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // CloseFactorBpsSetEvent
     let close_factor = CloseFactorBpsSetEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -113,7 +122,7 @@ fn test_all_events_have_schema_version_field() {
         timestamp: 123456,
     };
     assert_eq!(close_factor.schema_version, EVENT_SCHEMA_VERSION);
-    
+
     // LiquidationIncentiveBpsSetEvent
     let liq_incentive = LiquidationIncentiveBpsSetEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -127,8 +136,10 @@ fn test_all_events_have_schema_version_field() {
 fn test_schema_version_is_constant() {
     // Ensure EVENT_SCHEMA_VERSION is set to 1
     // If this test fails after changing the version, update migration docs
-    assert_eq!(EVENT_SCHEMA_VERSION, 1, 
-        "Schema version changed! Update migration documentation and indexer compatibility guides.");
+    assert_eq!(
+        EVENT_SCHEMA_VERSION, 1,
+        "Schema version changed! Update migration documentation and indexer compatibility guides."
+    );
 }
 
 // ============================================================================
@@ -139,7 +150,7 @@ fn test_schema_version_is_constant() {
 fn test_deposit_event_serialization_deterministic() {
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     // Create two identical events
     let event1 = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
@@ -148,7 +159,7 @@ fn test_deposit_event_serialization_deterministic() {
         new_balance: 100,
         timestamp: 123456,
     };
-    
+
     let event2 = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -156,21 +167,28 @@ fn test_deposit_event_serialization_deterministic() {
         new_balance: 100,
         timestamp: 123456,
     };
-    
+
     // They should be equal
     assert_eq!(event1, event2);
-    
-    // Convert to Val and compare (simulating serialization)
-    let val1 = event1.into_val(&env);
-    let val2 = event2.into_val(&env);
-    assert_eq!(val1, val2, "Event serialization must be deterministic");
+
+    // Convert to XDR and compare (simulating serialization). Raw `Val`
+    // payloads embed host-object allocation handles, which differ per
+    // construction even for identical content — the stable comparison is
+    // over the canonical XDR encoding.
+    let val1: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event1, &env);
+    let val2: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event2, &env);
+    assert_eq!(
+        val_to_scval(&env, val1),
+        val_to_scval(&env, val2),
+        "Event serialization must be deterministic"
+    );
 }
 
 #[test]
 fn test_borrow_event_serialization_deterministic() {
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event1 = BorrowEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -178,7 +196,7 @@ fn test_borrow_event_serialization_deterministic() {
         new_debt: 200,
         timestamp: 123456,
     };
-    
+
     let event2 = BorrowEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -186,11 +204,15 @@ fn test_borrow_event_serialization_deterministic() {
         new_debt: 200,
         timestamp: 123456,
     };
-    
+
     assert_eq!(event1, event2);
-    let val1 = event1.into_val(&env);
-    let val2 = event2.into_val(&env);
-    assert_eq!(val1, val2, "Event serialization must be deterministic");
+    let val1: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event1, &env);
+    let val2: soroban_sdk::Val = soroban_sdk::IntoVal::into_val(&event2, &env);
+    assert_eq!(
+        val_to_scval(&env, val1),
+        val_to_scval(&env, val2),
+        "Event serialization must be deterministic"
+    );
 }
 
 // ============================================================================
@@ -201,10 +223,10 @@ fn test_borrow_event_serialization_deterministic() {
 fn test_event_field_order_consistent() {
     // This test ensures field order hasn't changed
     // Any change in field order is a breaking change requiring version bump
-    
+
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -212,7 +234,7 @@ fn test_event_field_order_consistent() {
         new_balance: 100,
         timestamp: 123456,
     };
-    
+
     // Schema version should always be first field for indexers to read
     // This is enforced by struct definition order
     // If this assertion seems strange, it's because we're documenting
@@ -234,10 +256,10 @@ fn test_deposit_event_structure_unchanged() {
     // Current structure hash: DepositEvent { schema_version, user, amount, new_balance, timestamp }
     // Field count: 5
     // Field types: u32, Address, i128, i128, u64
-    
+
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -245,14 +267,14 @@ fn test_deposit_event_structure_unchanged() {
         new_balance: 100,
         timestamp: 123456,
     };
-    
+
     // Verify all fields are accessible and correct type
     let _version: u32 = event.schema_version;
     let _user: Address = event.user;
     let _amount: i128 = event.amount;
     let _balance: i128 = event.new_balance;
     let _time: u64 = event.timestamp;
-    
+
     // If you added or removed fields, this test should fail compilation
     // That's intentional - it forces you to update the version
 }
@@ -261,7 +283,7 @@ fn test_deposit_event_structure_unchanged() {
 fn test_withdraw_event_structure_unchanged() {
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = WithdrawEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -269,7 +291,7 @@ fn test_withdraw_event_structure_unchanged() {
         new_balance: 50,
         timestamp: 123456,
     };
-    
+
     // Verify field types
     let _version: u32 = event.schema_version;
     let _user: Address = event.user;
@@ -282,7 +304,7 @@ fn test_withdraw_event_structure_unchanged() {
 fn test_borrow_event_structure_unchanged() {
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = BorrowEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -290,7 +312,7 @@ fn test_borrow_event_structure_unchanged() {
         new_debt: 200,
         timestamp: 123456,
     };
-    
+
     let _version: u32 = event.schema_version;
     let _user: Address = event.user;
     let _amount: i128 = event.amount;
@@ -302,7 +324,7 @@ fn test_borrow_event_structure_unchanged() {
 fn test_repay_event_structure_unchanged() {
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = RepayEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
@@ -310,7 +332,7 @@ fn test_repay_event_structure_unchanged() {
         new_debt: 100,
         timestamp: 123456,
     };
-    
+
     let _version: u32 = event.schema_version;
     let _user: Address = event.user;
     let _amount: i128 = event.amount;
@@ -323,7 +345,7 @@ fn test_flash_loan_event_structure_unchanged() {
     let env = Env::default();
     let user = Address::generate(&env);
     let asset = Address::generate(&env);
-    
+
     let event = FlashLoanEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         initiator: user.clone(),
@@ -333,7 +355,7 @@ fn test_flash_loan_event_structure_unchanged() {
         fee: 10,
         timestamp: 123456,
     };
-    
+
     let _version: u32 = event.schema_version;
     let _initiator: Address = event.initiator;
     let _receiver: Address = event.receiver;
@@ -350,35 +372,55 @@ fn test_flash_loan_event_structure_unchanged() {
 #[test]
 fn test_schema_version_event_emitted_on_init() {
     let env = Env::default();
-    
-    // Emit schema version event
-    emit_schema_version(&env);
-    
+    let contract_id = env.register(crate::LendingContract, ());
+
+    // Emit schema version event (events publish within a contract frame,
+    // mirroring how `initialize` emits it on-chain).
+    env.as_contract(&contract_id, || emit_schema_version(&env));
+
     // Verify event was published
-    let events = env.events().all();
-    let has_schema_event = events.iter().any(|event| {
-        event
-            .topics
-            .get(0)
-            .and_then(|topic| topic.try_into_val::<soroban_sdk::Symbol>(&env).ok())
+    let events = soroban_sdk::testutils::Events::all(&env.events());
+    let has_schema_event = events.events().iter().any(|event| {
+        let topics: &[soroban_sdk::xdr::ScVal] = match &event.body {
+            soroban_sdk::xdr::ContractEventBody::V0(v0) => &v0.topics,
+        };
+        topics
+            .first()
+            .and_then(|topic| {
+                <soroban_sdk::Val as soroban_sdk::TryFromVal<
+                    soroban_sdk::Env,
+                    soroban_sdk::xdr::ScVal,
+                >>::try_from_val(&env, topic)
+                .ok()
+            })
+            .and_then(|topic| {
+                <soroban_sdk::Symbol as soroban_sdk::TryFromVal<
+                    soroban_sdk::Env,
+                    soroban_sdk::Val,
+                >>::try_from_val(&env, &topic)
+                .ok()
+            })
             .map(|sym| sym == soroban_sdk::Symbol::new(&env, "SchemaVersionEvent"))
             .unwrap_or(false)
     });
-    
-    assert!(has_schema_event, "SchemaVersionEvent must be emitted during initialization");
+
+    assert!(
+        has_schema_event,
+        "SchemaVersionEvent must be emitted during initialization"
+    );
 }
 
 #[test]
 fn test_event_emission_functions_use_current_version() {
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     // Emit events using the helper functions
     emit_deposit(&env, &user, 100, 100);
     emit_withdraw(&env, &user, 50, 50);
     emit_borrow(&env, &user, 200, 200);
     emit_repay(&env, &user, 100, 100);
-    
+
     // All events should use EVENT_SCHEMA_VERSION
     // This is guaranteed by the emit functions, but we verify the pattern exists
 }
@@ -388,7 +430,7 @@ fn test_event_emission_functions_use_current_version() {
 // ============================================================================
 
 /// This test serves as living documentation for event schema changes.
-/// 
+///
 /// ## Schema Version History:
 /// - v1 (current): Initial event schema with all core events
 ///
@@ -407,8 +449,10 @@ fn test_event_emission_functions_use_current_version() {
 /// - [ ] Test backwards compatibility with v1 indexers
 #[test]
 fn test_schema_version_documentation() {
-    assert_eq!(EVENT_SCHEMA_VERSION, 1, 
-        "If incrementing version, update migration documentation above");
+    assert_eq!(
+        EVENT_SCHEMA_VERSION, 1,
+        "If incrementing version, update migration documentation above"
+    );
 }
 
 // ============================================================================
@@ -421,7 +465,7 @@ fn test_schema_version_field_is_u32() {
     // Changing this type is a breaking change
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user,
@@ -429,7 +473,7 @@ fn test_schema_version_field_is_u32() {
         new_balance: 100,
         timestamp: 123456,
     };
-    
+
     // Compile-time check that schema_version is u32
     let version: u32 = event.schema_version;
     assert!(version > 0, "Schema version must be positive");
@@ -440,7 +484,7 @@ fn test_timestamp_field_is_u64() {
     // Indexers expect timestamp to be u64 (seconds since epoch)
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user,
@@ -448,7 +492,7 @@ fn test_timestamp_field_is_u64() {
         new_balance: 100,
         timestamp: 123456,
     };
-    
+
     // Compile-time check that timestamp is u64
     let ts: u64 = event.timestamp;
     assert!(ts > 0, "Timestamp must be positive");
@@ -459,7 +503,7 @@ fn test_amount_fields_are_i128() {
     // Indexers expect amount fields to be i128 for Stellar compatibility
     let env = Env::default();
     let user = Address::generate(&env);
-    
+
     let event = DepositEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user,
@@ -467,11 +511,14 @@ fn test_amount_fields_are_i128() {
         new_balance: 100,
         timestamp: 123456,
     };
-    
+
     // Compile-time check that amounts are i128
     let amt: i128 = event.amount;
     let bal: i128 = event.new_balance;
-    assert!(amt >= 0 && bal >= 0, "Amounts should be non-negative in valid events");
+    assert!(
+        amt >= 0 && bal >= 0,
+        "Amounts should be non-negative in valid events"
+    );
 }
 
 // ============================================================================
@@ -479,7 +526,7 @@ fn test_amount_fields_are_i128() {
 // ============================================================================
 
 /// This test documents how to maintain forward compatibility when adding events.
-/// 
+///
 /// ## Rules for Adding New Events:
 /// 1. Always include `schema_version: u32` as the first field
 /// 2. Always include `timestamp: u64` as the last field

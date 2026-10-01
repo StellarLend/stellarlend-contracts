@@ -126,6 +126,18 @@ export function validateOracleConfig(config: OracleServiceConfig): void {
 }
 
 /**
+ * Read-only view of a configured provider, reported by `getStatus()`.
+ * Derived from the validated configuration so that status always reflects what
+ * was configured, independently of provider runtime state.
+ */
+export interface ProviderStatus {
+    name: string;
+    enabled: boolean;
+    priority: number;
+    weight: number;
+}
+
+/**
  * Oracle Service
  */
 export class OracleService {

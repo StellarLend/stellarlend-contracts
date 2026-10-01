@@ -600,7 +600,7 @@ fn test_query_operation_status_for_recovery() {
     // Recovery: query operation status
     let record = get_operation_record(&env, &op_id).unwrap();
     assert_eq!(record.status, OperationStatus::Completed);
-    assert_eq!(record.result, Some(OperationResult::Deposit(1000)));
+    assert_eq!(record.result, OperationResult::Deposit(1000));
     
     // Client can safely use cached result without re-executing
 }
