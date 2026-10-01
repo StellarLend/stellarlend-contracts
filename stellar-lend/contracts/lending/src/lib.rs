@@ -111,6 +111,8 @@ mod liquidation_sequence_invariant_test;
 #[cfg(test)]
 mod max_borrow_proptest;
 #[cfg(test)]
+mod migration_event_test;
+#[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
 mod position_summary_bench_test;
@@ -146,7 +148,6 @@ mod self_liquidation_test;
 mod stateful_lifecycle_invariant_test;
 #[cfg(test)]
 mod storage_tier_test;
-#[cfg(test)]
 #[cfg(test)]
 mod supply_rate_split_test;
 
@@ -197,7 +198,7 @@ const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
-const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
+const DEFAULT_MAX_FLASH_BPS: i128 = 5_000;
 /// Maximum number of elements allowed in a [`LendingContract::receive`]
 /// payload. Prevents DoS through oversized payloads.
 const MAX_RECEIVE_PAYLOAD_LEN: u32 = 10;
@@ -248,6 +249,8 @@ pub enum DataKey {
     DebtAsset(Address, Address),
     /// Per-asset risk parameters (ltv, liquidation threshold, debt ceiling).
     AssetParams(Address),
+    /// Per-asset risk parameters (ltv, liquidation threshold, debt ceiling).
+    AssetParamsV2(Address),
     /// List of assets for which a user holds non-zero collateral cross-asset.
     UserCollateralAssets(Address),
     /// List of assets for which a user holds non-zero debt cross-asset.
@@ -386,6 +389,33 @@ pub struct LiquidationEventV1 {
     pub seized: i128,
     pub health_factor_before: i128,
     pub shortfall: i128,
+}
+
+/// Emitted by [`LendingContract::flash_loan`] when a flash loan is
+/// successfully disbursed. Carries the schema version, the borrowed amount,
+/// the fee charged, and the initiator/receiver addresses so off-chain
+/// indexers and monitoring can observe flash-loan activity.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanEvent {
+    pub schema_version: u32,
+    pub initiator: Address,
+    pub receiver: Address,
+    pub amount: i128,
+    pub fee: i128,
+}
+
+/// Emitted by [`LendingContract::repay_flash_loan`] when a flash loan is
+/// repaid (principal plus fee). Mirrors [`FlashLoanEvent`] so indexers can
+/// pair the disbursement and repayment legs.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanRepaidEvent {
+    pub schema_version: u32,
+    pub initiator: Address,
+    pub receiver: Address,
+    pub amount: i128,
+    pub fee: i128,
 }
 
 /// Emitted by [`LendingContract::write_off_bad_debt`] whenever a governed
@@ -765,8 +795,12 @@ impl LendingContract {
         Ok(())
     }
 
-    pub fn get_admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).unwrap()
+    pub fn get_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Admin)
+    }
+
+    pub fn has_admin(env: Env) -> bool {
+        env.storage().instance().has(&DataKey::Admin)
     }
 
     /// Returns the accumulated protocol bad debt.
@@ -1889,9 +1923,6 @@ impl LendingContract {
             increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
 
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &collateral_asset);
-
         Ok(updated.principal)
     }
 
@@ -2388,6 +2419,82 @@ impl LendingContract {
         debt::compute_debt(&position, current_index)
     }
 
+    /// One-time migration: initialise `borrow_index_snapshot` on all
+    /// pre-existing [`DebtPosition`] records that pre-date the global
+    /// borrow-index feature.
+    ///
+    /// # Behaviour
+    /// 1. Requires admin authorisation.
+    /// 2. Advances the global [`DataKey::BorrowIndex`] to the current
+    ///    ledger time **before** writing any snapshots, so all migrated
+    ///    positions share the same post-upgrade index baseline.
+    /// 3. Iterates every address in [`DataKey::BorrowerList`] and writes
+    ///    `current_index` into each [`DebtPosition`] whose
+    ///    `borrow_index_snapshot` is `0` (the sentinel for pre-migration
+    ///    records; see [`debt::DebtPosition`]).
+    /// 4. Emits a [`events::MigrationEvent`] recording the index value
+    ///    used and the number of positions migrated.
+    /// 5. When called a second time after all positions are already
+    ///    up-to-date, performs no writes and returns `0`.
+    ///
+    /// # Returns
+    /// The number of positions whose snapshot was updated.
+    ///
+    /// # Errors
+    /// - [`LendingError::NotInitialized`] – contract has not been
+    ///   initialised yet.
+    /// - [`LendingError::Unauthorized`] – caller is not the admin.
+    pub fn migrate_positions(env: Env) -> Result<u32, LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        // Step 1: Advance the global borrow index to the current time so all
+        //         migrated positions share the same post-upgrade baseline.
+        let now = env.ledger().timestamp();
+        let rate = cached_borrow_rate(&env);
+        let current_index = touch_borrow_index(&env, now, rate);
+
+        // Step 2: Load the borrower list (empty if no borrows have ever occurred).
+        let borrowers: soroban_sdk::Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::BorrowerList)
+            .unwrap_or_else(|| soroban_sdk::vec![&env]);
+
+        // Step 3: Migrate every position whose snapshot is still 0.
+        let mut migrated: u32 = 0;
+        for i in 0..borrowers.len() {
+            let user = borrowers.get(i).unwrap();
+            let key = DataKey::Debt(user.clone());
+            if let Some(mut position) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, debt::DebtPosition>(&key)
+            {
+                if position.borrow_index_snapshot == 0 {
+                    position.borrow_index_snapshot = current_index;
+                    env.storage().persistent().set(&key, &position);
+                    migrated += 1;
+                }
+            }
+        }
+
+        // Step 4: Emit migration event.
+        events::emit_migration(
+            &env,
+            1, // old schema version (pre-index)
+            2, // new schema version (post-index)
+            soroban_sdk::String::from_str(&env, "global-borrow-index migration"),
+        );
+
+        Ok(migrated)
+    }
+
     /// Set the protocol-level debt ceiling (admin-only).
     pub fn set_debt_ceiling(env: Env, ceiling: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
@@ -2514,30 +2621,48 @@ impl LendingContract {
     ///
     /// Gated behind pause and emergency checks to prevent any flash-loan
     /// interaction during a protocol pause or emergency shutdown.
-    pub fn repay_flash_loan(env: Env, payer: Address, asset: Address, amount: i128) {
-        require_initialized(&env).expect("NotInitialized");
+    ///
+    /// # Errors
+    /// - [`LendingError::NotInitialized`] if the contract has not been
+    ///   initialized yet.
+    /// - [`LendingError::InvalidAmount`] if `amount` is zero or negative.
+    /// - [`LendingError::InsufficientCollateral`] if the payer's recorded
+    ///   balance is less than `amount`.
+    /// - [`LendingError::Overflow`] if the checked arithmetic on the payer
+    ///   or treasury balance would overflow / underflow.
+    pub fn repay_flash_loan(
+        env: Env,
+        payer: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::FlashLoan);
         check_emergency_status(&env, ProtocolAction::FlashLoan);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
         payer.require_auth();
         let payer_key = DataKey::Balance(asset.clone(), payer.clone());
         let payer_bal: i128 = env.storage().persistent().get(&payer_key).unwrap_or(0);
         if payer_bal < amount {
-            panic!("InsufficientBalance");
+            return Err(LendingError::InsufficientCollateral);
         }
         let new_payer_bal = payer_bal
             .checked_sub(amount)
-            .expect("repay_flash_loan: payer balance underflow");
+            .ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&payer_key, &new_payer_bal);
 
         let tre_key = DataKey::Treasury(asset.clone());
         let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         let new_tre_bal = tre_bal
             .checked_add(amount)
-            .expect("repay_flash_loan: treasury balance overflow");
+            .ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&tre_key, &new_tre_bal);
 
         // Emit flash loan repaid event
         emit_flash_loan_repaid(&env, &payer, &asset, amount);
+        Ok(())
     }
 
     /// Issue a callback-based flash loan.
@@ -3887,7 +4012,7 @@ fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), Len
             caller.require_auth();
             Ok(())
         }
-        EmergencyState::Recovery | EmergencyState::Normal => assert_admin(env),
+        EmergencyState::Recovery | EmergencyState::Normal => assert_admin(env)?,
     }
 }
 

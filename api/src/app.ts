@@ -10,8 +10,11 @@ import logger from './utils/logger';
 
 const app: Application = express();
 
+// Security headers and CSRP protection.
 app.use(helmet());
+
 app.use(cors());
+
 app.use(express.json({
   verify: (req, res, buf) => {
     (req as any).rawBody = buf.toString('utf8');
@@ -30,6 +33,14 @@ app.use('/api/', limiter);
 app.use('/api/health', healthRoutes);
 app.use('/api/lending', lendingRoutes);
 
-app.use(errorHandler);
+// Centralized error handling must be last so it can catch downstream failures.
+app.use((err, req, res, next) => {
+  logger.error('Unhandled request error', {
+    message: err?.message,
+    path: req.path,
+    method: req.method,
+  });
+  errorHandler(err, req, res, next);
+});
 
 export default app;

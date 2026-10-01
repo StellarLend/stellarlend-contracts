@@ -106,19 +106,6 @@ pub fn get_max_debt_assets_per_user(env: &Env) -> Option<u32> {
 /// `bridge::require_guardian`.  A pure address-equality check without
 /// `require_auth` would allow any account to spoof the admin address as a
 /// plain argument with no proof of key ownership.
-fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
-    caller.require_auth();
-    let admin = get_admin(env).ok_or(CrossAssetError::Unauthorized)?;
-    if &admin != caller {
-        return Err(CrossAssetError::Unauthorized);
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 /// Errors that can occur in cross-asset operations.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -412,7 +399,7 @@ pub fn initialize_asset(
     asset: Option<Address>,
     config: AssetConfig,
 ) -> Result<(), CrossAssetError> {
-    require_admin(env, caller)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     if config.price_decimals > 38 {
         return Err(CrossAssetError::InvalidDecimals);
@@ -472,7 +459,7 @@ pub fn update_asset_config(
     can_borrow: Option<bool>,
     price_decimals: Option<u32>,
 ) -> Result<(), CrossAssetError> {
-    require_admin(env, caller)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
@@ -547,7 +534,7 @@ pub fn update_asset_price(
     asset: Option<Address>,
     price: i128,
 ) -> Result<(), CrossAssetError> {
-    require_admin(env, caller)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     if price <= 0 {
         return Err(CrossAssetError::InvalidAmount);

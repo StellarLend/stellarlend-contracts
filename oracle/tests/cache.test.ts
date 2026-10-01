@@ -76,7 +76,9 @@ describe('Cache', () => {
         });
 
         it('should return false for expired keys', async () => {
-            cache = createCache({ defaultTtlSeconds: 0.05 });
+            // staleTtlSeconds: 0 disables the stale grace window so the entry
+            // is fully expired, rather than only soft-expired.
+            cache = createCache({ defaultTtlSeconds: 0.05, staleTtlSeconds: 0 });
             cache.set('expires', 'value');
 
             await new Promise(r => setTimeout(r, 100));
@@ -155,7 +157,9 @@ describe('Cache', () => {
 
     describe('cleanup', () => {
         it('should remove expired entries', async () => {
-            cache = createCache({ defaultTtlSeconds: 0.05 });
+            // staleTtlSeconds: 0 so entries cross the hard expiry, not just the
+            // freshness TTL, and become eligible for cleanup.
+            cache = createCache({ defaultTtlSeconds: 0.05, staleTtlSeconds: 0 });
 
             cache.set('expire1', 1);
             cache.set('expire2', 2);
