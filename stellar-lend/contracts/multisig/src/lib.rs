@@ -33,6 +33,18 @@ pub enum ProposalAction {
     /// Update the approval threshold for future proposals
     SetThreshold(u32),
     /// Replace the full signer set with a new set
+    RotateSigners { new_signers: Vec<Address> },
+    /// Invoke an arbitrary lending upgrade entrypoint via cross-contract call.
+    /// `args` carries the actual call arguments so they are available at
+    /// dispatch time. They are also covered by `payload_hash` (which commits
+    /// to the entire `ProposalAction` value), so any mutation between proposal
+    /// creation and execution would be caught by the hash check in
+    /// `execute_proposal`.
+    InvokeContract {
+        contract: Address,
+        fn_symbol: Symbol,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+    },
     RotateSigners(Vec<Address>),
     /// Invoke an arbitrary contract entrypoint via cross-contract call
     InvokeContract(Address, Symbol, Vec<soroban_sdk::Val>),
@@ -157,6 +169,10 @@ pub enum MultisigError {
 /// `batch_execute` call. This bounds loop iterations and storage
 /// churn in a single contract invocation.
 pub const MAX_BATCH_SIZE: u32 = 32;
+
+/// Maximum `ttl_ledgers` accepted by `create_proposal`. Bounds the
+/// expiry arithmetic so `expires_at` cannot overflow.
+pub const MAX_TTL_LEDGERS: u64 = 3_110_400;
 
 /// Emitted when a signer revokes a previous approval from an open proposal.
 #[contractevent]
@@ -428,7 +444,7 @@ impl MultisigContract {
         caller.require_auth();
         Self::require_signer(&env, &caller)?;
 
-        if ttl_ledgers > 3_110_400 {
+        if ttl_ledgers > MAX_TTL_LEDGERS {
             return Err(MultisigError::InvalidTtl);
         }
 
@@ -670,6 +686,18 @@ impl MultisigContract {
                     .set(&MultisigDataKey::SignerSetHash, &signer_set_hash);
                 Ok(())
             }
+            ProposalAction::InvokeContract {
+                contract,
+                fn_symbol,
+                args,
+            } => {
+                // Dispatch to the target contract with the arguments that were
+                // committed at proposal-creation time.  The payload_hash check
+                // in execute_proposal already verified that the entire
+                // ProposalAction (including `args`) has not been tampered with
+                // between approval and execution.
+                let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args.clone());
+                true
             ProposalAction::InvokeContract(contract, fn_symbol, args) => {
                 // Dispatch to the target contract entrypoint with the concrete
                 // arguments carried on the proposal action. The payload hash
@@ -679,6 +707,40 @@ impl MultisigContract {
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // View entrypoints
+    // -----------------------------------------------------------------------
+
+    /// Return the current approval threshold.
+    pub fn get_threshold(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::Threshold)
+            .unwrap_or(1)
+    }
+
+    /// Return the current signer list.
+    pub fn get_signers(env: Env) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::Signers)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Return the current state of a proposal by ID.
+    ///
+    /// Panics with `"ProposalNotFound"` if `id` does not exist.
+    pub fn get_proposal(env: Env, id: u64) -> Proposal {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::Proposal(id))
+            .unwrap_or_else(|| panic!("ProposalNotFound"))
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancellation
+    // -----------------------------------------------------------------------
 
     /// Cancel an active proposal (proposer or any signer).
     ///
@@ -736,6 +798,14 @@ impl MultisigContract {
         Self::current_signer_set_hash(&env)
     }
 
+#[cfg(test)]
+mod invoke_contract_with_args_test;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::Ledger;
     /// Return the full state of a proposal.
     ///
     /// # Arguments
@@ -1043,6 +1113,7 @@ mod cancel_proposal_test;
 #[cfg(test)]
 mod approval_binding_test;
 
+/// Signer set shrink guard tests verifying prevention of quorum bricking.
 #[cfg(test)]
 mod signer_shrink_guard_test;
 
