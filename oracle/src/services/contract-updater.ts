@@ -8,8 +8,7 @@ const STALE_MS = 300000;
 
 export function calculateJitterDelay(attempt, base = BASE_MS, cap = CAP_MS) {
   const capped = Math.min(cap, base * Math.pow(2, attempt));
-  const ratio = (((attempt + 1) * 9301 + 49297) % 233280) / 233280;
-  return Math.floor(capped * ratio);
+  return Math.floor(capped * Math.random());
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
