@@ -196,7 +196,9 @@ describe('Validation Middleware', () => {
     it('should pass non-zod validator errors to next middleware', async () => {
       const error = new Error('custom parser failure');
       const schema = {
-        parseAsync: jest.fn().mockRejectedValue(error),
+        parse: jest.fn(() => {
+          throw error;
+        }),
       } as unknown as z.ZodSchema;
       const request = { body: { userAddress: VALID_USER_ADDRESS } } as any;
       const next = jest.fn();

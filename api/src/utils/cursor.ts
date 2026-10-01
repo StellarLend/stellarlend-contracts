@@ -53,7 +53,6 @@ export function encodeCursor(
   if (!Number.isInteger(evtIdx) || evtIdx < 0) {
     throw new CursorError(`Invalid event index: ${evtIdx}`);
   }
-}
 
   const raw = `${ledgerSeq}${CURSOR_SEPARATOR}${evtIdx}`;
   return Buffer.from(raw, 'utf-8').toString('base64');
