@@ -57,6 +57,7 @@
 | `get_debt_position` | `(user: Address)` | `DebtPosition { principal: i128, last_update: u64 }` |
 | `get_min_borrow` | `()` | `i128` |
 | `get_rate_smoothing_state` | `()` | `RateSmoothingState { schema_version: u32, current_rate_bps: i128, last_target_rate_bps: i128, last_update_ledger: u32 }` |
+| `get_rate_model_diagnostics` | `(env: Env)` | `RateModelDiagnostics` |
 | `get_health_factor` | `(user: Address)` | `i128` |
 | `get_protocol_metrics` | `()` | `ProtocolMetrics { total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` |
 
@@ -102,6 +103,11 @@
 |---|---|---|---|
 | `get_governance_audit_count` | `()` | — | `u64` |
 | `get_governance_audit_entries` | `(limit: u64)` | — | `Vec<AuditLogEntry>` |
+| `get_upgrade_approval_binding` | `(approver: Address, sequence: u32)` | — | `Option<BytesN<32>>` |
+| `get_upgrade_approver_set_hash` | `()` | — | `Option<BytesN<32>>` |
+| `get_upgrade_proposal_signer_hash` | `(proposal: Bytes)` | — | `Option<BytesN<32>>` |
+| `is_upgrade_proposal_cancelled` | `(proposal_hash: BytesN<32>)` | — | `bool` |
+| `upgrade_cancel` | `(proposal_hash: BytesN<32>)` | admin | `()` |
 
 ### Cross-Asset User Operations
 

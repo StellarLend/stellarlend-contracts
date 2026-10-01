@@ -30,7 +30,6 @@ pub mod amm_twap;
 pub mod analytics;
 pub mod borrow;
 pub mod bridge;
-pub mod config;
 pub mod config_snapshot;
 pub mod cross_asset;
 pub mod deposit;
@@ -40,7 +39,6 @@ pub mod flash_loan;
 pub mod governance;
 pub mod interest_rate;
 pub mod liquidate;
-pub mod multisig;
 pub mod oracle;
 pub mod recovery;
 pub mod repay;
@@ -120,7 +118,6 @@ use crate::oracle::FullOracleConfig;
 use deposit::deposit_collateral;
 use repay::repay_debt;
 
-use crate::config::{config_backup, config_get, config_restore, config_set};
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
 
 use crate::risk_management::{
@@ -355,38 +352,7 @@ impl HelloContract {
         recovery::execute_recovery(&env, executor)
     }
 
-    pub fn ms_set_admins(
-        env: Env,
-        caller: Address,
-        admins: soroban_sdk::Vec<Address>,
-        threshold: u32,
-    ) -> Result<(), crate::governance::GovernanceError> {
-        multisig::ms_set_admins(&env, caller, admins, threshold)
-    }
 
-    pub fn ms_propose_set_min_cr(
-        env: Env,
-        proposer: Address,
-        new_ratio: i128,
-    ) -> Result<u64, crate::governance::GovernanceError> {
-        multisig::ms_propose_set_min_cr(&env, proposer, new_ratio)
-    }
-
-    pub fn ms_approve(
-        env: Env,
-        approver: Address,
-        proposal_id: u64,
-    ) -> Result<(), crate::governance::GovernanceError> {
-        multisig::ms_approve(&env, approver, proposal_id)
-    }
-
-    pub fn ms_execute(
-        env: Env,
-        executor: Address,
-        proposal_id: u64,
-    ) -> Result<(), crate::governance::GovernanceError> {
-        multisig::ms_execute(&env, executor, proposal_id)
-    }
 
     /// Repay borrowed assets.
     pub fn repay_debt(
@@ -432,39 +398,7 @@ impl HelloContract {
         get_config_snapshot(&env)
     }
 
-    /// Set a protocol configuration key to `val` (admin only).
-    pub fn config_set(
-        env: Env,
-        caller: Address,
-        key: soroban_sdk::Symbol,
-        val: soroban_sdk::Val,
-    ) -> Result<(), crate::admin::AdminError> {
-        config_set(&env, &caller, &key, val)
-    }
 
-    /// Retrieve the value stored under `key`, or `None` if not set.
-    pub fn config_get(env: Env, key: soroban_sdk::Symbol) -> Option<soroban_sdk::Val> {
-        config_get(&env, &key)
-    }
-
-    /// Return a map of key → value for every key in `keys` (admin only).
-    pub fn config_backup(
-        env: Env,
-        caller: Address,
-        keys: soroban_sdk::Vec<soroban_sdk::Symbol>,
-    ) -> Result<soroban_sdk::Map<soroban_sdk::Symbol, soroban_sdk::Val>, crate::admin::AdminError>
-    {
-        config_backup(&env, &caller, &keys)
-    }
-
-    /// Restore a set of key-value pairs from a backup map (admin only).
-    pub fn config_restore(
-        env: Env,
-        caller: Address,
-        entries: soroban_sdk::Map<soroban_sdk::Symbol, soroban_sdk::Val>,
-    ) -> Result<(), crate::admin::AdminError> {
-        config_restore(&env, &caller, &entries)
-    }
 
     /// Get minimum collateral ratio in basis points.
     pub fn get_min_collateral_ratio(env: Env) -> Result<i128, RiskManagementError> {
