@@ -195,12 +195,16 @@ fn test_flash_loan_before_init_panics_not_initialized() {
 }
 
 #[test]
-#[should_panic(expected = "NotInitialized")]
-fn test_repay_flash_loan_before_init_panics_not_initialized() {
+fn test_repay_flash_loan_before_init_returns_not_initialized() {
     let (env, client, _admin) = uninit_client();
     let payer = Address::generate(&env);
     let asset = Address::generate(&env);
-    client.repay_flash_loan(&payer, &asset, &10);
+    let result = client.try_repay_flash_loan(&payer, &asset, &10);
+    assert!(
+        matches!(result, Err(Ok(LendingError::NotInitialized))),
+        "expected NotInitialized, got {:?}",
+        result
+    );
 }
 
 // ─── admin setters ───────────────────────────────────────────────────────────

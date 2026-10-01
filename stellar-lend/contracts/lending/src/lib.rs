@@ -2586,30 +2586,48 @@ impl LendingContract {
     ///
     /// Gated behind pause and emergency checks to prevent any flash-loan
     /// interaction during a protocol pause or emergency shutdown.
-    pub fn repay_flash_loan(env: Env, payer: Address, asset: Address, amount: i128) {
-        require_initialized(&env).expect("NotInitialized");
+    ///
+    /// # Errors
+    /// - [`LendingError::NotInitialized`] if the contract has not been
+    ///   initialized yet.
+    /// - [`LendingError::InvalidAmount`] if `amount` is zero or negative.
+    /// - [`LendingError::InsufficientCollateral`] if the payer's recorded
+    ///   balance is less than `amount`.
+    /// - [`LendingError::Overflow`] if the checked arithmetic on the payer
+    ///   or treasury balance would overflow / underflow.
+    pub fn repay_flash_loan(
+        env: Env,
+        payer: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::FlashLoan);
         check_emergency_status(&env, ProtocolAction::FlashLoan);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
         payer.require_auth();
         let payer_key = DataKey::Balance(asset.clone(), payer.clone());
         let payer_bal: i128 = env.storage().persistent().get(&payer_key).unwrap_or(0);
         if payer_bal < amount {
-            panic!("InsufficientBalance");
+            return Err(LendingError::InsufficientCollateral);
         }
         let new_payer_bal = payer_bal
             .checked_sub(amount)
-            .expect("repay_flash_loan: payer balance underflow");
+            .ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&payer_key, &new_payer_bal);
 
         let tre_key = DataKey::Treasury(asset.clone());
         let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         let new_tre_bal = tre_bal
             .checked_add(amount)
-            .expect("repay_flash_loan: treasury balance overflow");
+            .ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&tre_key, &new_tre_bal);
 
         // Emit flash loan repaid event
         emit_flash_loan_repaid(&env, &payer, &asset, amount);
+        Ok(())
     }
 
     /// Issue a callback-based flash loan.
