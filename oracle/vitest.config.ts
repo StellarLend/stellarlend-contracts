@@ -58,7 +58,7 @@ function assertNonEmptyStringArray(name: string, value: unknown): asserts value 
 }
 
 function assertThreshold(name: string, value: unknown): asserts value is number {
-    if (typeof value !== 'number' || !Number.finite(value)) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
         throw new Error(`vitest config invariant violated: thresholds.${name} must be a finite number`);
     }
     if (value < 0 || value > 100) {
