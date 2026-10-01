@@ -664,7 +664,10 @@ export class StellarService {
 
     // Boundary validation: reject malformed payloads so downstream consumers
     // never see a partially-populated AmmEventV1.
-    if (typeof data.amount_in !== 'string' || typeof data.amount_out !== 'string') {
+    if (
+      data.event === 'swap' &&
+      (typeof data.amount_in !== 'string' || typeof data.amount_out !== 'string')
+    ) {
       return null;
     }
 

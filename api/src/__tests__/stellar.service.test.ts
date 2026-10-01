@@ -7,19 +7,19 @@ import {
   Keypair,
   TransactionBuilder,
   nativeToScVal,
-  xdq,
+  xdr,
 } from '@stellar/stellar-sdk';
 import { Server as SorobanServer } from '@stellar/stellar-sdk/rpc';
 
-jdest.mock('axios');
-jdest.mock('@stellar/stellar-sdk');
-jdest.mock('@stellar/stellar-sdk/rpc');
+jest.mock('axios');
+jest.mock('@stellar/stellar-sdk');
+jest.mock('@stellar/stellar-sdk/rpc');
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
-const VALID_USER_ADDRESS = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDL4C46VY42OWHC3TPR2I26NNV3ZSJ';
+const VALID_USER_ADDRESS = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
 const VALID_USER_SECRET = 'SAOS4OGIK6HD4QGR3DVRRDSR4FUBH73FCZGRZ7M53LRN67UQE5JDNS4I';
 const VALID_CONTRACT_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
-const VALID_ASSET_ADDRESS = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDL4C46VY42OWHC3TPR2I26NNV3ZSJ';
+const VALID_ASSET_ADDRESS = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
 
 describe('StellarService', () => {
   let service: StellarService;
@@ -79,7 +79,7 @@ describe('StellarService', () => {
     });
 
     it('should throw error when account fetch fails', async () => {
-      mockedAxios.get.mockRejected(new Error('Network error'));
+      mockedAxios.get.mockRejectedValue(new Error('Network error'));
 
       await expect(service.getAccount('invalid_address')).rejects.toThrow();
     });
@@ -100,7 +100,7 @@ describe('StellarService', () => {
     });
 
     it('should wrap non-Error rejections into InternalServerError', async () => {
-      mockedAxios.get.mockRejected('string failure');
+      mockedAxios.get.mockRejectedValue('string failure');
 
       await expect(service.getAccount(VALID_USER_ADDRESS)).rejects.toThrow(
         'Failed to fetch account information'
@@ -108,7 +108,7 @@ describe('StellarService', () => {
     });
 
     it('should not leak unsanitized address in error message', async () => {
-      mockedAxios.get.mockRejected(new Error('network down'));
+      mockedAxios.get.mockRejectedValue(new Error('network down'));
 
       await expect(service.getAccount(VALID_USER_ADDRESS)).rejects.toThrow(
         new Error('Failed to fetch account information')
@@ -134,7 +134,7 @@ describe('StellarService', () => {
     });
 
     it('handles transaction submission failure', async () => {
-      mockedAxios.post.mockRejected({
+      mockedAxios.post.mockRejectedValue({
         response: {
           data: {
             extras: {
@@ -183,7 +183,7 @@ describe('StellarService', () => {
     });
 
     it('returns failure with error message when no response body is present', async () => {
-      mockedAxios.post.mockRejected(new Error('Network error'));
+      mockedAxios.post.mockRejectedValue(new Error('Network error'));
 
       const result = await service.submitTransaction('mock_tx_xdr');
 
@@ -193,7 +193,7 @@ describe('StellarService', () => {
     });
 
     it('returns failure when error has no response but has message', async () => {
-      mockedAxios.post.mockRejected({ response: { data: { extras: { result_codes: { transaction: 'tx_bad_seq' } } } } });
+      mockedAxios.post.mockRejectedValue({ response: { data: { extras: { result_codes: { transaction: 'tx_bad_seq' } } } } });
 
       const result = await service.submitTransaction('mock_tx_xdr');
 
@@ -202,7 +202,7 @@ describe('StellarService', () => {
     });
 
     it('returns failure with undefined error when response extras are missing', async () => {
-      mockedAxios.post.mockRejected({ response: { data: { } } });
+      mockedAxios.post.mockRejectedValue({ response: { data: { } } });
 
       const result = await service.submitTransaction('mock_tx_xdr');
 
@@ -216,7 +216,7 @@ describe('StellarService', () => {
       const mockTxHash = 'tx_hash_123';
       const mockResponse = {
         successful: true,
-        ledge: 12345,
+        ledger: 12345,
       };
 
       mockedAxios.get.mockResolvedValue({ data: mockResponse });
@@ -231,7 +231,7 @@ describe('StellarService', () => {
     it('should timeout if transaction takes too long', async () => {
       const mockTxHash = 'tx_hash_123';
 
-      mockedAxios.get.mockRejected({ response: { status: 404 } });
+      mockedAxios.get.mockRejectedValue({ response: { status: 404 } });
 
       const result = await service.monitorTransaction(mockTxHash, 2000);
 
@@ -254,7 +254,7 @@ describe('StellarService', () => {
     });
 
     it('should throw when monitoring encounters non-404 errors', async () => {
-      mockedAxios.get.mockRejected({ response: { status: 500 } });
+      mockedAxios.get.mockRejectedValue({ response: { status: 500 } });
 
       await expect(service.monitorTransaction('tx_hash_123')).rejects.toThrow(
         'Failed to monitor transaction'
@@ -279,7 +279,7 @@ describe('StellarService', () => {
     });
 
     it('throws when error has no response object', async () => {
-      mockedAxios.get.mockRejected(new Error('network down'));
+      mockedAxios.get.mockRejectedValue(new Error('network down'));
 
       await expect(service.monitorTransaction('missing_hash')).rejects.toThrow(
         'Failed to monitor transaction'
@@ -298,8 +298,8 @@ describe('StellarService', () => {
       jest.useFakeTimers();
       try {
         mockedAxios.get
-          .mockRejectedOnce({ response: { status: 404 } })
-          .mockResolvedOnce({ data: { successful: true, ledge: 999 } });
+          .mockRejectedValueOnce({ response: { status: 404 } })
+          .mockResolvedOnce({ data: { successful: true, ledger: 999 } });
 
         const promise = service.monitorTransaction('tx_hash_123', 5000);
 
@@ -337,8 +337,8 @@ describe('StellarService', () => {
     });
 
     it('should return unhealthy status when services fail', async () => {
-      mockedAxios.get.mockRejected(new Error('Connection failed'));
-      mockSorobanServer.getHealth.mockRejected(new Error('Connection failed'));
+      mockedAxios.get.mockRejectedValue(new Error('Connection failed'));
+      mockSorobanServer.getHealth.mockRejectedValue(new Error('Connection failed'));
 
       const result = await service.healthCheck();
 
@@ -347,7 +347,7 @@ describe('StellarService', () => {
     });
 
     it('reports horizon unhealthy while soroban remains healthy', async () => {
-      mockedAxios.get.mockRejected(new Error('horizon down'));
+      mockedAxios.get.mockRejectedValue(new Error('horizon down'));
       mockSorobanServer.getHealth.mockResolvedValue({});
 
       const result = await service.healthCheck();
@@ -358,7 +358,7 @@ describe('StellarService', () => {
 
     it('reports soroban unhealthy while horizon remains healthy', async () => {
       mockedAxios.get.mockResolvedValue({ data: {} });
-      mockSorobanServer.getHealth.mockRejected(new Error('rpc down'));
+      mockSorobanServer.getHealth.mockRejectedValue(new Error('rpc down'));
 
       const result = await service.healthCheck();
 
@@ -390,7 +390,7 @@ describe('StellarService', () => {
       mockedAxios.get.mockResolvedValue({
         data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
       });
-      mockSorobanServer.prepareTransaction.mockRejected(new Error('prepare failed'));
+      mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
 
       await expect(
         service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -454,7 +454,7 @@ describe('StellarService', () => {
     });
 
     it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejected(new Error('Network error'));
+      mockedAxios.get.mockRejectedValue(new Error('Network error'));
 
       await expect(
         service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -538,7 +538,7 @@ describe('StellarService', () => {
       mockedAxios.get.mockResolvedValue({
         data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
       });
-      mockSorobanServer.prepareTransaction.mockRejected(new Error('prepare failed'));
+      mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
 
       await expect(
         service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -576,7 +576,7 @@ describe('StellarService', () => {
     });
 
     it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejected(new Error('Network error'));
+      mockedAxios.get.mockRejectedValue(new Error('Network error'));
 
       await expect(
         service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -660,7 +660,7 @@ describe('StellarService', () => {
       mockedAxios.get.mockResolvedValue({
         data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
       });
-      mockSorobanServer.prepareTransaction.mockRejected(new Error('prepare failed'));
+      mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
 
       await expect(
         service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -684,11 +684,11 @@ describe('StellarService', () => {
 
       await expect(
         service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '-5', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to buil repay transaction');
+      ).rejects.toThrow('Failed to build repay transaction');
     });
 
     it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejected(new Error('Network error'));
+      mockedAxios.get.mockRejectedValue(new Error('Network error'));
 
       await expect(
         service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -717,7 +717,7 @@ describe('StellarService', () => {
       mockedAxios.get.mockResolvedValue({
         data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
       });
-      mockSorobanServer.prepareTransaction.mockRejected(new Error('prepare failed'));
+      mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
 
       await expect(
         service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -730,7 +730,7 @@ describe('StellarService', () => {
       });
 
       await expect(
-        service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, '1', VALID_USER_SECRET)
+        service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, 'abc', VALID_USER_SECRET)
       ).rejects.toThrow('Failed to build withdraw transaction');
     });
 
@@ -745,7 +745,7 @@ describe('StellarService', () => {
     });
 
     it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejected(new Error('Network error'));
+      mockedAxios.get.mockRejectedValue(new Error('Network error'));
 
       await expect(
         service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
@@ -755,7 +755,7 @@ describe('StellarService', () => {
 
   describe('AMM event decoding', () => {
     it('should parse a valid AMM topic tuple', () => {
-      const topic = service.parseAmmEventTopic['amm', 'v1', 'swap']);
+      const topic = service.parseAmmEventTopic(['amm', 'v1', 'swap']);
 
       expect(topic).toEqual({
         module: 'amm',
@@ -831,14 +831,14 @@ describe('StellarService', () => {
         ],
       };
 
-      const events = service.extractAmmEvents(txResult);
+      const events = service.extractAmmEventsFromTransactionResult(txResult);
 
       expect(events).toHaveLength(1);
       expect(events[0].topic.kind).toBe('add_liquidity');
     });
 
     it('returns null for topic tuples with fewer than three elements', () => {
-      expect(service.parseAmmEventTopic['amm', 'v1'])).toBeNull();
+      expect(service.parseAmmEventTopic(['amm', 'v1'])).toBeNull();
       expect(service.parseAmmEventTopic([])).toBeNull();
     });
 
@@ -892,11 +892,11 @@ describe('StellarService', () => {
     });
 
     it('returns empty array when txResult has no events', () => {
-      expect(service.extractAmmEvents({ events: [] })).toEqual([]);
+      expect(service.extractAmmEventsFromTransactionResult({ events: [] })).toEqual([]);
     });
 
     it('returns empty array when txResult is missing events field', () => {
-      expect(service.extractAmmEvents({} as any)).toEqual([]);
+      expect(service.extractAmmEventsFromTransactionResult({} as any)).toEqual([]);
     });
 
     it('skips malformed AMM events in txResult', () => {
@@ -907,7 +907,7 @@ describe('StellarService', () => {
         ],
       };
 
-      const events = service.extractAmmEvents(txResult);
+      const events = service.extractAmmEventsFromTransactionResult(txResult);
 
       expect(events).toHaveLength(1);
     });
