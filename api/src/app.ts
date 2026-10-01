@@ -26,13 +26,12 @@ app.use(cors());
 
 app.use(
   express.json({
-    limit: config.jsonLimit,
     verify: (req: Request, _res: Response, buf: Buffer) => {
       (req as Request & { rawBody?: string }).rawBody = buf.toString('utf8');
     },
   }),
 );
-app.use(express.urlencoded({ extended: true, limit: config.jsonLimit }));
+app.use(express.urlencoded({ extended: true }));
 
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
@@ -65,7 +64,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     method: req.method,
   });
 
-  if ((err as { type?: string })?.type === 'entity.tolarge') {
+  if ((err as { type?: string })?.type === 'entity.too.large') {
     logger.warn('Request body too large', { path: req.path, method: req.method });
     return res.status(413).json({ error: 'Payload too large' });
   }

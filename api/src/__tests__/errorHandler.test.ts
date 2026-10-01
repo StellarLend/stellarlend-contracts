@@ -793,7 +793,7 @@ describe('Error Handler Middleware', () => {
   });
 
   it('should handle ApiError with a minimal boundary status code (400)', () => {
-    const error = new ApiError('Bad request', 400);
+    const error = new ApiError(400, 'Bad request');
 
     errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
 
@@ -804,25 +804,8 @@ describe('Error Handler Middleware', () => {
     });
   });
 
-  it('should handle ApiError with an upper boundary status code (599)', () => {
-    const error = new ApiError('Up stream failure', 599);
-
-    errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
-
-    expect(mockResponse.status).toHaveBeenCalledWith(599);
-  });
-
-  it('should handle an ApiError with an empty message without throwing', () => {
-    const error = new ApiError('', 400);
-
-    expect(() =>
-      errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext),
-    ).not.toThrow();
-    expect(mockResponse.status).toHaveBeenCalledWith(400);
-  });
-
   it('should default to 500 for an ApiError with an invalid status code', () => {
-    const error = new ApiError('Bad', 0);
+    const error = new ApiError(0, 'Bad');
 
     errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
 

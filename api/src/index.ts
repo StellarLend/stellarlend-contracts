@@ -24,7 +24,7 @@ export const startServer = (): Server => {
 
   // Listen errors (E.ADDRINUSE, E.ACCESS, etc.) must not be swallowed.
   // The process exits non-zero so the orchestrator can restart it.
-  server.on('error', (error: NodeJS.Errno): void => {
+  server.on('error', (error: NodeJS.ErrnoException): void => {
     logger.error('Server failed to listen:', {
       code: error.code,
       message: error.message,
@@ -52,7 +52,7 @@ export const stopServer = (server: Server): Promise<void> =>
     server.close((err) => {
       if (err) {
         reject(err);
-        return {};
+        return;
       }
       resolve();
     });
