@@ -1,1 +1,155 @@
-Ly8vIGV2ZW50cy5ycyDigJQgU3RydWN0dXJlZCBldmVudCBkZWZpbml0aW9ucyBhbmQgZW1pdCBoZWxwZXJzIGZvciB0aGUgU3RlbGxhckxlbmQKLy8vIGhlbGxvLXdvcmxkIGNvbnRyYWN0LgovLy8KLy8vICMgU2NoZW1hIHZlcnNpb25pbmcKLy8vCi8vLyBBIHNpbmdsZSBbYEVWRU5UX1NDSEVNQV9WRVJTSU9OYF0gY29uc3RhbnQgaXMgdGhlIHNvdXJjZSBvZiB0cnV0aCBmb3IgdGhlCi8vLyBhY3RpdmUgc2NoZW1hIHZlcnNpb24uICBWZXJzaW9uZWQgZXZlbnQgc3RydWN0cyBjYXJyeSBhIGBzY2hlbWFfdmVyc2lvbjogdTMyYAovLy8gZmllbGQgcG9wdWxhdGVkIHdpdGggdGhpcyBjb25zdGFudCBhdCBlbWl0IHRpbWUuICBTZWUKLy8vIGBkb2NzL0VWRU5UX1NDSEVNQV9WRVJTSU9OSU5HLm1kYCBmb3IgdGhlIGZ1bGwgdXBncmFkZSBwb2xpY3kuCi8vLwovLy8gIyBBZGRpbmcgYSBuZXcgZXZlbnQKLy8vCi8vLyAxLiBEZWZpbmUgYSBzdHJ1Y3Qgd2l0aCBgI1tjb250cmFjdHR5cGVdYCBiZWxvdy4KLy8vIDIuIFdyaXRlIGEgYHB1YiBmbiBlbWl0XzxuYW1lPihlbnY6ICZFbnYsIGV2ZW50OiA8U3RydWN0PilgIGhlbHBlciB0aGF0IGNhbGxzCi8vLyAgICBbYHB1Ymxpc2hfZXZlbnRgXS4KLy8vIDMuIENhbGwgdGhlIGhlbHBlciBmcm9tIHRoZSBidXNpbmVzcy1sb2dpYyBzaXRlLgovLy8gNC4gQWRkIGEgcm93IHRvIHRoZSB2ZXJzaW9uZWQtZXZlbnRzIHRhYmxlIGluIGBkb2NzL0VWRU5UX1NDSEVNQV9WRVJTSU9OSU5HLm1kYC4KdXNlIHNvcm9iYW5fc2RrOjp7Y29udHJhY3R0eXBlLCBzeW1ib2xfc2hvcnQsIEFkZHJlc3MsIEVudiwgU3ltYm9sfTsKCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KLy8gU2NoZW1hIHZlcnNpb24KLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIFNpbmdsZSBzb3VyY2Ugb2YgdHJ1dGggZm9yIHRoZSBhY3RpdmUgZXZlbnQgc2NoZW1hIHZlcnNpb24uCi8vLwovLy8gSW5jcmVtZW50IHRoaXMgY29uc3RhbnQgd2hlbmV2ZXIgYSAqKmJyZWFraW5nKiogY2hhbmdlIGlzIG1hZGUgdG8gYSB2ZXJzaW9uZWQKLy8vIGV2ZW50IChmaWVsZCBhZGRlZCwgcmVtb3ZlZCwgb3IgdHlwZS1jaGFuZ2VkKS4gIFNlZQovLy8gYGRvY3MvRVZFTlRfU0NIRU1BX1ZFUlNJT05JTkcubWRgIGZvciB0aGUgZnVsbCBwcm9jZWR1cmUuCnB1YiBjb25zdCBFVkVOVF9TQ0hFTUFfVkVSU0lPTjogdTMyID0gMTsKCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KLy8gSW50ZXJuYWwgcHVibGlzaCBoZWxwZXIKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIFB1Ymxpc2ggYSByYXcgYCh0b3BpY3MsIGRhdGEpYCBldmVudCBwYWlyLgovLy8KLy8vIEFsbCBlbWl0IGhlbHBlcnMgZnVubmVsIHRocm91Z2ggaGVyZSBzbyB0b3BpYyBjb25zdHJ1Y3Rpb24gaXMgY29uc2lzdGVudC4KZm4gcHVibGlzaF9ldmVudDxUOiBzb3JvYmFuX3NkazpJbnRvVmFsPEVudiwgc29yb2Jhbl9zZGs6OlZhbD4+KAogICAgZW52OiAmRW52LAogICAgdG9waWNzOiBpbXBsIHNvcm9iYW5fc2RrOjpJbnRvVmFsPEVudiwgc29yb2Jhbl9zZGs6OlZhbD4sCiAgICBkYXRhOiBULAopIHsKICAgIGVudi5ldmVudHMoKS5wdWJsaXNoKHRvcGljcywgZGF0YSk7Cn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KLy8gUHJpY2VVcGRhdGVkRXZlbnQKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIEVtaXR0ZWQgd2hlbmV2ZXIgYSBwcmljZSBmZWVkIGVudHJ5IGlzIHN1Y2Nlc3NmdWxseSB3cml0dGVuIGJ5Ci8vLyBbYG9yYWNsZTo6dXBkYXRlX3ByaWNlX2ZlZWRgXS4KLy8vCi8vLyBUaGlzIGlzIGFuICoq dW52ZXJzaW9uZWQqKiBldmVudDogbmV3IG9wdGlvbmFsIGZpZWxkcyBtYXkgYmUgYXBwZW5kZWQgYWNyb3NzCi8vLyB1cGdyYWRlcyBidXQgZXhpc3RpbmcgZmllbGRzIHdpbGwgbm90IGJlIHJlbW92ZWQgb3IgcmVvcmRlcmVkLgojW2NvbnRyYWN0dHlwZV0KI1tkZXJpdmUoQ2xvbmUsIERlYnVnKV0KcHViIHN0cnVjdCBQcmljZVVwZGF0ZWRFdmVudCB7CiAgICAvLy8gQ2FsbGVyIHRoYXQgc3VibWl0dGVkIHRoZSBwcmljZSB1cGRhdGUuCiAgICBwdWIgYWN0b3I6IEFkZHJlc3MsCiAgICAvLy8gQXNzZXQgd2hvc2UgcHJpY2Ugd2FzIHVwZGF0ZWQuCiAgICBwdWIgYXNzZXQ6IEFkZHJlc3MsCiAgICAvLy8gTmV3IHByaWNlIHZhbHVlIChyYXcgb3JhY2xlIHVuaXRzKS4KICAgIHB1YiBwcmljZTogaTEyOCwKICAgIC8vLyBEZWNpbWFsIHByZWNpc2lvbiBvZiBgcHJpY2VgLgogICAgcHViIGRlY2ltYWxzOiB1MzIsCiAgICAvLy8gT3JhY2xlIGNvbnRyYWN0IGFkZHJlc3MgdGhhdCBzaWduZWQgLyBzdWJtaXR0ZWQgdGhlIHByaWNlLgogICAgcHViIG9yYWNsZTogQWRkcmVzcywKICAgIC8vLyBMZWRnZXIgdGltZXN0YW1wIGF0IHdoaWNoIHRoZSB1cGRhdGUgd2FzIHdyaXR0ZW4uCiAgICBwdWIgdGltZXN0YW1wOiB1NjQsCn0KCi8vLyBFbWl0IGEgW2BQcmljZVVwZGF0ZWRFdmVudGBdLgovLy8KLy8vIFRvcGljczogYCgib3JhY2xlIiwgInByaWNlVXBkIilgCnB1YiBmbiBlbWl0X3ByaWNlX3VwZGF0ZWQoZW52OiAmRW52LCBldmVudDogUHJpY2VVcGRhdGVkRXZlbnQpIHsKICAgIGVudi5ldmVudHMoKQogICAgICAgIC5wdWJsaXNoKChzeW1ib2xfc2hvcnQhKCJvcmFjbGUiKSwgc3ltYm9sX3Nob3J0ISgicHJpY2VVcGQiKSksIGV2ZW50KTsKfQoKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBUd2FwRmFsbGJhY2tVc2VkRXZlbnQgICh2ZXJzaW9uZWQsIHNjaGVtYV92ZXJzaW9uID0gMSkKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIEVtaXR0ZWQgYnkgW2BvcmFjbGU6OnRyeV90d2FwX2ZhbGxiYWNrYF0gZWFjaCB0aW1lIHRoZSBvcmFjbGUgcmVzb2x1dGlvbgovLy8gcGF0aCBmYWxscyBiYWNrIHRvIHRoZSBBTU0gVFdBUCBwcmljZSBpbnN0ZWFkIG9mIHRoZSBwcmltYXJ5IGZlZWQuCi8vLwovLy8gIyBTZW1hbnRpY3MKLy8vCi8vLyBUaGlzIGV2ZW50IGZpcmVzICoqb25seSB3aGVuIHRoZSBmYWxsYmFjayBpcyBhY3R1YWxseSB1c2VkKiog4oCUIGl0IGlzIG5ldmVyCi8vLyBlbWl0dGVkIG9uIHRoZSBwcmltYXJ5LWZlZWQgaGFwcHkgcGF0aC4gIEl0cyBwcmVzZW5jZSBpbiB0aGUgZXZlbnQgc3RyZWFtCi8vLyBpcyBhbiB1bmFtYmlndW91cyBzaWduYWwgdGhhdDoKLy8vCi8vLyAtIFRoZSBwcmltYXJ5IG9yYWNsZSBmZWVkIGZvciBgYXNzZXRgIHdhcyBlaXRoZXIgYWJzZW50IG9yIHN0YWxlCi8vLyAgIChhZ2UgPiBgbWF4X3N0YWxlbmVzc19zZWNvbmRzYCkuCi8vLyAtIFRoZSByZXNvbHZlZCBwcmljZSBmb3IgdGhpcyBjYWxsIGlzIGRlcml2ZWQgZnJvbSBBTU0gcG9vbCByZXNlcnZlcwovLy8gICBvdmVyIGEgW2BUV0FQX0ZBTExCQUNLX1dJTkRPV19TRUNTYF0tc2Vjb25kIHdpbmRvdy4KLy8vCi8vLyAjIFZlcnNpb25pbmcKLy8vCi8vLyBUaGlzIGlzIGEgKip2ZXJzaW9uZWQqKiBldmVudCAoYHNjaGVtYV92ZXJzaW9uYCBmaWVsZCBwcmVzZW50KS4gIEFueQovLy8gZnV0dXJlIGJyZWFraW5nIGNoYW5nZSBtdXN0IGZvbGxvdyB0aGUgYnVtcC1hbmQtZHVhbC1lbWl0IHByb2NlZHVyZSBpbgovLy8gYGRvY3MvRVZFTlRfU0NIRU1BX1ZFUlNJT05JTkcubWRgLgovLy8KLy8vIFtgVFdBUF9GQUxMQkFDS19XSU5ET1dfU0VDU2BdOiBjcmF0ZTo6b3JhY2xlOjpUV0FQX0ZBTExCQUNLX1dJTkRPV19TRUNTCiNbY29udHJhY3R0eXBlXQojW2Rlcml2ZShDbG9uZSwgRGVidWcpXQpwdWIgc3RydWN0IFR3YXBGYWxsYmFja1VzZWRFdmVudCB7CiAgICAvLy8gU2NoZW1hIHZlcnNpb24g4oCUIGFsd2F5cyBbYEVWRU5UX1NDSEVNQV9WRVJTSU9OYF0gYXQgZW1pdCB0aW1lLgogICAgLy8vIEluZGV4ZXJzIG11c3QgcmVhZCB0aGlzIGZpZWxkIGJlZm9yZSBkZWNvZGluZyB0aGUgcmVzdCBvZiB0aGUgcGF5bG9hZC4KICAgIHB1YiBzY2hlbWFfdmVyc2lvbjogdTMyLAogICAgLy8vIEFzc2V0IGZvciB3aGljaCB0aGUgVFdBUCBmYWxsYmFjayB3YXMgdXNlZC4KICAgIHB1YiBhc3NldDogQWRkcmVzcywKICAgIC8vLyBUV0FQIHByaWNlIHJlc29sdmVkIGZvciB0aGlzIGNhbGwsIHNjYWxlZCBieSBgUFJJQ0VfU0NBTEVgICgxIMOXIDEwXjE4KS4KICAgIC8vLyBEaXZpZGUgYnkgMTBeMTggdG8gb2J0YWluIHRoZSBodW1hbi1yZWFkYWJsZSBwcmljZS4KICAgIHB1YiB0d2FwX3ByaWNlOiB1MTI4LAogICAgLy8vIEFnZSBpbiBzZWNvbmRzIG9mIHRoZSBwcmltYXJ5IGZlZWQgYXQgdGhlIHRpbWUgdGhlIGZhbGxiYWNrIGZpcmVkLgogICAgLy8vCiAgICAvLy8gU2V0IHRvIGB1NjQ6Ok1BWGAgd2hlbiB0aGUgcHJpbWFyeSBmZWVkIHJlY29yZCB3YXMgYWJzZW50IGVudGlyZWx5CiAgICAvLy8gKGFzIG9wcG9zZWQgdG8gcHJlc2VudCBidXQgc3RhbGUpLiAgSW5kZXhlcnMgc2hvdWxkIHRyZWF0IGB1NjQ6Ok1BWGAsCiAgICAvLy8gYXMgImZlZWQgbWlzc2luZyIgcmF0aGVyIHRoYW4gYW4gYWN0dWFsIGFnZSBtZWFzdXJlbWVudC4KICAgIHB1YiBwcmltYXJ5X2FnZV9zZWNzOiB1NjQsCn0KCi8vLyBTZW50aW5lbCB2YWx1ZSBmb3IgW2BUd2FwRmFsbGJhY2tVc2VkRXZlbnQ6OnByaW1hcnlfYWdlX3NlY3NgXSBpbmRpY2F0aW5nCi8vLyB0aGUgcHJpbWFyeSBmZWVkIHJlY29yZCB3YXMgYWJzZW50IChub3QgbWVyZWx5IHN0YWxlKS4KcHViIGNvbnN0IFBSSU1BUllfRkVFRF9BQlNFTlQ6IHU2NCA9IHU2NDo6TUFYOwoKLy8vIEVtaXQgYSBbYFR3YXBGYWxsYmFja1VzZWRFdmVudGBdLgovLy8KLy8vIFRvcGljczogYCgib3JhY2xlIiwgInYxIiwgInR3YXBGYWxia2siKWAgaW4gdGhlIG9sZCBjb2RlLCBub3cgYCgib3JhY2xlIiwgInYxIiwgInR3YXBGYWxia2siKWAuCi8vLwovLy8gVGhlIHRocmVlLXNlZ21lbnQgdG9waWMgbWlycm9ycyB0aGUgQU1NIGV2ZW50IGNvbnZlbnRpb24KLy8vIChgImFtbSJgLCBgInYxImAsIGA8a2luZD5gKSBzbyB0aGF0IGluZGV4ZXJzIGNhbiBzdWJzY3JpYmUgdG8gdmVyc2lvbmVkCi8vLyBvcmFjbGUgZXZlbnRzIHVzaW5nIHRoZSBzYW1lIGAoIm9yYWNsZSIsICJ2MSIsICopYCBmaWx0ZXIgdGhleSB1c2UgZm9yCi8vLyBBTU0gZXZlbnRzLgpwdWIgZm4gZW1pdF90d2FwX2ZhbGxiYWNrX3VzZWQoCiAgICBlbnY6ICZFbnYsCiAgICBhc3NldDogJkFkZHJlc3MsCiAgICB0d2FwX3ByaWNlOiB1MTI4LAogICAgcHJpbWFyeV9hZ2Vfc2VjczogdTY0LAopIHsKICAgIGVudi5ldmVudHMoKS5wdWJsaXNoKAogICAgICAgICgKICAgICAgICAgICAgc3ltYm9sX3Nob3J0ISgib3JhY2xlIiksCiAgICAgICAgICAgIHN5bWJvbF9zaG9ydCEoInYxIiksCiAgICAgICAgICAgIHN5bWJvbF9zaG9ydCEoInR3YXBGYWxia2siKSwKICAgICAgICApLAogICAgICAgIFR3YXBGYWxsYmFja1VzZWRFdmVudCB7CiAgICAgICAgICAgIHNjaGVtYV92ZXJzaW9uOiBFVkVOVF9TQ0hFTUFfVkVSU0lPTiwKICAgICAgICAgICAgYXNzZXQ6IGFzc2V0LmNsb25lKCksCiAgICAgICAgICAgIHR3YXBfcHJpY2UsCiAgICAgICAgICAgIHByaW1hcnlfYWdlX3NlY3MsCiAgICAgICAgfSwKICAgICk7Cn0K
+/// events.rs — Structured event definitions and emit helpers for the StellarLend
+/// hello-world contract.
+///
+/// # Schema versioning
+///
+/// A single [`EVENT_SCHEMA_VERSION`] constant is the source of truth for the
+/// active schema version.  Versioned event structs carry a `schema_version: u32`
+/// field populated with this constant at emit time.  See
+/// `docs/EVENT_SCHEMA_VERSIONING.md` for the full upgrade policy.
+///
+/// # Adding a new event
+///
+/// 1. Define a struct with `#[contracttype]` below.
+/// 2. Write a `pub fn emit_<name>(env: &Env, event: <Struct>)` helper that calls
+///    [`publish_event`].
+/// 3. Call the helper from the business-logic site.
+/// 4. Add a row to the versioned-events table in `docs/EVENT_SCHEMA_VERSIONING.md`.
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
+
+// ---------------------------------------------------------------------------
+// Schema version
+// ---------------------------------------------------------------------------
+
+/// Single source of truth for the active event schema version.
+///
+/// Increment this constant whenever a **breaking** change is made to a versioned
+/// event (field added, removed, or type-changed).  See
+/// `docs/EVENT_SCHEMA_VERSIONING.md` for the full procedure.
+pub const EVENT_SCHEMA_VERSION: u32 = 1;
+
+// ---------------------------------------------------------------------------
+// Internal publish helper
+// ---------------------------------------------------------------------------
+
+/// Publish a raw `(topics, data)` event pair.
+///
+/// All emit helpers funnel through here so topic construction is consistent.
+fn publish_event<T: soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(
+    env: &Env,
+    topics: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+    data: T,
+) {
+    env.events().publish(topics, data);
+}
+
+// ---------------------------------------------------------------------------
+// PriceUpdatedEvent
+// ---------------------------------------------------------------------------
+
+/// Emitted whenever a price feed entry is successfully written by
+/// [`oracle::update_price_feed`].
+///
+/// This is an **unversioned** event: new optional fields may be appended across
+/// upgrades but existing fields will not be removed or reordered.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PriceUpdatedEvent {
+    /// Caller that submitted the price update.
+    pub actor: Address,
+    /// Asset whose price was updated.
+    pub asset: Address,
+    /// New price value (raw oracle units).
+    pub price: i128,
+    /// Decimal precision of `price`.
+    pub decimals: u32,
+    /// Oracle contract address that signed / submitted the price.
+    pub oracle: Address,
+    /// Ledger timestamp at which the update was written.
+    pub timestamp: u64,
+}
+
+/// Emit a [`PriceUpdatedEvent`].
+///
+/// Topics: `("oracle", "price_updated")`
+pub fn emit_price_updated(env: &Env, event: PriceUpdatedEvent) {
+    env.events()
+        .publish((symbol_short!("oracle"), symbol_short!("priceUpd")), event);
+}
+
+// ---------------------------------------------------------------------------
+// TwapFallbackUsedEvent  (versioned, schema_version = 1)
+// ---------------------------------------------------------------------------
+
+/// Emitted by [`oracle::try_twap_fallback`] each time the oracle resolution
+/// path falls back to the AMM TWAP price instead of the primary feed.
+///
+/// # Semantics
+///
+/// This event fires **only when the fallback is actually used** — it is never
+/// emitted on the primary-feed happy path.  Its presence in the event stream
+/// is an unambiguous signal that:
+///
+/// - The primary oracle feed for `asset` was either absent or stale
+///   (age > `max_staleness_seconds`).
+/// - The resolved price for this call is derived from AMM pool reserves
+///   over a [`TWAP_FALLBACK_WINDOW_SECS`]-second window.
+///
+/// # Versioning
+///
+/// This is a **versioned** event (`schema_version` field present).  Any
+/// future breaking change must follow the bump-and-dual-emit procedure in
+/// `docs/EVENT_SCHEMA_VERSIONING.md`.
+///
+/// [`TWAP_FALLBACK_WINDOW_SECS`]: crate::oracle::TWAP_FALLBACK_WINDOW_SECS
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TwapFallbackUsedEvent {
+    /// Schema version — always [`EVENT_SCHEMA_VERSION`] at emit time.
+    /// Indexers must read this field before decoding the rest of the payload.
+    pub schema_version: u32,
+    /// Asset for which the TWAP fallback was used.
+    pub asset: Address,
+    /// TWAP price resolved for this call, scaled by `PRICE_SCALE` (1 × 10^18).
+    /// Divide by 10^18 to obtain the human-readable price.
+    pub twap_price: u128,
+    /// Age in seconds of the primary feed at the time the fallback fired.
+    ///
+    /// Set to `u64::MAX` when the primary feed record was absent entirely
+    /// (as opposed to present but stale).  Indexers should treat `u64::MAX`
+    /// as "feed missing" rather than an actual age measurement.
+    pub primary_age_secs: u64,
+}
+
+/// Sentinel value for [`TwapFallbackUsedEvent::primary_age_secs`] indicating
+/// the primary feed record was absent (not merely stale).
+pub const PRIMARY_FEED_ABSENT: u64 = u64::MAX;
+
+/// Emit a [`TwapFallbackUsedEvent`].
+///
+/// Topics: `("oracle", "v1", "twapFalbk")`
+///
+/// The three-segment topic mirrors the AMM event convention
+/// (`"amm"`, `"v1"`, `<kind>`) so that indexers can subscribe to versioned
+/// oracle events using the same `("oracle", "v1", *)` filter they use for
+/// AMM events.
+pub fn emit_twap_fallback_used(
+    env: &Env,
+    asset: &Address,
+    twap_price: u128,
+    primary_age_secs: u64,
+) {
+    env.events().publish(
+        (
+            symbol_short!("oracle"),
+            symbol_short!("v1"),
+            symbol_short!("twapFalbk"),
+        ),
+        TwapFallbackUsedEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            asset: asset.clone(),
+            twap_price,
+            primary_age_secs,
+        },
+    );
+}
