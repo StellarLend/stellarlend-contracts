@@ -730,12 +730,12 @@ impl MultisigContract {
 
     /// Return the current state of a proposal by ID.
     ///
-    /// Panics with `"ProposalNotFound"` if `id` does not exist.
-    pub fn get_proposal(env: Env, id: u64) -> Proposal {
+    /// Returns `Err(MultisigError::ProposalNotFound)` if `id` does not exist.
+    pub fn get_proposal(env: Env, id: u64) -> Result<Proposal, MultisigError> {
         env.storage()
             .persistent()
             .get(&MultisigDataKey::Proposal(id))
-            .unwrap_or_else(|| panic!("ProposalNotFound"))
+            .ok_or(MultisigError::ProposalNotFound)
     }
 
     // -----------------------------------------------------------------------
