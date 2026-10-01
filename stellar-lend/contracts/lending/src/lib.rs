@@ -23,6 +23,8 @@ mod adversarial_scenarios_test;
 mod event_schema_versioning_test;
 #[cfg(test)]
 mod governance_audit_test;
+#[cfg(test)]
+mod test_token_receiver;
 
 #[cfg(test)]
 mod accrual_idempotency_test;
@@ -1578,22 +1580,26 @@ impl LendingContract {
             .try_into_val(&env)
             .map_err(|_| LendingError::MalformedPayload)?;
 
+        let is_deposit = action_sym == symbol_short!("deposit");
+        let is_repay = action_sym == symbol_short!("repay");
+        if !is_deposit && !is_repay {
+            return Err(LendingError::AssetNotSupported);
+        }
+
         // Pull tokens from the user into the contract via transfer_from.
         // The user must have previously called token_client.approve() to
         // authorize the lending contract as a spender.
         let token_client = TokenClient::new(&env, &token_asset);
         token_client.transfer_from(&contract_address, &from, &contract_address, &amount);
 
-        if action_sym == symbol_short!("deposit") {
+        if is_deposit {
             // Defence-in-depth: deposit() also calls require_initialized
             // and user.require_auth(). The double check is intentional.
             Self::deposit(env, from, amount)?;
-        } else if action_sym == symbol_short!("repay") {
+        } else {
             // Defence-in-depth: repay() also calls require_initialized
             // and user.require_auth(). The double check is intentional.
             Self::repay(env, from, amount)?;
-        } else {
-            return Err(LendingError::AssetNotSupported);
         }
 
         Ok(())
