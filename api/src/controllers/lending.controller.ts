@@ -6,7 +6,6 @@ import {
   encodeCursor,
   decodeCursor,
   isValidCursor,
-  getNextCursor,
 } from '../utils/cursor';
 
 const DEFAULT_LIMIT = 20;
@@ -59,39 +58,36 @@ export class LendingController {
       // Validate and parse limit
       const limit = this.parseLimit(limitParam);
 
-      // Parse cursor to get starting ledger/event index
-      const { fromLedger, fromEventIndex } = this.parseCursor(cursor);
+      // Parse cursor to get the inclusive start position.
+      const { startLedger, startEventIndex } = this.parseCursor(cursor);
 
-      // Fetch activities from Stellar
-      const activities = await this.stellarService.fetchActivities(
-        process.env.LENDING_CONTRACT_ID || '',
-        {
-          fromLedger,
-          fromEventIndex,
-          limit: limit + 1, // Fetch one extra to determine hasMore
-          order: 'desc',
-        }
-      );
-
-      // Determine if there are more results
-      const hasMore = activities.length > limit;
-      const results = hasMore ? activities.slice(0, limit) : activities;
+      const { events, hasMore } = await this.stellarService.fetchActivityByLedgerRange({
+        startLedger,
+        startEventIndex,
+        limit,
+      });
 
       // Build response
       const response: ActivityResponse = {
-        data: results.map((a) => ({
+        data: events.map((a) => ({
           id: a.id,
           type: a.type,
           ledgerSequence: a.ledgerSequence,
           eventIndex: a.eventIndex,
-          timestamp: a.timestamp.toISOString(),
+          timestamp: a.timestamp,
           amount: a.amount,
           asset: a.asset,
-          account: a.account,
+          account: a.user,
           txHash: a.txHash,
         })),
         pagination: {
-          nextCursor: hasMore ? getNextCursor(results) || null : null,
+          nextCursor:
+            hasMore && events.length > 0
+              ? encodeCursor(
+                  events[events.length - 1].ledgerSequence,
+                  events[events.length - 1].eventIndex,
+                )
+              : null,
           hasMore,
           limit,
         },
@@ -126,27 +122,39 @@ export class LendingController {
     return Math.min(parsed, MAX_LIMIT);
   }
 
-  private parseCursor(cursorParam: unknown): { fromLedger?: number; fromEventIndex: number } {
-    if (!cursorParam) {
-      return { fromEventIndex: 0 };
+  private parseCursor(cursorParam: unknown): {
+    startLedger: number | null;
+    startEventIndex: number | null;
+  } {
+    if (cursorParam === undefined || cursorParam === null || cursorParam === '') {
+      return { startLedger: null, startEventIndex: null };
     }
 
     const cursor = cursorParam as string;
-    
+
     if (!isValidCursor(cursor)) {
-      throw new Error(`Cursor decode failed: Invalid cursor format`);
+      throw new Error('Cursor decode failed: Invalid cursor format');
     }
 
     const { ledgerSequence, eventIndex } = decodeCursor(cursor);
-    
-    // For pagination, we want to start AFTER the cursor position
-    // So we increment the event index within the same ledger
+
+    // Resume *after* the cursor position: skip everything at or before it.
     return {
-      fromLedger: ledgerSequence,
-      fromEventIndex: eventIndex + 1,
+      startLedger: ledgerSequence,
+      startEventIndex: eventIndex + 1,
     };
   }
 }
+
+const lendingController = new LendingController();
+
+/**
+ * Standalone Express handler for `GET /api/lending/activity`.
+ *
+ * Exported so the route table can mount the controller without instantiating a
+ * fresh service per request.
+ */
+export const getActivity = lendingController.getActivity.bind(lendingController);
 
 export const deposit = async (req: Request, res: Response, next: NextFunction) => {
   try {
