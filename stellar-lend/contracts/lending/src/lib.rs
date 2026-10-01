@@ -1686,7 +1686,6 @@ impl LendingContract {
 
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
-
         Ok(new_balance)
     }
 
@@ -1723,7 +1722,6 @@ impl LendingContract {
 
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
-
         Ok(new_balance)
     }
 
@@ -1846,7 +1844,6 @@ impl LendingContract {
 
         // Emit borrow event
         emit_borrow(&env, &user, amount, updated.principal);
-
         Ok(updated.principal)
     }
 
