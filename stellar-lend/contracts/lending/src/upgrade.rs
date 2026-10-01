@@ -430,11 +430,7 @@ pub fn upgrade_remove_approver(
         .instance()
         .get(&UpgradeKey::RequiredApprovals)
         .unwrap_or(1);
-    let approvers: Vec<Address> = env
-        .storage()
-        .instance()
-        .get(&UpgradeKey::Approvers)
-        .unwrap_or_else(|| Vec::new(env));
+    let approvers = load_approvers(env);
 
     if approvers.len() <= 1 {
         return Err(LendingError::InvalidUpgradeConfig);

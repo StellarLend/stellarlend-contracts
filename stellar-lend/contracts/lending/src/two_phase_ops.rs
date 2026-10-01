@@ -39,7 +39,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```text
 //! // Borrow operation
 //! let prepared = prepare_borrow(&env, &user, &asset, amount)?;
 //! // ← All validation (health factor, debt ceiling) completed here
@@ -693,7 +693,10 @@ pub fn execute_repay_two_phase(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env,
+    };
 
     #[test]
     fn test_two_phase_borrow_validates_before_write() {
@@ -701,14 +704,19 @@ mod tests {
         // BEFORE any permanent state mutation occurs.
 
         let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
 
         // Setup would require full contract initialization
         // For now, this demonstrates the API
 
-        // Attempt to prepare under-collateralized borrow
-        let result = prepare_borrow(&env, &user, &asset, 1_000_000);
+        // Attempt to prepare under-collateralized borrow (prepare reads
+        // contract storage, so run inside the contract frame)
+        let result = env.as_contract(&contract_id, || {
+            prepare_borrow(&env, &user, &asset, 1_000_000)
+        });
 
         // Expect: HealthFactorTooLow error
         // Verify: No debt position written (query storage confirms)
@@ -718,8 +726,15 @@ mod tests {
     #[test]
     fn test_two_phase_commit_without_prepare_fails() {
         let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        env.ledger().set_timestamp(1_000);
         let user = Address::generate(&env);
         let asset = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
+
+        // Move the ledger forward so the hand-built prepared operation
+        // (prepared_at = 0) is provably stale.
+        env.ledger().set_timestamp(1_000);
 
         // Create a prepared operation manually (without validation)
         let fake_prepared = PreparedBorrow {
@@ -742,14 +757,15 @@ mod tests {
             prepared_at: 0,
         };
 
-        // Commit should fail: prepared_at too old
-        let result = commit_borrow(&env, fake_prepared);
+        // Commit should fail: prepared_at too old (commit reads contract
+        // storage, so run inside the contract frame)
+        let result = env.as_contract(&contract_id, || commit_borrow(&env, fake_prepared));
         assert!(matches!(result, Err(LendingError::OperationExpired)));
     }
 
     #[test]
     fn test_prepared_operation_has_timestamp_validation() {
-        let env = Env::default();
+        let _env = Env::default();
 
         // Verify that committed operations check prepared_at timestamp
         // to prevent stale prepared operations from being committed
