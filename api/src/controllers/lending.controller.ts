@@ -14,8 +14,6 @@ const MAX_LIMIT = 100;
 
 const stellarService = new StellarService();
 
-
-
 export interface ActivityResponse {
   data: Array<{
     id: string;
