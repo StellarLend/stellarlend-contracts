@@ -37,7 +37,7 @@
 //! Each operation can optionally include a unique operation_id (32-byte hash).
 //! The protocol stores operation_id → OperationStatus mappings with TTL.
 //!
-//! ```rust
+//! ```text
 //! pub struct OperationRecord {
 //!     pub status: OperationStatus,
 //!     pub result: OperationResult,
@@ -55,7 +55,7 @@
 //!
 //! All operations follow a state machine:
 //!
-//! ```
+//! ```text
 //! [NONE]
 //!   ↓ (submit with operation_id)
 //! [PENDING]
@@ -85,7 +85,13 @@ pub enum OperationStatus {
 }
 
 /// Result of a completed operation (cached for idempotency).
-#[contracttype(export = false)]
+///
+/// NOTE: `OperationRecord` stores this directly (not as `Option`). soroban-sdk
+/// 25.3.1's `#[contracttype]` struct conversion requires every field type to
+/// implement infallible `Into<ScVal>`, which `Option<CustomEnum>` does not —
+/// so [`OperationResult::Empty`] is the explicit "no result" marker instead
+/// of `None`.
+#[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationResult {
     /// No result (e.g. pending, in-flight, failed, or no value produced)
@@ -102,6 +108,8 @@ pub enum OperationResult {
     Liquidate(i128),
     /// Generic success without specific result
     Success,
+    /// No result recorded yet (operation still pending/failed/cancelled).
+    Empty,
 }
 
 /// Operation record stored for deduplication and idempotency.
@@ -110,7 +118,7 @@ pub enum OperationResult {
 pub struct OperationRecord {
     /// Current status of the operation
     pub status: OperationStatus,
-    /// Cached result (only valid when status == Completed)
+    /// Cached result (OperationResult::Empty when status != Completed)
     pub result: OperationResult,
     /// Ledger timestamp when operation was first submitted
     pub submitted_at: u64,
@@ -248,7 +256,7 @@ pub fn register_operation(
 
     let record = OperationRecord {
         status: OperationStatus::Pending,
-        result: OperationResult::None,
+        result: OperationResult::Empty,
         submitted_at: now,
         executed_at: None,
         expires_at,
@@ -402,11 +410,8 @@ pub fn cancel_operation(
 pub fn check_idempotent(env: &Env, operation_id: &BytesN<32>) -> Option<OperationResult> {
     let record = get_operation_record(env, operation_id)?;
 
-    if record.status == OperationStatus::Completed {
-        match record.result {
-            OperationResult::None => None,
-            other => Some(other),
-        }
+    if record.status == OperationStatus::Completed && record.result != OperationResult::Empty {
+        Some(record.result)
     } else {
         None
     }
@@ -505,7 +510,7 @@ impl core::fmt::Display for OperationTrackerError {
 /// the same logical operation always produces the same ID.
 ///
 /// Example:
-/// ```rust
+/// ```text
 /// let op_id = generate_operation_id(
 ///     env,
 ///     &user,
@@ -519,6 +524,7 @@ pub fn generate_operation_id(
     operation_type: &Symbol,
     params: &Vec<soroban_sdk::Val>,
 ) -> BytesN<32> {
+    use soroban_sdk::crypto::Hash;
     use soroban_sdk::xdr::ToXdr;
 
     // Hash: user || operation_type || params
@@ -529,7 +535,8 @@ pub fn generate_operation_id(
         data.append(&param.to_xdr(env));
     }
 
-    env.crypto().sha256(&data).into()
+    let hash: soroban_sdk::crypto::Hash<32> = env.crypto().sha256(&data);
+    hash.into()
 }
 
 #[cfg(test)]
@@ -546,7 +553,10 @@ mod tests {
 
     #[test]
     fn test_sequence_starts_at_zero() {
-        let (env, contract_id, user) = setup();
+        let env = Env::default();
+        let user = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
+
         env.as_contract(&contract_id, || {
             assert_eq!(get_user_sequence(&env, &user), 0);
         });
@@ -554,7 +564,10 @@ mod tests {
 
     #[test]
     fn test_sequence_increments() {
-        let (env, contract_id, user) = setup();
+        let env = Env::default();
+        let user = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
+
         env.as_contract(&contract_id, || {
             let seq1 = increment_user_sequence(&env, &user);
             assert_eq!(seq1, 1);
@@ -568,7 +581,10 @@ mod tests {
 
     #[test]
     fn test_sequence_validation_success() {
-        let (env, contract_id, user) = setup();
+        let env = Env::default();
+        let user = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
+
         env.as_contract(&contract_id, || {
             // Current sequence is 0
             assert!(validate_sequence(&env, &user, 0).is_ok());
@@ -582,7 +598,10 @@ mod tests {
 
     #[test]
     fn test_sequence_validation_mismatch() {
-        let (env, contract_id, user) = setup();
+        let env = Env::default();
+        let user = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
+
         env.as_contract(&contract_id, || {
             // Try to submit with sequence 5 when current is 0
             let result = validate_sequence(&env, &user, 5);
@@ -601,6 +620,7 @@ mod tests {
     fn test_operation_registration() {
         let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
+        let contract_id = env.register(crate::LendingContract, ());
 
         env.as_contract(&contract_id, || {
             // Register new operation
@@ -618,6 +638,7 @@ mod tests {
     fn test_duplicate_operation_rejected() {
         let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
+        let contract_id = env.register(crate::LendingContract, ());
 
         env.as_contract(&contract_id, || {
             // Register operation
@@ -639,6 +660,7 @@ mod tests {
     fn test_completed_operation_idempotent() {
         let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
+        let contract_id = env.register(crate::LendingContract, ());
 
         env.as_contract(&contract_id, || {
             // Register and complete operation
@@ -660,6 +682,7 @@ mod tests {
     fn test_failed_operation_allows_retry() {
         let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
+        let contract_id = env.register(crate::LendingContract, ());
 
         env.as_contract(&contract_id, || {
             // Register and fail operation
@@ -680,6 +703,7 @@ mod tests {
     fn test_operation_cancellation() {
         let (env, contract_id, user) = setup();
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
+        let contract_id = env.register(crate::LendingContract, ());
 
         env.as_contract(&contract_id, || {
             // Register operation
@@ -700,6 +724,7 @@ mod tests {
         let (env, contract_id, user1) = setup();
         let user2 = Address::generate(&env);
         let op_id = BytesN::from_array(&env, &[1u8; 32]);
+        let contract_id = env.register(crate::LendingContract, ());
 
         env.as_contract(&contract_id, || {
             // User1 registers operation

@@ -195,28 +195,40 @@ mod tests {
         let contract_id = env.register(crate::LendingContract, ());
         let _asset = Address::generate(&env);
 
+        // Set up matching internal accounting (contract-scoped storage access)
         env.as_contract(&contract_id, || {
-            // Set up matching internal accounting and token balance
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDeposits, &1000i128);
         });
+
+        // Note: In a real test, we'd mock the token client balance
+        // For now, this demonstrates the structure
     }
 
     #[test]
     #[should_panic(expected = "RESERVE INVARIANT VIOLATION")]
     fn test_invariant_panics_on_drift() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(crate::LendingContract, ());
-        let admin = Address::generate(&env);
-        let asset = env.register_stellar_asset_contract_v2(admin).address();
 
+        // Register a real token so the balance query has a valid issuer.
+        // No mint is needed: the contract balance stays 0 while TotalDeposits
+        // is written as 1000 below, which is exactly the drift the check must
+        // detect.
+        let token_admin = Address::generate(&env);
+        let asset = env.register_stellar_asset_contract(token_admin.clone());
+
+        // Mismatched accounting: TotalDeposits = 1000 but the token balance of
+        // the contract is 0. Both the write and the check run inside the same
+        // `as_contract` frame so contract storage and the current-contract
+        // address resolve correctly.
         env.as_contract(&contract_id, || {
-            // Set up mismatched accounting
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDeposits, &1000i128);
-            // Token balance is 0, TotalDeposits is 1000 -> drift detected
+
             check_invariant_before(&env, &asset);
         });
     }

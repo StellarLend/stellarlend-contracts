@@ -29,7 +29,7 @@
 //! }
 //! ```
 
-use soroban_sdk::{Address, BytesN, Env};
+use soroban_sdk::{Address, Bytes, BytesN, Env};
 
 use crate::DataKey;
 
@@ -352,8 +352,9 @@ pub fn validate_oracle_signature(
     pubkey: &BytesN<32>,
 ) -> Result<(), ValidationError> {
     // Verify Ed25519 signature
+    let message_bytes: Bytes = message.to_bytes();
     env.crypto()
-        .ed25519_verify(pubkey, &message.clone().into(), signature);
+        .ed25519_verify(pubkey, &message_bytes, signature);
 
     // Note: ed25519_verify panics on failure in Soroban
     // If we reach here, signature is valid
@@ -745,7 +746,18 @@ mod tests {
     #[test]
     fn test_validate_timestamp() {
         let env = Env::default();
-        env.ledger().set_timestamp(1_000_000);
+        // Use a non-zero ledger timestamp so the `current - tolerance`
+        // assertions below do not underflow (default test timestamp is 0).
+        env.ledger().set(LedgerInfo {
+            timestamp: 1_000_000,
+            protocol_version: 25,
+            sequence_number: 10,
+            network_id: [1u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 16,
+            max_entry_ttl: 6312000,
+        });
         let current = env.ledger().timestamp();
 
         // Current timestamp is valid
@@ -765,7 +777,18 @@ mod tests {
     #[test]
     fn test_validate_price_freshness() {
         let env = Env::default();
-        env.ledger().set_timestamp(1_000_000);
+        // Use a non-zero ledger timestamp so the `current - age`
+        // assertions below do not underflow (default test timestamp is 0).
+        env.ledger().set(LedgerInfo {
+            timestamp: 1_000_000,
+            protocol_version: 25,
+            sequence_number: 10,
+            network_id: [1u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 16,
+            max_entry_ttl: 6312000,
+        });
         let current = env.ledger().timestamp();
 
         // Fresh price is valid

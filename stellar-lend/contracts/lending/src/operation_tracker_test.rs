@@ -104,7 +104,7 @@ fn test_register_new_operation() {
     let record = get_operation_record(&env, &op_id).unwrap();
     assert_eq!(record.status, OperationStatus::Pending);
     assert_eq!(record.initiator, user);
-    assert_eq!(record.result, OperationResult::None);
+    assert_eq!(record.result, OperationResult::Empty);
     assert!(record.executed_at.is_none());
 }
 

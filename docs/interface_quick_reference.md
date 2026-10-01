@@ -60,17 +60,7 @@
 | `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { rate_model_active: bool, utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32, elapsed_ledgers: u32 }` |
 | `get_health_factor` | `(user: Address)` | `i128` |
 | `get_protocol_metrics` | `()` | `ProtocolMetrics { total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` |
-| `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32 }` |
-
-### Upgrade Governance
-
-| Function | Signature | Auth Required | Returns |
-|---|---|---|---|
-| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` |
-| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` |
-| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` — domain-separated approval binding |
-| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint captured for the proposal |
-| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the current approver set |
+| `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { rate_model_active: bool, utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32, elapsed_ledgers: u32 }` |
 
 ### Oracle Price Controls
 
@@ -143,6 +133,16 @@
 | `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the live approver set |
 | `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint at proposal creation |
 | `get_min_upgrade_delay_ledgers` | `()` | — | `u32` — minimum timelock delay in ledgers |
+
+### Upgrade Governance
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` — cancel a pending proposal |
+| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` — proposal is in the `Cancelled` terminal state |
+| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` — stored domain-separated approval binding hash |
+| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint captured at proposal creation |
+| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the live upgrade approver set |
 
 ### Cross-Asset User Operations
 

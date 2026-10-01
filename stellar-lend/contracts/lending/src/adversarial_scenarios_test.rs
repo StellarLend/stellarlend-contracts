@@ -23,8 +23,8 @@ use soroban_sdk::{
 };
 
 use crate::authorization::{
-    authorize_admin, authorize_guardian, authorize_user_operation, verify_position_ownership,
-    AuthorizationError, OperationType,
+    authorize_admin, authorize_guardian, authorize_user_operation, check_rate_limit,
+    verify_position_ownership, AuthorizationError, OperationType,
 };
 use crate::validation::{
     validate_amount, validate_asset_configured, validate_borrow, validate_deposit,
@@ -45,7 +45,20 @@ fn setup() -> (
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(LendingContract, ());
+    // Non-zero network id + current protocol version so the authorization
+    // paths (which call `validate_network`) succeed in tests.
+    env.ledger().set(LedgerInfo {
+        timestamp: env.ledger().timestamp(),
+        protocol_version: 25,
+        sequence_number: env.ledger().sequence(),
+        network_id: [1u8; 32],
+        base_reserve: 10,
+        min_temp_entry_ttl: 16,
+        min_persistent_entry_ttl: 16,
+        max_entry_ttl: 6312000,
+    });
+
+    let contract_id = env.register_contract(None, LendingContract);
     let client = LendingContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -80,26 +93,24 @@ fn test_replay_same_operation_in_same_ledger() {
 fn test_replay_after_ledger_advance_succeeds() {
     let (env, _client, id, _admin, user) = setup();
 
-    // First operation
     env.as_contract(&id, || {
+        // First operation
         let result1 = authorize_user_operation(&env, &user, OperationType::Deposit);
         assert!(result1.is_ok());
-    });
 
-    // Advance ledger
-    env.ledger().set(LedgerInfo {
-        timestamp: env.ledger().timestamp() + 5,
-        protocol_version: 25,
-        sequence_number: env.ledger().sequence() + 1,
-        network_id: env.ledger().network_id().into(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 16,
-        min_persistent_entry_ttl: 16,
-        max_entry_ttl: 6312000,
-    });
+        // Advance ledger
+        env.ledger().set(LedgerInfo {
+            timestamp: env.ledger().timestamp() + 5,
+            protocol_version: 25,
+            sequence_number: env.ledger().sequence() + 1,
+            network_id: [1u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 16,
+            max_entry_ttl: 6312000,
+        });
 
-    // Same operation should succeed in new ledger (different nonce context)
-    env.as_contract(&id, || {
+        // Same operation should succeed in new ledger (different nonce context)
         let result2 = authorize_user_operation(&env, &user, OperationType::Deposit);
         assert!(result2.is_ok());
     });
@@ -227,7 +238,18 @@ fn test_operation_without_require_auth_should_fail() {
 #[test]
 fn test_stale_oracle_price_rejected() {
     let env = Env::default();
-    env.ledger().set_timestamp(1_000_000);
+    // Non-zero ledger time so `now - 3601` is genuinely in the past
+    // (the default test timestamp is 0).
+    env.ledger().set(LedgerInfo {
+        timestamp: 1_000_000,
+        protocol_version: 25,
+        sequence_number: 10,
+        network_id: [1u8; 32],
+        base_reserve: 10,
+        min_temp_entry_ttl: 16,
+        min_persistent_entry_ttl: 16,
+        max_entry_ttl: 6312000,
+    });
     let current_time = env.ledger().timestamp();
 
     // Fresh price succeeds
@@ -473,62 +495,50 @@ fn test_borrow_cap_enforced() {
 fn test_rate_limit_prevents_dos() {
     let (env, _client, id, _admin, user) = setup();
 
-    // Each `authorize_user_operation` creates a unique OperationRecord key in
-    // temporary storage.  The default Soroban invocation footprint allows at
-    // most 100 ledger entries / 50 writes; 100 iterations would blow that
-    // limit.  Instead we test with a smaller count (20) which keeps the test
-    // within footprint bounds while still exercising the rate-limit logic
-    // end-to-end.  (The unit test `authorization::tests::test_rate_limit_rejects_over_limit`
-    // covers the full MAX_OPS_PER_LEDGER=100 threshold using `check_rate_limit`
-    // directly, which only writes a single counter key.)
-    let ops_to_perform = 20u32;
-
     env.as_contract(&id, || {
-        // Perform ops_to_perform operations in same ledger – each with a
-        // unique timestamp so track_operation() produces a distinct nonce.
-        for i in 0..ops_to_perform {
-            env.ledger().set_timestamp(env.ledger().timestamp() + 1);
-            let result = authorize_user_operation(&env, &user, OperationType::Deposit);
+        // Rate limiting counts operations per ledger, independent of the
+        // replay tracker (which rejects duplicate (user, op-type, ledger)
+        // keys). Exercise the rate limiter directly.
+        for i in 0..100 {
+            let result = check_rate_limit(&env, &user);
             assert!(result.is_ok(), "Operation {} should succeed", i);
         }
-    });
 
-    // All ops_to_perform succeeded; the comprehensive rate-limit boundary
-    // (101st op exceeding MAX_OPS_PER_LEDGER) is validated by the unit test
-    // in authorization.rs.
+        // 101st operation should fail
+        let result = check_rate_limit(&env, &user);
+        assert_eq!(result, Err(AuthorizationError::RateLimitExceeded));
+    });
 }
 
 #[test]
 fn test_rate_limit_resets_per_ledger() {
     let (env, _client, id, _admin, user) = setup();
 
-    // Use 20 iterations to stay within Soroban footprint limits (see
-    // test_rate_limit_prevents_dos for detailed explanation).
-    let ops_to_perform = 20u32;
-
     env.as_contract(&id, || {
-        // Perform operations in one ledger
-        for _ in 0..ops_to_perform {
-            env.ledger().set_timestamp(env.ledger().timestamp() + 1);
-            authorize_user_operation(&env, &user, OperationType::Deposit).unwrap();
+        // Fill the rate limit (rate limiter exercised directly — see the
+        // rate-limit/DoS test above).
+        for _ in 0..100 {
+            check_rate_limit(&env, &user).unwrap();
         }
-    });
 
-    // Advance ledger
-    env.ledger().set(LedgerInfo {
-        timestamp: env.ledger().timestamp() + 5,
-        protocol_version: 25,
-        sequence_number: env.ledger().sequence() + 1,
-        network_id: env.ledger().network_id().into(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 16,
-        min_persistent_entry_ttl: 16,
-        max_entry_ttl: 6312000,
-    });
+        // Should be at limit
+        let result = check_rate_limit(&env, &user);
+        assert_eq!(result, Err(AuthorizationError::RateLimitExceeded));
 
-    env.as_contract(&id, || {
-        // Should succeed in new ledger (rate limit resets per ledger sequence)
-        let result = authorize_user_operation(&env, &user, OperationType::Deposit);
+        // Advance ledger
+        env.ledger().set(LedgerInfo {
+            timestamp: env.ledger().timestamp() + 5,
+            protocol_version: 25,
+            sequence_number: env.ledger().sequence() + 1,
+            network_id: [1u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 16,
+            max_entry_ttl: 6312000,
+        });
+
+        // Should succeed in new ledger
+        let result = check_rate_limit(&env, &user);
         assert!(result.is_ok());
     });
 }
@@ -619,15 +629,37 @@ fn test_repay_more_than_debt_rejected() {
 fn test_authorization_events_emitted() {
     let (env, _client, id, _admin, user) = setup();
 
+    // Authorization should emit events for auditing (inside the contract
+    // frame, mirroring the on-chain call path)
     env.as_contract(&id, || {
-        // Authorization should emit events for auditing
         authorize_user_operation(&env, &user, OperationType::Deposit).unwrap();
     });
 
     // Verify events were emitted (events contain auth_check symbol)
-    let events = env.events().all();
-    assert!(
-        !events.events().is_empty(),
-        "Authorization event should be emitted"
-    );
+    let events = soroban_sdk::testutils::Events::all(&env.events());
+    let has_auth_event = events.events().iter().any(|event| {
+        let topics: &[soroban_sdk::xdr::ScVal] = match &event.body {
+            soroban_sdk::xdr::ContractEventBody::V0(v0) => &v0.topics,
+        };
+        topics
+            .first()
+            .and_then(|topic| {
+                <soroban_sdk::Val as soroban_sdk::TryFromVal<
+                    soroban_sdk::Env,
+                    soroban_sdk::xdr::ScVal,
+                >>::try_from_val(&env, topic)
+                .ok()
+            })
+            .and_then(|topic| {
+                <soroban_sdk::Symbol as soroban_sdk::TryFromVal<
+                    soroban_sdk::Env,
+                    soroban_sdk::Val,
+                >>::try_from_val(&env, &topic)
+                .ok()
+            })
+            .map(|sym| sym == Symbol::new(&env, "auth_check"))
+            .unwrap_or(false)
+    });
+
+    assert!(has_auth_event, "Authorization event should be emitted");
 }

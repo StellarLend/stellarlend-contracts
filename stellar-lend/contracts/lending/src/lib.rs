@@ -900,20 +900,16 @@ impl LendingContract {
         if timestamp > now || now > timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
             return Err(LendingError::StaleOracleTimestamp);
         }
-        // Load the existing record once. The freshness and retry policy is:
-        // 1. A strictly older timestamp can never overwrite a newer record.
-        // 2. Two different prices can never share the same timestamp.
-        // 3. Replaying the exact current (price, timestamp) is an idempotent
-        //    retry: it is not an error, but it also does not mutate state.
-        let existing_record: Option<PriceRecord> = env
+        // Monotonic timestamp enforcement. An exact retry of the current
+        // record (same price AND same timestamp) is treated as an
+        // idempotent success; any other same-timestamp or older update is
+        // rejected as a replay.
+        if let Some(last) = env
             .storage()
             .persistent()
-            .get(&DataKey::OraclePrice(asset.clone()));
-        if let Some(last) = existing_record.as_ref() {
-            if timestamp < last.timestamp {
-                return Err(LendingError::OracleReplay);
-            }
-            if timestamp == last.timestamp && price != last.price {
+            .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
+        {
+            if timestamp < last.timestamp || (timestamp == last.timestamp && price != last.price) {
                 return Err(LendingError::OracleReplay);
             }
         }
@@ -925,48 +921,9 @@ impl LendingContract {
             .ok_or(LendingError::OraclePubkeyNotSet)?;
 
         let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
+        // ed25519_verify traps (panics) on a bad signature in soroban-sdk 25.x.
         env.crypto()
             .ed25519_verify(&oracle_pubkey, &payload, &signature);
-
-        // A retry of an already-applied update is a successful no-op. The
-        // signature above proves the caller is authoritative for this payload.
-        if let Some(last) = existing_record.as_ref() {
-            if timestamp == last.timestamp && price == last.price {
-                return Ok(());
-            }
-        }
-
-        // Per-update move-cap circuit breaker.
-        // If max_move_bps is configured and a prior price record exists, reject
-        // updates that move the price beyond the configured threshold.
-        if let Some(max_move_bps) = env
-            .storage()
-            .instance()
-            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
-        {
-            if let Some(last) = existing_record.as_ref() {
-                let last_price = last.price;
-                // delta = |price - last_price| * 10_000 / last_price
-                let delta_abs = if price >= last_price {
-                    price
-                        .checked_sub(last_price)
-                        .ok_or(LendingError::Overflow)?
-                } else {
-                    last_price
-                        .checked_sub(price)
-                        .ok_or(LendingError::Overflow)?
-                };
-                let move_bps = delta_abs
-                    .checked_mul(BPS_DENOM)
-                    .ok_or(LendingError::Overflow)?
-                    .checked_div(last_price)
-                    .ok_or(LendingError::Overflow)?;
-                if move_bps > max_move_bps {
-                    return Err(LendingError::MaxMoveBpsExceeded);
-                }
-            }
-            // No prior record: first-ever price for this asset is exempt.
-        }
 
         // Per-update move-cap circuit breaker.
         // If max_move_bps is configured and a prior price record exists, reject
@@ -4588,6 +4545,8 @@ pub(crate) mod test {
 
         let asset = env.register(MockAsset, ());
         let price = 1_500_000_000i128;
+        // Non-zero ledger time so `timestamp - 1` is genuinely older.
+        env.ledger().set_timestamp(1_000_000);
         let timestamp = env.ledger().timestamp();
         let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
         client.set_price(&admin, &asset, &price, &timestamp, &signature);

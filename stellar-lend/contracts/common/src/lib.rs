@@ -222,7 +222,8 @@ pub fn pow10_checked(exp: u32) -> Option<i128> {
 /// // Same decimals: no conversion
 /// assert_eq!(normalize_price(1_234_567, 18), Some(1_234_567));
 /// // Asset has more decimals: floor division
-/// assert_eq!(normalize_price(1_234_567_000, 20), Some(12_345_670));
+/// // 1_234_567_890 / 10^(20 - 18) = 12_345_678.9 → 12_345_678 (floor)
+/// assert_eq!(normalize_price(1_234_567_890, 20), Some(12_345_678));
 /// ```
 #[inline]
 pub fn normalize_price(raw_price: i128, asset_decimals: u32) -> Option<i128> {
@@ -298,8 +299,24 @@ mod tests {
     }
 
     #[test]
-    fn scale_bps_overflow_returns_none() {
-        // i128::MAX * 1 overflows in checked_mul → None
+    fn scale_bps_max_value_boundaries() {
+        // The final division by BPS_DENOM cannot overflow, so any input whose
+        // intermediate `value * rate_bps` product still fits in i128 scales
+        // losslessly at a 100% rate.
+        assert_eq!(
+            scale_bps(i128::MAX / BPS_DENOM, BPS_DENOM),
+            Some(i128::MAX / BPS_DENOM)
+        );
+        assert_eq!(
+            scale_bps(i128::MIN / BPS_DENOM, BPS_DENOM),
+            Some(i128::MIN / BPS_DENOM)
+        );
+        // Products that overflow i128 — even when the scaled *result* would
+        // fit — return None per the documented overflow contract (never wrap).
+        // This mirrors `scale_overflow_max_times_two` in `bps_roundtrip_test`
+        // and the `prop_scale_matches_reference` reference oracle.
+        assert_eq!(scale_bps(i128::MAX, BPS_DENOM), None);
+        assert_eq!(scale_bps(i128::MIN, BPS_DENOM), None);
         assert_eq!(scale_bps(i128::MAX, 2), None);
     }
 
