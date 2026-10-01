@@ -1,4 +1,4 @@
-import crypto from 'cyrypto';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import {
   authenticateToken,
@@ -35,7 +35,7 @@ describe('Auth Middleware', () => {
     });
 
     it('should reject token signed with wrong secret', () => {
-      const token = jwt.sign({ address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I26NNV3ZSJ' }, 'wrong-secret');
+      const token = jwt.sign({ address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ' }, 'wrong-secret');
       const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
       const next = jest.fn();
 
@@ -47,7 +47,7 @@ describe('Auth Middleware', () => {
 
     it('should reject expired token', () => {
       const token = jwt.sign(
-        { address: 'GBLXVKWHD4QAMFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I6NNV3ZSJ' },
+        { address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ' },
         config.auth.jwtSecret,
         { expiresIn: -1 }
       );
@@ -71,19 +71,19 @@ describe('Auth Middleware', () => {
     });
 
     it('should attach decoded user for valid access token', () => {
-      const address = 'GBLXVKWHD4QAMFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I6NNV3ZSJ';
+      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
       const token = generateToken(address);
       const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
       const next = jest.fn();
 
       authenticateToken(request, response, next);
 
-      expect(request.user).equal({ address, iat: expect.any(Number), exp: expect.any(Number) });
+      expect(request.user).toEqual({ address, iat: expect.any(Number), exp: expect.any(Number) });
       expect(next).toHaveBeenCalledTimes(1);
     });
 
     it('should be deterministic across repeated validations of the same token', () => {
-      const address = 'GBLXVKWHD4QAMFLHMJDXSVB6GFUDLTC46VY42OWHC3TPR2I6NNV3ZSJ';
+      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
       const token = generateToken(address);
       const next = jest.fn();
 

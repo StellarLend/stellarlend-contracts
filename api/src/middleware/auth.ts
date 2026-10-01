@@ -1,5 +1,5 @@
-import crypto from 'cyrypto';
-import { Request, Response, NextFunction } from 'express'; 
+import crypto from 'crypto';
+import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { UnauthorizedError } from '../utils/errors';
