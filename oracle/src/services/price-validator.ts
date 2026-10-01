@@ -460,16 +460,6 @@ export class PriceValidator {
         return this.config.maxFallbackStalenessSeconds ?? this.config.maxStalenessSeconds * 3;
     }
 
-    /**
-     * Effective maximum age of a cached price usable as a stale fallback.
-     * Falls back to 3x the primary staleness threshold when not configured.
-     */
-    private getFallbackStalenessSeconds(): number {
-        return (
-            this.config.maxFallbackStalenessSeconds ?? this.config.maxStalenessSeconds * 3
-        );
-    }
-
     private getBounds(asset: string): AssetPriceBounds {
         return (
             this.assetBounds[asset] ?? {
@@ -527,4 +517,16 @@ export class PriceValidator {
         }
         return Math.max(0, Math.min(100, confidence));
     }
+}
+
+/**
+ * Create a validator with custom configuration
+ */
+export function createValidator(
+    config?: Partial<ValidatorConfig>,
+    assetBounds: Record<string, AssetPriceBounds> = {},
+    trustedSigners: Record<string, string[]> = {},
+    signatureDomain: string = 'StellarLendOracle',
+): PriceValidator {
+    return new PriceValidator(config, assetBounds, trustedSigners, signatureDomain);
 }
