@@ -1,1 +1,675 @@
-LyoqCiAqIFRlc3RzIGZvciBDb25maWd1cmF0aW9uIExvYWRpbmcgYW5kIFZhbGlkYXRpb24KICoKICogVGhpcyBzdWl0ZSBjb3ZlcnMgdGhlIGZhaWx1cmUtcGF0aCBhbmQgYm91bmRhcnkgY29udHJhY3Qgb2YgYG9yYWNsZS9zcmMvY29uZmlnLnRzYC4KICoKICogSW52YXJpYW50cyBlbmZvcmNlZCBieSB0aGVzZSB0ZXN0czoKICogIDEuIGBsb2FkQ29uZmlnKClgIGlzIGRldGVybWluaXN0aWMgZm9yIGEgZ2l2ZW4gZW52aXJvbm1lbnQgc25hcHNob3QuCiAqICAyLiBSZXF1aXJlZCBmaWVsZHMgKENPTlRSQUNUX0lELCBBRE1JTl9TRUNSRVRfS0VZKSBtdXN0IGJlIHByZXNlbnQgYW5kIG5vbi1lbXB0eS4KICogIDMuIE51bWVyaWMgZW52IHZhbHVlcyBtdXN0IGJlIHBhcnNlZCBhbmQgYm91bmRlZDsgaW52YWxpZCB2YWx1ZXMgbXVzdCBmYWlsIGxvdWQKICogICAgIHJhdGhlciB0aGFuIHNpbGVudGx5IGRlZmF1bHRpbmcuCiAqICA0LiBQcm92aWRlciBjb25maWd1cmF0aW9uIGlzIGRlcml2ZWQgZGV0ZXJtaW5pc3RpY2FsbHkgZnJvbSBlbnYgYW5kIGlzIG5vdAogKiAgICAgbXV0YWJsZSBhY3Jvc3MgbG9hZHMgKG5vIHNoYXJlZCBtdXRhYmxlIHN0YXRlIGxlYWtzKS4KICogIDUuIEFzc2V0IGxvb2t1cHMgYXJlIGNhc2Utc2Vuc2l0aXZlIGFuZCByZXR1cm4gYHVuZGVmaW5lZGAgZm9yIHVua25vd24ga2V5cy4KICogIDYuIFByaWNlIHNjYWxpbmcgaXMgcm91bmQtdHJpcCBzdGFibGUgZm9yIHZhbGlkIGlucHV0cyBhbmQgcmVqZWN0cyBpbnZhbGlkCiAqICAgICBpbnB1dHMgd2l0aG91dCBwcm9kdWNpbmcgTmFOIG9yIGluZmluaXR5LgogKi8KCmltcG9ydCB7IGRlc2NyaWJlLCBpdCwgZXhwZWN0LCBiZWZvcmVFYWNoLCBhZnRlckVhY2ggfSBmcm9tICd2aXRlc3QnOwppbXBvcnQgewogICAgbG9hZENvbmZpZywKICAgIGdldEFzc2V0TWFwcGluZywKICAgIGlzU3VwcG9ydGVkQXNzZXQsCiAgICBzY2FsZVByaWNlLAogICAgdW5zY2FsZVByaWNlLAogICAgUFJJQ0VfU0NBTEUsCiAgICBBU1NFVF9NQVBQSU5HUywKfSBmcm9tICcuLi9zcmMvY29uZmlnLmpzJzsKCmNvbnN0IFZBTElEX0NPTlRSQUNUX0lEID0gJ0NURVNUMTIzNDU2Nzg5JzsKY29uc3QgVkFMSURfQURNSU5fU0VDUkVUID0gJ1NURVNUMTIzNDU2Nzg5QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVoxMjM0NTY3ODknOwoKY29uc3QgUkVRVUlSRURfRU5WID0gewogICAgQ09OVFJBQ1RfSUQ6IFZBTElEX0NPTlRSQUNUX0lELAogICAgQURNSU5fU0VDUkVUX0tFWTogVkFMSURfQURNSU5fU0VDUkVULAp9IGFzIGNvbnN0OwoKY29uc3QgTlVNRVJJQ19FTlZfS0VZUyA9IFsKICAgICdDQUNIRV9UVExfU0VDT05EUycsCiAgICAnVVBEQVRFX0lOVEVSVkFMX01TJywKICAgICdNQVhfUFJJQ0VfREVWSUFUSU9OX1BFUkNFTlQnLAogICAgJ1BSSUNFX1NUQUxFTkVTU19USFJFU0hPTERfU0VDT05EUycsCl0gYXMgY29uc3Q7CgpmdW5jdGlvbiBzZXRFbnYodmFsdWVzOiBSZWNvcmQ8c3RyaW5nLCBzdHJpbmcgfCB1bmRlZmluZWQ+KTogdm9pZCB7CiAgICBmb3IgKGNvbnN0IFtrZXksIHZhbHVlXSBvZiBPYmplY3QuZW50cmllcyh2YWx1ZXMpKSB7CiAgICAgICAgaWYgKHZhbHVlID09PSB1bmRlZmluZWQpIHsKICAgICAgICAgICAgZGVsZXRlIHByb2Nlc3MuZW52W2tleV07CiAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgcHJvY2Vzcy5lbnZba2V5XSA9IHZhbHVlOwogICAgICAgIH0KICAgIH0KfQoKZGVzY3JpYmUoJ0NvbmZpZ3VyYXRpb24nLCAoKSA9PiB7CiAgICBjb25zdCBvcmlnaW5hbEVudiA9IHsgLi4ucHJvY2Vzcy5lbnYgfTsKCiAgICBiZWZvcmVFYWNoKCgpID0+IHsKICAgICAgICAvLyBSZXNldCBlbnZpcm9ubWVudCBiZWZvcmUgZWFjaCB0ZXN0IGFuZCByZW1vdmUgYW55IGtleXMgdGhpcyBzdWl0ZSB0b3VjaGVzCiAgICAgICAgLy8gc28gYSBwcmV2aW91cyB0ZXN0IGNhbm5vdCBsZWFrIHN0YXRlIGludG8gdGhlIG5leHQgb25lLgogICAgICAgIHByb2Nlc3MuZW52ID0geyAuLi5vcmlnaW5hbEVudiB9OwogICAgICAgIGZvciAoY29uc3Qga2V5IG9mIFsKICAgICAgICAgICAgJ1NURUxMQVJfTkVUV09SSycsCiAgICAgICAgICAgICdTVEVMTEFSX1JQQ19VUkwnLAogICAgICAgICAgICAnQ09OVFJBQ1RfSUQnLAogICAgICAgICAgICAnQURNSU5fU0VDUkVUX0tFWScsCiAgICAgICAgICAgICdDT0lOR0VDS09fQVBJX0tFWScsCiAgICAgICAgICAgICdDT0lOTUFSS0VUQ0FQX0FQSV9LRVknLAogICAgICAgICAgICAnTE9HX0xFVkVMJywKICAgICAgICAgICAgLi4uTlVNRVJJQ19FTlZfS0VZUywKICAgICAgICBdKSB7CiAgICAgICAgICAgIGRlbGV0ZSBwcm9jZXNzLmVudltrZXldOwogICAgICAgIH0KICAgIH0pOwoKICAgIGFmdGVyRWFjaCgoKSA9PiB7CiAgICAgICAgLy8gUmVzdG9yZSBvcmlnaW5hbCBlbnZpcm9ubWVudAogICAgICAgIHByb2Nlc3MuZW52ID0gb3JpZ2luYWxFbnY7CiAgICB9KTsKCiAgICBkZXNjcmliZSgnbG9hZENvbmZpZycsICgpID0+IHsKICAgICAgICBpdCgnc2hvdWxkIGxvYWQgdmFsaWQgY29uZmlndXJhdGlvbiB3aXRoIGFsbCByZXF1aXJlZCBmaWVsZHMnLCAoKSA9PiB7CiAgICAgICAgICAgIHNldEVudih7CiAgICAgICAgICAgICAgICBTVEVMTEFSX05FVFdPUks6ICd0ZXN0bmV0JywKICAgICAgICAgICAgICAgIFNURUxMQVJfUlBDX1VSTDogJ2h0dHBzOi8vc29yb2Jhbi10ZXN0bmV0LnN0ZWxsYXIub3JnJywKICAgICAgICAgICAgICAgIC4uLlJFUVVJUkVEX0VOViwKICAgICAgICAgICAgfSk7CgogICAgICAgICAgICBjb25zdCBjb25maWcgPSBsb2FkQ29uZmlnKCk7CgogICAgICAgICAgICBleHBlY3QoY29uZmlnLnN0ZWxsYXJOZXR3b3JrKS50b0JlKCd0ZXN0bmV0Jyk7CiAgICAgICAgICAgIGV4cGVjdChjb25maWcuc3RlbGxhclJwY1VybCkudG9CZSgnaHR0cHM6Ly9zb3JvYmFuLXRlc3RuZXQuc3RlbGxhci5vcmcnKTsKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5jb250cmFjdElkKS50b0JlKFZBTElEX0NPTlRSQUNUX0lEKTsKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5hZG1pblNlY3JldEtleSkudG9CZSgKICAgICAgICAgICAgICAgIFZBTElEX0FETUlOX1NFQ1JFVCwKICAgICAgICAgICAgKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCB1c2UgZGVmYXVsdCB2YWx1ZXMgd2hlbiBvcHRpb25hbCBmaWVsZHMgYXJlIG1pc3NpbmcnLCAoKSA9PiB7CiAgICAgICAgICAgIHNldEVudihSRVFVSVJFRF9FTlYpOwoKICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5zdGVsbGFyTmV0d29yaykudG9CZSgndGVzdG5ldCcpOwogICAgICAgICAgICBleHBlY3QoY29uZmlnLnN0ZWxsYXJScGNVcmwpLnRvQmUoJ2h0dHBzOi8vc29yb2Jhbi10ZXN0bmV0LnN0ZWxsYXIub3JnJyk7CiAgICAgICAgICAgIGV4cGVjdChjb25maWcuY2FjaGVUdGxTZWNvbmRzKS50b0JlKDMwKTsKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy51cGRhdGVJbnRlcnZhbE1zKS50b0JlKDYwMDAwKTsKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5tYXhQcmljZURldmlhdGlvblBlcmNlbnQpLnRvQmUoMTApOwogICAgICAgICAgICBleHBlY3QoY29uZmlnLnByaWNlU3RhbGVUaHJlc2hvbGRTZWNvbmRzKS50b0JlKDMwMCk7CiAgICAgICAgICAgIGV4cGVjdChjb25maWcubG9nTGV2ZWwpLnRvQmUoJ2luZm8nKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCBvdmVycmlkZSBkZWZhdWx0cyB3aXRoIHByb3ZpZGVkIHZhbHVlcycsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KHsKICAgICAgICAgICAgICAgIC4uLlJFUVVJUkVEX0VOViwKICAgICAgICAgICAgICAgIENBQ0hFX1RUTF9TRUNPTkRTOiAnNjAnLAogICAgICAgICAgICAgICAgVVBEQVRFX0lOVEVSVkFMX01TOiAnMTIwMDAwJywKICAgICAgICAgICAgICAgIE1BWF9QUklDRV9ERVZJQVRJT05fUEVSQ0VOVDogJzE1JywKICAgICAgICAgICAgICAgIFBSSUNFX1NUQUxFTkVTU19USFJFU0hPTERfU0VDT05EUzogJzYwMCcsCiAgICAgICAgICAgICAgICBMT0dfTEVWRUw6ICdkZWJ1ZycsCiAgICAgICAgICAgIH0pOwoKICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5jYWNoZVR0bFNlY29uZHMpLnRvQmUoNjApOwogICAgICAgICAgICBleHBlY3QoY29uZmlnLnVwZGF0ZUludGVydmFsTXMpLnRvQmUoMTIwMDAwKTsKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5tYXhQcmljZURldmlhdGlvblBlcmNlbnQpLnRvQmUoMTUpOwogICAgICAgICAgICBleHBlY3QoY29uZmlnLnByaWNlU3RhbGVUaHJlc2hvbGRTZWNvbmRzKS50b0JlKDYwMCk7CiAgICAgICAgICAgIGV4cGVjdChjb25maWcubG9nTGV2ZWwpLnRvQmUoJ2RlYnVnJyk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgdGhyb3cgZXJyb3Igd2hlbiBDT05UUkFDVF9JRCBpcyBtaXNzaW5nJywgKCkgPT4gewogICAgICAgICAgICBzZXRFbnYoewogICAgICAgICAgICAgICAgQURNSU5fU0VDUkVUX0tFWTogVkFMSURfQURNSU5fU0VDUkVULAogICAgICAgICAgICAgICAgQ09OVFJBQ1RfSUQ6IHVuZGVmaW5lZCwKICAgICAgICAgICAgfSk7CgogICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCB0aHJvdyBlcnJvciB3aGVuIEFETUlOX1NFQ1JFVF9LRVkgaXMgbWlzc2luZycsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KHsKICAgICAgICAgICAgICAgIENPTlRSQUNUX0lEOiBWQUxJRF9DT05UUkFDVF9JRCwKICAgICAgICAgICAgICAgIEFETUlOX1NFQ1JFVF9LRVk6IHVuZGVmaW5lZCwKICAgICAgICAgICAgfSk7CgogICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZWplY3QgYW4gZW1wdHkgQ09OVFJBQ1RfSUQnLCAoKSA9PiB7CiAgICAgICAgICAgIHNldEVudih7IC4uLlJFUVVJUkVEX0VOViwgQ09OVFJBQ1RfSUQ6ICcnIH0pOwoKICAgICAgICAgICAgZXhwZWN0KCgpID0+IGxvYWRDb25maWcoKSkudG9UaHJvdygnSW52YWxpZCBlbnZpcm9ubWVudCBjb25maWd1cmF0aW9uJyk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgcmVqZWN0IGFuIGVtcHR5IEFETUlOX1NFQ1JFVF9LRVknLCAoKSA9PiB7CiAgICAgICAgICAgIHNldEVudih7IC4uLlJFUVVJUkVEX0VOViwgQURNSU5fU0VDUkVUX0tFWTogJycgfSk7CgogICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZWplY3QgYW4gdW5zdXBwb3J0ZWQgU1RFTExBUl9ORVRXT1JLJywgKCkgPT4gewogICAgICAgICAgICBzZXRFbnYoeyAuLi5SRVFVSVJFRF9FTlYsIFNURUxMQVJfTkVUV09SSzogJ2Rldm5ldCcgfSk7CgogICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZWplY3QgYSBtYWxmb3JtZWQgU1RFTExBUl9SUENfVVJMJywgKCkgPT4gewogICAgICAgICAgICBzZXRFbnYoeyAuLi5SRVFVSVJFRF9FTlYsIFNURUxMQVJfUlBDX1VSTDogJ25vdC1hLXVybCcgfSk7CgogICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZWplY3QgYSBub24taHR0cHMgU1RFTExBUl9SUENfVVJMJywgKCkgPT4gewogICAgICAgICAgICBzZXRFbnYoeyAuLi5SRVFVSVJFRF9FTlYsIFNURUxMQVJfUlBDX1VSTDogJ2Z0cDovL3JwYy5zdGVsbGFyLm9yZycgfSk7CgogICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZWplY3Qgbm9uLW51bWVyaWMgbnVtZXJpYyBlbnYgdmFsdWVzJywgKCkgPT4gewogICAgICAgICAgICBmb3IgKGNvbnN0IGtleSBvZiBOVU1FUklDX0VOVl9LRVlTKSB7CiAgICAgICAgICAgICAgICBzZXRFbnYoeyAuLi5SRVFVSVJFRF9FTlYsIFtrZXldOiAnYWJjJyB9KTsKCiAgICAgICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICAgICAgfQogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJlamVjdCBuZWdhdGl2ZSBudW1lcmljIGVudiB2YWx1ZXMnLCAoKSA9PiB7CiAgICAgICAgICAgIGZvciAoY29uc3Qga2V5IG9mIE5VTUVSSUNfRU5WX0tFWVMpIHsKICAgICAgICAgICAgICAgIHNldEVudih7IC4uLlJFUVVJUkVEX0VOViwgW2tleV06ICctMScgfSk7CgogICAgICAgICAgICAgICAgZXhwZWN0KCgpID0+IGxvYWRDb25maWcoKSkudG9UaHJvdygnSW52YWxpZCBlbnZpcm9ubWVudCBjb25maWd1cmF0aW9uJyk7CiAgICAgICAgICAgIH0KICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZWplY3QgemVybyBmb3IgcG9zaXRpdmUtb25seSBudW1lcmljIGVudiB2YWx1ZXMnLCAoKSA9PiB7CiAgICAgICAgICAgIGZvciAoY29uc3Qga2V5IG9mIE5VTUVSSUNfRU5WX0tFWVMpIHsKICAgICAgICAgICAgICAgIHNldEVudih7IC4uLlJFUVVJUkVEX0VOViwgW2tleV06ICcwJyB9KTsKCiAgICAgICAgICAgICAgICBleHBlY3QoKCkgPT4gbG9hZENvbmZpZygpKS50b1Rocm93KCdJbnZhbGlkIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24nKTsKICAgICAgICAgICAgfQogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJlamVjdCBhbiB1bnN1cHBvcnRlZCBBRE1JTl9TRUNSRVRfS0VZIGZvcm1hdCcsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KHsgLi4uUkVRVUlSRURfRU5WLCBBRE1JTl9TRUNSRVRfS0VZOiAnbm90LWEtc3RlbGxhci1zZWNyZXQnIH0pOwoKICAgICAgICAgICAgZXhwZWN0KCgpID0+IGxvYWRDb25maWcoKSkudG9UaHJvdygnSW52YWxpZCBlbnZpcm9ubWVudCBjb25maWd1cmF0aW9uJyk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgcmVqZWN0IGFuIHVuc3VwcG9ydGVkIExPR19MRVZFTCcsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KHsgLi4uUkVRVUlSRURfRU5WLCBMT0dfTEVWRUw6ICd2ZXJib3NlJyB9KTsKCiAgICAgICAgICAgIGV4cGVjdCgoKSA9PiBsb2FkQ29uZmlnKCkpLnRvVGhyb3coJ0ludmFsaWQgZW52aXJvbm1lbnQgY29uZmlndXJhdGlvbicpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIGFjY2VwdCBtYWlubmV0IGFzIG5ldHdvcmsgb3B0aW9uJywgKCkgPT4gewogICAgICAgICAgICBzZXRFbnYoeyAuLi5SRVFVSVJFRF9FTlYsIFNURUxMQVJfTkVUV09SSzogJ21haW5uZXQnIH0pOwoKICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5zdGVsbGFyTmV0d29yaykudG9CZSgnbWFpbm5ldCcpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIGluY2x1ZGUgQ29pbkdFY2tvIHByb3ZpZGVyIGNvbmZpZ3VyYXRpb24nLCAoKSA9PiB7CiAgICAgICAgICAgIHNldEVudihSRVFVSVJFRF9FTlYpOwoKICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgY29uc3QgY29pbmdlY2tvUHJvdmlkZXIgPSBjb25maWcucHJvdmlkZXJzLmZpbmQocCA9PiBwLm5hbWUgPT09ICdjb2luZ2Vja28nKTsKICAgICAgICAgICAgZXhwZWN0KGNvaW5nZWNrb1Byb3ZpZGVyKS50b0JlRGVmaW5lZCgpOwogICAgICAgICAgICBleHBlY3QoY29pbmdlY2tvUHJvdmlkZXI/LmVuYWJsZWQpLnRvQmUodHJ1ZSk7CiAgICAgICAgICAgIGV4cGVjdChjb2luZ2Vja29Qcm92aWRlcj8ucHJpb3JpdHkpLnRvQmUoMSk7CiAgICAgICAgICAgIGV4cGVjdChjb2luZ2Vja29Qcm92aWRlcj8uYmFzZVVybCkudG9CZSgnaHR0cHM6Ly9hcGkuY29pbmdlY2tvLmNvbS9hcGkvdjMnKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCB1c2UgcHJvIENvaW5HYWNrbyBBUEkgd2hlbiBBUEkga2V5IGlzIHByb3ZpZGVkJywgKCkgPT4gewogICAgICAgICAgICBzZXRFbnYoeyAuLi5SRVFVSVJFRF9FTlYsIENPSU5HRUNLT19BUElfS0VZOiAndGVzdC1hcGkta2V5LTEyMycgfSk7CgogICAgICAgICAgICBjb25zdCBjb25maWcgPSBsb2FkQ29uZmlnKCk7CgogICAgICAgICAgICBjb25zdCBjb2luZ2Vja29Qcm92aWRlciA9IGNvbmZpZy5wcm92aWRlcnMuZmluZChwID0+IHAubmFtZSA9PT0gJ2NvaW5nZWNrbycpOwogICAgICAgICAgICBleHBlY3QoY29pbmdlY2tvUHJvdmlkZXI/LmJhc2VVcmwpLnRvQmUoJ2h0dHBzOi8vcHJvLWFwaS5jb2luZ2Vja28uY29tL2FwaS92MycpOwogICAgICAgICAgICBleHBlY3QoY29pbmdlY2tvUHJvdmlkZXI/LmFwaUtleSkudG9CZSgndGVzdC1hcGkta2V5LTEyMycpOwogICAgICAgICAgICBleHBlY3QoY29pbmdlY2tvUHJvdmlkZXI/LnJhdGVMaW1pdC5tYXhSZXF1ZXN0cykudG9CZSg1MDApOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIGluY2x1ZGUgQmluYW5jZSBwcm92aWRlciBjb25maWd1cmF0aW9uJywgKCkgPT4gewogICAgICAgICAgICBzZXRFbnYoUkVRVUlSRURfRU5WKTsKCiAgICAgICAgICAgIGNvbnN0IGNvbmZpZyA9IGxvYWRDb25maWcoKTsKCiAgICAgICAgICAgIGNvbnN0IGJpbmFuY2VQcm92aWRlciA9IGNvbmZpZy5wcm92aWRlcnMuZmluZChwID0+IHAubmFtZSA9PT0gJ2JpbmFuY2UnKTsKICAgICAgICAgICAgZXhwZWN0KGJpbmFuY2VQcm92aWRlcikudG9CZU RlZmluZWQoKTsKICAgICAgICAgICAgZXhwZWN0KGJpbmFuY2VQcm92aWRlcj8uZW5hYmxlZCkudG9CZSh0cnVlKTsKICAgICAgICAgICAgZXhwZWN0KGJpbmFuY2VQcm92aWRlcj8ucHJpb3JpdHkpLnRvQmUoMyk7CiAgICAgICAgICAgIGV4cGVjdChiaW5hbmNlUHJvdmlkZXI/LmJhc2VVcmwpLnRvQmUoJ2h0dHBzOi8vYXBpLmJpbmFuY2UuY29tL2FwaS92MycpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIGVuYWJsZSBDb2luTWFya2V0Q2FwIHByb3ZpZGVyIHdoZW4gQVBJIGtleSBpcyBwcm92aWRlZCcsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KHsgLi4uUkVRVUlSRURfRU5WLCBDT0lOTUFSS0VUQ0FQX0FQSV9LRVk6ICdjbWMtdGVzdC1rZXknIH0pOwoKICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgY29uc3QgY21jUHJvdmlkZXIgPSBjb25maWcucHJvdmlkZXJzLmZpbmQocCA9PiBwLm5hbWUgPT09ICdjb2lubWFya2V0Y2FwJyk7CiAgICAgICAgICAgIGV4cGVjdChjbWNQcm92aWRlcj8uZW5hYmxlZCkudG9CZSh0cnVlKTsKICAgICAgICAgICAgZXhwZWN0KGNtY1Byb3ZpZGVyPy5hcGlLZXkpLnRvQmUoJ2NtYy10ZXN0LWtleScpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIGRpc2FibGUgQ29pbk1hcmtldENhcCBwcm92aWRlciB3aGVuIG5vIEFQSSBrZXknLCAoKSA9PiB7CiAgICAgICAgICAgIHNldEVudihSRVFVSVJFRF9FTlYpOwoKICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgY29uc3QgY21jUHJvdmlkZXIgPSBjb25maWcucHJvdmlkZXJzLmZpbmQocCA9PiBwLm5hbWUgPT09ICdjb2lubWFya2V0Y2FwJyk7CiAgICAgICAgICAgIGV4cGVjdChjbWNQcm92aWRlcj8uZW5hYmxlZCkudG9CZShmYWxzZSk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgYWNjZXB0IHZhbGlkIFNURUxMQVJfUlBDX1VSTCcsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KHsgLi4uUkVRVUlSRURfRU5WLCBTVEVMTEFSX1JQQ19VUkw6ICdodHRwczovL2N1c3RvbS1ycGMuc3RlbGxhci5vcmcnIH0pOwoKICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5zdGVsbGFyUnBjVXJsKS50b0JlKCdodHRwczovL2N1c3RvbS1ycGMuc3RlbGxhci5vcmcnKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCBoYW5kbGUgbG9nIGxldmVsIHZhbGlkYXRpb24nLCAoKSA9PiB7CiAgICAgICAgICAgIGNvbnN0IGxvZ0xldmVscyA9IFsnZGVidWcnLCAnaW5mbycsICd3YXJuJywgJ2Vycm9yJ10gYXMgY29uc3Q7CgogICAgICAgICAgICBmb3IgKGNvbnN0IGxldmVsIG9mIGxvZ0xldmVscykgewogICAgICAgICAgICAgICAgc2V0RW52KHsgLi4uUkVRVUlSRURfRU5WLCBMT0dfTEVWRUw6IGxldmVsIH0pOwogICAgICAgICAgICAgICAgY29uc3QgY29uZmlnID0gbG9hZENvbmZpZygpOwogICAgICAgICAgICAgICAgZXhwZWN0KGNvbmZpZy5sb2dMZXZlbCkudG9CZShsZXZlbCk7CiAgICAgICAgICAgIH0KICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCBiZSBkZXRlcm1pbmlzdGljIGFjcm9zcyByZXBlYXRlZCBsb2FkcyB3aXRoIHRoZSBzYW1lIGVudicsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KHsgLi4uUkVRVUlSRURfRU5WLCBDQUNIRV9UVExfU0VDT05EUzogJzQ1JyB9KTsKCiAgICAgICAgICAgIGNvbnN0IGZpcnN0ID0gbG9hZENvbmZpZygpOwogICAgICAgICAgICBjb25zdCBzZWNvbmQgPSBsb2FkQ29uZmlnKCk7CgogICAgICAgICAgICBleHBlY3Qoc2Vjb25kKS50b0VxdWFsKGZpcnN0KTsKICAgICAgICAgICAgZXhwZWN0KHNlY29uZC5jYWNoZVR0bFNlY29uZHMpLnRvQmUoNDUpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIG5vdCBsZWFrIG11dGF0aW9ucyBiZXR3ZWVuIGxvYWRlZCBjb25maWcgb2JqZWN0cycsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KFJFUVVJUkVEX0VOVik7CgogICAgICAgICAgICBjb25zdCBmaXJzdCA9IGxvYWRDb25maWcoKTsKICAgICAgICAgICAgY29uc3Qgc2Vjb25kID0gbG9hZENvbmZpZygpOwoKICAgICAgICAgICAgZXhwZWN0KGZpcnN0LnByb3ZpZGVycykubm90LnRvQmUoc2Vjb25kLnByb3ZpZGVycyk7CiAgICAgICAgICAgIGZpcnN0LnByb3ZpZGVyc1swXS5lbmFibGVkID0gIWZpcnN0LnByb3ZpZGVyc1swXS5lbmFibGVkOwogICAgICAgICAgICBleHBlY3Qoc2Vjb25kLnByb3ZpZGVyc1swXS5lbmFibGVkKS50b0JlKHRydWUpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIG5vdCBsZWFrIG11dGF0aW9ucyBpbnRvIEFTU0VUX01BUFBJTkdTIGFjcm9zcyBsb2FkcycsICgpID0+IHsKICAgICAgICAgICAgc2V0RW52KFJFUVVJUkVEX0VOVik7CgogICAgICAgICAgICBjb25zdCBjb25maWcgPSBsb2FkQ29uZmlnKCk7CiAgICAgICAgICAgIGNvbnN0IG1hcHBpbmdzQmVmb3JlID0gSlNPTi5zdHJpbmdpZnkoQVNTRVRfTUFQUElOR1MpOwoKICAgICAgICAgICAgY29uZmlnLmFzc2V0TWFwcGluZ3NbMF0uc3ltYm9sID0gJ01VVEFURUQnOwogICAgICAgICAgICBleHBlY3QoSlNPTi5zdHJpbmdpZnkoQVNTRVRfTUFQUElOR1MpKS50b0JlKG1hcHBpbmdzQmVmb3JlKTsKICAgICAgICB9KTsKICAgIH0pOwoKICAgIGRlc2NyaWJlKCdBc3NldCBNYXBwaW5ncycsICgpID0+IHsKICAgICAgICBpdCgnc2hvdWxkIGhhdmUgbWFwcGluZ3MgZm9yIGFsbCBzdXBwb3J0ZWQgYXNzZXRzJywgKCkgPT4gewogICAgICAgICAgICBleHBlY3QoQVNTRVRfTUFQUElOR1MubGVuZ3RoKS50b0JlR3JlYXRlclRoYW4oMCk7CgogICAgICAgICAgICBjb25zdCBleHBlY3RlZEFzc2V0cyA9IFsnWExNJywgJ1VTREMnLCAnVVNEVCcsICdCVEMnLCAnRVRIJ107CiAgICAgICAgICAgIGNvbnN0IG1hcHBlZEFzc2V0cyA9IEFTU0VUX01BUFBJTkdTLm1hcChtID0+IG0uc3ltYm9sKTsKCiAgICAgICAgICAgIGZvciAoY29uc3QgYXNzZXQgb2YgZXhwZWN0ZWRBc3NldHMpIHsKICAgICAgICAgICAgICAgIGV4cGVjdChtYXBwZWRBc3NldHMpLnRvQ29udGFpbihhc3NldCk7CiAgICAgICAgICAgIH0KICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCBoYXZlIHVuaXF1ZSBzeW1ib2xzIGFuZCBwcm92aWRlciBpZGVudGlmaWVycycsICgpID0+IHsKICAgICAgICAgICAgY29uc3Qgc3ltYm9scyA9IEFTU0VUX01BUFBJTkdTLm1hcChtID0+IG0uc3ltYm9sKTsKICAgICAgICAgICAgZXhwZWN0KG5ldyBTZXQoc3ltYm9scykuc2l6ZSkudG9CZShzeW1ib2xzLmxlbmd0aCk7CgogICAgICAgICAgICBjb25zdCBjb2luZ2Vja29JZHMgPSBBU1NFVF9NQVBQSU5HUy5tYXAobSA9PiBtLmNvaW5nZWNrb0lkKTsKICAgICAgICAgICAgZXhwZWN0KG5ldyBTZXQoY29pbmdlY2tvSWRzKS5zaXplKS50b0JlKGNvaW5nZWNrb0lkcy5sZW5ndGgpOwoKICAgICAgICAgICAgY29uc3QgYmluYW5jZVN5bWJvbHMgPSBBU1NFVF9NQVBQSU5HUy5tYXAobSA9PiBtLmJpbmFuY2VTeW1ib2wpOwogICAgICAgICAgICBleHBlY3QobmV3IFNldChiaW5hbmNlU3ltYm9scykuc2l6ZSkudG9CZShiaW5hbmNlU3ltYm9scy5sZW5ndGgpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIGhhdmUgdmFsaWQgQ29pbkdFY2tvIElEcyBmb3IgYWxsIGFzc2V0cycsICgpID0+IHsKICAgICAgICAgICAgZm9yIChjb25zdCBtYXBwaW5nIG9mIEFTU0VUX01BUFBJTkdTKSB7CiAgICAgICAgICAgICAgICBleHBlY3QobWFwcGluZy5jb2luZ2Vja29JZCkudG9CZURlZmluZWQoKTsKICAgICAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nLmNvaW5nZWNrb0lkLmxlbmd0aCkudG9CZUdyZWF0ZXJUaGFuKDApOwogICAgICAgICAgICB9CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgaGF2ZSB2YWxpZCBCaW5hbmNlIHN5bWJvbHMgZm9yIGFsbCBhc3NldHMnLCAoKSA9PiB7CiAgICAgICAgICAgIGZvciAoY29uc3QgbWFwcGluZyBvZiBBU1NFVF9NQVBQSU5HUykgewogICAgICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmcuYmluYW5jZVN5bWJvbCkudG9CZURlZmluZWQoKTsKICAgICAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nLmJpbmFuY2VTeW1ib2wubGVuZ3RoKS50b0JlR3JlYXRlclRoYW4oMCk7CiAgICAgICAgICAgICAgICAvLyBNb3N0IGFzc2V0cyBwYWlyZWQgd2l0aCBVU0RULCBidXQgVVNEVCBpdHNlbGYgdXNlcyBCVVNECiAgICAgICAgICAgICAgICBleHBlY3QobWFwcGluZy5iaW5hbmNlU3ltYm9sKS50b01hdGNoKC8oVVNEVHxCVVNEKSQvKTsKICAgICAgICAgICAgfQogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIGhhdmUgdmFsaWQgQ29pbk1hcmtldENhcCBJRHMgZm9yIGFsbCBhc3NldHMnLCAoKSA9PiB7CiAgICAgICAgICAgIGZvciAoY29uc3QgbWFwcGluZyBvZiBBU1NFVF9NQVBQSU5HUykgewogICAgICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmcuY29pbm1hcmtldGNhcElkKS50b0JlRGVmaW5lZCgpOwogICAgICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmcuY29pbm1hcmtldGNhcElkKS50b0JlR3JlYXRlclRoYW4oMCk7CiAgICAgICAgICAgICAgICBleHBlY3QoTnVtYmVyLmlzSW50ZWdlcihtYXBwaW5nLmNvaW5tYXJrZXRjYXBJZCkpLnRvQmUodHJ1ZSk7CiAgICAgICAgICAgIH0KICAgICAgICB9KTsKICAgIH0pOwoKICAgIGRlc2NyaWJlKCdnZXRBc3NldE1hcHBpbmcnLCAoKSA9PiB7CiAgICAgICAgaXQoJ3Nob3VsZCByZXR1cm4gY29ycmVjdCBtYXBwaW5nIGZvciBYTE0nLCAoKSA9PiB7CiAgICAgICAgICAgIGNvbnN0IG1hcHBpbmcgPSBnZXRBc3NldE1hcHBpbmcoJ1hMTScpOwoKICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmcpLnRvQmVEZWZpbmVkKCk7CiAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nPy5zeW1ib2wpLnRvQmUoJ1hMTScpOwogICAgICAgICAgICBleHBlY3QobWFwcGluZz8uY29pbmdlY2tvSWQpLnRvQmUoJ3N0ZWxsYXInKTsKICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmc/LmJpbmFuY2VTeW1ib2wpLnRvQmUoJ1hMTVVTRFQnKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZXR1cm4gY29ycmVjdCBtYXBwaW5nIGZvciBCVEMnLCAoKSA9PiB7CiAgICAgICAgICAgIGNvbnN0IG1hcHBpbmcgPSBnZXRBc3NldE1hcHBpbmcoJ0JUQycpOwoKICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmcpLnRvQmVEZWZpbmVkKCk7CiAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nPy5zeW1ib2wpLnRvQmUoJ0JUQycpOwogICAgICAgICAgICBleHBlY3QobWFwcGluZz8uY29pbmdlY2tvSWQpLnRvQmUoJ2JpdGNvaW4nKTsKICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmc/LmJpbmFuY2VTeW1ib2wpLnRvQmUoJ0JUQ1VTRFQnKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZXR1cm4gY29ycmVjdCBtYXBwaW5nIGZvciBFVEgnLCAoKSA9PiB7CiAgICAgICAgICAgIGNvbnN0IG1hcHBpbmcgPSBnZXRBc3NldE1hcHBpbmcoJ0VUSCcpOwoKICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmcpLnRvQmVEZWZpbmVkKCk7CiAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nPy5zeW1ib2wpLnRvQmUoJ0VUSCcpOwogICAgICAgICAgICBleHBlY3QobWFwcGluZz8uY29pbmdlY2tvSWQpLnRvQmUoJ2V0aGVyZXVtJyk7CiAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nPy5iaW5hbmNlU3ltYm9sKS50b0JlKCdFVEhVU0RUJyk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgcmV0dXJuIGNvcnJlY3QgbWFwcGluZyBmb3IgVVNEQycsICgpID0+IHsKICAgICAgICAgICAgY29uc3QgbWFwcGluZyA9IGdldEFzc2V0TWFwcGluZygnVVNEQycpOwoKICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmcpLnRvQmVEZWZpbmVkKCk7CiAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nPy5zeW1ib2wpLnRvQmUoJ1VTREMnKTsKICAgICAgICAgICAgZXhwZWN0KG1hcHBpbmc/LmNvaW5nZWNrb0lkKS50b0JlKCd1c2QtY29pbicpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJldHVybiB1bmRlZmluZWQgZm9yIHVuc3VwcG9ydGVkIGFzc2V0JywgKCkgPT4gewogICAgICAgICAgICAvLyBAdHMtaWdub3JlIC0gVGVzdGluZyBydW50aW1lIGJlaGF2aW9yCiAgICAgICAgICAgIGNvbnN0IG1hcHBpbmcgPSBnZXRBc3NldE1hcHBpbmcoJ1VOS05PV04nKTsKCiAgICAgICAgICAgIGV4cGVjdChtYXBwaW5nKS50b0JlVW5kZWZpbmVkKCk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgcmV0dXJuIHVuZGVmaW5lZCBmb3IgZW1wdHkgc3RyaW5nJywgKCkgPT4gewogICAgICAgICAgICAvLyBAdHMtaWdub3JlIC0gVGVzdGluZyBydW50aW1lIGJlaGF2aW9yCiAgICAgICAgICAgIGV4cGVjdChnZXRBc3NldE1hcHBpbmcoJycpKS50b0JlVW5kZWZpbmVkKCk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgYmUgY2FzZS1zZW5zaXRpdmUnLCAoKSA9PiB7CiAgICAgICAgICAgIC8vIEB0cy1pZ25vcmUgLSBUZXN0aW5nIHJ1bnRpbWUgYmVoYXZpb3IKICAgICAgICAgICAgZXhwZWN0KGdldEFzc2V0TWFwcGluZygneGxtJykpLnRvQmVVbmRlZmluZWQoKTsKICAgICAgICAgICAgLy8gQHRzLWlnbm9yZSAtIFRlc3RpbmcgcnVudGltZSBiZWhhdmlvcgogICAgICAgICAgICBleHBlY3QoZ2V0QXNzZXRNYXBwaW5nKCdYbG0nKSkudG9CZVVuZGVmaW5lZCgpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJldHVybiB0aGUgc2FtZSBvYmplY3QgcmVmZXJlbmNlIGFzIEFTU0VUX01BUFBJTkdTIGZvciBrbm93biBhc3NldHMnLCAoKSA9PiB7CiAgICAgICAgICAgIGNvbnN0IG1hcHBpbmcgPSBnZXRBc3NldE1hcHBpbmcoJ1hMTScpOwogICAgICAgICAgICBleHBlY3QobWFwcGluZykudG9CZShBU1NFVF9NQVBQSU5HUy5maW5kKG0gPT4gbS5zeW1ib2wgPT09ICdYTE0nKSk7CiAgICAgICAgfSk7CiAgICB9KTsKCiAgICBkZXNjcmliZSgnaXNTdXBwb3J0ZWRBc3NldCcsICgpID0+IHsKICAgICAgICBpdCgnc2hvdWxkIHJldHVybiB0cnVlIGZvciBYTE0nLCAoKSA9PiB7CiAgICAgICAgICAgIGV4cGVjdChpc1N1cHBvcnRlZEFzc2V0KCdYTE0nKSkudG9CZSh0cnVlKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZXR1cm4gdHJ1ZSBmb3IgQlRDJywgKCkgPT4gewogICAgICAgICAgICBleHBlY3QoaXNTdXBwb3J0ZWRBc3NldCgnQlRDJykpLnRvQmUodHJ1ZSk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgcmV0dXJuIHRydWUgZm9yIEVUSCcsICgpID0+IHsKICAgICAgICAgICAgZXhwZWN0KGlzU3VwcG9ydGVkQXNzZXQoJ0VUSCcpKS50b0JlKHRydWUpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJldHVybiB0cnVlIGZvciBVU0RDJywgKCkgPT4gewogICAgICAgICAgICBleHBlY3QoaXNTdXBwb3J0ZWRBc3NldCgnVVNEQycpKS50b0JlKHRydWUpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJldHVybiB0cnVlIGZvciBVU0RUJywgKCkgPT4gewogICAgICAgICAgICBleHBlY3QoaXNTdXBwb3J0ZWRBc3NldCgnVVNEVCcpKS50b0JlKHRydWUpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJldHVybiBmYWxzZSBmb3IgdW5zdXBwb3J0ZWQgYXNzZXQnLCAoKSA9PiB7CiAgICAgICAgICAgIGV4cGVjdChpc1N1cHBvcnRlZEFzc2V0KCdVTktOT1dOJykpLnRvQmUoZmFsc2UpOwogICAgICAgICAgICBleHBlY3QoaXNTdXBwb3J0ZWRBc3NldCgnRE9HRScpKS50b0JlKGZhbHNlKTsKICAgICAgICAgICAgZXhwZWN0KGlzU3VwcG9ydGVkQXNzZXQoJ1NPRCcpKS50b0JlKGZhbHNlKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZXR1cm4gZmFsc2UgZm9yIGVtcHR5IHN0cmluZycsICgpID0+IHsKICAgICAgICAgICAgZXhwZWN0KGlzU3VwcG9ydGVkQXNzZXQoJycpKS50b0JlKGZhbHNlKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCBiZSBjYXNlLXNlbnNpdGl2ZScsICgpID0+IHsKICAgICAgICAgICAgZXhwZWN0KGlzU3VwcG9ydGVkQXNzZXQoJ3hsbScpKS50b0JlKGZhbHNlKTsKICAgICAgICAgICAgZXhwZWN0KGlzU3VwcG9ydGVkQXNzZXQoJ2J0YycpKS50b0JlKGZhbHNlKTsKICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCByZXR1cm4gZmFsc2UgZm9yIHdoaXRlc3BhY2Utd3JhcHBlZCBzeW1ib2xzJywgKCkgPT4gewogICAgICAgICAgICBleHBlY3QoaXNTdXBwb3J0ZWRBc3NldCgnIFhMTScpKS50b0JlKGZhbHNlKTsKICAgICAgICAgICAgZXhwZWN0KGlzU3VwcG9ydGVkQXNzZXQoJ1hMTSAnKSkudG9CZShmYWxzZSk7CiAgICAgICAgfSk7CiAgICB9KTsKCiAgICBkZXNjcmliZSgnUHJpY2UgU2NhbGluZycsICgpID0+IHsKICAgICAgICBpdCgnc2hvdWxkIGV4cG9zZSBhIHBvc2l0aXZlIGludGVnZXIgUFJJQ0VfU0NBTEUnLCAoKSA9PiB7CiAgICAgICAgICAgIGV4cGVjdChOdW1iZXIuaXNJbnRlZ2VyKFBSSUNFX1NDQUxFKSkudG9CZSh0cnVlKTsKICAgICAgICAgICAgZXhwZWN0KFBSSUNFX1NDQUxFKS50b0JlR3JlYXRlclRoYW4oMCk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgc2NhbGUgYSBwcmljZSB0byB0aGUgY29uZmlndXJlZCBwcmVjaXNpb24nLCAoKSA9PiB7CiAgICAgICAgICAgIGV4cGVjdChzY2FsZVByaWNlKDEpKS50b0JlKFBSSUNFX1NDQUxFKTsKICAgICAgICAgICAgZXhwZWN0KHNjYWxlUHJpY2UoMCkpLnRvQmUoMCk7CiAgICAgICAgICAgIGV4cGVjdChzY2FsZVByaWNlKDAuNSkpLnRvQmUoTWF0aC5yb3VuZCgwLjUgKiBQUklDRV9TQ0FMRSkpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJvdW5kLXRyaXAgc2NhbGUvdW5zY2FsZSBmb3IgcmVwcmVzZW50YWJsZSB2YWx1ZXMnLCAoKSA9PiB7CiAgICAgICAgICAgIGNvbnN0IHZhbHVlcyA9IFsxLCAwLjUsIDAuMjUsIDEwLCAxMjMuNDUsIDAuMDAwMV07CgogICAgICAgICAgICBmb3IgKGNvbnN0IHZhbHVlIG9mIHZhbHVlcykgewogICAgICAgICAgICAgICAgZXhwZWN0KHVuc2NhbGVQcmljZShzY2FsZVByaWNlKHZhbHVlKSkpLnRvQmV2YWx1ZSh2YWx1ZSk7CiAgICAgICAgICAgIH0KICAgICAgICB9KTsKCiAgICAgICAgaXQoJ3Nob3VsZCB1bnNjYWxlIGJhY2sgdG8gYSBwb3NpdGl2ZSBudW1iZXInLCAoKSA9PiB7CiAgICAgICAgICAgIGV4cGVjdCh1bnNjYWxlUHJpY2UoUFJJQ0VfU0NBTEUpKS50b0JlKDEpOwogICAgICAgICAgICBleHBlY3QodW5zY2FsZVByaWNlKDApKS50b0JlKDApOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJlamVjdCBpbnZhbGlkIGlucHV0cyB3aXRob3V0IHByb2R1Y2luZyBOYU4gb3IgaW5maW5pdHknLCAoKSA9PiB7CiAgICAgICAgICAgIGNvbnN0IGludmFsaWRJbnB1dHMgPSBbTnVOKSwgSW5maW5pdHksIC1JbmZpbml0eSwgLTEgKiBQUklDRV9TQ0FMRV07CgogICAgICAgICAgICBmb3IgKGNvbnN0IGlucHV0IG9mIGludmFsaWRJbnB1dHMpIHsKICAgICAgICAgICAgICAgIGV4cGVjdCgoKSA9PiBzY2FsZVByaWNlKGlucHV0KSkudG9UaHJvdygpOwogICAgICAgICAgICB9CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgcmVqZWN0IG5vbi1udW1lcmljIGlucHV0cycsICgpID0+IHsKICAgICAgICAgICAgLy8gQHRzLWlnbm9yZSAtIFRlc3RpbmcgcnVudGltZSBiZWhhdmlvcgogICAgICAgICAgICBleHBlY3QoKCkgPT4gc2NhbGVQcmljZSgnYWJjJykpLnRvVGhyb3coKTsKICAgICAgICAgICAgLy8gQHRzLWlnbm9yZSAtIFRlc3RpbmcgcnVudGltZSBiZWhhdmlvcgogICAgICAgICAgICBleHBlY3QoKCkgPT4gdW5zY2FsZVByaWNlKCdhYmMnKSkudG9UaHJvdygpOwogICAgICAgIH0pOwoKICAgICAgICBpdCgnc2hvdWxkIHJlamVjdCB1bnNjYWxpbmcgb2Ygbm9uLWludGVnZXIgc2NhbGVkIHZhbHVlcycsICgpID0+IHsKICAgICAgICAgICAgZXhwZWN0KCgpID0+IHVuc2NhbGVQcmljZSgxLjUpKS50b1Rocm93KCk7CiAgICAgICAgfSk7CgogICAgICAgIGl0KCdzaG91bGQgaGFuZGxlIGJvdW5kYXJ5IHZhbHVlcyBhdCB0aGUgZWRnZSBvZiBzYWZlIGludGVnZXIgcHJlY2lzaW9uJywgKCkgPT4gewogICAgICAgICAgICBjb25zdCBtYXhTYWZlID0gTWF0aC5mbG9vcihOdW1iZXIuTUFYX1NBRkVfSU5URUdFUiAvIFBSSUNFX1NDQUxFKTsKICAgICAgICAgICAgZXhwZWN0KHVuc2NhbGVQcmljZShzY2FsZVByaWNlKG1heFNhZmUpKSkudG9CZUNsb3NlVG8obWF4U2FmZSwgMSk7CiAgICAgICAgfSk7CiAgICB9KTsKfSk7Cg==
+/**
+ * Tests for Configuration Loading and Validation
+ *
+ * This suite covers the failure-path and boundary contract of `oracle/src/config.ts`.
+ *
+ * Invariants enforced by these tests:
+ *  1. `loadConfig()` is deterministic for a given environment snapshot.
+ *  2. Required fields (CONTRACT_ID, ADMIN_SECRET_KEY) must be present and non-empty.
+ *  3. Numeric env values must be parsed and bounded; invalid values must fail loud
+ *     rather than silently defaulting.
+ *  4. Provider configuration is derived deterministically from env and is not
+ *     mutable across loads (no shared mutable state leaks).
+ *  5. Asset lookups are case-sensitive and return `undefined` for unknown keys.
+ *  6. Price scaling is round-trip stable for valid inputs and rejects invalid
+ *     inputs without producing NaN or infinity.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+    loadConfig,
+    getAssetMapping,
+    getPriceBounds,
+    isSupportedAsset,
+    scalePrice,
+    unscalePrice,
+    PRICE_SCALE,
+    ASSET_MAPPINGS,
+} from '../src/config.js';
+
+const VALID_CONTRACT_ID = 'CTEST123456789';
+const VALID_ADMIN_SECRET = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+const REQUIRED_ENV = {
+    CONTRACT_ID: VALID_CONTRACT_ID,
+    ADMIN_SECRET_KEY: VALID_ADMIN_SECRET,
+} as const;
+
+const NUMERIC_ENV_KEYS = [
+    'CACHE_TTL_SECONDS',
+    'UPDATE_INTERVAL_MS',
+    'MAX_PRICE_DEVIATION_PERCENT',
+    'PRICE_STALENESS_THRESHOLD_SECONDS',
+] as const;
+
+function setEnv(values: Record<string, string | undefined>): void {
+    for (const [key, value] of Object.entries(values)) {
+        if (value === undefined) {
+            delete process.env[key];
+        } else {
+            process.env[key] = value;
+        }
+    }
+}
+
+describe('Configuration', () => {
+    const originalEnv = { ...process.env };
+
+    beforeEach(() => {
+        // Reset environment before each test and remove any keys this suite touches
+        // so a previous test cannot leak state into the next one.
+        process.env = { ...originalEnv };
+        for (const key of [
+            'STELLAR_NETWORK',
+            'STELLAR_RPC_URL',
+            'CONTRACT_ID',
+            'ADMIN_SECRET_KEY',
+            'COINGECKO_API_KEY',
+            'COINMARKETCAP_API_KEY',
+            'LOG_LEVEL',
+            ...NUMERIC_ENV_KEYS,
+        ]) {
+            delete process.env[key];
+        }
+    });
+
+    afterEach(() => {
+        // Restore original environment
+        process.env = originalEnv;
+    });
+
+    describe('loadConfig', () => {
+        it('should load valid configuration with all required fields', () => {
+            setEnv({
+                STELLAR_NETWORK: 'testnet',
+                STELLAR_RPC_URL: 'https://soroban-testnet.stellar.org',
+                ...REQUIRED_ENV,
+            });
+
+            const config = loadConfig();
+
+            expect(config.stellarNetwork).toBe('testnet');
+            expect(config.stellarRpcUrl).toBe('https://soroban-testnet.stellar.org');
+            expect(config.contractId).toBe(VALID_CONTRACT_ID);
+            expect(config.adminSecretKey).toBe(
+                VALID_ADMIN_SECRET,
+            );
+        });
+
+        it('should use default values when optional fields are missing', () => {
+            setEnv(REQUIRED_ENV);
+
+            const config = loadConfig();
+
+            expect(config.stellarNetwork).toBe('testnet');
+            expect(config.stellarRpcUrl).toBe('https://soroban-testnet.stellar.org');
+            expect(config.cacheTtlSeconds).toBe(30);
+            expect(config.updateIntervalMs).toBe(60000);
+            expect(config.maxPriceDeviationPercent).toBe(10);
+            expect(config.priceStaleThresholdSeconds).toBe(300);
+            expect(config.logLevel).toBe('info');
+        });
+
+        it('should override defaults with provided values', () => {
+            setEnv({
+                ...REQUIRED_ENV,
+                CACHE_TTL_SECONDS: '60',
+                UPDATE_INTERVAL_MS: '120000',
+                MAX_PRICE_DEVIATION_PERCENT: '15',
+                PRICE_STALENESS_THRESHOLD_SECONDS: '600',
+                LOG_LEVEL: 'debug',
+            });
+
+            const config = loadConfig();
+
+            expect(config.cacheTtlSeconds).toBe(60);
+            expect(config.updateIntervalMs).toBe(120000);
+            expect(config.maxPriceDeviationPercent).toBe(15);
+            expect(config.priceStaleThresholdSeconds).toBe(600);
+            expect(config.logLevel).toBe('debug');
+        });
+
+        it('should throw error when CONTRACT_ID is missing', () => {
+            setEnv({
+                ADMIN_SECRET_KEY: VALID_ADMIN_SECRET,
+                CONTRACT_ID: undefined,
+            });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should throw error when ADMIN_SECRET_KEY is missing', () => {
+            setEnv({
+                CONTRACT_ID: VALID_CONTRACT_ID,
+                ADMIN_SECRET_KEY: undefined,
+            });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an empty CONTRACT_ID', () => {
+            setEnv({ ...REQUIRED_ENV, CONTRACT_ID: '' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an empty ADMIN_SECRET_KEY', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_SECRET_KEY: '' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an unsupported STELLAR_NETWORK', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_NETWORK: 'devnet' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject a malformed STELLAR_RPC_URL', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_RPC_URL: 'not-a-url' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject a non-https STELLAR_RPC_URL', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_RPC_URL: 'ftp://rpc.stellar.org' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject non-numeric numeric env values', () => {
+            for (const key of NUMERIC_ENV_KEYS) {
+                setEnv({ ...REQUIRED_ENV, [key]: 'abc' });
+
+                expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            }
+        });
+
+        it('should reject negative numeric env values', () => {
+            for (const key of NUMERIC_ENV_KEYS) {
+                setEnv({ ...REQUIRED_ENV, [key]: '-1' });
+
+                expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            }
+        });
+
+        it('should reject zero for positive-only numeric env values', () => {
+            for (const key of NUMERIC_ENV_KEYS) {
+                setEnv({ ...REQUIRED_ENV, [key]: '0' });
+
+                expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            }
+        });
+
+        it('should reject an unsupported ADMIN_SECRET_KEY format', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_SECRET_KEY: 'not-a-stellar-secret' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an unsupported LOG_LEVEL', () => {
+            setEnv({ ...REQUIRED_ENV, LOG_LEVEL: 'verbose' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should accept mainnet as network option', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_NETWORK: 'mainnet' });
+
+            const config = loadConfig();
+
+            expect(config.stellarNetwork).toBe('mainnet');
+        });
+
+        it('should include CoinGEcko provider configuration', () => {
+            setEnv(REQUIRED_ENV);
+
+            const config = loadConfig();
+
+            const coingeckoProvider = config.providers.find(p => p.name === 'coingecko');
+            expect(coingeckoProvider).toBeDefined();
+            expect(coingeckoProvider?.enabled).toBe(true);
+            expect(coingeckoProvider?.priority).toBe(1);
+            expect(coingeckoProvider?.baseUrl).toBe('https://api.coingecko.com/api/v3');
+        });
+
+        it('should use pro CoinGacko API when API key is provided', () => {
+            setEnv({ ...REQUIRED_ENV, COINGECKO_API_KEY: 'test-api-key-123' });
+
+            const config = loadConfig();
+
+            const coingeckoProvider = config.providers.find(p => p.name === 'coingecko');
+            expect(coingeckoProvider?.baseUrl).toBe('https://pro-api.coingecko.com/api/v3');
+            expect(coingeckoProvider?.apiKey).toBe('test-api-key-123');
+            expect(coingeckoProvider?.rateLimit.maxRequests).toBe(500);
+        });
+
+        it('should include Binance provider configuration', () => {
+            setEnv(REQUIRED_ENV);
+
+            const config = loadConfig();
+
+            const binanceProvider = config.providers.find(p => p.name === 'binance');
+            expect(binanceProvider).toBeDefined();
+            expect(binanceProvider?.enabled).toBe(true);
+            expect(binanceProvider?.priority).toBe(3);
+            expect(binanceProvider?.baseUrl).toBe('https://api.binance.com/api/v3');
+        });
+
+        it('should enable CoinMarketCap provider when API key is provided', () => {
+            setEnv({ ...REQUIRED_ENV, COINMARKETCAP_API_KEY: 'cmc-test-key' });
+
+            const config = loadConfig();
+
+            const cmcProvider = config.providers.find(p => p.name === 'coinmarketcap');
+            expect(cmcProvider?.enabled).toBe(true);
+            expect(cmcProvider?.apiKey).toBe('cmc-test-key');
+        });
+
+        it('should disable CoinMarketCap provider when no API key', () => {
+            setEnv(REQUIRED_ENV);
+
+            const config = loadConfig();
+
+            const cmcProvider = config.providers.find(p => p.name === 'coinmarketcap');
+            expect(cmcProvider?.enabled).toBe(false);
+        });
+
+        it('should accept valid STELLAR_RPC_URL', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_RPC_URL: 'https://custom-rpc.stellar.org' });
+
+            const config = loadConfig();
+
+            expect(config.stellarRpcUrl).toBe('https://custom-rpc.stellar.org');
+        });
+
+        it('should handle log level validation', () => {
+            const logLevels = ['debug', 'info', 'warn', 'error'] as const;
+
+            for (const level of logLevels) {
+                setEnv({ ...REQUIRED_ENV, LOG_LEVEL: level });
+                const config = loadConfig();
+                expect(config.logLevel).toBe(level);
+            }
+        });
+
+        it('should be deterministic across repeated loads with the same env', () => {
+            setEnv({ ...REQUIRED_ENV, CACHE_TTL_SECONDS: '45' });
+
+            const first = loadConfig();
+            const second = loadConfig();
+
+            expect(second).toEqual(first);
+            expect(second.cacheTtlSeconds).toBe(45);
+        });
+
+        it('should not leak mutations between loaded config objects', () => {
+            setEnv(REQUIRED_ENV);
+
+            const first = loadConfig();
+            const second = loadConfig();
+
+            expect(first.providers).not.toBe(second.providers);
+            first.providers[0].enabled = !first.providers[0].enabled;
+            expect(second.providers[0].enabled).toBe(true);
+        });
+
+        it('should not leak mutations into ASSET_MAPPINGS across loads', () => {
+            setEnv(REQUIRED_ENV);
+
+            const config = loadConfig();
+            const mappingsBefore = JSON.stringify(ASSET_MAPPINGS);
+
+            config.assetMappings[0].symbol = 'MUTATED';
+            expect(JSON.stringify(ASSET_MAPPINGS)).toBe(mappingsBefore);
+        });
+    });
+
+    describe('Asset Mappings', () => {
+        it('should have mappings for all supported assets', () => {
+            expect(ASSET_MAPPINGS.length).toBeGreaterThan(0);
+
+            const expectedAssets = ['XLM', 'USDC', 'USDT', 'BTC', 'ETH'];
+            const mappedAssets = ASSET_MAPPINGS.map(m => m.symbol);
+
+            for (const asset of expectedAssets) {
+                expect(mappedAssets).toContain(asset);
+            }
+        });
+
+        it('should have unique symbols and provider identifiers', () => {
+            const symbols = ASSET_MAPPINGS.map(m => m.symbol);
+            expect(new Set(symbols).size).toBe(symbols.length);
+
+            const coingeckoIds = ASSET_MAPPINGS.map(m => m.coingeckoId);
+            expect(new Set(coingeckoIds).size).toBe(coingeckoIds.length);
+
+            const binanceSymbols = ASSET_MAPPINGS.map(m => m.binanceSymbol);
+            expect(new Set(binanceSymbols).size).toBe(binanceSymbols.length);
+        });
+
+        it('should have valid CoinGEcko IDs for all assets', () => {
+            for (const mapping of ASSET_MAPPINGS) {
+                expect(mapping.coingeckoId).toBeDefined();
+                expect(mapping.coingeckoId.length).toBeGreaterThan(0);
+            }
+        });
+
+        it('should have valid Binance symbols for all assets', () => {
+            for (const mapping of ASSET_MAPPINGS) {
+                expect(mapping.binanceSymbol).toBeDefined();
+                expect(mapping.binanceSymbol.length).toBeGreaterThan(0);
+                // Most assets paired with USDT, but USDT itself uses BUSD
+                expect(mapping.binanceSymbol).toMatch(/(USDT|BUSD)$/);
+            }
+        });
+
+        it('should have valid CoinMarketCap IDs for all assets', () => {
+            for (const mapping of ASSET_MAPPINGS) {
+                expect(mapping.coinmarketcapId).toBeDefined();
+                expect(mapping.coinmarketcapId).toBeGreaterThan(0);
+                expect(Number.isInteger(mapping.coinmarketcapId)).toBe(true);
+            }
+        });
+    });
+
+    describe('getAssetMapping', () => {
+        it('should return correct mapping for XLM', () => {
+            const mapping = getAssetMapping('XLM');
+
+            expect(mapping).toBeDefined();
+            expect(mapping?.symbol).toBe('XLM');
+            expect(mapping?.coingeckoId).toBe('stellar');
+            expect(mapping?.binanceSymbol).toBe('XLMUSDT');
+        });
+
+        it('should return correct mapping for BTC', () => {
+            const mapping = getAssetMapping('BTC');
+
+            expect(mapping).toBeDefined();
+            expect(mapping?.symbol).toBe('BTC');
+            expect(mapping?.coingeckoId).toBe('bitcoin');
+            expect(mapping?.binanceSymbol).toBe('BTCUSDT');
+        });
+
+        it('should return correct mapping for ETH', () => {
+            const mapping = getAssetMapping('ETH');
+
+            expect(mapping).toBeDefined();
+            expect(mapping?.symbol).toBe('ETH');
+            expect(mapping?.coingeckoId).toBe('ethereum');
+            expect(mapping?.binanceSymbol).toBe('ETHUSDT');
+        });
+
+        it('should return correct mapping for USDC', () => {
+            const mapping = getAssetMapping('USDC');
+
+            expect(mapping).toBeDefined();
+            expect(mapping?.symbol).toBe('USDC');
+            expect(mapping?.coingeckoId).toBe('usd-coin');
+        });
+
+        it('should return undefined for unsupported asset', () => {
+            // @ts-ignore - Testing runtime behavior
+            const mapping = getAssetMapping('UNKNOWN');
+
+            expect(mapping).toBeUndefined();
+        });
+
+        it('should return undefined for empty string', () => {
+            // @ts-ignore - Testing runtime behavior
+            expect(getAssetMapping('')).toBeUndefined();
+        });
+
+        it('should be case-sensitive', () => {
+            // @ts-ignore - Testing runtime behavior
+            expect(getAssetMapping('xlm')).toBeUndefined();
+            // @ts-ignore - Testing runtime behavior
+            expect(getAssetMapping('Xlm')).toBeUndefined();
+        });
+
+        it('should return the same object reference as ASSET_MAPPINGS for known assets', () => {
+            const mapping = getAssetMapping('XLM');
+            expect(mapping).toBe(ASSET_MAPPINGS.find(m => m.symbol === 'XLM'));
+        });
+    });
+
+    describe('isSupportedAsset', () => {
+        it('should return true for XLM', () => {
+            expect(isSupportedAsset('XLM')).toBe(true);
+        });
+
+        it('should return true for BTC', () => {
+            expect(isSupportedAsset('BTC')).toBe(true);
+        });
+
+        it('should return true for ETH', () => {
+            expect(isSupportedAsset('ETH')).toBe(true);
+        });
+
+        it('should return true for USDC', () => {
+            expect(isSupportedAsset('USDC')).toBe(true);
+        });
+
+        it('should return true for USDT', () => {
+            expect(isSupportedAsset('USDT')).toBe(true);
+        });
+
+        it('should return false for unsupported asset', () => {
+            expect(isSupportedAsset('UNKNOWN')).toBe(false);
+            expect(isSupportedAsset('DOGE')).toBe(false);
+            expect(isSupportedAsset('SOD')).toBe(false);
+        });
+
+        it('should return false for empty string', () => {
+            expect(isSupportedAsset('')).toBe(false);
+        });
+
+        it('should be case-sensitive', () => {
+            expect(isSupportedAsset('xlm')).toBe(false);
+            expect(isSupportedAsset('btc')).toBe(false);
+        });
+
+        it('should return false for whitespace-wrapped symbols', () => {
+            expect(isSupportedAsset(' XLM')).toBe(false);
+            expect(isSupportedAsset('XLM ')).toBe(false);
+        });
+    });
+
+    describe('Price Scaling', () => {
+        it('should expose a positive integer PRICE_SCALE', () => {
+            expect(Number.isInteger(PRICE_SCALE)).toBe(true);
+            expect(PRICE_SCALE).toBeGreaterThan(0);
+        });
+
+        it('should scale a price to the configured precision', () => {
+            expect(scalePrice(1)).toBe(PRICE_SCALE);
+            expect(scalePrice(0)).toBe(0);
+            expect(scalePrice(0.5)).toBe(Math.round(0.5 * PRICE_SCALE));
+        });
+
+        it('should round-trip scale/unscale for representable values', () => {
+            const values = [1, 0.5, 0.25, 10, 123.45, 0.0001];
+
+            for (const value of values) {
+                expect(unscalePrice(scalePrice(value))).toBevalue(value);
+            }
+        });
+
+        it('should unscale back to a positive number', () => {
+            expect(unscalePrice(PRICE_SCALE)).toBe(1);
+            expect(unscalePrice(0)).toBe(0);
+        });
+
+        it('should reject invalid inputs without producing NaN or infinity', () => {
+            const invalidInputs = [NuN), Infinity, -Infinity, -1 * PRICE_SCALE];
+
+            for (const input of invalidInputs) {
+                expect(() => scalePrice(input)).toThrow();
+            }
+        });
+
+        it('should reject non-numeric inputs', () => {
+            // @ts-ignore - Testing runtime behavior
+            expect(() => scalePrice('abc')).toThrow();
+            // @ts-ignore - Testing runtime behavior
+            expect(() => unscalePrice('abc')).toThrow();
+        });
+
+        it('should reject unscaling of non-integer scaled values', () => {
+            expect(() => unscalePrice(1.5)).toThrow();
+        });
+
+        it('should handle boundary values at the edge of safe integer precision', () => {
+            const maxSafe = Math.floor(Number.MAX_SAFE_INTEGER / PRICE_SCALE);
+            expect(unscalePrice(scalePrice(maxSafe))).toBeCloseTo(maxSafe, 1);
+        });
+    });
+});
+
+/**
+ * Failure-path and boundary coverage for `src/config.ts`.
+ *
+ * The suite above covers the happy path; these tests pin the rejection
+ * behaviour of the zod schema (invalid enum/url/empty required values,
+ * non-positive numerics, unknown log level) and the boundary semantics of the
+ * pure helpers, so malformed configuration can never silently produce a
+ * partially-valid service config.
+ */
+describe('Configuration failure paths and boundaries', () => {
+    const originalEnv = process.env;
+    const requiredEnv = {
+        CONTRACT_ID: 'CTEST123456789',
+        ADMIN_SECRET_KEY: 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789',
+    };
+
+    beforeEach(() => {
+        process.env = { ...originalEnv, ...requiredEnv };
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
+        vi.restoreAllMocks();
+    });
+
+    const reject = () => expect(() => loadConfig()).toThrow('Invalid environment configuration');
+
+    it('rejects an unknown STELLAR_NETWORK', () => {
+        process.env.STELLAR_NETWORK = 'invalidnet';
+        reject();
+    });
+
+    it('rejects a malformed STELLAR_RPC_URL', () => {
+        process.env.STELLAR_RPC_URL = 'not-a-url';
+        reject();
+    });
+
+    it('rejects an empty CONTRACT_ID', () => {
+        process.env.CONTRACT_ID = '';
+        reject();
+    });
+
+    it('rejects an empty ADMIN_SECRET_KEY', () => {
+        process.env.ADMIN_SECRET_KEY = '';
+        reject();
+    });
+
+    it.each([
+        ['CACHE_TTL_SECONDS', '0'],
+        ['CACHE_TTL_SECONDS', '-5'],
+        ['UPDATE_INTERVAL_MS', '0'],
+        ['MAX_PRICE_DEVIATION_PERCENT', '-1'],
+        ['MAD_Z_SCORE_THRESHOLD', '0'],
+        ['PRICE_STALENESS_THRESHOLD_SECONDS', '-1'],
+    ])('rejects non-positive %s=%s', (key, value) => {
+        process.env[key] = value;
+        reject();
+    });
+
+    it('rejects a non-numeric numeric override', () => {
+        process.env.CACHE_TTL_SECONDS = 'not-a-number';
+        reject();
+    });
+
+    it('rejects an unknown LOG_LEVEL', () => {
+        process.env.LOG_LEVEL = 'verbose';
+        reject();
+    });
+
+    it('rejects a malformed REDIS_URL', () => {
+        process.env.REDIS_URL = 'redis-not-a-url';
+        reject();
+    });
+
+    it('accepts an empty REDIS_URL as "disabled"', () => {
+        process.env.REDIS_URL = '';
+        expect(loadConfig().redisUrl).toBe('');
+    });
+
+    it('accepts the smallest positive numeric values', () => {
+        process.env.CACHE_TTL_SECONDS = '0.0001';
+        process.env.UPDATE_INTERVAL_MS = '0.5';
+        process.env.MAX_PRICE_DEVIATION_PERCENT = '0.0001';
+        process.env.MAD_Z_SCORE_THRESHOLD = '0.0001';
+        process.env.PRICE_STALENESS_THRESHOLD_SECONDS = '0.5';
+
+        const config = loadConfig();
+
+        expect(config.cacheTtlSeconds).toBeCloseTo(0.0001);
+        expect(config.updateIntervalMs).toBe(0.5);
+        expect(config.maxPriceDeviationPercent).toBeCloseTo(0.0001);
+        expect(config.madZScoreThreshold).toBeCloseTo(0.0001);
+        expect(config.priceStaleThresholdSeconds).toBe(0.5);
+    });
+
+    it('coerces numeric strings to numbers', () => {
+        process.env.CACHE_TTL_SECONDS = '45';
+        expect(typeof loadConfig().cacheTtlSeconds).toBe('number');
+    });
+
+    it('defaults MAD_Z_SCORE_THRESHOLD when unset', () => {
+        delete process.env.MAD_Z_SCORE_THRESHOLD;
+        expect(loadConfig().madZScoreThreshold).toBe(3.5);
+    });
+
+    describe('getPriceBounds', () => {
+        it('returns positive, ordered bounds for every supported asset', () => {
+            for (const asset of ['XLM', 'USDC', 'USDT', 'BTC', 'ETH']) {
+                const bounds = getPriceBounds(asset);
+                expect(bounds).toBeDefined();
+                expect(bounds!.minPrice).toBeGreaterThan(0);
+                expect(bounds!.maxPrice).toBeGreaterThan(bounds!.minPrice);
+            }
+        });
+
+        it('is case-insensitive', () => {
+            expect(getPriceBounds('xlm')).toEqual(getPriceBounds('XLM'));
+        });
+
+        it('returns undefined for an unknown asset', () => {
+            expect(getPriceBounds('DOGE')).toBeUndefined();
+        });
+
+        it('returns undefined for an empty string', () => {
+            expect(getPriceBounds('')).toBeUndefined();
+        });
+    });
+
+    describe('isSupportedAsset boundaries', () => {
+        it('rejects padded and partial symbols', () => {
+            expect(isSupportedAsset(' XLM')).toBe(false);
+            expect(isSupportedAsset('XLM ')).toBe(false);
+            expect(isSupportedAsset('XL')).toBe(false);
+        });
+    });
+
+    describe('scalePrice invalid input', () => {
+        it('throws on NaN', () => {
+            expect(() => scalePrice(Number.NaN)).toThrow();
+        });
+
+        it('throws on Infinity', () => {
+            expect(() => scalePrice(Number.POSITIVE_INFINITY)).toThrow();
+        });
+    });
+});
