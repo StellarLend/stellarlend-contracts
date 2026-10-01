@@ -4,20 +4,6 @@
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, Map, Symbol};
 
-mod cross_asset;
-mod deposit;
-mod risk_management;
-
-use cross_asset::CrossAssetError;
-use deposit::deposit_collateral;
-use risk_management::{
-    can_be_liquidated, get_close_factor, get_liquidation_incentive,
-    get_liquidation_incentive_amount, get_liquidation_threshold, get_max_liquidatable_amount,
-    get_min_collateral_ratio, initialize_risk_management, is_emergency_paused, is_operation_paused,
-    require_min_collateral_ratio, set_emergency_pause, set_pause_switch, set_pause_switches,
-    set_risk_params, RiskConfig, RiskManagementError,
-};
-
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HelloError {
@@ -115,9 +101,6 @@ mod gov_quorum_test;
 // mod tests;
 
 use crate::oracle::FullOracleConfig;
-
-use deposit::deposit_collateral;
-use repay::repay_debt;
 
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
 

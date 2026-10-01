@@ -27,7 +27,7 @@ members = [
 [workspace.dependencies]
 # Keep shared Soroban and test dependency versions pinned in one place.
 soroban-sdk = "=25.3.1"
-soroban-token-sd{ = "=25.3.1"
+soroban-token-sdk = "=25.3.1"
 proptest = "1.5"
 
 [profile.release]
