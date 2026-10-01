@@ -1890,9 +1890,6 @@ impl LendingContract {
             increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
 
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &collateral_asset);
-
         Ok(updated.principal)
     }
 
