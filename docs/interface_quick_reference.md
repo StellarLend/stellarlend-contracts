@@ -60,8 +60,17 @@
 | `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { rate_model_active: bool, utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32, elapsed_ledgers: u32 }` |
 | `get_health_factor` | `(user: Address)` | `i128` |
 | `get_protocol_metrics` | `()` | `ProtocolMetrics { total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` |
-| `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { rate_model_active: bool, utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32, elapsed_ledgers: u32 }` |
+| `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32 }` |
 
+### Upgrade Governance
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` |
+| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` |
+| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` — domain-separated approval binding |
+| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint captured for the proposal |
+| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the current approver set |
 ### Oracle Price Controls
 
 | Function | Signature | Auth Required | Returns |
@@ -88,6 +97,11 @@
 | `set_liquidation_incentive_bps` | `(incentive_bps: i128)` | admin | `Result<(), LendingError>` |
 | `get_liquidation_incentive_bps` | `()` | — | `i128` |
 | `set_liquidation_threshold_bps` | `(threshold_bps: i128)` | admin | `Result<(), LendingError>` |
+| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` |
+| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` |
+| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` |
+| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` |
+| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` |
 
 ### Config Store
 

@@ -1,8 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    Map, Vec,
-};
+    Map, Vec,};
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
 const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
@@ -345,9 +344,7 @@ impl Bridge {
     fn inbound_message_id(env: &Env, source_hash: &BytesN<32>, nonce: u64) -> BytesN<32> {
         let mut data = Bytes::new(env);
         data.extend_from_slice(INBOUND_MSG_DOMAIN);
-        let hash_arr: [u8; 32] = source_hash.into();
-        data.extend_from_slice(&hash_arr);
-        data.extend_from_slice(&nonce.to_le_bytes());
+        data.append(&source_hash.to_bytes());        data.extend_from_slice(&nonce.to_le_bytes());
         env.crypto().sha256(&data).into()
     }
 }
@@ -575,8 +572,7 @@ impl Bridge {
 
         // 5. Emit event.
         env.events().publish(
-            (symbol_short!("inbound"), symbol_short!("consumed")),
-            InboundMessageConsumedEvent {
+            (symbol_short!("in_msg"), symbol_short!("consumed")),            InboundMessageConsumedEvent {
                 message_id: message_id.clone(),
                 source,
                 nonce,
@@ -887,39 +883,7 @@ impl Bridge {
     // Inbound epoch validation
     // -----------------------------------------------------------------------
 
-    /// Reject a `signed_epoch` that does not name the bridge's currently
-    /// active validator set.
-    ///
-    /// # Threat model (#1147)
-    ///
-    /// A naive `signed_epoch >= self.epoch` check accepts any far-future
-    /// epoch. A message claiming an epoch that the validator set has not
-    /// yet rotated into must NEVER be honoured on this bridge: once the
-    /// future epoch is reached, an attacker who pre-collected the message
-    /// can replay it. The defence is to accept only the active epoch,
-    /// optionally extended by a small explicit tolerance.
-    ///
-    /// With [`INBOUND_EPOCH_TOLERANCE`] set to `0` (the default and safe
-    /// choice) the bridge enforces **strict equality**: only an inbound
-    /// message carrying exactly [`Bridge::epoch`] is admitted. Epochs are
-    /// monotonically-incremented discrete sequence numbers, not physical
-    /// timestamps, so there is no "clock skew" to absorb and any positive
-    /// tolerance weakens replay resistance without justification.
-    ///
-    /// # Bounds
-    ///
-    /// * `signed_epoch < epoch`
-    ///   [`Err`] — retired-validator-set replay.
-    /// * `signed_epoch == epoch`
-    ///   [`Ok`] — exactly the active epoch, accepted.
-    /// * `signed_epoch > epoch.saturating_add(INBOUND_EPOCH_TOLERANCE)`
-    ///   [`Err`] — message claims to be from a validator set that has not
-    ///   yet been rotationally authorised on this bridge.
-    ///
-    /// `saturating_add` ensures that if `epoch == u64::MAX` the upper
-    /// bound also equals `u64::MAX`, so the comparison cannot be defeated
-    /// by wrapping arithmetic.
-    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
+    /// Reject a `signed_epoch` that belongs to a retired validator set.    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
         let current = Self::load_epoch(&env);
         if signed_epoch < current {
             return Err(BridgeError::RetiredEpoch);
@@ -1018,8 +982,7 @@ impl Bridge {
         payload.extend_from_slice(tag);
         let validator_bytes: [u8; 32] = validator.into();
         payload.extend_from_slice(&validator_bytes);
-        payload
-    }
+        payload    }
 
     // -----------------------------------------------------------------------
     // Inbound value-cap
