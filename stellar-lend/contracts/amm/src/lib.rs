@@ -15,16 +15,20 @@
 //! Equivalently: `amount_out = (amount_in · (10000 − fee_bps) · reserve_out) /
 //! (reserve_in · 10000 + amount_in · (10000 − fee_bps))`.
 //!
-//! Public entry points (`pub fn`, no auth required):
-//! - [`init_pool`] — initialise reserves A/B and LP total supply. Returns `Result<(), AmmPoolError>`.
+//! Public entry points:
+//! - [`init_pool`] — initialise reserves A/B and LP total supply (admin-only:
+//!   the supplied `admin` must authorize via `require_auth()` and, once an
+//!   admin identity is stored, must match the stored pool admin). Returns
+//!   `Result<(), AmmPoolError>`.
 //! - [`add_liquidity`] — deposit tokens, mint LP shares via donation-attack-resistant math. Returns `Result<i128, AmmPoolError>` (shares minted).
 //! - [`remove_liquidity`] — burn LP shares for proportional reserves. Returns `Result<(i128, i128), AmmPoolError>` (tokens returned).
 //! - [`swap_a_for_b`] — fee‑adjusted constant‑product swap A → B. Returns `Result<i128, AmmPoolError>` (amount_out).
+//! - [`swap_b_for_a`] — fee‑adjusted constant‑product swap B → A (mirror of `swap_a_for_b` with token roles reversed). Returns `Result<i128, AmmPoolError>` (amount_out).
 //! - [`get_reserves`] — read both reserves for inspection / tests. Returns `(i128, i128)`.
 //!
 //! Notes for downstream callers:
-//! - Input validation is enforced via `panic!` (this is a test‑grade surface, not a production safety
-//!   wrapper); callers should pre‑validate non‑negative amounts and `0 ≤ fee_bps ≤ 10000` off‑chain.
+//! - Input validation is enforced via typed `Result` errors (`AmmPoolError`); callers should
+//!   pre‑validate non‑negative amounts and `0 ≤ fee_bps ≤ 10000` off‑chain.
 //! - The k‑invariant is enforced by [`assert_k_monotonic`] after every reserve mutation.
 //! - Flash‑swap APIs — [`AmmContract::flash_swap_a_for_b`] and
 //!   [`AmmContract::repay_flash_swap`] — implement the "optimistic transfer
@@ -35,6 +39,8 @@
 pub mod liquidity_math;
 pub mod math;
 
+#[cfg(test)]
+mod admin_authorization_test;
 #[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
@@ -198,9 +204,12 @@ const KEY_FEE_BPS: (&str, &str) = ("pool", "fee_bps");
 // See: [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md)
 const KEY_MIN_SWAP_IN: (&str, &str) = ("pool", "min_swap_in");
 
-// Pool admin identity. Set on the first `init_pool` call (first-caller-wins).
-// All admin-gated setters (`init_pool`, `set_max_impact_bps`, `set_fee_bps`,
-// `set_min_swap_in`) require the stored admin's authorization once it exists.
+// Pool admin identity. Set by `init_pool` from its authenticated `admin`
+// parameter (first caller wins — the identity cannot be replaced without
+// calling the contract's own admin, so it is effectively immutable here).
+// All admin-gated entry points (`init_pool`, `set_max_impact_bps`,
+// `set_fee_bps`, `set_min_swap_in`, `set_min_liquidity`) require the stored
+// admin's authorization once the identity exists.
 const KEY_ADMIN: (&str, &str) = ("pool", "admin");
 
 // LP share tracking — total supply and per-user balances.
@@ -313,6 +322,13 @@ pub struct AmmContract;
 impl AmmContract {
     /// Initialize pool reserves.
     ///
+    /// Admin only. `admin` must authorize the call via `require_auth()` and,
+    /// once a pool admin identity is stored, must match the stored admin —
+    /// mirroring [`set_fee_bps`](AmmContract::set_fee_bps).  The first
+    /// successful `init_pool` call locks in its `admin` argument as the
+    /// pool admin (first-caller-wins); later calls are restricted to that
+    /// same address so a third party cannot reset the reserves.
+    ///
     /// Gated by the `FlashActive` reentrancy guard so that a flash swap
     /// initiated on a stale pool cannot be silently clobbered by a
     /// follow-up `init_pool` from the same transaction.
@@ -320,17 +336,26 @@ impl AmmContract {
     /// Stores the token contract addresses for A and B so that
     /// `add_liquidity` and `remove_liquidity` can perform real token
     /// transfers.  Resets both fee accumulators and LP total supply to zero.
-    /// The caller becomes the pool admin (first-caller-wins).
     pub fn init_pool(
         env: Env,
+        admin: Address,
         a: i128,
         b: i128,
         token_a: Address,
         token_b: Address,
     ) -> Result<(), AmmPoolError> {
         Self::assert_no_active_flash_swap(&env)?;
-        // Admin is set externally via set_fee_bps / set_max_impact_bps;
-        // init_pool does not lock in a default admin.
+        // Admin-gated: authorize the caller, enforce the stored admin
+        // identity, and lock it in on first initialization.
+        Self::require_stored_admin(&env, &admin)?;
+        if env
+            .storage()
+            .persistent()
+            .get::<_, Address>(&KEY_ADMIN)
+            .is_none()
+        {
+            env.storage().persistent().set(&KEY_ADMIN, &admin);
+        }
         env.storage().persistent().set(&KEY_RES_A, &a);
         env.storage().persistent().set(&KEY_RES_B, &b);
         env.storage().persistent().set(&KEY_TOKEN_A, &token_a);
@@ -364,13 +389,31 @@ impl AmmContract {
         Ok(())
     }
 
-    /// Verify that `admin` matches the stored pool admin.
+    /// Verify that `admin` is authorized for this call and matches the
+    /// stored pool admin (when one exists).
+    ///
+    /// Mirrors `set_fee_bps`'s auth model: the supplied address must
+    /// authorize the invocation via `require_auth()`, and once an admin
+    /// identity has been persisted (by `init_pool`), any other address is
+    /// rejected with [`AmmPoolError::UnauthorizedCaller`] even though it
+    /// can always authorize its *own* transactions.
+    fn require_stored_admin(env: &Env, admin: &Address) -> Result<(), AmmPoolError> {
+        Self::require_admin(env, admin)?;
+        if let Some(stored) = env.storage().persistent().get::<_, Address>(&KEY_ADMIN) {
+            if &stored != admin {
+                return Err(AmmPoolError::UnauthorizedCaller);
+            }
+        }
+        Ok(())
+    }
+
+    /// Verify that `admin` is authorized for this call.
     fn require_admin(_env: &Env, admin: &Address) -> Result<(), AmmPoolError> {
         admin.require_auth();
         Ok(())
     }
 
-    /// Return the current pool admin address.
+    /// Return the current pool admin address, if one has been locked in.
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&KEY_ADMIN)
     }
@@ -399,15 +442,16 @@ impl AmmContract {
     /// and allow swaps of any size (backward-compatible default).
     ///
     /// # Arguments
-    /// * `_admin`         — caller address (auth checked by the caller in
-    ///                      production; kept in signature for future ACL).
+    /// * `admin`          — pool admin; must authorize via `require_auth()`
+    ///                      and match the stored admin identity (see
+    ///                      [`require_admin`](AmmContract::require_admin)).
     /// * `max_impact_bps` — maximum impact in BPS, or `IMPACT_GUARD_DISABLED`.
     pub fn set_max_impact_bps(
         env: Env,
         admin: Address,
         max_impact_bps: u32,
     ) -> Result<(), AmmPoolError> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_stored_admin(&env, &admin)?;
         env.storage()
             .persistent()
             .set(&KEY_MAX_IMPACT_BPS, &max_impact_bps);
@@ -1021,9 +1065,9 @@ impl AmmContract {
     /// entry points within a single multi-operation transaction:
     ///
     /// ```text
-    /// Op 1: AMM.flash_swap_a_for_b(amount_out, fee_bps)
+    /// Op 1: AMM.flash_swap_a_for_b(caller, amount_out, params)
     /// Op 2: <caller runs arbitrary logic on asset A received elsewhere>
-    /// Op 3: AMM.repay_flash_swap(amount_in)        // verify-k runs here
+    /// Op 3: AMM.repay_flash_swap(caller, amount_in) // verify-k runs here
     /// ```
     ///
     /// Soroban rolls back every storage write in the whole transaction if
@@ -1063,7 +1107,7 @@ impl AmmContract {
     /// perturbs reserves.  See [DUST_SWAP_GUARD.md](../DUST_SWAP_GUARD.md).
     ///
     /// # Returns
-    /// `amount_out` — the number of asset-B units debited from the pool.
+    /// * `Ok(amount_out)` — the number of asset-B units debited from the pool.
     ///
     /// # Errors
     /// * [`AmmPoolError::ReentrantFlashSwap`] — a flash swap is already in flight.
@@ -1523,6 +1567,7 @@ mod inline_test {
 
         let token_a = Address::generate(&env);
         let token_b = Address::generate(&env);
+        let admin = Address::generate(&env);
 
         let reserve_sizes = [1_000_i128, 10_000, 100_000, 1_000_000];
         // Start from 2: amount_in=1 floors to zero output under the dust guard
@@ -1532,7 +1577,7 @@ mod inline_test {
         for &ra in reserve_sizes.iter() {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
-                    client.init_pool(&ra, &rb, &token_a, &token_b);
+                    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
                     // swap using stored fee (default 30 bps)
                     let res = client.try_swap_a_for_b(&amt);
                     if res == Err(Ok(AmmPoolError::ZeroOutput)) {
@@ -1566,6 +1611,7 @@ mod inline_test {
         let client = AmmContractClient::new(&env, &id);
 
         let caller = generate_address(&env);
+        let pool_admin = generate_address(&env);
         let a_admin = generate_address(&env);
         let b_admin = generate_address(&env);
         let ta = env.register_stellar_asset_contract(a_admin);
@@ -1573,7 +1619,7 @@ mod inline_test {
         soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&caller, &1_000_i128);
         soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &2_000_i128);
 
-        client.init_pool(&1000, &2000, &ta, &tb);
+        client.init_pool(&pool_admin, &1000, &2000, &ta, &tb);
         client.add_liquidity(&caller, &100, &200);
         let (ra1, rb1) = client.get_reserves();
         let k1 = ra1.checked_mul(rb1).unwrap();
@@ -1609,7 +1655,7 @@ mod inline_test {
         soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&caller, &1001_i128);
         soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &1001_i128);
 
-        client.init_pool(&0_i128, &0_i128, &ta, &tb);
+        client.init_pool(&caller, &0_i128, &0_i128, &ta, &tb);
 
         // First deposit: 1001 of each token → sqrt(1001*1001)=1001, shares=1, locked=1000
         let shares = client.add_liquidity(&caller, &1001_i128, &1001_i128);
@@ -1641,7 +1687,7 @@ mod inline_test {
         soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&caller, &10000_i128);
         soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &10000_i128);
 
-        client.init_pool(&0_i128, &0_i128, &ta, &tb);
+        client.init_pool(&caller, &0_i128, &0_i128, &ta, &tb);
 
         // Deposit 10000 of each token.
         let shares = client.add_liquidity(&caller, &10000_i128, &10000_i128);
@@ -1674,7 +1720,7 @@ mod inline_test {
         let token_b = generate_address(&env);
         let caller = generate_address(&env);
 
-        client.init_pool(&0_i128, &0_i128, &token_a, &token_b);
+        client.init_pool(&caller, &0_i128, &0_i128, &token_a, &token_b);
         // sqrt(100*10)=31 < MINIMUM_LIQUIDITY(1000) → rejected
         client.add_liquidity(&caller, &100_i128, &10_i128);
     }
@@ -1694,8 +1740,9 @@ mod inline_test {
         let token_a = Address::generate(&env);
         let token_b = Address::generate(&env);
         let caller = Address::generate(&env);
+        let admin = Address::generate(&env);
 
-        client.init_pool(&1_000_000, &1_000_000, &token_a, &token_b);
+        client.init_pool(&admin, &1_000_000, &1_000_000, &token_a, &token_b);
 
         // Before any swap, the observation list is empty.
         assert_eq!(

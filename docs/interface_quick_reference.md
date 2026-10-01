@@ -57,8 +57,20 @@
 | `get_debt_position` | `(user: Address)` | `DebtPosition { principal: i128, last_update: u64 }` |
 | `get_min_borrow` | `()` | `i128` |
 | `get_rate_smoothing_state` | `()` | `RateSmoothingState { schema_version: u32, current_rate_bps: i128, last_target_rate_bps: i128, last_update_ledger: u32 }` |
+| `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { rate_model_active: bool, utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32, elapsed_ledgers: u32 }` |
 | `get_health_factor` | `(user: Address)` | `i128` |
 | `get_protocol_metrics` | `()` | `ProtocolMetrics { total_borrow: i128, total_supply: i128, utilization_bps: i128, ledger: u32 }` |
+| `get_rate_model_diagnostics` | `()` | `RateModelDiagnostics { utilization_bps: i128, target_rate_bps: i128, applied_rate_bps: i128, last_update_ledger: u32 }` |
+
+### Upgrade Governance
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` |
+| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` |
+| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` — domain-separated approval binding |
+| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint captured for the proposal |
+| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the current approver set |
 
 ### Oracle Price Controls
 
@@ -102,6 +114,35 @@
 |---|---|---|---|
 | `get_governance_audit_count` | `()` | — | `u64` |
 | `get_governance_audit_entries` | `(limit: u64)` | — | `Vec<AuditLogEntry>` |
+| `get_upgrade_approval_binding` | `(approver: Address, sequence: u32)` | — | `Option<BytesN<32>>` |
+| `get_upgrade_approver_set_hash` | `()` | — | `Option<BytesN<32>>` |
+| `get_upgrade_proposal_signer_hash` | `(proposal: Bytes)` | — | `Option<BytesN<32>>` |
+| `is_upgrade_proposal_cancelled` | `(proposal_hash: BytesN<32>)` | — | `bool` |
+| `upgrade_cancel` | `(proposal_hash: BytesN<32>)` | admin | `()` |
+
+### Upgrade Governance
+
+| Function | Signature | Auth Required | Returns |
+|---|---|---|---|
+| `upgrade_init` | `(caller: Address, current_wasm_hash: BytesN<32>, required_approvals: u32)` | admin | `Result<(), LendingError>` |
+| `upgrade_propose` | `(caller: Address, new_wasm_hash: BytesN<32>, new_version: u32)` | admin | `Result<u64, LendingError>` — proposal ID |
+| `upgrade_approve` | `(caller: Address, proposal_id: u64)` | approver | `Result<u32, LendingError>` — approval count |
+| `upgrade_cancel` | `(caller: Address, proposal_id: u64)` | admin | `Result<(), LendingError>` |
+| `upgrade_execute` | `(caller: Address, proposal_id: u64)` | approver | `Result<(), LendingError>` |
+| `upgrade_set_required_approvals` | `(caller: Address, required_approvals: u32)` | admin | `Result<(), LendingError>` |
+| `upgrade_add_approver` | `(caller: Address, approver: Address)` | admin | `Result<(), LendingError>` |
+| `upgrade_remove_approver` | `(caller: Address, approver: Address)` | admin | `Result<(), LendingError>` |
+| `upgrade_status` | `(proposal_id: u64)` | — | `Result<UpgradeStatus, LendingError>` |
+| `current_version` | `()` | — | `Result<u32, LendingError>` |
+| `current_wasm_hash` | `()` | — | `Result<BytesN<32>, LendingError>` |
+| `get_required_approvals` | `()` | — | `Result<u32, LendingError>` |
+| `get_upgrade_approvers` | `()` | — | `Result<Vec<Address>, LendingError>` |
+| `get_proposal_approvals` | `(proposal_id: u64)` | — | `Result<Vec<Address>, LendingError>` |
+| `is_upgrade_proposal_cancelled` | `(proposal_id: u64)` | — | `bool` |
+| `get_upgrade_approval_binding` | `(proposal_id: u64, approver: Address)` | — | `Option<BytesN<32>>` — WASM hash the approver committed to |
+| `get_upgrade_approver_set_hash` | `()` | — | `BytesN<32>` — fingerprint of the live approver set |
+| `get_upgrade_proposal_signer_hash` | `(proposal_id: u64)` | — | `Option<BytesN<32>>` — approver-set fingerprint at proposal creation |
+| `get_min_upgrade_delay_ledgers` | `()` | — | `u32` — minimum timelock delay in ledgers |
 
 ### Cross-Asset User Operations
 
