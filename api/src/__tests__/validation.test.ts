@@ -848,6 +848,79 @@ describe('Validation Middleware', () => {
       expect(response.status).toBe(400);
     });
   });
+
+  describe('Authorization credential and normalization regressions', () => {
+    it('rejects a non-string userSecret credential without leaking its value', async () => {
+      const response = await request(app)
+        .post('/api/lending/deposit')
+        .send({
+          userAddress: VALID_USER_ADDRESS,
+          amount: '1000000',
+          userSecret: 123456789,
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('userSecret');
+      // Credential values must never be echoed back to the caller.
+      expect(JSON.stringify(response.body)).not.toContain('123456789');
+      expect(mockStellarService.buildDepositTransaction).not.toHaveBeenCalled();
+    });
+
+    it('trims surrounding whitespace from the userSecret credential before forwarding', async () => {
+      const response = await request(app)
+        .post('/api/lending/deposit')
+        .send({
+          userAddress: VALID_USER_ADDRESS,
+          amount: '1000000',
+          userSecret: `  ${VALID_USER_SECRET}  `,
+        });
+
+      expect(response.status).toBe(400);
+      expect(mockStellarService.buildDepositTransaction).toHaveBeenCalledWith(
+        VALID_USER_ADDRESS,
+        undefined,
+        '1000000',
+        VALID_USER_SECRET
+      );
+    });
+
+    it('trims surrounding whitespace from userAddress and amount before forwarding', async () => {
+      const response = await request(app)
+        .post('/api/lending/deposit')
+        .send({
+          userAddress: `  ${VALID_USER_ADDRESS}  `,
+          amount: ' 1000000 ',
+          userSecret: VALID_USER_SECRET,
+        });
+
+      expect(response.status).toBe(400);
+      expect(mockStellarService.buildDepositTransaction).toHaveBeenCalledWith(
+        VALID_USER_ADDRESS,
+        undefined,
+        '1000000',
+        VALID_USER_SECRET
+      );
+    });
+
+    it('normalizes a null assetAddress to undefined', async () => {
+      const response = await request(app)
+        .post('/api/lending/deposit')
+        .send({
+          userAddress: VALID_USER_ADDRESS,
+          assetAddress: null,
+          amount: '1000000',
+          userSecret: VALID_USER_SECRET,
+        });
+
+      expect(response.status).toBe(400);
+      expect(mockStellarService.buildDepositTransaction).toHaveBeenCalledWith(
+        VALID_USER_ADDRESS,
+        undefined,
+        '1000000',
+        VALID_USER_SECRET
+      );
+    });
+  });
 });
 
 describe('Hook HMAC Validation', () => {
