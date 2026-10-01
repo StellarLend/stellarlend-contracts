@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import dotenv from 'dotenv';
-import type { OracleServiceConfig, ProviderConfig, AssetMapping, SupportedAsset } from './types/index.js';
+import type { OracleServiceConfig, ProviderConfig, AssetMapping, AssetPriceBounds, SupportedAsset } from './types/index.js';
 
 export type { OracleServiceConfig } from './types/index.js';
 
@@ -129,6 +129,19 @@ export const ASSET_MAPPINGS: AssetMapping[] = [
         binanceSymbol: 'ETHUSDT',
     },
 ];
+
+/**
+ * Default per-asset sanity bounds. These are deliberately wide and exist to
+ * reject obviously corrupt provider data; operational tightening is performed
+ * at runtime via the admin server.
+ */
+export const DEFAULT_PRICE_BOUNDS: Record<SupportedAsset, AssetPriceBounds> = {
+    XLM: { minPrice: 0.00001, maxPrice: 1000000 },
+    USDC: { minPrice: 0.9, maxPrice: 1.1 },
+    USDT: { minPrice: 0.9, maxPrice: 1.1 },
+    BTC: { minPrice: 1000, maxPrice: 200000 },
+    ETH: { minPrice: 100, maxPrice: 20000 },
+};
 
 /**
  * Get asset mapping by symbol

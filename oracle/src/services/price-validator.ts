@@ -207,23 +207,6 @@ export class PriceValidator {
                         lastTimestamp: cached.timestamp,
                     },
                 });
-            } else if (raw.timestamp === cached.timestamp && raw.price === cached.price) {
-                errors.push({
-                    code: 'PRICE_STALE' as ValidationErrorCode,
-                    message: `Price for ${asset} at timestamp ${raw.timestamp} is already committed`,
-                    details: { asset, timestamp: raw.timestamp, price: raw.price },
-                });
-            } else if (raw.timestamp === cached.timestamp) {
-                errors.push({
-                    code: 'PRICE_STALE' as ValidationErrorCode,
-                    message: `Price for timestamp ${raw.timestamp} conflicts with last accepted price ${cached.price} for ${asset}`,
-                    details: {
-                        asset,
-                        timestamp: raw.timestamp,
-                        cachedPrice: cached.price,
-                        price: raw.price,
-                    },
-                });
             }
 
             const deviation = Math.abs((raw.price - cached.price) / cached.price) * 100;
@@ -242,10 +225,10 @@ export class PriceValidator {
         }
 
         const scaledPrice = scalePrice(raw.price);
-        if (Number.isFinite(raw.price) && !Number.isSafeInteger(scaledPrice)) {
+        if (Number.isFinite(raw.price) && scaledPrice > BigInt(Number.MAX_SAFE_INTEGER)) {
             errors.push({
                 code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
-                message: `Scaled price ${scaledPrice} for ${asset} is not a safe integer`,
+                message: `Scaled price ${scaledPrice} for ${asset} exceeds the safe integer range`,
                 details: { scaledPrice, maxSafeInteger: Number.MAX_SAFE_INTEGER },
             });
         }
@@ -262,7 +245,27 @@ export class PriceValidator {
                 signature: raw.signature,
             };
 
-            this.pendingPrices.set(asset, { price: raw.price, timestamp: raw.timestamp });
+            // When a source declares trusted signers, the payload must carry a
+            // valid signature from one of them before the price is accepted.
+            const trusted = this.trustedSigners[raw.source];
+            if (trusted && trusted.length > 0) {
+                const signatureError = this.verifySignatureIfPresent(raw, trusted);
+                if (signatureError) {
+                    logger.warn(`Signature validation failed for ${raw.asset}`, {
+                        error: signatureError,
+                    });
+                    return {
+                        isValid: false,
+                        errors: [signatureError],
+                    };
+                }
+            }
+
+            this.cachedPrices.set(asset, {
+                price: raw.price,
+                timestamp: raw.timestamp,
+                volume24h: raw.volume24h ? Number(raw.volume24h) : undefined,
+            });
 
             return {
                 isValid: true,
@@ -318,6 +321,53 @@ export class PriceValidator {
     }
 
     /**
+     * Verify a provider signature when trusted signers are configured for a
+     * source. Returns a ValidationError when verification fails, otherwise
+     * undefined. The canonical message is
+     * `domain|ASSET|price|timestamp|source`.
+     */
+    private verifySignatureIfPresent(
+        raw: RawPriceData,
+        trusted: string[],
+    ): ValidationError | undefined {
+        if (!raw.signature || !raw.signer) {
+            return {
+                code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                message: `Missing signature or signer for trusted source ${raw.source}`,
+            };
+        }
+
+        if (!trusted.includes(raw.signer)) {
+            return {
+                code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                message: `Untrusted signer ${raw.signer} for source ${raw.source}`,
+            };
+        }
+
+        try {
+            const keypair = Keypair.fromPublicKey(raw.signer);
+            const message = `${this.signatureDomain}|${raw.asset.toUpperCase()}|${raw.price}|${raw.timestamp}|${raw.source}`;
+            const messageBuffer = Buffer.from(message, 'utf8');
+            const signatureBuffer = Buffer.from(raw.signature, 'base64');
+
+            if (!keypair.verify(messageBuffer, signatureBuffer)) {
+                return {
+                    code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                    message: `Invalid signature for source ${raw.source}`,
+                };
+            }
+        } catch (error) {
+            logger.error('Signature verification error', { error });
+            return {
+                code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                message: `Signature verification failed for ${raw.source}`,
+            };
+        }
+
+        return undefined;
+    }
+
+    /**
      * Validate raw price data, falling back to the latest cached price when the
      * live price is rejected exclusively for staleness and a safe cached price
      * exists. This method never relaxes asset bounds, safe scaling, or hard
@@ -342,11 +392,55 @@ export class PriceValidator {
             return result;
         }
 
+        const now = Math.floor(Date.now() / 1000);
+        const fallbackAge = now - fallback.timestamp;
+        if (fallbackAge > this.getFallbackStalenessSeconds()) {
+            return result;
+        }
+
+        const asset = raw.asset.toUpperCase();
+        const bounds = this.getBounds(asset);
+        if (fallback.price < bounds.minPrice || fallback.price > bounds.maxPrice) {
+            return result;
+        }
+
+        const scaledFallbackPrice = scalePrice(fallback.price);
+        if (scaledFallbackPrice > BigInt(Number.MAX_SAFE_INTEGER)) {
+            return result;
+        }
+
+        const validatedPrice: PriceData = {
+            asset,
+            price: scaledFallbackPrice,
+            timestamp: fallback.timestamp,
+            source: `${raw.source}:cached`,
+            confidence: this.calculateConfidence(raw, fallback.price),
+            volume24h: raw.volume24h,
+            signer: raw.signer,
+            signature: raw.signature,
+        };
+
         return {
             isValid: true,
-            price: fallback,
+            price: validatedPrice,
             errors: [],
         };
+    }
+
+    /**
+     * Effective maximum age (seconds) for a cached price to be used as a
+     * fallback when the live price is rejected for staleness.
+     */
+    private getFallbackStalenessSeconds(): number {
+        return this.config.maxFallbackStalenessSeconds ?? this.config.maxStalenessSeconds * 3;
+    }
+
+    /**
+     * Latest cached price for an asset, if any. Used as a bounded fallback when
+     * a live price is rejected solely for staleness.
+     */
+    private getFallbackPrice(asset: string): CachedPrice | undefined {
+        return this.cachedPrices.get(asset.toUpperCase());
     }
 
     /**

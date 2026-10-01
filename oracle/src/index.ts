@@ -22,7 +22,7 @@ import {
     type ContractUpdater,
 } from './services/index.js';
 import { AdminServer } from './services/admin-server.js';
-import type { ProviderConfig } from './types/index.js';
+import { pathToFileURL } from 'node:url';
 
 /**
  * Default assets to fetch prices for
@@ -49,12 +49,12 @@ export class OracleService {
         // Create providers from configuration
         const providers: BasePriceProvider[] = config.providers
             .filter((p) => p.enabled)
-            .map((p) => {
+            .map((p): BasePriceProvider | null => {
                 switch (p.name) {
                     case 'coingecko':
-                        return new (await import('./providers/coingecko.js')).CoinGeckoProvider(p as ProviderConfig);
+                        return createCoinGeckoProvider(p.apiKey);
                     case 'binance':
-                        return new (await import('./providers/binance.js')).BinanceProvider(p as ProviderConfig);
+                        return createBinanceProvider();
                     default:
                         logger.warn('Unknown provider in config, skipping', { provider: p.name });
                         return null;
@@ -264,8 +264,27 @@ async function main(): Promise<void> {
     }
 }
 
-// Run if this is the main module
-main().catch(console.error);
+/**
+ * True when this module was executed directly (`node dist/index.js`) rather
+ * than imported. Importing the module must not boot a service or terminate the
+ * host process.
+ */
+function isDirectExecution(): boolean {
+    const entry = process.argv[1];
+    if (entry === undefined) {
+        return false;
+    }
+    try {
+        return import.meta.url === pathToFileURL(entry).href;
+    } catch {
+        return false;
+    }
+}
+
+// Run only when this module is the process entry point.
+if (isDirectExecution()) {
+    main().catch(console.error);
+}
 
 // Export for programmatic use
 export { loadConfig } from './config.js';
