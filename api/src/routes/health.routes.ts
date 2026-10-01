@@ -46,17 +46,19 @@ const notFound = (req: Request, res: Response): void => {
  */
 function safeHandler(
   name: string,
-  handler: (req: Request, res: Response) => unknown,
+  handler: (req: Request, res: Response, next: NextFunction) => unknown,
 ) : (req: Request, res: Response, next: NextFunction) => void {
   return (req, res, next): void => {
     try {
-      const result = handler(req, res);
+      const result = handler(req, res, next);
       if (result && typeof (result as Promise<unknown>).then === 'function') {
         (result as Promise<unknown>).catch((err) => {
-          logger.error(
-            { err, route: name, method: req.method, path: req.originalUrl },
-            'health route handler failed',
-          );
+          logger.error('health route handler failed', {
+            err,
+            route: name,
+            method: req.method,
+            path: req.originalUrl,
+          });
           if (!res.headersSent) {
             res.status(503).json({
               status: 'error',
@@ -67,10 +69,12 @@ function safeHandler(
         });
       }
     } catch (err) {
-      logger.error(
-        { err, route: name, method: req.method, path: req.originalUrl },
-        'health route handler threw',
-      );
+      logger.error('health route handler threw', {
+        err,
+        route: name,
+        method: req.method,
+        path: req.originalUrl,
+      });
       if (!res.headersSent) {
         res.status(503).json({
           status: 'error',

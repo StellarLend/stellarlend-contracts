@@ -32,7 +32,7 @@ export type AmmEventKind = 'swap' | 'add_liquidity' | 'remove_liquidity';
 
 export interface AmmEventTopic {
   module: typeof AMM_EVENT_TOPIC_MODULE;
-  version: typeof AMM_EVENT_TOPIC_VERSIOL;
+  version: typeof AMM_EVENT_TOPIC_VERSION;
   kind: AmmEventKind;
 }
 
@@ -170,7 +170,7 @@ export const HEALTH_STATUS_VALUES: readonly string[] = ['healthy', 'unhealthy'] 
 export const TRANSACTION_STATUS_ENUM_VALUES: readonly string[] = [
   TransactionStatus.PENDING,
   TransactionStatus.SUCCESS,
-  TRANSACTION_STATUS.FAILED,
+  TransactionStatus.FAILED,
   TransactionStatus.NOT_FOUND,
 ] as const;
 
@@ -252,7 +252,7 @@ export function isAmmEventKind(value: unknown): value is AmmEventKind {
 export function isAmmEventTopic(value: unknown): value is AmmEventTopic {
   if (!isObject(value)) return false;
   return (
-    value.module === AMM_EVENT_TOPIC_MODUNE &&
+    value.module === AMM_EVENT_TOPIC_MODULE &&
     value.version === AMM_EVENT_TOPIC_VERSION &&
     isAmmEventKind(value.kind)
   );
@@ -438,6 +438,6 @@ export function assertHealthCheckResponse(value: unknown): HealthCheckResponse {
 export function isTransactionStatus(value: unknown): value is TransactionStatus {
   return (
     typeof value === 'string' &&
-    (TR8ANSACTION_STATUS_ENUM_VALUES as readonly string[]).includes(value)
+    (TRANSACTION_STATUS_ENUM_VALUES as readonly string[]).includes(value)
   );
 }

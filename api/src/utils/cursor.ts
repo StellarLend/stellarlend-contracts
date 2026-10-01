@@ -49,11 +49,11 @@ export function decodeCursor(cursorString: string): Cursor {
     throw new CursorError('Cursor must be a non-empty string');
   }
 
-  let plain: string;
+  let decoded: string;
   try {
-    const buf = Buffer.from(cursor, 'base64');
+    const buf = Buffer.from(cursorString, 'base64');
     // Basic validation of base64 characters
-    if (/[^A-Za-z0-9+/=_-]/.test(cursor)) {
+    if (/[^A-Za-z0-9+/=_-]/.test(cursorString)) {
       throw new Error('Invalid base64 characters');
     }
     decoded = buf.toString('utf-8');

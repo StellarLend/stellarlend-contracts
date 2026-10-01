@@ -14,6 +14,43 @@ import logger from '../utils/logger';
  *  - Non-Zod errors are propagated unchanged so they are not mislabeled as validation failures.
  *  - Error messages include the field path but never echo the received value, so secrets are not leaked.
  */
+
+/**
+ * Translate a Zod failure into the canonical `ValidationError` and forward it.
+ *
+ * Only the field *path* and the schema-authored *message* are used. Zod's
+ * `message` is written by the schema author and never contains the received
+ * value, so a `userSecret`/token in the body cannot be echoed back to the
+ * client or into the logs. `req.body` is deliberately left untouched here: the
+ * controller must not observe a partially normalized body.
+ */
+const handleValidationFailure = (
+  error: unknown,
+  req: Request,
+  next: NextFunction
+): void => {
+  if (error instanceof ZodError) {
+    const errorMessages = error.issues
+      .map(issue => `${issue.path.join('.') || 'body'}: ${issue.message}`)
+      .join(', ');
+
+    // The message is field-level and value-free, so it is safe to log; the body
+    // itself is never included.
+    logger.warn('Request body validation failed', {
+      method: req.method,
+      path: req.path,
+      error: errorMessages,
+    });
+
+    return next(new ValidationError(errorMessages));
+  }
+
+  // Anything that is not a schema violation (a programmer error, a transport
+  // failure, a rejected promise) is propagated untouched so the central error
+  // handler can classify it correctly.
+  return next(error as Error);
+};
+
 export const validateBody =
   (schema: ZodSchema) => (req: Request, _res: Response, next: NextFunction) => {
     try {
