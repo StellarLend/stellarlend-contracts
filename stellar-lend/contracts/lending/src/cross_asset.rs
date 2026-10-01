@@ -109,13 +109,21 @@ pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, Le
         .get(&DataKey::OraclePrice(asset.clone()))
         .ok_or(LendingError::PriceFeedNotFound)?;
     let now = env.ledger().timestamp();
+    // Reject prices from the future (clock skew / manipulation).
+    if record.timestamp > now {
+        return Err(LendingError::StaleOracleTimestamp);
+    }
     if now > record.timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
         return Err(LendingError::StaleOracleTimestamp);
+    }
+    // A non-positive price is never valid; treat as missing feed.
+    if record.price <= 0 {
+        return Err(LendingError::PriceFeedNotFound);
     }
     Ok(record)
 }
 
-fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserCollateralAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -128,7 +136,7 @@ fn add_to_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
-fn remove_from_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn remove_from_user_collateral_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserCollateralAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -141,7 +149,7 @@ fn remove_from_user_collateral_list(env: &Env, user: &Address, asset: &Address) 
     }
 }
 
-fn add_to_user_debt_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn add_to_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserDebtAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -154,7 +162,7 @@ fn add_to_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
-fn remove_from_user_debt_list(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn remove_from_user_debt_list(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::UserDebtAssets(user.clone());
     let mut list: Vec<Address> = env
         .storage()
@@ -189,7 +197,7 @@ fn get_user_debt_assets(env: &Env, user: &Address) -> Vec<Address> {
         .unwrap_or(Vec::new(env))
 }
 
-fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
     let threshold = extend_to / 2 + 1;
@@ -200,7 +208,7 @@ fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     }
 }
 
-fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
+pub(crate) fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
     let threshold = extend_to / 2 + 1;
@@ -681,7 +689,7 @@ pub fn borrow_asset_internal(
         if prev_principal == 0 {
             remove_from_user_debt_list(env, user, asset);
         }
-        return Err(LendingError::BorrowCapExceeded);
+        return Err(LendingError::DebtCeilingExceeded);
     }
     // Enforce optional per-asset borrow cap: 0 means uncapped.
     if params.borrow_cap != 0 && new_total_debt > params.borrow_cap {
@@ -743,7 +751,7 @@ pub fn borrow_asset_internal(
 /// # Errors
 /// - [`LendingError::StaleOracleTimestamp`] if any scanned asset's price is stale.
 /// - [`LendingError::PriceFeedNotFound`] if any scanned asset has no price record.
-fn ensure_position_prices_fresh(
+pub(crate) fn ensure_position_prices_fresh(
     env: &Env,
     user: &Address,
     borrow_asset: &Address,
@@ -858,7 +866,14 @@ pub fn repay_asset_internal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+
+    fn setup_test() -> (Env, Address, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::LendingContract, ());
+        let asset = Address::generate(&env);
+        (env, contract_id, asset)
+    }
 
     fn set_price(env: &Env, asset: &Address, price: i128, timestamp: u64) {
         env.storage().persistent().set(
@@ -869,79 +884,81 @@ mod tests {
 
     #[test]
     fn get_price_for_asset_success() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         let timestamp = 1_000_000u64;
         env.ledger().set_timestamp(timestamp);
-        set_price(&env, &asset, 10_000_000, timestamp);
-
-        let result = get_price_for_asset(&env, &asset);
-        assert!(result.is_ok());
-        match result {
-            Ok(record) => assert_eq!(record.price, 10_000_000),
-            Err(_) => unreachable!(),
-        }
+        env.as_contract(&contract_id, || {
+            set_price(&env, &asset, 10_000_000, timestamp);
+            let result = get_price_for_asset(&env, &asset);
+            assert!(result.is_ok());
+            match result {
+                Ok(record) => assert_eq!(record.price, 10_000_000),
+                Err(_) => unreachable!(),
+            }
+        });
     }
 
     #[test]
     fn get_price_for_asset_missing_feed_fails() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
-
-        assert!(matches!(
-            get_price_for_asset(&env, &asset),
-            Err(LendingError::PriceFeedNotFound)
-        ));
+        let (env, contract_id, asset) = setup_test();
+        env.as_contract(&contract_id, || {
+            assert!(matches!(
+                get_price_for_asset(&env, &asset),
+                Err(LendingError::PriceFeedNotFound)
+            ));
+        });
     }
 
     #[test]
     fn get_price_for_asset_stale_fails() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         let timestamp = 1_000_000u64;
-        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
-        set_price(&env, &asset, 10_000_000, timestamp);
-
-        assert!(matches!(
-            get_price_for_asset(&env, &asset),
-            Err(LendingError::StaleOracleTimestamp)
-        ));
+        env.ledger()
+            .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS + 1);
+        env.as_contract(&contract_id, || {
+            set_price(&env, &asset, 10_000_000, timestamp);
+            assert!(matches!(
+                get_price_for_asset(&env, &asset),
+                Err(LendingError::StaleOracleTimestamp)
+            ));
+        });
     }
 
     #[test]
     fn get_price_for_asset_boundary_is_fresh() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         let timestamp = 1_000_000u64;
-        env.ledger().set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
-        set_price(&env, &asset, 10_000_000, timestamp);
-
-        assert!(get_price_for_asset(&env, &asset).is_ok());
+        env.ledger()
+            .set_timestamp(timestamp + DEFAULT_ORACLE_MAX_AGE_SECS);
+        env.as_contract(&contract_id, || {
+            set_price(&env, &asset, 10_000_000, timestamp);
+            assert!(get_price_for_asset(&env, &asset).is_ok());
+        });
     }
 
     #[test]
     fn get_price_for_asset_future_timestamp_fails() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         env.ledger().set_timestamp(1_000_000);
-        set_price(&env, &asset, 10_000_000, 1_000_001);
-
-        assert!(matches!(
-            get_price_for_asset(&env, &asset),
-            Err(LendingError::StaleOracleTimestamp)
-        ));
+        env.as_contract(&contract_id, || {
+            set_price(&env, &asset, 10_000_000, 1_000_001);
+            assert!(matches!(
+                get_price_for_asset(&env, &asset),
+                Err(LendingError::StaleOracleTimestamp)
+            ));
+        });
     }
 
     #[test]
     fn get_price_for_asset_non_positive_price_fails() {
-        let env = Env::default();
-        let asset = Address::generate(&env);
+        let (env, contract_id, asset) = setup_test();
         env.ledger().set_timestamp(1_000_000);
-        set_price(&env, &asset, 0, 1_000_000);
-
-        assert!(matches!(
-            get_price_for_asset(&env, &asset),
-            Err(LendingError::PriceFeedNotFound)
-        ));
+        env.as_contract(&contract_id, || {
+            set_price(&env, &asset, 0, 1_000_000);
+            assert!(matches!(
+                get_price_for_asset(&env, &asset),
+                Err(LendingError::PriceFeedNotFound)
+            ));
+        });
     }
 }

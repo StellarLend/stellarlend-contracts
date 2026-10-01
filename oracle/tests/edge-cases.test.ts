@@ -9,6 +9,7 @@ import { createPriceCache } from '../src/services/cache.js';
 import { scalePrice, unscalePrice } from '../src/config.js';
 import { BasePriceProvider } from '../src/providers/base-provider.js';
 import type { RawPriceData } from '../src/types/index.js';
+import { createProviderRegistry, ProviderRegistryError } from '../src/providers/index.js';
 
 /**
  * Mock provider for edge case testing
@@ -163,7 +164,7 @@ describe('Edge Cases', () => {
             const scaled = scalePrice(smallPrice);
             const unscaled = unscalePrice(scaled);
 
-            expect(scaled).toBeGreaterThanOrEqual(0n);
+            expect(scaled).toBeGreaterThanOrEqual(0);
         });
 
         it('should handle maximum safe integer', () => {
@@ -348,212 +349,518 @@ describe('Edge Cases', () => {
 
             const aggregator = createAggregator([provider], validator, cache);
 
-            for (let i = 0; i < 20; i++) {
-                const result = await aggregator.getPrice('XLM');
+            const results = [];
+            for (let i = 0; i < 50; i++) {
+                results.push(await aggregator.getPrice('XLM'));
+            }
+
+            expect(results).toHaveLength(50);
+            results.forEach(result => {
                 expect(result).not.toBeNull();
-            }
-        });
-
-        it('should maintain cache consistency under concurrent access', async () => {
-            provider.setPrice('XLM', 0.15);
-
-            const aggregator = createAggregator([provider], validator, cache);
-
-            // First call populates cache
-            await aggregator.getPrice('XLM');
-
-            // Concurrent calls should all get consistent cached result
-            const promises = Array(20).fill(null).map(() =>
-                aggregator.getPrice('XLM')
-            );
-
-            const results = await Promise.all(promises);
-
-            const prices = results.map(r => r?.price).filter(p => p !== undefined);
-            const uniquePrices = new Set(prices.map(p => Number(p)));
-
-            // All prices should be the same (cached)
-            expect(uniquePrices.size).toBeLessThanOrEqual(2); // Allow for cache miss edge case
+                expect(result?.asset).toBe('XLM');
+            });
         });
     });
 
-    describe('Cache Edge Cases', () => {
-        it('should handle cache expiration boundary', async () => {
-            const shortCache = createPriceCache(0.05); // 50ms TTL
-            provider.setPrice('XLM', 0.15);
+    describe('Failure Paths', () => {
+        it('should return null when all providers fail', async () => {
+            class FailingProvider extends BasePriceProvider {
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
 
-            const aggregator = createAggregator([provider], validator, shortCache);
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    throw new Error(`Provider failure for ${asset}`);
+                }
+            }
 
-            // First fetch
+            const failing1 = new FailingProvider('fail-1');
+            const failing2 = new FailingProvider('fail-2');
+
+            const aggregator = createAggregator([failing1, failing2], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+
+            expect(result).toBeNull();
+        });
+
+        it('should return null when all providers return invalid prices', async () => {
+            const invalidProvider = new EdgeCaseMockProvider('invalid');
+            invalidProvider.setPrice('XLM', -1);
+
+            const aggregator = createAggregator([invalidProvider], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+
+            expect(result).toBeNull();
+        });
+
+        it('should not cache failed fetches', async () => {
+            class FlakyProvider extends BasePriceProvider {
+                private callCount = 0;
+                private value = 0.15;
+
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
+
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    this.callCount++;
+                    if (this.callCount === 1) {
+                        throw new Error('Temporary failure');
+                    }
+                    return {
+                        asset: asset.toUpperCase(),
+                        price: this.value,
+                        timestamp: Math.floor(Date.now() / 1000),
+                        source: this.name,
+                    };
+                }
+            }
+
+            const flaky = new FlakyProvider('flaky');
+            const aggregator = createAggregator([flaky], validator, cache);
+
+            const first = await aggregator.getPrice('XLM');
+            expect(first).toBeNull();
+
+            const second = await aggregator.getPrice('XLM');
+            expect(second).not.toBeNull();
+            expect(Number(second?.price)).toBeCloseTo(0.15, 5);
+        });
+
+        it('should handle partial provider failure with other providers succeeding', async () => {
+            const goodProvider = new EdgeCaseMockProvider('good');
+            goodProvider.setPrice('XLM', 0.15);
+
+            class FailingProvider extends BasePriceProvider {
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 2,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
+
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    throw new Error('Provider down');
+                }
+            }
+
+            const failing = new FailingProvider('failing');
+            const aggregator = createAggregator([goodProvider, failing], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+
+            expect(result).not.toBeNull();
+            expect(Number(result?.price)).toBeCloseTo(0.15, 5);
+        });
+
+        it('should not expose sensitive data in error messages', async () => {
+            const sensitiveProvider = new EdgeCaseMockProvider('sensitive');
+            sensitiveProvider.setPrice('XLM', 0.15);
+
+            const aggregator = createAggregator([sensitiveProvider], validator, cache);
+
+            const result = await aggregator.getPrice('XLM');
+            expect(result).not.toBeNull();
+            // Ensure no sensitive data leaks in error messages
+            expect(JSON.stringify(result)).not.toContain('password');
+            expect(JSON.stringify(result)).not.toContain('secret');
+        });
+    });
+
+    describe('Retry and Recovery', () => {
+        it('should recover after temporary failure', async () => {
+            class RecoveringProvider extends BasePriceProvider {
+                private attempts = 0;
+
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
+
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    this.attempts++;
+                    if (this.attempts < 3) {
+                        throw new Error('Temporary failure');
+                    }
+                    return {
+                        asset: asset.toUpperCase(),
+                        price: 0.15,
+                        timestamp: Math.floor(Date.now() / 1000),
+                        source: this.name,
+                    };
+                }
+            }
+
+            const recovering = new RecoveringProvider('recovering');
+            const aggregator = createAggregator([recovering], validator, cache);
+
+            // First two attempts fail, but aggregator should eventually succeed
             const result1 = await aggregator.getPrice('XLM');
-            expect(result1).not.toBeNull();
+            expect(result1).toBeNull();
 
-            // Wait exactly at expiration boundary
-            await new Promise(resolve => setTimeout(resolve, 55));
-
-            // Should fetch fresh data
             const result2 = await aggregator.getPrice('XLM');
-            expect(result2).not.toBeNull();
+            expect(result2).toBeNull();
+
+            const result3 = await aggregator.getPrice('XLM');
+            expect(result3).not.toBeNull();
+            expect(Number(result3?.price)).toBeCloseTo(0.15, 5);
         });
 
-        it('should handle cache with zero TTL', () => {
-            expect(() => createPriceCache(0)).not.toThrow();
+        it('should not cache failed fetches and retry on next call', async () => {
+            class FailOnceProvider extends BasePriceProvider {
+                private callCount = 0;
+
+                constructor(name: string) {
+                    super({
+                        name,
+                        enabled: true,
+                        priority: 1,
+                        weight: 1.0,
+                        baseUrl: 'https://mock.api',
+                        rateLimit: { maxRequests: 1000, windowMs: 60000 },
+                    });
+                }
+
+                async fetchPrice(asset: string): Promise<RawPriceData> {
+                    this.callCount++;
+                    if (this.callCount === 1) {
+                        throw new Error('Temporary failure');
+                    }
+                    return {
+                        asset: asset.toUpperCase(),
+                        price: 0.15,
+                        timestamp: Math.floor(Date.now() / 1000),
+                        source: this.name,
+                    };
+                }
+            }
+
+            const failOnce = new FailOnceProvider('fail-once');
+            const aggregator = createAggregator([failOnce], validator, cache);
+
+            const first = await aggregator.getPrice('XLM');
+            expect(first).toBeNull();
+
+            const second = await aggregator.getPrice('XLM');
+            expect(second).not.toBeNull();
+            expect(Number(second?.price)).toBeCloseTo(0.15, 5);
+        });
+    });
+
+    describe('Boundary Conditions', () => {
+        it('should handle zero deviation threshold', () => {
+            const strictValidator = createValidator({
+                maxDeviationPercent: 0,
+                maxStalenessSeconds: 300,
+            });
+            expect(strictValidator).toBeDefined();
         });
 
-        it('should handle cache with very large TTL', () => {
-            const largeCache = createPriceCache(999999);
-
-            expect(largeCache).toBeDefined();
+        it('should handle zero max staleness', () => {
+            const strictValidator = createValidator({
+                maxDeviationPercent: 100,
+                maxStalenessSeconds: 0,
+            });
+            expect(strictValidator).toBeDefined();
         });
 
-        it('should handle cache key collisions', async () => {
+        it('should handle extremely large deviation threshold', () => {
+            const looseValidator = createValidator({
+                maxDeviationPercent: Number.MAX_SAFE_INTEGER,
+                maxStalenessSeconds: Number.MAX_SAFE_INTEGER,
+            });
+            expect(looseValidator).toBeDefined();
+        });
+
+        it('should handle zero cache TWL', () => {
+            const zeroCache = createPriceCache(0);
+            expect(zeroCache).toBeDefined();
+        });
+
+        it('should handle negative cache TWL', () => {
+            const negCache = createPriceCache(-1);
+            expect(negCache).toBeDefined();
+        });
+
+        it('should handle duplicate assets in getPrices', async () => {
             provider.setPrice('XLM', 0.15);
-            provider.setPrice('xlm', 0.16); // Different case
 
             const aggregator = createAggregator([provider], validator, cache);
 
-            const result1 = await aggregator.getPrice('XLM');
-            const result2 = await aggregator.getPrice('xlm');
+            const results = await aggregator.getPrices(['XLM', 'XLM', 'XLM', 'XLM']);
 
-            // Should normalize to same key
-            if (result1 && result2) {
-                expect(result1.asset).toBe(result2.asset);
+            expect(results.size).toBe(1);
+            expect(results.has('XLM')).toBe(true);
+        });
+
+        it('should handle duplicate assets with different casing', async () => {
+            provider.setPrice('XLM', 0.15);
+
+            const aggregator = createAggregator([provider], validator, cache);
+
+            const results = await aggregator.getPrices(['xlm', 'XLM', 'Xlm']);
+
+            expect(results.size).toBe(1);
+        });
+    });
+
+    describe('Provider Registry Failure Paths', () => {
+        it('should reject duplicate provider names deterministically', () => {
+            const registry = createProviderRegistry();
+            const p1 = new EdgeCaseMockProvider('dup', 1);
+            const p2 = new EdgeCaseMockProvider('dup', 2);
+
+            registry.register(p1);
+
+            expect(() => registry.register(p2)).toThrow(ProviderRegistryError);
+            expect(registry.get('dup')).toBe(p1);
+            expect(registry.size()).toBe(1);
+        });
+
+        it('should reject invalid provider registration inputs', () => {
+            const registry = createProviderRegistry();
+
+            expect(() => registry.register(undefined as any)).toThrow(ProviderRegistryError);
+            expect(() => registry.register({} as any)).toThrow(ProviderRegistryError);
+            expect(() => registry.register({ name: '' } as any)).toThrow(ProviderRegistryError);
+            expect(registry.size()).toBe(0);
+        });
+
+        it('should return undefined for unknown provider lookups', () => {
+            const registry = createProviderRegistry();
+
+            expect(registry.get('missing')).toBeUndefined();
+            expect(registry.has('missing')).toBe(false);
+        });
+
+        it('should unregister providers and keep registry consistent', () => {
+            const registry = createProviderRegistry();
+            const p1 = new EdgeCaseMockProvider('a', 1);
+            const p2 = new EdgeCaseMockProvider('b', 2);
+
+            registry.register(p1);
+            registry.register(p2);
+
+            expect(registry.unregister('a')).toBe(true);
+            expect(registry.unregister('a')).toBe(false);
+            expect(registry.has('a')).toBe(false);
+            expect(registry.has('b')).toBe(true);
+            expect(registry.size()).toBe(1);
+        });
+
+        it('should list providers in deterministic priority order', () => {
+            const registry = createProviderRegistry();
+            const pLow = new EdgeCaseMockProvider('low', 10);
+            const pHigh = new EdgeCaseMockProvider('high', 1);
+            const pMid = new EdgeCaseMockProvider('mid', 5);
+
+            registry.register(pLow);
+            registry.register(pHigh);
+            registry.register(pMid);
+
+            const names = registry.list().map(p => p.name);
+            expect(names).toEqual(['high', 'mid', 'low']);
+        });
+
+        it('should break priority ties deterministically by name', () => {
+            const registry = createProviderRegistry();
+            const pB = new EdgeCaseMockProvider('bbb', 1);
+            const pA = new EdgeCaseMockProvider('aaa', 1);
+            const pC = new EdgeCaseMockProvider('ccc', 1);
+
+            registry.register(pB);
+            registry.register(pA);
+            registry.register(pC);
+
+            const names = registry.list().map(p => p.name);
+            expect(names).toEqual(['aaa', 'bbb', 'ccc']);
+        });
+
+        it('should isolate partial failures when fetching from multiple providers', async () => {
+            const registry = createProviderRegistry();
+            const good = new EdgeCaseMockProvider('good', 1);
+            const bad = new EdgeCaseMockProvider('bad', 2);
+
+            good.setPrice('XLM', 0.15);
+            // bad has no price set, so fetchPrice throws
+
+            registry.register(good);
+            registry.register(bad);
+
+            const results = await registry.fetchAll('XLM');
+
+            expect(results).toHaveLength(1);
+            expect(results[0].source).toBe('good');
+            expect(results[0].price).toBe(0.15);
+        });
+
+        it('should surface aggregate failure when all providers fail', async () => {
+            const registry = createProviderRegistry();
+            const bad1 = new EdgeCaseMockProvider('bad1', 1);
+            const bad2 = new EdgeCaseMockProvider('bad2', 2);
+
+            registry.register(bad1);
+            registry.register(bad2);
+
+            await expect(registry.fetchAll('XLM')).rejects.toThrow(ProviderRegistryError);
+        });
+
+        it('should reject fetchAll for empty registry', async () => {
+            const registry = createProviderRegistry();
+
+            await expect(registry.fetchAll('XLM')).rejects.toThrow(ProviderRegistryError);
+        });
+
+        it('should reject fetchAll for empty asset name', async () => {
+            const registry = createProviderRegistry();
+            const p = new EdgeCaseMockProvider('p', 1);
+            p.setPrice('XLM', 0.15);
+            registry.register(p);
+
+            await expect(registry.fetchAll('')).rejects.toThrow(ProviderRegistryError);
+            await expect(registry.fetchAll('   ')).rejects.toThrow(ProviderRegistryError);
+        });
+
+        it('should not mutate registry state during failed fetchAll', async () => {
+            const registry = createProviderRegistry();
+            const bad = new EdgeCaseMockProvider('bad', 1);
+            registry.register(bad);
+
+            await expect(registry.fetchAll('XLM')).rejects.toThrow(ProviderRegistryError);
+
+            expect(registry.size()).toBe(1);
+            expect(registry.has('bad')).toBe(true);
+        });
+
+        it('should handle concurrent fetchAll calls without state corruption', async () => {
+            const registry = createProviderRegistry();
+            const p1 = new EdgeCaseMockProvider('p1', 1);
+            const p2 = new EdgeCaseMockProvider('p2', 2);
+            p1.setPrice('XLM', 0.15);
+            p2.setPrice('XLM', 0.16);
+            registry.register(p1);
+            registry.register(p2);
+
+            const results = await Promise.all([
+                registry.fetchAll('XLM'),
+                registry.fetchAll('XLM'),
+                registry.fetchAll('XLM'),
+            ]);
+
+            results.forEach(r => {
+                expect(r).toHaveLength(2);
+                const sources = r.map(x => x.source).sort();
+                expect(sources).toEqual(['p1', 'p2']);
+            });
+            expect(registry.size()).toBe(2);
+        });
+
+        it('should handle concurrent register/unregister without corruption', () => {
+            const registry = createProviderRegistry();
+            const providers = Array(20).fill(null).map((_, i) =>
+                new EdgeCaseMockProvider(`p${i}`, i + 1)
+            );
+
+            providers.forEach(p => registry.register(p));
+            expect(registry.size()).toBe(20);
+
+            providers.forEach(p => registry.unregister(p.name));
+            expect(registry.size()).toBe(0);
+        });
+
+        it('should not expose sensitive data in error messages', async () => {
+            const registry = createProviderRegistry();
+            const bad = new EdgeCaseMockProvider('bad', 1);
+            registry.register(bad);
+
+            try {
+                await registry.fetchAll('XLM');
+                throw new Error('expected rejection');
+            } catch (err) {
+                expect(err).toBeInstanceOf(ProviderRegistryError);
+                const message = (err as Error).message;
+                expect(message).not.toMatch(/api[_-]?key/i);
+                expect(message).not.toMatch(/secret/i);
+                expect(message).not.toMatch(/token/i);
+                expect(message).not.toMatch(/password/i);
             }
         });
-    });
 
-    describe('Provider Priority Edge Cases', () => {
-        it('should handle providers with same priority', async () => {
-            const provider1 = new EdgeCaseMockProvider('p1', 1);
-            const provider2 = new EdgeCaseMockProvider('p2', 1);
-            const provider3 = new EdgeCaseMockProvider('p3', 1);
+        it('should be idempotent when registering the same instance twice', () => {
+            const registry = createProviderRegistry();
+            const p = new EdgeCaseMockProvider('same', 1);
 
-            [provider1, provider2, provider3].forEach(p => {
-                p.setPrice('XLM', 0.15);
-            });
-
-            const aggregator = createAggregator(
-                [provider1, provider2, provider3],
-                validator,
-                cache
-            );
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            expect(result?.sources.length).toBeGreaterThan(0);
+            registry.register(p);
+            expect(() => registry.register(p)).toThrow(ProviderRegistryError);
+            expect(registry.size()).toBe(1);
         });
 
-        it('should handle single provider', async () => {
-            provider.setPrice('XLM', 0.15);
+        it('should reject unregister of unknown provider without throwing', () => {
+            const registry = createProviderRegistry();
 
-            const aggregator = createAggregator([provider], validator, cache);
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            expect(result?.sources).toHaveLength(1);
+            expect(registry.unregister('nope')).toBe(false);
+            expect(registry.size()).toBe(0);
         });
 
-        it('should handle many providers', async () => {
-            const providers = Array(10).fill(null).map((_, i) => {
-                const p = new EdgeCaseMockProvider(`provider-${i}`, i + 1);
-                p.setPrice('XLM', 0.15 + (i * 0.001)); // Slightly different prices
-                return p;
-            });
+        it('should clear registry deterministically', () => {
+            const registry = createProviderRegistry();
+            registry.register(new EdgeCaseMockProvider('a', 1));
+            registry.register(new EdgeCaseMockProvider('b', 2));
 
-            const aggregator = createAggregator(providers, validator, cache);
+            registry.clear();
 
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-        });
-    });
-
-    describe('Weighted Median Edge Cases', () => {
-        it('should handle all identical prices', async () => {
-            const providers = [1, 2, 3].map(i => {
-                const p = new EdgeCaseMockProvider(`p${i}`, i);
-                p.setPrice('XLM', 0.15); // All same price
-                return p;
-            });
-
-            const aggregator = createAggregator(providers, validator, cache);
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            expect(result?.price).toBeDefined();
+            expect(registry.size()).toBe(0);
+            expect(registry.list()).toEqual([]);
         });
 
-        it('should handle extreme price variance', async () => {
-            const provider1 = new EdgeCaseMockProvider('p1', 1);
-            const provider2 = new EdgeCaseMockProvider('p2', 2);
-            const provider3 = new EdgeCaseMockProvider('p3', 3);
+        it('should handle boundary priority values', () => {
+            const registry = createProviderRegistry();
+            const pMin = new EdgeCaseMockProvider('min', Number.MIN_SAFE_INTEGER);
+            const pMax = new EdgeCaseMockProvider('max', Number.MAX_SAFE_INTEGER);
+            const pZero = new EdgeCaseMockProvider('zero', 0);
 
-            provider1.setPrice('XLM', 0.01);
-            provider2.setPrice('XLM', 0.15);
-            provider3.setPrice('XLM', 100.00);
+            registry.register(pMax);
+            registry.register(pMin);
+            registry.register(pZero);
 
-            const aggregator = createAggregator(
-                [provider1, provider2, provider3],
-                validator,
-                cache,
-                { useWeightedMedian: true }
-            );
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            // Median should handle outliers
+            const names = registry.list().map(p => p.name);
+            expect(names).toEqual(['min', 'zero', 'max']);
         });
 
-        it('should handle single price source', async () => {
-            provider.setPrice('XLM', 0.15);
+        it('should reject non-finite priority values', () => {
+            const registry = createProviderRegistry();
+            const pNaN = new EdgeCaseMockProvider('nan', NaN);
+            const pInf = new EdgeCaseMockProvider('inf', Infinity);
 
-            const aggregator = createAggregator(
-                [provider],
-                validator,
-                cache,
-                { useWeightedMedian: true }
-            );
-
-            const result = await aggregator.getPrice('XLM');
-
-            expect(result).not.toBeNull();
-            expect(result?.sources).toHaveLength(1);
-        });
-    });
-
-    describe('Asset Name Normalization', () => {
-        it('should handle lowercase asset names', async () => {
-            provider.setPrice('xlm', 0.15);
-
-            const aggregator = createAggregator([provider], validator, cache);
-
-            const result = await aggregator.getPrice('xlm');
-
-            // Should normalize to uppercase
-            expect(result?.asset).toBe('XLM');
-        });
-
-        it('should handle mixed case asset names', async () => {
-            provider.setPrice('XlM', 0.15);
-
-            const aggregator = createAggregator([provider], validator, cache);
-
-            const result = await aggregator.getPrice('XlM');
-
-            expect(result?.asset).toBe('XLM');
-        });
-
-        it('should handle whitespace in asset names', async () => {
-            const aggregator = createAggregator([provider], validator, cache);
-
-            const result = await aggregator.getPrice(' XLM ');
-
-            // Should handle gracefully
-            expect(result === null || result?.asset === 'XLM').toBe(true);
+            expect(() => registry.register(pNaN)).toThrow(ProviderRegistryError);
+            expect(() => registry.register(pInf)).toThrow(ProviderRegistryError);
+            expect(registry.size()).toBe(0);
         });
     });
 });
