@@ -337,8 +337,8 @@ pub fn settle_position(
 pub(crate) fn compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
-) -> Result<BorrowRateComputation, DebtError> {
-    try_compute_borrow_rate_from_snapshot(env, snapshot)ilization overflow")
+) -> BorrowRateComputation {
+    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
 }
 
 fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
