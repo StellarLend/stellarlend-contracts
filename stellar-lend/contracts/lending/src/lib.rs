@@ -3970,7 +3970,7 @@ fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), Len
             caller.require_auth();
             Ok(())
         }
-        EmergencyState::Recovery | EmergencyState::Normal => assert_admin(env),
+        EmergencyState::Recovery | EmergencyState::Normal => assert_admin(env)?,
     }
 }
 
