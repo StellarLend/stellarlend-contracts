@@ -9,9 +9,7 @@
  */
 
 export interface Cursor {
-  /** Ledger sequence number (monotonically increasing) */
   ledgerSequence: number;
-  /** Event index within the ledger (0-based) */
   eventIndex: number;
 }
 
@@ -103,15 +101,8 @@ export function decodeCursor(cursor: string): Cursor {
  * Checks if a cursor is valid without throwing.
  */
 export function isValidCursor(value: unknown): value is string {
-  if (typeof value !== 'string' || !value) {
-    return false;
-  }
-  try {
-    decodeCursor(value);
-    return true;
-  } catch {
-    return false;
-  }
+  if (typeof value !== 'string' || !value) return false;
+  try { decodeCursor(value); return true; } catch { return false; }
 }
 
 /**

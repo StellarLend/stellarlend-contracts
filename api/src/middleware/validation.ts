@@ -47,7 +47,7 @@ function isSensitiveField(path: string): boolean {
  *    Non-Zod errors are forwarded via next(err) without alteration.
  */
 export const validateBody =
-  (schema: ZodSchema) => (req: Request, res: Response, next: NextFunction) => {
+  (schema: ZodSchema) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       const parsed = schema.parse(req.body);
       req.body = parsed;
