@@ -30,7 +30,6 @@ pub mod amm_twap;
 pub mod analytics;
 pub mod borrow;
 pub mod bridge;
-pub mod config;
 pub mod config_snapshot;
 pub mod cross_asset;
 pub mod deposit;
@@ -40,9 +39,9 @@ pub mod flash_loan;
 pub mod governance;
 pub mod interest_rate;
 pub mod liquidate;
-pub mod multisig;
 pub mod oracle;
 pub mod recovery;
+pub mod reentrancy;
 pub mod repay;
 pub mod reserve;
 pub mod risk_management;
@@ -120,7 +119,6 @@ use crate::oracle::FullOracleConfig;
 use deposit::deposit_collateral;
 use repay::repay_debt;
 
-use crate::config::{config_backup, config_get, config_restore, config_set};
 use crate::config_snapshot::{get_config_snapshot, ConfigSnapshot};
 
 use crate::risk_management::{
@@ -232,54 +230,72 @@ impl HelloContract {
     }
 
     /// Increment the user's deposit balance.
+    ///
+    /// Protected by the reentrancy guard: reentrant calls (e.g. from an
+    /// `invoke_contract` callback triggered inside the same transaction) are
+    /// rejected with a `ReentrantCall` panic, preventing double-spend attacks.
     pub fn deposit(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Balance(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_bal = current + amount;
         env.storage().persistent().set(&key, &new_bal);
+        reentrancy::release(&env);
         new_bal
     }
 
     /// Decrement the user's deposit balance.
+    ///
+    /// Protected by the reentrancy guard.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Balance(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_bal = current - amount;
         env.storage().persistent().set(&key, &new_bal);
+        reentrancy::release(&env);
         new_bal
     }
 
     /// Borrow increases the user's debt.
+    ///
+    /// Protected by the reentrancy guard.
     pub fn borrow(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Debt(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_debt = current + amount;
         env.storage().persistent().set(&key, &new_debt);
+        reentrancy::release(&env);
         new_debt
     }
 
     /// Repay decreases the user's debt.
+    ///
+    /// Protected by the reentrancy guard.
     pub fn repay(env: Env, user: Address, amount: i128) -> i128 {
         if amount <= 0 {
             panic_with_error!(env, HelloError::InvalidAmount);
         }
         user.require_auth();
+        reentrancy::acquire(&env).expect("ReentrantCall");
         let key = DataKey::Debt(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_debt = current - amount;
         env.storage().persistent().set(&key, &new_debt);
+        reentrancy::release(&env);
         new_debt
     }
 
@@ -355,38 +371,7 @@ impl HelloContract {
         recovery::execute_recovery(&env, executor)
     }
 
-    pub fn ms_set_admins(
-        env: Env,
-        caller: Address,
-        admins: soroban_sdk::Vec<Address>,
-        threshold: u32,
-    ) -> Result<(), crate::governance::GovernanceError> {
-        multisig::ms_set_admins(&env, caller, admins, threshold)
-    }
 
-    pub fn ms_propose_set_min_cr(
-        env: Env,
-        proposer: Address,
-        new_ratio: i128,
-    ) -> Result<u64, crate::governance::GovernanceError> {
-        multisig::ms_propose_set_min_cr(&env, proposer, new_ratio)
-    }
-
-    pub fn ms_approve(
-        env: Env,
-        approver: Address,
-        proposal_id: u64,
-    ) -> Result<(), crate::governance::GovernanceError> {
-        multisig::ms_approve(&env, approver, proposal_id)
-    }
-
-    pub fn ms_execute(
-        env: Env,
-        executor: Address,
-        proposal_id: u64,
-    ) -> Result<(), crate::governance::GovernanceError> {
-        multisig::ms_execute(&env, executor, proposal_id)
-    }
 
     /// Repay borrowed assets.
     pub fn repay_debt(
@@ -432,39 +417,7 @@ impl HelloContract {
         get_config_snapshot(&env)
     }
 
-    /// Set a protocol configuration key to `val` (admin only).
-    pub fn config_set(
-        env: Env,
-        caller: Address,
-        key: soroban_sdk::Symbol,
-        val: soroban_sdk::Val,
-    ) -> Result<(), crate::admin::AdminError> {
-        config_set(&env, &caller, &key, val)
-    }
 
-    /// Retrieve the value stored under `key`, or `None` if not set.
-    pub fn config_get(env: Env, key: soroban_sdk::Symbol) -> Option<soroban_sdk::Val> {
-        config_get(&env, &key)
-    }
-
-    /// Return a map of key → value for every key in `keys` (admin only).
-    pub fn config_backup(
-        env: Env,
-        caller: Address,
-        keys: soroban_sdk::Vec<soroban_sdk::Symbol>,
-    ) -> Result<soroban_sdk::Map<soroban_sdk::Symbol, soroban_sdk::Val>, crate::admin::AdminError>
-    {
-        config_backup(&env, &caller, &keys)
-    }
-
-    /// Restore a set of key-value pairs from a backup map (admin only).
-    pub fn config_restore(
-        env: Env,
-        caller: Address,
-        entries: soroban_sdk::Map<soroban_sdk::Symbol, soroban_sdk::Val>,
-    ) -> Result<(), crate::admin::AdminError> {
-        config_restore(&env, &caller, &entries)
-    }
 
     /// Get minimum collateral ratio in basis points.
     pub fn get_min_collateral_ratio(env: Env) -> Result<i128, RiskManagementError> {
@@ -865,6 +818,17 @@ impl HelloContract {
     /// Check if emergency pause is active.
     pub fn is_emergency_paused(env: Env) -> bool {
         risk_management::is_emergency_paused(&env)
+    }
+
+    /// Check if the reentrancy guard is currently locked.
+    ///
+    /// Returns `true` when a protected entrypoint (`deposit`, `withdraw`,
+    /// `borrow`, `repay`) is currently executing.  Under normal operation
+    /// this will always be `false` when queried from outside the contract;
+    /// it is exposed primarily for off-chain monitoring and integration
+    /// tests.
+    pub fn is_reentrant_locked(env: Env) -> bool {
+        reentrancy::is_locked(&env)
     }
 
     /// Set emergency pause (admin only).

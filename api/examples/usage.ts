@@ -32,7 +32,7 @@ async function checkHealth(): Promise<void> {
       console.log('⚠️ Some services are down:', response.data.services);
     }
   } catch (error) {
-    console.error('❌ Health check failed:', error);
+    handleError('Health check', error);
   }
 }
 
@@ -63,7 +63,7 @@ async function depositCollateral(
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Deposit failed:', response.data.error);
+      logTransactionFailure('Deposit', response.status);
     }
 
     return response.data;
@@ -100,7 +100,7 @@ async function borrowAssets(
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Borrow failed:', response.data.error);
+      logTransactionFailure('Borrow', response.status);
     }
 
     return response.data;
@@ -137,7 +137,7 @@ async function repayDebt(
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Repayment failed:', response.data.error);
+      logTransactionFailure('Repay', response.status);
     }
 
     return response.data;
@@ -174,7 +174,7 @@ async function withdrawCollateral(
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Withdrawal failed:', response.data.error);
+      logTransactionFailure('Withdraw', response.status);
     }
 
     return response.data;
@@ -184,22 +184,31 @@ async function withdrawCollateral(
   }
 }
 
+function logTransactionFailure(operation: string, status: number): void {
+  console.error(`❌ ${operation} failed: API reported failure`);
+  console.error(`   Status: ${status}`);
+}
+
 /**
  * Handle API errors
  */
 function handleError(operation: string, error: unknown): void {
+  // Exception messages and response bodies may echo credentials; log safe metadata only.
   if (axios.isAxiosError(error)) {
-    const axiosError = error as AxiosError<{ error: string }>;
+    const axiosError = error as AxiosError;
     if (axiosError.response) {
-      console.error(`❌ ${operation} failed:`, axiosError.response.data.error);
+      console.error(`❌ ${operation} failed: API returned an error response`);
       console.error(`   Status: ${axiosError.response.status}`);
     } else if (axiosError.request) {
       console.error(`❌ ${operation} failed: No response from server`);
     } else {
-      console.error(`❌ ${operation} failed:`, axiosError.message);
+      console.error(`❌ ${operation} failed: Request could not be prepared`);
+      if (axiosError.code) {
+        console.error(`   Code: ${axiosError.code}`);
+      }
     }
   } else {
-    console.error(`❌ ${operation} failed:`, error);
+    console.error(`❌ ${operation} failed: Unexpected error`);
   }
 }
 

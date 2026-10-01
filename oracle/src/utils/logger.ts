@@ -10,6 +10,9 @@ import winston from 'winston';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
+const replacer = (_key: string, value: unknown) =>
+    typeof value === 'bigint' ? value.toString() : value;
+
 /**
  * JSON replacer that keeps logging total.
  *
@@ -111,11 +114,11 @@ export function logPriceUpdate(
     details?: Record<string, unknown>,
 ) {
     const logData = {
+        ...details,
         asset,
         price: price.toString(),
         source,
         success,
-        ...details,
     };
 
     if (success) {
