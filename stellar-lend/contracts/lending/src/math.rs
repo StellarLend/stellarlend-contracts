@@ -2,9 +2,8 @@
 
 use soroban_sdk::contracterror;
 
-// Reused, not re-declared: a second, independent `31_536_000` here would let
-// this and the rounding-strategy interest paths silently drift apart (e.g. if
-// a leap-year adjustment were ever applied to only one of them).
+// Reuse the shared year length so the interest paths cannot silently drift
+// apart if its day-count convention ever changes.
 use crate::rounding_strategy::SECONDS_PER_YEAR;
 
 /// Basis points scale (100% = 10,000 bps).

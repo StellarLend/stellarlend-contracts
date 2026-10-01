@@ -1,8 +1,8 @@
 //! Event definitions for the StellarLend lending protocol.
-//!
-//! All events carry a `schema_version` field to enable safe decoding
-//! across contract upgrades. See docs/EVENT_SCHEMA_VERSIONING.md for
-//! versioning policy and indexer integration guide.
+///
+/// All events carry a `schema_version` field to enable safe decoding
+/// across contract upgrades. See docs/EVENT_SCHEMA_VERSIONING.md for
+/// versioning policy and indexer integration guide.
 
 use soroban_sdk::{contracttype, Address, Env, Symbol};
 
@@ -306,4 +306,78 @@ pub fn emit_liquidation_incentive_bps_set(env: &Env, incentive_bps: i128) {
         (Symbol::new(env, "LiquidationIncentiveBpsSetEvent"),),
         event,
     );
+}
+
+// ─── Migration Event ──────────────────────────────────────────────────────────
+
+/// Maximum byte length for a migration memo field.
+///
+/// Memos longer than this are silently replaced with a fixed placeholder before
+/// publishing, so the event is always emitted regardless of memo size.
+pub const MIGRATION_MEMO_MAX_LEN: u32 = 128;
+
+/// Emitted once by `migrate_positions` when the one-time borrow-index snapshot
+/// migration completes.
+///
+/// Carries:
+/// - `schema_version`: always [`EVENT_SCHEMA_VERSION`].
+/// - `old_schema_version`: the schema version before this migration.
+/// - `new_schema_version`: the schema version after this migration (must be > old).
+/// - `ledger`: ledger sequence at emit time.
+/// - `timestamp`: ledger timestamp at emit time.
+/// - `memo`: human-readable note about what changed (truncated to
+///   [`MIGRATION_MEMO_MAX_LEN`] bytes).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MigrationEvent {
+    /// Schema version for safe decoding across upgrades (always [`EVENT_SCHEMA_VERSION`]).
+    pub schema_version: u32,
+    /// Protocol schema version before this migration.
+    pub old_schema_version: u32,
+    /// Protocol schema version after this migration (must be > `old_schema_version`).
+    pub new_schema_version: u32,
+    /// Ledger sequence at the time of emission.
+    pub ledger: u32,
+    /// Ledger timestamp at the time of emission.
+    pub timestamp: u64,
+    /// Human-readable migration note, truncated to [`MIGRATION_MEMO_MAX_LEN`] bytes.
+    pub memo: soroban_sdk::String,
+}
+
+/// Emit a migration event signalling a schema version upgrade.
+///
+/// # Panics
+/// Panics with `"MigrationEvent: version must increase"` if
+/// `new_schema_version <= old_schema_version`.
+///
+/// Memos longer than [`MIGRATION_MEMO_MAX_LEN`] bytes are silently replaced
+/// with a fixed placeholder so the event is always emitted.
+pub fn emit_migration(
+    env: &Env,
+    old_schema_version: u32,
+    new_schema_version: u32,
+    memo: soroban_sdk::String,
+) {
+    assert!(
+        new_schema_version > old_schema_version,
+        "MigrationEvent: version must increase"
+    );
+
+    // Truncate oversized memos rather than panicking.
+    let safe_memo = if memo.len() > MIGRATION_MEMO_MAX_LEN {
+        soroban_sdk::String::from_str(env, "[memo truncated]")
+    } else {
+        memo
+    };
+
+    let event = MigrationEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        old_schema_version,
+        new_schema_version,
+        ledger: env.ledger().sequence(),
+        timestamp: env.ledger().timestamp(),
+        memo: safe_memo,
+    };
+    env.events()
+        .publish((Symbol::new(env, "MigrationEvent"),), event);
 }
