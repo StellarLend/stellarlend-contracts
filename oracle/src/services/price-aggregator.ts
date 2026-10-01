@@ -89,10 +89,16 @@ export class PriceAggregator {
         if (!Number.isInteger(resolvedConfig.providerRetries) || resolvedConfig.providerRetries < 0) {
             throw new Error('providerRetries must be a non-negative integer');
         }
-        if (!Number.isFinite(resolvedConfig.retryBackoffMs) || resolvedConfig.retryBackoffMs < 0) {
+        if (
+            !Number.isFinite(resolvedConfig.retryBackoffMs) ||
+            resolvedConfig.retryBackoffMs < 0
+        ) {
             throw new Error('retryBackoffMs must be a finite number greater than or equal to 0');
         }
-        if (!Number.isFinite(resolvedConfig.madZScoreThreshold) || resolvedConfig.madZScoreThreshold < 0) {
+        if (
+            !Number.isFinite(resolvedConfig.madZScoreThreshold) ||
+            resolvedConfig.madZScoreThreshold < 0
+        ) {
             throw new Error('madZScoreThreshold must be a finite number greater than or equal to 0');
         }
 

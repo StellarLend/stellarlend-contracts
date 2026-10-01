@@ -26,9 +26,9 @@ use crate::authorization::{
 };
 use crate::validation::{
     validate_amount, validate_asset_configured, validate_borrow, validate_deposit,
-    validate_health_factor, validate_liquidation, validate_oracle_signature,
-    validate_price_bounds, validate_price_freshness, validate_repay, validate_timestamp,
-    validate_withdrawal, ValidationError,
+    validate_health_factor, validate_liquidation, validate_oracle_signature, validate_price_bounds,
+    validate_price_freshness, validate_repay, validate_timestamp, validate_withdrawal,
+    ValidationError,
 };
 use crate::{DataKey, LendingContract, LendingContractClient, LendingError};
 

@@ -456,8 +456,10 @@ describe('OracleService failure paths and boundaries', () => {
 
     describe('unauthorized admin configuration', () => {
         it('rejects an admin API port without an HMAC secret', () => {
+            // Config validation (validateOracleServiceConfig) rejects this before the
+            // constructor's own ADMIN_HMAC_SECRET guard; either message is a refusal.
             expect(() => new OracleService(baseConfig({ adminApiPort: 9123 }))).toThrow(
-                /ADMIN_HMAC_SECRET/,
+                /adminHmacSecret|ADMIN_HMAC_SECRET/,
             );
         });
 

@@ -1,3 +1,6 @@
+// NOTE: The TwapFallbackUsedEvent topic is emitted via `symbol_short!("twapFalbk")`
+// (9 chars, within Soroban's limit). Any indexer matching this topic must use
+// "twapFalbk" — the previous 10-char literal "twapFallbk" did not compile.
 /// twap_fallback_event_test.rs — Structured TwapFallbackUsedEvent emission tests.
 ///
 /// Coverage matrix

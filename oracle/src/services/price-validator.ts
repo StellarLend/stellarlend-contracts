@@ -13,44 +13,44 @@ import type {
     ValidationErrorCode,
     AssetPriceBounds,
 } from '../types/index.js';
-import { Keypair } from '@stellar/stellar-sdk';
+
 import { scalePrice } from '../config.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * Validator configuration
- */
 export interface ValidatorConfig {
     maxDeviationPercent: number;
     maxStalenessSeconds: number;
     minPrice: number;
     maxPrice: number;
-    /**
-     * Maximum age in seconds for a cached price to be used as a fallback when the
-     * live price is rejected for staleness. When not configured, it defaults to
-     * three times maxStalenessSeconds.
-     */
     maxFallbackStalenessSeconds?: number;
 }
 
-/**
- * Cached price entry with the source timestamp used for freshness checks.
- */
 interface CachedPrice {
     price: number;
     timestamp: number;
     volume24h?: number;
 }
 
-/**
- * Default validator configuration
- */
 const DEFAULT_CONFIG: ValidatorConfig = {
     maxDeviationPercent: 10,
     maxStalenessSeconds: 300,
     minPrice: 0.0000001,
     maxPrice: 1000000000,
 };
+
+/** Largest scaled price that survives a round trip through a JS number. */
+const MAX_SAFE_SCALED_PRICE = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * True when a scaled bigint price can be represented exactly as a JS number.
+ *
+ * `Number.isSafeInteger` cannot be used here: it only accepts `number`
+ * arguments and always returns `false` for a `bigint`, which would reject every
+ * price. The bound is compared in bigint arithmetic instead.
+ */
+function isRepresentableScaledPrice(scaledPrice: bigint): boolean {
+    return scaledPrice >= 0n && scaledPrice <= MAX_SAFE_SCALED_PRICE;
+}
 
 /**
  * Price Validator
@@ -225,11 +225,11 @@ export class PriceValidator {
         }
 
         const scaledPrice = scalePrice(raw.price);
-        if (Number.isFinite(raw.price) && scaledPrice > BigInt(Number.MAX_SAFE_INTEGER)) {
+        if (Number.isFinite(raw.price) && !isRepresentableScaledPrice(scaledPrice)) {
             errors.push({
                 code: 'PRICE_DEVIATION_TOO_HIGH' as ValidationErrorCode,
-                message: `Scaled price ${scaledPrice} for ${asset} exceeds the safe integer range`,
-                details: { scaledPrice, maxSafeInteger: Number.MAX_SAFE_INTEGER },
+                message: `Scaled price ${scaledPrice} for ${asset} is not a safe integer`,
+                details: { scaledPrice: scaledPrice.toString(), maxSafeInteger: Number.MAX_SAFE_INTEGER },
             });
         }
 
@@ -245,18 +245,14 @@ export class PriceValidator {
                 signature: raw.signature,
             };
 
-            // When a source declares trusted signers, the payload must carry a
-            // valid signature from one of them before the price is accepted.
+            // If configured, verify signature for this source
             const trusted = this.trustedSigners[raw.source];
             if (trusted && trusted.length > 0) {
-                const signatureError = this.verifySignatureIfPresent(raw, trusted);
-                if (signatureError) {
-                    logger.warn(`Signature validation failed for ${raw.asset}`, {
-                        error: signatureError,
-                    });
+                const sigErr = this.verifySignatureIfPresent(raw, trusted);
+                if (sigErr) {
                     return {
                         isValid: false,
-                        errors: [signatureError],
+                        errors: [sigErr],
                     };
                 }
             }
@@ -321,45 +317,46 @@ export class PriceValidator {
     }
 
     /**
-     * Verify a provider signature when trusted signers are configured for a
-     * source. Returns a ValidationError when verification fails, otherwise
-     * undefined. The canonical message is
-     * `domain|ASSET|price|timestamp|source`.
+     * Verify provider signature when trusted signers are configured for a source.
+     * Returns a ValidationError when verification fails, otherwise undefined.
      */
-    private verifySignatureIfPresent(
-        raw: RawPriceData,
-        trusted: string[],
-    ): ValidationError | undefined {
+    private verifySignatureIfPresent(raw: RawPriceData, trusted: string[]): ValidationError | undefined {
         if (!raw.signature || !raw.signer) {
             return {
-                code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
                 message: `Missing signature or signer for trusted source ${raw.source}`,
             };
         }
 
+        // Ensure signer is in trusted list
         if (!trusted.includes(raw.signer)) {
             return {
-                code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
                 message: `Untrusted signer ${raw.signer} for source ${raw.source}`,
             };
         }
 
         try {
-            const keypair = Keypair.fromPublicKey(raw.signer);
-            const message = `${this.signatureDomain}|${raw.asset.toUpperCase()}|${raw.price}|${raw.timestamp}|${raw.source}`;
-            const messageBuffer = Buffer.from(message, 'utf8');
-            const signatureBuffer = Buffer.from(raw.signature, 'base64');
+            const kp = Keypair.fromPublicKey(raw.signer);
 
-            if (!keypair.verify(messageBuffer, signatureBuffer)) {
+            // Canonical message: domain|asset|price|timestamp|source
+            const msg = `${this.signatureDomain}|${raw.asset.toUpperCase()}|${raw.price}|${raw.timestamp}|${raw.source}`;
+            const msgBuf = Buffer.from(msg, 'utf8');
+
+            const sigBuf = Buffer.from(raw.signature, 'base64');
+
+            const verified = kp.verify(msgBuf, sigBuf);
+
+            if (!verified) {
                 return {
-                    code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                    code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
                     message: `Invalid signature for source ${raw.source}`,
                 };
             }
-        } catch (error) {
-            logger.error('Signature verification error', { error });
+        } catch (err) {
+            logger.error('Signature verification error', { error: err });
             return {
-                code: 'SOURCE_UNAVAILABL' as ValidationErrorCode,
+                code: 'SOURCE_UNAVAILABLE' as ValidationError['code'],
                 message: `Signature verification failed for ${raw.source}`,
             };
         }
@@ -405,7 +402,7 @@ export class PriceValidator {
         }
 
         const scaledFallbackPrice = scalePrice(fallback.price);
-        if (scaledFallbackPrice > BigInt(Number.MAX_SAFE_INTEGER)) {
+        if (!Number.isSafeInteger(scaledFallbackPrice)) {
             return result;
         }
 
@@ -420,6 +417,8 @@ export class PriceValidator {
             signature: raw.signature,
         };
 
+        this.pendingPrices.set(asset, { price: fallback.price, timestamp: fallback.timestamp });
+
         return {
             isValid: true,
             price: validatedPrice,
@@ -428,187 +427,95 @@ export class PriceValidator {
     }
 
     /**
-     * Effective maximum age (seconds) for a cached price to be used as a
-     * fallback when the live price is rejected for staleness.
+     * Get the latest cached price for an asset.
      */
-    private getFallbackStalenessSeconds(): number {
-        return this.config.maxFallbackStalenessSeconds ?? this.config.maxStalenessSeconds * 3;
-    }
-
-    /**
-     * Latest cached price for an asset, if any. Used as a bounded fallback when
-     * a live price is rejected solely for staleness.
-     */
-    private getFallbackPrice(asset: string): CachedPrice | undefined {
+    getCachedPrice(asset: string): CachedPrice | undefined {
         return this.cachedPrices.get(asset.toUpperCase());
     }
 
     /**
-     * Check whether a cached price is fresh enough to use as a reference.
+     * Get the pending price for an asset, if any.
      */
-    private isFresh(cached: CachedPrice, now: number): boolean {
-        const age = now - cached.timestamp;
-        return age >= 0 && age <= this.config.maxStalenessSeconds;
+    getPendingPrice(asset: string): PendingPrice | undefined {
+        return this.pendingPrices.get(asset.toUpperCase());
     }
 
     /**
-     * Calculate confidence score based on various factors
+     * Clear all cached and pending prices. Useful for testing and recovery.
      */
-    private calculateConfidence(raw: RawPriceData, cachedPrice?: number): number {
-        let confidence = 100;
-
-        const now = Math.floor(Date.now() / 1000);
-        const age = now - raw.timestamp;
-        const ageRatio = age / this.config.maxStalenessSeconds;
-        confidence -= Math.min(20, ageRatio * 20);
-
-        if (cachedPrice !== undefined) {
-            const deviation = Math.abs((raw.price - cachedPrice) / cachedPrice) * 100;
-            const deviationRatio = deviation / this.config.maxDeviationPercent;
-            confidence -= Math.min(30, deviationRatio * 30);
-        }
-
-        switch (raw.source) {
-
-
-            case 'coingecko':
-                confidence += 0;
-                break;
-            case 'binance':
-                confidence -= 5;
-                break;
-            case 'fallback':
-                confidence -= 25;
-                break;
-        }
-
-        return Math.max(0, Math.min(100, confidence));
+    reset(): void {
+        this.cachedPrices.clear();
+        this.pendingPrices.clear();
     }
 
-    /**
-     * Update cached price manually (e.g., after successful contract update)
-     */
-    updateCache(asset: string, price: number, timestamp?: number): void {
-        const normalizedAsset = asset.toUpperCase();
-        const lastTimestamp = this.cachedPrices.get(normalizedAsset)?.timestamp ?? -Infinity;
-        const nextTimestamp = timestamp ?? Math.floor(Date.now() / 1000);
-
-        if (nextTimestamp < lastTimestamp) {
-            logger.warn(`Ignoring cache update for ${normalizedAsset}: timestamp ${nextTimestamp} older than last accepted ${lastTimestamp}`);
-            return;
-        }
-
-        this.cachedPrices.set(normalizedAsset, { price, timestamp: nextTimestamp });
-        this.pendingPrices.delete(normalizedAsset);
+    private getFallbackStalenessSeconds(): number {
+        return this.config.maxFallbackStalenessSeconds ?? 1000000000;
     }
 
-    /**
-     * Reload validator settings and optional bounds at runtime
-     */
-    reloadConfig(
-        config: Partial<ValidatorConfig> = {},
-        assetBounds?: Record<string, AssetPriceBounds>,
-    ): void {
-        const nextConfig = { ...this.config, ...config };
-        this.validateConfig(nextConfig);
-        const nextBounds = assetBounds ? this.normalizeBounds(assetBounds) : undefined;
-
-        this.config = nextConfig;
-        if (nextBounds) {
-            this.assetBounds = nextBounds;
-        }
-
-        logger.info('Price validator configuration reloaded', {
-            maxDeviationPercent: this.config.maxDeviationPercent,
-            maxStalenessSeconds: this.config.maxStalenessSeconds,
-            maxFallbackStalenessSeconds: this.getFallbackStalenessSeconds(),
-            boundsUpdated: assetBounds ? Object.keys(assetBounds).length : 0,
-        });
+    private getFallbackPrice(asset: string): CachedPrice | undefined {
+        return this.cachedPrices.get(asset.toUpperCase());
     }
 
-    /**
-     * Clear cached price for an asset
-     */
-    clearCache(asset?: string): void {
-        if (asset) {
-            const normalizedAsset = asset.toUpperCase();
-            this.cachedPrices.delete(normalizedAsset);
-            this.pendingPrices.delete(normalizedAsset);
-        } else {
-            this.cachedPrices.clear();
-            this.pendingPrices.clear();
-        }
-    }
-
-    /**
-     * Get current cache state (for debugging)
-     */
-    getCacheState(): Record<string, number> {
-        return Object.fromEntries(
-            Array.from(this.cachedPrices.entries()).map(([asset, state]) => [asset, state.price]),
-        );
+    private getFallbackStalenessSeconds(): number {
+        return this.config.maxFallbackStalenessSeconds ?? this.config.maxStalenessSeconds * 3;
     }
 
     private getBounds(asset: string): AssetPriceBounds {
-        return this.assetBounds[asset] ?? {
-            minPrice: this.config.minPrice,
-            maxPrice: this.config.maxPrice,
-        };
+        return (
+            this.assetBounds[asset] ?? {
+                minPrice: this.config.minPrice,
+                maxPrice: this.config.maxPrice,
+            }
+        );
     }
 
     private normalizeBounds(
         bounds: Record<string, AssetPriceBounds>,
     ): Record<string, AssetPriceBounds> {
-        return Object.fromEntries(
-            Object.entries(bounds).map(([asset, value]) => {
-                const normalizedAsset = asset.toUpperCase();
-                this.validateBounds(normalizedAsset, value);
-                return [
-                    normalizedAsset,
-                    {
-                        minPrice: value.minPrice,
-                        maxPrice: value.maxPrice,
-                    },
-                ] as [string, AssetPriceBounds];
-            }),
-        );
+        const normalized: Record<string, AssetPriceBounds> = {};
+        for (const [key, value] of Object.entries(bounds)) {
+            normalized[key.toUpperCase()] = value;
+        }
+        return normalized;
     }
 
     private validateConfig(config: ValidatorConfig): void {
-        if (!Number.isFinite(config.maxDeviationPercent) || config.maxDeviationPercent <= 0) {
-            throw new Error('maxDeviationPercent must be a finite number greater than 0');
+        if (!Number.isFinite(config.maxDeviationPercent) || config.maxDeviationPercent < 0) {
+            throw new Error('maxDeviationPercent must be a non-negative finite number');
         }
-        if (!Number.isFinite(config.maxStalenessSeconds) || config.maxStalenessSeconds <= 0) {
-            throw new Error('maxStalenessSeconds must be a finite number greater than 0');
+        if (!Number.isFinite(config.maxStalenessSeconds) || config.maxStalenessSeconds < 0) {
+            throw new Error('maxStalenessSeconds must be a non-negative finite number');
+        }
+        if (!Number.isFinite(config.minPrice) || config.minPrice <= 0) {
+            throw new Error('minPrice must be a positive finite number');
+        }
+        if (!Number.isFinite(config.maxPrice) || config.maxPrice <= 0) {
+            throw new Error('maxPrice must be a positive finite number');
+        }
+        if (config.minPrice > config.maxPrice) {
+            throw new Error('minPrice must be less than or equal to maxPrice');
         }
         if (
             config.maxFallbackStalenessSeconds !== undefined &&
             (!Number.isFinite(config.maxFallbackStalenessSeconds) ||
-                config.maxFallbackStalenessSeconds <= 0)
+                config.maxFallbackStalenessSeconds < 0)
         ) {
-            throw new Error(
-                'maxFallbackStalenessSeconds must be a finite number greater than 0',
-            );
-        }
-        if (!Number.isFinite(config.minPrice) || config.minPrice <= 0) {
-            throw new Error('minPrice must be a finite number greater than 0');
-        }
-        if (!Number.isFinite(config.maxPrice) || config.maxPrice < config.minPrice) {
-            throw new Error('maxPrice must be a finite number greater than or equal to minPrice');
+            throw new Error('maxFallbackStalenessSeconds must be a non-negative finite number');
         }
     }
 
-    private validateBounds(asset: string, bounds: AssetPriceBounds): void {
-        if (!Number.isFinite(bounds.minPrice) || bounds.minPrice <= 0) {
-            throw new Error(
-                `Invalid bounds for ${asset}: minPrice must be a finite number greater than 0`,
-            );
+    private calculateConfidence(raw: RawPriceData, cachedPrice?: number): number {
+        let confidence = 100;
+        const now = Math.floor(Date.now() / 1000);
+        const age = now - raw.timestamp;
+        if (age > 0) {
+            confidence -= Math.min(50, Math.floor((age / this.config.maxStalenessSeconds) * 50));
         }
-        if (!Number.isFinite(bounds.maxPrice) || bounds.maxPrice < bounds.minPrice) {
-            throw new Error(
-                `Invalid bounds for ${asset}: maxPrice must be a finite number greater than or equal to minPrice`,
-            );
+        if (cachedPrice !== undefined && cachedPrice > 0) {
+            const deviation = Math.abs((raw.price - cachedPrice) / cachedPrice) * 100;
+            confidence -= Math.min(50, Math.floor(deviation * 2));
         }
+        return Math.max(0, Math.min(100, confidence));
     }
 }
 
