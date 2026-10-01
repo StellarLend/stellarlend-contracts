@@ -6,6 +6,7 @@ use crate::{
     rate_model::RateParams,
     write_utilization_sample, DataKey, LendingContract, LendingContractClient, UtilizationSample,
 };
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};
 
