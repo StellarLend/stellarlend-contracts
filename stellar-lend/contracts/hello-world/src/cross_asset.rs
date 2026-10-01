@@ -10,6 +10,17 @@
 //! fixed-point units.  A helper [`normalize_price`] converts an asset's raw
 //! price (stored with `price_decimals` fractional digits) to that scale using
 //! checked 128-bit arithmetic.
+//!
+//! **Independent Copy & Rounding Behavior Note**:
+//! This module maintains its own independent copy of the value-aggregation math
+//! rather than sharing the `lending` crate's logic. This is because this crate
+//! must support heterogeneous oracle price scales via `INTERNAL_DECIMALS` (requiring
+//! per-asset scaling), whereas `lending` uses a uniform 7-decimal `PRICE_DIVISOR`.
+//! Furthermore, rounding behavior intentionally diverges: `lending` delays division
+//! in health factor checks and uses floor rounding everywhere else to save gas.
+//! This crate divides each asset down to 18-decimals before aggregation, necessitating
+//! **ceiling normalisation** for debt values (`normalize_price_ceil`) to ensure
+//! liabilities are never understated by truncation.
 
 #![allow(unused)]
 
@@ -106,19 +117,6 @@ pub fn get_max_debt_assets_per_user(env: &Env) -> Option<u32> {
 /// `bridge::require_guardian`.  A pure address-equality check without
 /// `require_auth` would allow any account to spoof the admin address as a
 /// plain argument with no proof of key ownership.
-fn require_admin(env: &Env, caller: &Address) -> Result<(), CrossAssetError> {
-    caller.require_auth();
-    let admin = get_admin(env).ok_or(CrossAssetError::Unauthorized)?;
-    if &admin != caller {
-        return Err(CrossAssetError::Unauthorized);
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 /// Errors that can occur in cross-asset operations.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -412,7 +410,7 @@ pub fn initialize_asset(
     asset: Option<Address>,
     config: AssetConfig,
 ) -> Result<(), CrossAssetError> {
-    require_admin(env, caller)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     if config.price_decimals > 38 {
         return Err(CrossAssetError::InvalidDecimals);
@@ -472,7 +470,7 @@ pub fn update_asset_config(
     can_borrow: Option<bool>,
     price_decimals: Option<u32>,
 ) -> Result<(), CrossAssetError> {
-    require_admin(env, caller)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     let key = asset_key(asset);
     let mut cfg = load_config(env, &key)?;
@@ -547,7 +545,7 @@ pub fn update_asset_price(
     asset: Option<Address>,
     price: i128,
 ) -> Result<(), CrossAssetError> {
-    require_admin(env, caller)?;
+    crate::admin::require_admin(env, caller).map_err(|_| CrossAssetError::Unauthorized)?;
 
     if price <= 0 {
         return Err(CrossAssetError::InvalidAmount);

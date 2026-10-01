@@ -8,6 +8,7 @@
 import axios, { AxiosError } from 'axios';
 
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
+const MAX_AMOUNT_STROOPS = 9223372036854775807n;
 
 interface TransactionResponse {
   success: boolean;
@@ -24,15 +25,17 @@ interface TransactionResponse {
 async function checkHealth(): Promise<void> {
   try {
     const response = await axios.get(`${API_BASE_URL}/health`);
-    console.log('Health Check:', response.data);
+    console.log('Health Check:', response.data.status === 'healthy' ? 'healthy' : 'unhealthy');
     
     if (response.data.status === 'healthy') {
       console.log('✅ All services are operational');
     } else {
-      console.log('⚠️ Some services are down:', response.data.services);
+      console.log('⚠️ One or more services are unavailable');
+      throw new Error('API health check failed');
     }
   } catch (error) {
-    console.error('❌ Health check failed:', error);
+    handleError('Health check', error);
+    throw error;
   }
 }
 
@@ -45,6 +48,7 @@ async function depositCollateral(
   userSecret: string,
   assetAddress?: string
 ): Promise<TransactionResponse> {
+  validateTransactionInput(userAddress, amount, userSecret);
   try {
     console.log(`\n📥 Depositing ${amount} stroops...`);
     
@@ -58,12 +62,12 @@ async function depositCollateral(
       }
     );
 
-    if (response.data.success) {
+    if (response.data.success && response.data.status === 'success') {
       console.log('✅ Deposit successful!');
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Deposit failed:', response.data.error);
+      console.log('❌ Deposit failed');
     }
 
     return response.data;
@@ -82,6 +86,7 @@ async function borrowAssets(
   userSecret: string,
   assetAddress?: string
 ): Promise<TransactionResponse> {
+  validateTransactionInput(userAddress, amount, userSecret);
   try {
     console.log(`\n💰 Borrowing ${amount} stroops...`);
     
@@ -95,12 +100,12 @@ async function borrowAssets(
       }
     );
 
-    if (response.data.success) {
+    if (response.data.success && response.data.status === 'success') {
       console.log('✅ Borrow successful!');
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Borrow failed:', response.data.error);
+      console.log('❌ Borrow failed');
     }
 
     return response.data;
@@ -119,6 +124,7 @@ async function repayDebt(
   userSecret: string,
   assetAddress?: string
 ): Promise<TransactionResponse> {
+  validateTransactionInput(userAddress, amount, userSecret);
   try {
     console.log(`\n💳 Repaying ${amount} stroops...`);
     
@@ -132,12 +138,12 @@ async function repayDebt(
       }
     );
 
-    if (response.data.success) {
+    if (response.data.success && response.data.status === 'success') {
       console.log('✅ Repayment successful!');
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Repayment failed:', response.data.error);
+      console.log('❌ Repayment failed');
     }
 
     return response.data;
@@ -156,6 +162,7 @@ async function withdrawCollateral(
   userSecret: string,
   assetAddress?: string
 ): Promise<TransactionResponse> {
+  validateTransactionInput(userAddress, amount, userSecret);
   try {
     console.log(`\n📤 Withdrawing ${amount} stroops...`);
     
@@ -169,12 +176,12 @@ async function withdrawCollateral(
       }
     );
 
-    if (response.data.success) {
+    if (response.data.success && response.data.status === 'success') {
       console.log('✅ Withdrawal successful!');
       console.log(`   Transaction Hash: ${response.data.transactionHash}`);
       console.log(`   Ledger: ${response.data.ledger}`);
     } else {
-      console.log('❌ Withdrawal failed:', response.data.error);
+      console.log('❌ Withdrawal failed');
     }
 
     return response.data;
@@ -184,22 +191,49 @@ async function withdrawCollateral(
   }
 }
 
+function logTransactionFailure(operation: string, status: number): void {
+  console.error(`❌ ${operation} failed: API reported failure`);
+  console.error(`   Status: ${status}`);
+}
+
 /**
  * Handle API errors
  */
 function handleError(operation: string, error: unknown): void {
+  // Exception messages and response bodies may echo credentials; log safe metadata only.
   if (axios.isAxiosError(error)) {
-    const axiosError = error as AxiosError<{ error: string }>;
+    const axiosError = error as AxiosError;
     if (axiosError.response) {
-      console.error(`❌ ${operation} failed:`, axiosError.response.data.error);
-      console.error(`   Status: ${axiosError.response.status}`);
+      console.error(`❌ ${operation} failed with HTTP ${axiosError.response.status}`);
     } else if (axiosError.request) {
       console.error(`❌ ${operation} failed: No response from server`);
     } else {
-      console.error(`❌ ${operation} failed:`, axiosError.message);
+      console.error(`❌ ${operation} failed before the request was sent`);
     }
   } else {
-    console.error(`❌ ${operation} failed:`, error);
+    console.error(`❌ ${operation} failed`);
+  }
+}
+
+function validateTransactionInput(userAddress: string, amount: string, userSecret: string): void {
+  if (typeof userAddress !== 'string' || !userAddress.trim()) {
+    throw new Error('User address is required');
+  }
+  if (typeof amount !== 'string' || !/^[1-9]\d*$/.test(amount)) {
+    throw new Error('Amount must be a positive whole number of stroops');
+  }
+  if (BigInt(amount) > MAX_AMOUNT_STROOPS) {
+    throw new Error('Amount exceeds the maximum allowed stroops');
+  }
+  if (typeof userSecret !== 'string' || !userSecret.trim()) {
+    throw new Error('User secret is required');
+  }
+}
+
+function requireSuccessfulTransaction(response: TransactionResponse, operation: string): void {
+  if (response.success !== true || response.status !== 'success') {
+    // Transaction writes are not retried because the API does not promise idempotency.
+    throw new Error(`${operation} did not complete`);
   }
 }
 
@@ -220,25 +254,37 @@ async function completeLendingCycle(): Promise<void> {
     await checkHealth();
 
     // 2. Deposit collateral (10 XLM)
-    await depositCollateral(USER_ADDRESS, '100000000', USER_SECRET);
+    requireSuccessfulTransaction(
+      await depositCollateral(USER_ADDRESS, '100000000', USER_SECRET),
+      'Deposit'
+    );
 
     // Wait a bit for transaction to settle
     await new Promise(resolve => setTimeout(resolve, 5000));
 
     // 3. Borrow assets (5 XLM)
-    await borrowAssets(USER_ADDRESS, '50000000', USER_SECRET);
+    requireSuccessfulTransaction(
+      await borrowAssets(USER_ADDRESS, '50000000', USER_SECRET),
+      'Borrow'
+    );
 
     // Wait a bit for transaction to settle
     await new Promise(resolve => setTimeout(resolve, 5000));
 
     // 4. Repay debt (5.5 XLM with interest)
-    await repayDebt(USER_ADDRESS, '55000000', USER_SECRET);
+    requireSuccessfulTransaction(
+      await repayDebt(USER_ADDRESS, '55000000', USER_SECRET),
+      'Repay'
+    );
 
     // Wait a bit for transaction to settle
     await new Promise(resolve => setTimeout(resolve, 5000));
 
     // 5. Withdraw collateral (5 XLM)
-    await withdrawCollateral(USER_ADDRESS, '50000000', USER_SECRET);
+    requireSuccessfulTransaction(
+      await withdrawCollateral(USER_ADDRESS, '50000000', USER_SECRET),
+      'Withdraw'
+    );
 
     console.log('\n' + '='.repeat(60));
     console.log('✅ Complete lending cycle finished successfully!');
@@ -247,6 +293,7 @@ async function completeLendingCycle(): Promise<void> {
     console.log('\n' + '='.repeat(60));
     console.log('❌ Lending cycle failed');
     console.log('='.repeat(60));
+    throw error;
   }
 }
 
@@ -297,11 +344,17 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   
   if (args.includes('--health')) {
-    checkHealth();
+    void checkHealth().catch(() => {
+      process.exitCode = 1;
+    });
   } else if (args.includes('--errors')) {
-    errorHandlingExamples();
+    void errorHandlingExamples().catch(() => {
+      process.exitCode = 1;
+    });
   } else if (args.includes('--cycle')) {
-    completeLendingCycle();
+    void completeLendingCycle().catch(() => {
+      process.exitCode = 1;
+    });
   } else {
     console.log('Usage:');
     console.log('  ts-node examples/usage.ts --health   # Check API health');

@@ -83,6 +83,28 @@ fn test_initialize_sets_threshold_and_signers() {
 }
 
 #[test]
+fn test_initialize_rejects_reinitialization_without_mutating_state() {
+    let env = make_env();
+    let contract_id = env.register(MultisigContract, ());
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let mut initial_signers = Vec::new(&env);
+    initial_signers.push_back(Address::generate(&env));
+    initial_signers.push_back(Address::generate(&env));
+    client.initialize(&initial_signers, &2u32);
+
+    let mut replacement_signers = Vec::new(&env);
+    replacement_signers.push_back(Address::generate(&env));
+    assert_eq!(
+        client.try_initialize(&replacement_signers, &1u32),
+        Err(Ok(MultisigError::AlreadyInitialized))
+    );
+
+    assert_eq!(client.get_signers(), initial_signers);
+    assert_eq!(client.get_threshold(), 2u32);
+}
+
+#[test]
 fn test_initialize_rejects_zero_threshold() {
     let env = make_env();
     let contract_id = env.register(MultisigContract, ());
