@@ -212,6 +212,16 @@ export class LendingController {
 // Standalone route handlers — wired in lending.routes.ts
 // ---------------------------------------------------------------------------
 
+const lendingController = new LendingController(stellarService);
+
+/**
+ * Standalone Express handler for `GET /api/lending/activity`.
+ *
+ * Exported so the route table can mount the controller without instantiating a
+ * fresh service per request.
+ */
+export const getActivity = lendingController.getActivity.bind(lendingController);
+
 export const deposit = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userAddress, assetAddress, amount, userSecret }: DepositRequest = req.body;

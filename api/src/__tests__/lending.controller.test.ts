@@ -889,3 +889,26 @@ describe('GET /api/health', () => {
     expect(res.status).toBe(500);
   });
 });
+
+describe('GET /api/lending/activity (route wiring)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('returns 200 with pagination metadata through the mounted route', async () => {
+    appSvc().fetchActivityByLedgerRange.mockResolvedValue({ events: [mockEvent()] });
+
+    const res = await request(app).get('/api/lending/activity');
+
+    expect(res.status).toBe(200);
+    expect(res.body.pagination.hasNextPage).toBe(false);
+    expect(appSvc().fetchActivityByLedgerRange).toHaveBeenCalledWith({
+      startLedger: null,
+      startEventIndex: null,
+      limit: DEFAULT_PAGE_SIZE + 1,
+    });
+  });
+
+  it('returns 400 for an invalid cursor', async () => {
+    const res = await request(app).get('/api/lending/activity').query({ cursor: 'nope' });
+    expect(res.status).toBe(400);
+  });
+});
