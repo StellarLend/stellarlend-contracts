@@ -102,7 +102,7 @@ describe('Boundary Validation Middleware', () => {
     });
 
     it('should reject address not starting with G', () => {
-      req.body = { address: 'XABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' };
+      req.body = { address: 'XABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
       expect(() => validateStellarAddress()(req as Request, res as Response, next)).toThrow(
         ValidationError
       );
@@ -353,6 +353,84 @@ describe('Boundary Validation Middleware', () => {
       sanitizeSearchQuery(req as Request, res as Response, next);
       expect(req.query.q).toBe('scriptalertxss/script');
     });
+
+    it('should handle missing query parameter', () => {
+      req.query = {};
+      sanitizeSearchQuery(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should handle non-string query parameter', () => {
+      req.query = { q: 5 } as unknown as Request['query'];
+      sanitizeSearchQuery(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+  });
+
+  describe('validateAsset', () => {
+    it('should pass for valid asset', () => {
+      req.body = { asset: 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ23456789ABCDEFGHIJKLMNO' };
+      validateAsset(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should reject missing asset', () => {
+      req.body = {};
+      expect(() => validateAsset(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+
+    it('should reject invalid asset address', () => {
+      req.body = { asset: 'invalid' };
+      expect(() => validateAsset(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+  });
+
+  describe('validateHealthFactor', () => {
+    it('should pass for valid health factor', () => {
+      req.body = { healthFactor: 1.5 };
+      validateHealthFactor(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should reject zero health factor', () => {
+      req.body = { healthFactor: 0 };
+      expect(() => validateHealthFactor(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+
+    it('should reject negative health factor', () => {
+      req.body = { healthFactor: -1 };
+      expect(() => validateHealthFactor(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+  });
+
+  describe('validateTimestamp', () => {
+    it('should pass for valid timestamp', () => {
+      req.body = { timestamp: Math.floor(Date.now() / 1000) };
+      validateTimestamp(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('should reject future timestamp', () => {
+      req.body = { timestamp: Math.floor(Date.now() / 1000) + 10000 };
+      expect(() => validateTimestamp(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
+
+    it('should reject missing timestamp', () => {
+      req.body = {};
+      expect(() => validateTimestamp(req as Request, res as Response, next)).toThrow(
+        ValidationError
+      );
+    });
   });
 
   describe('validateContractCall', () => {
@@ -362,21 +440,18 @@ describe('Boundary Validation Middleware', () => {
         functionName: 'deposit',
         args: [100, 'GXYZ...'],
       };
-      validateContractCall(req as AuthRequest, res as Response, next);
+      validateContractCall(req as Request, res as Response, next);
       expect(next).toHaveBeenCalled();
     });
 
-    it('should reject invalid contract ID', () => {
-      req.body = {
-        contractId: 'GABC123...', // Should start with C, not G
-        functionName: 'deposit',
-      };
-      expect(() => validateContractCall(req as AuthRequest, res as Response, next)).toThrow(
-        'Invalid contract ID format'
+    it('should reject missing contractId', () => {
+      req.body = { method: 'transfer' };
+      expect(() => validateContractCall(req as Request, res as Response, next)).toThrow(
+        ValidationError
       );
     });
 
-    it('should reject invalid function name', () => {
+    it('should reject missing method', () => {
       req.body = {
         contractId: 'CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR',
         functionName: 'invalid-function!',

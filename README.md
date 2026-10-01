@@ -326,6 +326,16 @@ See the contract's own [README](stellar-lend/contracts/lending/README.md) for th
 | `get_upgrade_proposal_signer_hash`  | Read the approver-set fingerprint captured when a proposal was created |
 | `get_min_upgrade_delay_ledgers`     | Read the minimum timelock delay in ledgers                          |
 
+### Upgrade Administration
+
+| Function                      | Description                                      |
+|-------------------------------|--------------------------------------------------|
+| `upgrade_cancel`              | Cancel a pending upgrade proposal (admin-only)   |
+| `is_upgrade_proposal_cancelled` | Query whether a proposal is in the `Cancelled` terminal state |
+| `get_upgrade_approval_binding` | Query the stored per-approver approval binding hash for a proposal |
+| `get_upgrade_proposal_signer_hash` | Query the approver-set fingerprint captured at proposal creation |
+| `get_upgrade_approver_set_hash` | Query the fingerprint of the live upgrade approver set |
+
 For exact signatures and planned-but-not-shipping names, see
 [docs/interface_quick_reference.md](docs/interface_quick_reference.md).
 
