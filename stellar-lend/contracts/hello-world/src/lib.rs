@@ -84,6 +84,9 @@ mod dual_kink_test;
 mod cross_asset_decimals_test;
 
 #[cfg(test)]
+mod config_snapshot_test;
+
+#[cfg(test)]
 mod cross_asset_config_bounds_test;
 #[cfg(test)]
 mod cross_asset_ltv_test;
