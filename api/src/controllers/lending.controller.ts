@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-@import { StellarService } from '../services/stellar.service';
+import { StellarService } from '../services/stellar.service';
 import { DepositRequest, BorrowRequest, RepayRequest, WithdrawRequest } from '../types';
+import { config } from '../config';
 import logger from '../utils/logger';
 import {
   decodeCursor,
@@ -11,10 +12,17 @@ import {
   Cursor,
 } from '../utils/cursor';
 
-// Module-level singleton used by the standalone route handlers
+// Module-level singleton used by the standalone route handlers.
+//
+// Invariant: this module is loaded by `app.ts` at import time, so the
+// constructor arguments must never be empty. They come from the validated
+// `config` (which rejects a non-`http` RPC URL at start-up) rather than from
+// raw `process.env`, because a blank `SOROBAN_RPC_URL` would otherwise make
+// `new rpc.Server('')` throw and take the whole app down before it can serve
+// a single request or render a diagnosable error.
 const stellarService = new StellarService(
-  process.env.SOROBAN_RPC_URL || '',
-  process.env.LENDING_CONTRACT_ID || ''
+  config.stellar.sorobanRpcUrl,
+  config.stellar.contractId
 );
 
 // ---------------------------------------------------------------------------
@@ -245,6 +253,112 @@ export const deposit = async (req: Request, res: Response, next: NextFunction) =
     return res.status(400).json({
       success: false,
       error: result.error || 'Transaction submission failed',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * `borrow`, `repay`, and `withdraw` share the deposit flow's shape: build the
+ * transaction, submit it, then monitor it. A rejected submission is surfaced as
+ * 400 (the caller can fix the request); a thrown failure is forwarded to the
+ * central error handler via `next(error)` so a partial failure can never be
+ * reported as a success.
+ */
+const submitOperation = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  operation: 'borrow' | 'repay' | 'withdraw',
+  build: (
+    userAddress: string,
+    assetAddress: string | undefined,
+    amount: string,
+    userSecret: string
+  ) => Promise<string>
+) => {
+  try {
+    const { userAddress, assetAddress, amount, userSecret }: BorrowRequest &
+      RepayRequest &
+      WithdrawRequest = req.body;
+
+    logger.info(`Processing ${operation} request`, { userAddress, amount });
+
+    const txXdr = await build(userAddress, assetAddress, amount, userSecret);
+
+    const result = await stellarService.submitTransaction(txXdr);
+
+    if (result.success && result.transactionHash) {
+      const monitorResult = await stellarService.monitorTransaction(result.transactionHash);
+      return res.status(200).json(monitorResult);
+    }
+
+    return res.status(400).json({
+      success: false,
+      error: result.error || 'Transaction submission failed',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const borrow = async (req: Request, res: Response, next: NextFunction) =>
+  submitOperation(req, res, next, 'borrow', (userAddress, assetAddress, amount, userSecret) =>
+    stellarService.buildBorrowTransaction(userAddress, assetAddress, amount, userSecret)
+  );
+
+export const repay = async (req: Request, res: Response, next: NextFunction) =>
+  submitOperation(req, res, next, 'repay', (userAddress, assetAddress, amount, userSecret) =>
+    stellarService.buildRepayTransaction(userAddress, assetAddress, amount, userSecret)
+  );
+
+export const withdraw = async (req: Request, res: Response, next: NextFunction) =>
+  submitOperation(req, res, next, 'withdraw', (userAddress, assetAddress, amount, userSecret) =>
+    stellarService.buildWithdrawTransaction(userAddress, assetAddress, amount, userSecret)
+  );
+
+/**
+ * POST /api/lending/hooks/*
+ *
+ * Reached only after `verifyHookHmac` has authenticated the raw body. The hook
+ * payload itself is intentionally opaque: acknowledging it keeps the indexer
+ * from retrying an already-delivered event, and acknowledging is idempotent so
+ * a duplicate delivery is harmless.
+ */
+export const processHook = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    return res.status(200).json({ success: true, message: 'Hook authenticated' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const healthCheck = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const services = await stellarService.healthCheck();
+    const isHealthy = services.horizon && services.sorobanRpc;
+
+    res.status(isHealthy ? 200 : 503).json({
+      status: isHealthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      services,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deepHealthCheck = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await stellarService.pingContract();
+    const isHealthy = result.rpc && result.contract;
+
+    res.status(isHealthy ? 200 : 503).json({
+      rpc: result.rpc,
+      contract: result.contract,
+      ledger: result.ledger,
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     next(error);
