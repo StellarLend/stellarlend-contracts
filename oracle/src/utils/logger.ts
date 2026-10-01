@@ -14,10 +14,48 @@ const replacer = (_key: string, value: unknown) =>
     typeof value === 'bigint' ? value.toString() : value;
 
 /**
+ * JSON replacer that keeps logging total.
+ *
+ * Prices, sequence numbers and idempotency keys are bigints, which
+ * `JSON.stringify` throws on by default. A log call must never be the reason a
+ * request fails, so bigints are rendered as decimal strings, `BigInt` instances
+ * likewise, and cycles are collapsed to `"[Circular]"`.
+ */
+function safeReplacer(_key: string, value: unknown): unknown {
+    if (typeof value === 'bigint') {
+        return value.toString();
+    }
+    if (value instanceof Error) {
+        return { name: value.name, message: value.message, stack: value.stack };
+    }
+    return value;
+}
+
+/**
+ * Stringify log metadata without ever throwing.
+ */
+function stringifyMeta(meta: unknown): string {
+    const seen = new WeakSet<object>();
+    try {
+        return JSON.stringify(meta, (key, value: unknown) => {
+            if (typeof value === 'object' && value !== null) {
+                if (seen.has(value)) {
+                    return '[Circular]';
+                }
+                seen.add(value);
+            }
+            return safeReplacer(key, value);
+        });
+    } catch {
+        return '[unserializable]';
+    }
+}
+
+/**
  * Custom log format for console output
  */
 const consoleFormat = printf(({ level, message, timestamp, ...meta }) => {
-    const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta, replacer)}` : '';
+    const metaStr = Object.keys(meta).length ? ` ${stringifyMeta(meta)}` : '';
     return `${timestamp} [${level}]: ${message}${metaStr}`;
 });
 
@@ -25,15 +63,12 @@ const consoleFormat = printf(({ level, message, timestamp, ...meta }) => {
  * Custom log format for JSON output (production)
  */
 const jsonFormat = printf(({ level, message, timestamp, ...meta }) => {
-    return JSON.stringify(
-        {
-            timestamp,
-            level,
-            message,
-            ...meta,
-        },
-        replacer,
-    );
+    return stringifyMeta({
+        timestamp,
+        level,
+        message,
+        ...meta,
+    });
 });
 
 /**
@@ -79,11 +114,11 @@ export function logPriceUpdate(
     details?: Record<string, unknown>,
 ) {
     const logData = {
+        ...details,
         asset,
         price: price.toString(),
         source,
         success,
-        ...details,
     };
 
     if (success) {
