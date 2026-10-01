@@ -97,7 +97,7 @@ export class PriceValidator {
         logger.info('Price validator initialized', {
             maxDeviationPercent: this.config.maxDeviationPercent,
             maxStalenessSeconds: this.config.maxStalenessSeconds,
-            maxFallbackStalenessSeconds: this.getFallbackStalenessSeconds(),
+            maxFallbackStalenessSeconds: this.config.maxFallbackStalenessSeconds,
             assetBounds: Object.keys(this.assetBounds).length,
         });
     }

@@ -75,23 +75,14 @@ export class PriceAggregator {
         if (!Number.isInteger(resolvedConfig.minSources) || resolvedConfig.minSources < 1) {
             throw new Error('minSources must be a positive integer');
         }
-        if (!Number.isFinite(resolvedConfig.maxStalenessMs) || resolvedConfig.maxStalenessMs < 0) {
-            throw new Error('maxStalenessMs must be a non-negative finite number');
+        if (resolvedConfig.maxStalenessMs < 0) {
+            throw new Error('maxStalenessMs cannot be negative');
         }
-        if (!Number.isFinite(resolvedConfig.maxFallbackAgeMs) || resolvedConfig.maxFallbackAgeMs < 0) {
-            throw new Error('maxFallbackAgeMs must be a non-negative finite number');
-        }
-        if (
-            !Number.isFinite(resolvedConfig.madZScoreThreshold) ||
-            resolvedConfig.madZScoreThreshold < 0
-        ) {
-            throw new Error('madZScoreThreshold must be a non-negative finite number');
+        if (resolvedConfig.maxFallbackAgeMs < 0) {
+            throw new Error('maxFallbackAgeMs cannot be negative');
         }
         if (!Number.isInteger(resolvedConfig.providerRetries) || resolvedConfig.providerRetries < 0) {
             throw new Error('providerRetries must be a non-negative integer');
-        }
-        if (!Number.isFinite(resolvedConfig.retryBackoffMs) || resolvedConfig.retryBackoffMs < 0) {
-            throw new Error('retryBackoffMs must be a non-negative finite number');
         }
 
         this.config = resolvedConfig;
@@ -106,12 +97,7 @@ export class PriceAggregator {
      * Fetch and aggregate price for a single asset
      */
     async getPrice(asset: string): Promise<AggregatedPrice | null> {
-        if (typeof asset !== 'string' || asset.trim().length === 0) {
-            logger.warn('getPrice called with invalid asset', { asset });
-            return null;
-        }
-
-        const upperAsset = asset.trim().toUpperCase();
+        const upperAsset = asset.toUpperCase();
         const now = Date.now();
         const cachedPrice = this.cache.getPrice(upperAsset);
         const cachedAt = this.cacheTimestamps.get(upperAsset);
