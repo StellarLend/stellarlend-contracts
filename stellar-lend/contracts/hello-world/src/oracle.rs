@@ -314,6 +314,9 @@ pub fn update_price_feed(
         }
     }
 
+    // Admin-gate: only the protocol admin, the registered primary oracle, or the
+    // registered fallback oracle may submit price updates (see module-level Safety
+    // note). `get_admin` is sourced from `crate::admin` — the fix for #2017.
     let is_admin = get_admin(env).map(|admin| admin == caller).unwrap_or(false);
     let _ = &caller;
     let primary = get_primary_oracle(env, &asset);

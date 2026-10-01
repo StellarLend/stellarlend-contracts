@@ -124,6 +124,10 @@ pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, Le
     {
         return Err(LendingError::StaleOracleTimestamp);
     }
+    // A non-positive price is never valid; treat as missing feed.
+    if record.price <= 0 {
+        return Err(LendingError::PriceFeedNotFound);
+    }
     Ok(record)
 }
 
@@ -916,6 +920,7 @@ mod tests {
     fn get_price_for_asset_missing_feed_fails() {
         let (env, id) = setup();
         let asset = Address::generate(&env);
+        let contract_id = env.register(crate::LendingContract, ());
 
         assert!(matches!(
             price_of(&env, &id, &asset),

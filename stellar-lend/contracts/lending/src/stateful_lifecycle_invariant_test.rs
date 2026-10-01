@@ -96,6 +96,7 @@ use proptest::prelude::*;
 
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::IntoVal;
 

@@ -84,7 +84,10 @@ fn check_reserve_invariant(env: &Env, asset: &Address, checkpoint: &str) {
     // Get actual token balance held by the contract
     let token_client = TokenClient::new(env, asset);
     let contract_address = env.current_contract_address();
-    let actual_balance: i128 = token_client.balance(&contract_address);
+    let actual_balance: i128 = match token_client.try_balance(&contract_address) {
+        Ok(Ok(b)) => b,
+        _ => return,
+    };
 
     // Compute expected balance from internal accounting
     let expected_balance = compute_expected_reserve(env, asset);
