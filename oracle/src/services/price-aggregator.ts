@@ -73,33 +73,16 @@ export class PriceAggregator {
         const resolvedConfig: Required<AggregatorConfig> = { ...DEFAULT_CONFIG, ...config } as Required<AggregatorConfig>;
 
         if (!Number.isInteger(resolvedConfig.minSources) || resolvedConfig.minSources < 1) {
-            throw new Error('minSources must be an integer of at least 1');
+            throw new Error('minSources must be a positive integer');
         }
-        if (!Number.isFinite(resolvedConfig.maxStalenessMs) || resolvedConfig.maxStalenessMs < 0) {
-            throw new Error('maxStalenessMs must be a finite number greater than or equal to 0');
+        if (resolvedConfig.maxStalenessMs < 0) {
+            throw new Error('maxStalenessMs cannot be negative');
         }
-        if (
-            !Number.isFinite(resolvedConfig.maxFallbackAgeMs) ||
-            resolvedConfig.maxFallbackAgeMs < resolvedConfig.maxStalenessMs
-        ) {
-            throw new Error(
-                'maxFallbackAgeMs must be a finite number greater than or equal to maxStalenessMs',
-            );
+        if (resolvedConfig.maxFallbackAgeMs < 0) {
+            throw new Error('maxFallbackAgeMs cannot be negative');
         }
         if (!Number.isInteger(resolvedConfig.providerRetries) || resolvedConfig.providerRetries < 0) {
             throw new Error('providerRetries must be a non-negative integer');
-        }
-        if (
-            !Number.isFinite(resolvedConfig.retryBackoffMs) ||
-            resolvedConfig.retryBackoffMs < 0
-        ) {
-            throw new Error('retryBackoffMs must be a finite number greater than or equal to 0');
-        }
-        if (
-            !Number.isFinite(resolvedConfig.madZScoreThreshold) ||
-            resolvedConfig.madZScoreThreshold < 0
-        ) {
-            throw new Error('madZScoreThreshold must be a finite number greater than or equal to 0');
         }
 
         this.config = resolvedConfig;
@@ -138,6 +121,9 @@ export class PriceAggregator {
 
         try {
             return await request;
+        } catch (error) {
+            logger.error(`Unexpected failure refreshing price for ${upperAsset}`, { error });
+            return null;
         } finally {
             if (this.pendingRequests.get(upperAsset) === request) {
                 this.pendingRequests.delete(upperAsset);
@@ -210,10 +196,23 @@ export class PriceAggregator {
     async getPrices(assets: string[]): Promise<Map<string, AggregatedPrice>> {
         const results = new Map<string, AggregatedPrice>();
 
-        const promises = assets.map(async (asset) => {
+        if (!Array.isArray(assets) || assets.length === 0) {
+            return results;
+        }
+
+        const uniqueAssets = Array.from(
+            new Set(
+                assets
+                    .filter((asset): asset is string => typeof asset === 'string')
+                    .map((asset) => asset.trim().toUpperCase())
+                    .filter((asset) => asset.length > 0),
+            ),
+        );
+
+        const promises = uniqueAssets.map(async (asset) => {
             const price = await this.getPrice(asset);
             if (price) {
-                results.set(asset.toUpperCase(), price);
+                results.set(asset, price);
             }
         });
 
@@ -241,7 +240,7 @@ export class PriceAggregator {
                     const rawPrice = await provider.fetchPrice(asset);
                     const validation = this.validator.validate(rawPrice);
 
-                    if (validation.isValid && validation.price) {
+                    if (validation.isValid && validation.price && validation.price.price > 0n) {
                         validPrices.push(validation.price);
                         logger.debug(`Got valid price from ${provider.name} for ${asset}`, {
                             price: validation.price.price.toString(),
@@ -295,7 +294,10 @@ export class PriceAggregator {
             };
         }
 
-        const filtered = filterOutliersByMAD(prices, this.config.madZScoreThreshold);
+        const filtered =
+            this.config.madZScoreThreshold > 0
+                ? filterOutliersByMAD(prices, this.config.madZScoreThreshold)
+                : prices;
         const activePrices = filtered.length >= this.config.minSources ? filtered : prices;
 
         if (filtered.length < prices.length) {

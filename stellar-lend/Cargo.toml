@@ -10,24 +10,32 @@ members = [
   "contracts/multisig",
   "cross_asset_test",
 ]
-# NOTE: `contracts/hello-world` was removed from the workspace (and deleted
-# outright) rather than fixed. It was a stale, unmaintained near-duplicate of
-# `contracts/lending` (its own `src/lib.r` diverges from
-# `contracts/lending/src/lib.r` by ~5,400 lines and most files under its
-# `src/` mirror lending's borrow/repay/liquidate/governance/oracle modules
-# almost verbatim, complete with its own accompanying docs), left over from
-# an earlier repo layout. It did not compile (e.g. a literal unmatched-brace
-# syntax error in `repay.r`, the same bad-merge corruption pattern found and
-# fixed elsewhere in this PR) and, given the size of the divergence, properly
-# reconciling it with `contracts/lending` was not a cheap fix -- the real,
-# actively-maintained lending contract already lives at `contracts/lending`
-# with full test coverage. Removed entirely per the "delete rather than
-# deep-fix" policy for this CI-green pass.
+# NOTE: `contracts/hello-world` is deliberately NOT a workspace member. It is a
+# stale, unmaintained near-duplicate of `contracts/lending` (its own
+# `src/lib.rs` diverges from `contracts/lending/src/lib.rs` by ~5,400 lines and
+# most files under its `src/` mirror lending's borrow/repay/liquidate/
+# governance/oracle modules almost verbatim, complete with its own accompanying
+# docs), left over from an earlier repo layout. It does not compile (90+ errors
+# on a clean `cargo build`: `lib.rs` calls symbols its own modules never
+# defined -- `analytics` and `multisig` are near-empty, and the rest expose an
+# API that has drifted from the names `lib.rs` still calls), and reconciling it
+# with `contracts/lending` is not a cheap fix. The real, actively-maintained
+# lending contract lives at `contracts/lending`.
+#
+# IMPORTANT: the crate's *sources are still on disk* under
+# `contracts/hello-world/`; only the workspace membership was dropped. An
+# earlier revision of this comment claimed the directory had been "deleted
+# outright" / "removed entirely", which was not true and led to issues being
+# filed against files in a crate that was assumed to be gone. The crate is also
+# excluded from CI (`.github/workflows/ci-cd.yml` never names it) and from the
+# coverage gate (`.tarpaulin.toml`). Nothing under `contracts/hello-world/` is
+# compiled, linted, formatted or tested today, so do not treat files there as
+# live code. See `contracts/hello-world/README.md` for the full status.
 
 [workspace.dependencies]
 # Keep shared Soroban and test dependency versions pinned in one place.
 soroban-sdk = "=25.3.1"
-soroban-token-sd{ = "=25.3.1"
+soroban-token-sdk = "=25.3.1"
 proptest = "1.5"
 
 [profile.release]
