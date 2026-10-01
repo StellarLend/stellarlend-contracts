@@ -1,6 +1,5 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
-use crate::events::MAX_ACCRUAL_LOG_SIZE;
 use crate::math::split_interest_by_reserve_factor;
 use crate::rounding_strategy::{calculate_interest_with_rounding, RoundingError, RoundingMode};
 use crate::{rate_model, write_utilization_sample, DataKey};
@@ -616,9 +615,7 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
 /// bounded and deterministic at maximum utilization instead of feeding an
 /// out-of-range utilization to the model.
-pub(crate) fn compute_utilization_bps(
-    snapshot: &RateSnapshot,
-) -> Result<i128, DebtError> {
+pub(crate) fn compute_utilization_bps(snapshot: &RateSnapshot) -> Result<i128, DebtError> {
     if snapshot.total_supply <= 0 {
         return Ok(0);
     }
