@@ -44,8 +44,6 @@ mod admin_authorization_test;
 #[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
-mod error_codes_test;
-#[cfg(test)]
 mod fee_accrual_overflow_test;
 #[cfg(test)]
 mod fee_accrual_test;

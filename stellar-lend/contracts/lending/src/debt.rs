@@ -1,6 +1,5 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
-use crate::events::MAX_ACCRUAL_LOG_SIZE;
 use crate::math::split_interest_by_reserve_factor;
 use crate::rounding_strategy::{calculate_interest_with_rounding, RoundingError, RoundingMode};
 use crate::{rate_model, write_utilization_sample, DataKey};
@@ -337,8 +336,8 @@ pub fn settle_position(
 pub(crate) fn compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
-) -> Result<BorrowRateComputation, DebtError> {
-    try_compute_borrow_rate_from_snapshot(env, snapshot)ilization overflow")
+) -> BorrowRateComputation {
+    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
 }
 
 fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {

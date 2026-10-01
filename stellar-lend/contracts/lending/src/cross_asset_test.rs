@@ -1,5 +1,6 @@
 use super::*;
 use soroban_sdk::events::Event;
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Events};
 
 pub fn setup() -> (

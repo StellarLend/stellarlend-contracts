@@ -102,7 +102,8 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 | **Liquidation** | `liquidate_test.rs`, `liquidation_boundary_test.rs`, `liquidation_invariant_test.rs`, `liquidation_max_amount_correctness_test.rs` | Close factor, incentives, health factor changes |
 | **Pause & Emergency** | `pause_matrix_test.rs`, `emergency_shutdown_test.rs`, `emergency_lifecycle_conformance_test.rs`, `guardian_scope_test.rs` | Granular pauses, lifecycle transitions, authorization |
 | **Oracle** | `oracle_test.rs`, `oracle_adversarial_test.rs`, `oracle_staleness_test.rs`, `oracle_migration_test.rs` | Price updates, staleness, fallback, adversarial feeds |
-| **Flash Loans** | `flash_loan_test.rs`, `flash_adversarial_test.rs`, `flash_loan_fee_rounding_test.rs` | Repayment verification, reentrancy, fee rounding |
+| **Flash Loans** | `tests/flash_loan_repayment.rs`, `tests/flash_callback_revert_test.rs`, `src/flash_utilization_test.rs`, `src/flash_pause_gating_test.rs` | Repayment verification, callback-revert rollback, max-utilization, pause gating |
+| **Reentrancy** | `tests/reentrancy_guard_test.rs`, `tests/liquidate_reentrancy_test.rs` | Every state-mutating op blocked inside an active flash-loan callback |
 | **Cross-Asset** | `cross_asset_test.rs`, `cross_asset_liquidation_test.rs`, `cross_asset_view_invariants_test.rs` | Multi-asset positions, cross-liquidation |
 | **Adversarial / Security** | `borrow_withdraw_adversarial_test.rs`, `borrow_withdraw_rounding_timing_test.rs`, `borrow_withdraw_sequence_adversarial_test.rs`, `auth_boundary_test.rs`, `zero_amount_semantics_test.rs` | Rounding exploits, timing attacks, sequence attacks, auth bypass |
 | **Governance & Upgrades** | `governance_audit_test.rs`, `upgrade_test.rs`, `upgrade_migration_safety_test.rs`, `proposal_race_test.rs` | Audit log correctness, upgrade flow, race conditions |
@@ -265,7 +266,8 @@ cargo test
 # Run specific test module
 cargo test borrow_withdraw_adversarial_test --lib
 cargo test pause_matrix_test --lib
-cargo test flash_loan_test --lib
+cargo test --test flash_loan_repayment
+cargo test --test reentrancy_guard_test
 
 # Lint
 cargo clippy --all-targets --all-features

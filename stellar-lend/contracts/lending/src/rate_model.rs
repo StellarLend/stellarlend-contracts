@@ -1,1 +1,495 @@
-I2FsbG93KHVudXNlZF9pbXBvcnRzKV0KdXNlIHNvcm9iYW5fc2RrOjp7Y29udHJhY3R0eXBlLCBFbnZ9Owp1c2Ugc3RlbGxhcl9sZW5kX2NvbW1vbjo6QlBTX0RFTk9NOwoKLy8vIENvbmZpZ3VyYXRpb24gcGFyYW1ldGVycyBmb3IgdGhlIHR3by1zbG9wZSBraW5rIGludGVyZXN0LXJhdGUgbW9kZWwgd2l0aAovLy8gYW4gb3B0aW9uYWwgZW1lcmdlbmN5IHN1cmNoYXJnZSBiYW5kIGF0IGhpZ2ggdXRpbGl6YXRpb24uCi8vLwovLy8gU2VlIFtgUkFURV9NT0RFTC5tZGBdKC4vUkFURV9NT0RFTC5tZCkgZm9yIHRoZSBiYXNlIHBpZWNld2lzZSBmb3JtdWxhIGFuZAovLy8gW2BSQVRFX1NVUkNIQVJHRS5tZGBdKC4vUkFURV9TVVJDSEFSR0UubWQpIGZvciB0aGUgc3VyY2hhcmdlIGJhbmQgYmVoYXZpb3VyLAovLy8gcmF0aW9uYWxlLCBhbmQgYSB3b3JrZWQgZXhhbXBsZS4KLy8vCi8vLyBBbGwgZmllbGRzIGFyZSBleHByZXNzZWQgaW4gYmFzaXMgcG9pbnRzIChicHMpLCB3aGVyZSBgMTAwIGJwcyA9IDElYCBhbmQKLy8vIGAxMCwwMDAgYnBzID0gMTAwJWAuCiNbb250cmFjdHR5cGVdCiNbZGVyaXZlKENsb25lLCBEZWJ1ZywgUGFydGlhbEVxLCBFcSldCnB1YiBzdHJ1Y3QgUmF0ZVBhcmFtcyB7CiAgICAvLy8gQmFzZSByYXRlIChicHMpIGFwcGxpZWQgYXQgemVybyB1dGlsaXphdGlvbi4gQWx3YXlzIGFkZGVkIHRvIHRoZSBjb21wdXRlZCByYXRlCiAgICAvLy8gYmVmb3JlIGFwcGx5aW5nIGZsb29yL2NlaWxpbmcgY2xhbXBpbmcuCiAgICBwdWIgYmFzZV9yYXRlX2JwczogaTEyOCwKCiAgICAvLy8gVXRpbGl6YXRpb24gdGhyZXNob2xkIChicHMpIHdoZXJlIHRoZSBzbG9wZSBjaGFuZ2VzLiBCZWxvdyB0aGlzIHBvaW50LCB0aGUKICAgIC8vLyBtdWx0aXBsaWVyIGlzIFtgbXVsdGlwbGllcl9icHNgXShTZWxmOjptdWx0aXBsaWVyX2Jwcyk7IGFib3ZlLCBpdCBpcwogICAgLy8vIFtganVtcF9tdWx0aXBsaWVyX2Jwc2BdKFNlbGY6Omp1bXBfbXVsdGlwbGllcl9icHMpLgogICAgcHViIGtpbmtfdXRpbGl6YXRpb25fYnBzOiBpMTI4LAoKICAgIC8vLyBTbG9wZSAocmF0ZSBwZXIgYnBzIG9mIHV0aWxpemF0aW9uKSBiZWxvdyB0aGUga2luay4gTXVsdGlwbGllZCBieSB1dGlsaXphdGlvbgogICAgLy8vIGFuZCBkaXZpZGVkIGJ5IGBCUFNfREVOT00gPSAxMF8wMDBgIHRvIGNvbXB1dGUgdGhlIHByZS1raW5rIHJhdGUgY29tcG9uZW50LgogICAgcHViIG11bHRpcGxpZXJfYnBzOiBpMTI4LAoKICAgIC8vLyBTbG9wZSAocmF0ZSBwZXIgYnBzIG9mIHV0aWxpemF0aW9uKSBhYm92ZSB0aGUga2luay4gTXVsdGlwbGllZCBieSB0aGUgZXhjZXNzCiAgICAvLy8gdXRpbGl6YXRpb24gYWJvdmUgW2BraW5rX3V0aWxpemF0aW9uX2Jwc2BdKFNlbGY6OmtpbmtfdXRpbGl6YXRpb25fYnBzKSBhbmQKICAgIC8vLyBkaXZpZGVkIGJ5IGBCUFNfREVOT00gPSAxMF8wMDBgIHRvIGNvbXB1dGUgdGhlIHBvc3Qta2luayBqdW1wIGNvbXBvbmVudC4KICAgIHB1YiBqdW1wX211bHRpcGxpZXJfYnBzOiBpMTI4LAoKICAgIC8vLyBNaW5pbXVtIGVmZmVjdGl2ZSBib3Jyb3cgcmF0ZSAoYnBzKS4gQXBwbGllZCBhcyBhIGZsb29yIGFmdGVyIHJhdyByYXRlIGNvbXB1dGF0aW9uLgogICAgcHViIHJhdGVfZmxvb3JfYnBzOiBpMTI4LAoKICAgIC8vLyBNYXhpbXVtIGVmZmVjdGl2ZSBib3Jyb3cgcmF0ZSAoYnBzKS4gQXBwbGllZCBhcyBhIGNlaWxpbmcgYWZ0ZXIgcmF3IHJhdGUgY29tcHV0YXRpb24uCiAgICBwdWIgcmF0ZV9jZWlsaW5nX2JwczogaTEyOCwKCiAgICAvLy8gTWF4aW11bSBhbGxvd2VkIHJhdGUgY2hhbmdlIHBlciBsZWRnZXIgKGJwcykuIFdoZW4gY29tYmluZWQgd2l0aCBlbGFwc2VkIGxlZGdlcnMsCiAgICAvLy8gY2FwcyB0aGUgcGVyLWxlZGdlciByYXRlIGNoYW5nZS4gU2V0IHRvIGBpMTI4OjpNQVhgIHRvIGRpc2FibGUgcGVyLWxlZGdlciBzbW9vdGhpbmcuCiAgICBwdWIgbWF4X3JhdGVfY2hhbmdlX3Blcl9sZWRnZXJfYnBzOiBpMTI4LAoKICAgIC8vLyBIeXN0ZXJlc2lzIGJhbmQgKGJwcykuIFdoZW4gdGhlIHRhcmdldCByYXRlIGRpZmZlcnMgZnJvbSB0aGUgY3VycmVudCByYXRlIGJ5IGxlc3MKICAgIC8vLyB0aGFuIHRoaXMgYmFuZCwgdGhlIGN1cnJlbnQgcmF0ZSBpcyBoZWxkIHN0ZWFkeS4gU2V0IHRvIGAwYCB0byBkaXNhYmxlIGh5c3RlcmVzaXMuCiAgICBwdWIgaHlzdGVyZXNpc19icHM6IGkxMjgsCgogICAgLy8vIFV0aWxpemF0aW9uIHRocmVzaG9sZCAoYnBzKSB0aGF0IGFjdGl2YXRlcyB0aGUgZW1lcmdlbmN5IHN1cmNoYXJnZSBiYW5kLgogICAgLy8vCiAgICAvLy8gV2hlbiBgdXRpbGl6YXRpb25fYnBzID4gc3VyY2hhcmdlX2tpbmtfYnBzYCwgYW4gYWRkaXRpb25hbCBsaW5lYXIgc3VyY2hhcmdlCiAgICAvLy8gaXMgY29tcHV0ZWQgb24gdG9wIG9mIHRoZSBiYXNlIHR3by1zbG9wZSByYXRlOgogICAgLy8vCiAgICAvLy8gYGBgdGV4dAogICAgLy8vIHN1cmNoYXJnZSA9ICh1dGlsaXphdGlvbiAtIHN1cmNoYXJnZV9raW5rKSDDlyBzdXJjaGFyZ2Vfc2xvcGUgLyBCUFNfREVOT00KICAgIC8vLyBgYGAKICAgIC8vLwogICAgLy8vIFRoZSBzdXJjaGFyZ2UgaXMgYXBwbGllZCAqKmJlZm9yZSoqIHRoZSBjZWlsaW5nIGNsYW1wLCBzbyBpdCBjYW4gcHVzaCB0aGUgcmF0ZQogICAgLy8vIHVwIHRvIFtgcmF0ZV9jZWlsaW5nX2Jwc2BdKFNlbGY6OnJhdGVfY2VpbGluZ19icHMpIGJ1dCBub3QgYmV5b25kLiBTZXQgdG8KICAgIC8vLyBgMTBfMDAwYCAob3IgaGlnaGVyKSB3aXRoIFtgc3VyY2hhcmdlX3Nsb3BlYF0oU2VsZjo6c3VyY2hhcmdlX3Nsb3BlKWA9IDAgdG8KICAgIC8vLyBkaXNhYmxlIHRoZSBzdXJjaGFyZ2UgKHByZXNlcnZpbmcgdGhlIGxlZ2FjeSB0d28tc2xvcGUgYmVoYXZpb3VyKS4KICAgIC8vLwogICAgLy8vIFNlZSBbYFJBVEVfU1VSQ0hBUkdFLm1kYF0oLi9SQVRFX1NVUkNIQVJHRS5tZCkgZm9yIHJhdGlvbmFsZSBhbmQgYSB3b3JrZWQgZXhhbXBsZS4KICAgIHB1YiBzdXJjaGFyZ2Vfa2lua19icHM6IGkxMjgsCgogICAgLy8vIFNsb3BlIChyYXRlIHBlciBicHMgb2YgdXRpbGl6YXRpb24pIGFwcGxpZWQgaW4gdGhlIHN1cmNoYXJnZSBiYW5kLgogICAgLy8vCiAgICAvLy8gTXVsdGlwbGllZCBieSB0aGUgZXhjZXNzIHV0aWxpemF0aW9uIGFib3ZlCiAgICAvLy8gW2BzdXJjaGFyZ2Vfa2lua19icHNgXShTZWxmOjpzdXJjaGFyZ2Vfa2lua19icHMpIGFuZCBkaXZpZGVkIGJ5CiAgICAvLy8gYEJQU19ERU5PTSA9IDEwXzAwMGAuIEEgdmFsdWUgb2YgYDBgIGRpc2FibGVzIHRoZSBzdXJjaGFyZ2UgcmVnYXJkbGVzcyBvZgogICAgLy8vIHRoZSBraW5rLgogICAgcHViIHN1cmNoYXJnZV9zbG9wZTogaTEyOCwKfQoKaW1wbCBEZWZhdWx0IGZvciBSYXRlUGFyYW1zIHsKICAgIC8vLyBSZXR1cm5zIHRoZSBkZWZhdWx0IHJhdGUgbW9kZWwgY29uZmlndXJhdGlvbi4KICAgIC8vLwogICAgLy8vICMgRGVmYXVsdCBWYWx1ZXMKICAgIC8vLwogICAgLy8vIHwgUGFyYW1ldGVyIHwgVmFsdWUgfCBJbnRlcnByZXRhdGlvbiB8CiAgICAvLy8gfC0tLS0tLS0tLS0tfC0tLS0tLS18LS0tLXwKICAgIC8vLyB8IGBiYXNlX3JhdGVfYnBzYCB8IDEwMCB8IDElIEFQUiBiYXNlIHJhdGUgfAogICAgLy8vIHwgYGtpbmtfdXRpbGl6YXRpb25fYnBzYCB8IDgsMDAwIHwgODAlIHV0aWxpemF0aW9uIGtpbmsgfAogICAgLy8vIHwgYG11bHRpcGxpZXJfYnBzYCB8IDIsMDAwIHwgMC4yJSByYXRlIHBlciAxJSB1dGlsaXphdGlvbiBiZWxvdyBraW5rIHwKICAgIC8vLyB8IGBqdW1wX211bHRpcGxpZXJfYnBzYCB8IDEwLDAwMCB8IDElIHJhdGUgcGVyIDElIHV0aWxpemF0aW9uIGFib3ZlIGtpbmsgfAogICAgLy8vIHwgYHJhdGVfZmxvb3JfYnBzYCB8IDUwIHwgMC41JSBtaW5pbXVtIHJhdGUgfAogICAgLy8vIHwgYHJhdGVfY2VpbGluZ19icHNgIHwgMTAsMDAwIHwgMTAwJSBtYXhpbXVtIHJhdGUgfAogICAgLy8vIHwgYG1heF9yYXRlX2NoYW5nZV9wZXJfbGVkZ2VyX2Jwc2AgfCBgaTEyODo6TUFYYCB8IE5vIHBlci1sZWRnZXIgbGltaXQgfAogICAgLy8vIHwgYGh5c3RlcmVzaXNfYnBzYCB8IDAgfCBObyBoeXN0ZXJlc2lzIGJhbmQgfAogICAgLy8vIHwgYHN1cmNoYXJnZV9raW5rX2Jwc2AgfCAxMF8wMDAgfCAxMDAlIHV0aWxpemF0aW9uIOKAlCBkaXNhYmxlcyBzdXJjaGFyZ2UgKGtpbmsgYXQgbWF4IHV0aWwpIHwKICAgIC8vLyB8IGBzdXJjaGFyZ2Vfc2xvcGVgIHwgMCB8IFplcm8gc2xvcGUg4oCUIGRpc2FibGVzIHN1cmNoYXJnZSByZWdhcmRsZXNzIG9mIGtpbmsgfAogICAgLy8vCiAgICAvLy8gVGhpcyBjb25maWd1cmF0aW9uIGluY2VudGl2aXplcyBjYXBpdGFsIHV0aWxpemF0aW9uIHVwIHRvIDgwJSwgdGhlbiBzdGVlcGx5IHBlbmFsaXplcwogICAgLy8vIHNjYXJjaXR5IGJleW9uZCB0aGF0IHBvaW50LiBUaGUgc3VyY2hhcmdlIGJhbmQgaXMgZGlzYWJsZWQgYnkgZGVmYXVsdCwgcHJlc2VydmluZyB0aGUKICAgIC8vLyBsZWdhY3kgdHdvLXNsb3BlIGJlaGF2aW91ci4gU2VlIFtgUkFURV9NT0RFTC5tZGBdKC4vUkFURV9NT0RFTC5tZCkgZm9yIGN1cnZlIGFuYWx5c2lzCiAgICAvLy8gYW5kIFtgUkFURV9TVVJDSEFSR0UubWRgXSguL1JBVEVfU1VSQ0hBUkdFLm1kKSBmb3IgdGhlIHN1cmNoYXJnZSBtZWNoYW5pc20uCiAgICBmbiBkZWZhdWx0KCkgLT4gU2VsZiB7CiAgICAgICAgU2VsZiB7CiAgICAgICAgICAgIGJhc2VfcmF0ZV9icHM6IDEwMCwKICAgICAgICAgICAga2lua191dGlsaXphdGlvbl9icHM6IDhfMDAwLAogICAgICAgICAgICBtdWx0aXBsaWVyX2JwczogMl8wMDAsCiAgICAgICAgICAgIGp1bXBfbXVsdGlwbGllcl9icHM6IDEwXzAwMCwKICAgICAgICAgICAgcmF0ZV9mbG9vcl9icHM6IDUwLAogICAgICAgICAgICByYXRlX2NlaWxpbmdfYnBzOiAxMF8wMDAsCiAgICAgICAgICAgIG1heF9yYXRlX2NoYW5nZV9wZXJfbGVkZ2VyX2JwczogaTEyODo6TUFYLAogICAgICAgICAgICBoeXN0ZXJlc2lzX2JwczogMCwKICAgICAgICAgICAgc3VyY2hhcmdlX2tpbmtfYnBzOiAxMF8wMDAsCiAgICAgICAgICAgIHN1cmNoYXJnZV9zbG9wZTogMCwKICAgICAgICB9CiAgICB9Cn0KCi8vLyBFcnJvcnMgdGhhdCBjYW4gb2NjdXIgZHVyaW5nIGJvcnJvdy1yYXRlIGNvbXB1dGF0aW9uLgojW2Rlcml2ZShDbG9uZSwgQ29weSwgRGVidWcsIFBhcnRpYWxFcSwgRXEpXQpwdWIgZW51bSBSYXRlTW9kZWxFcnJvciB7CiAgICAvLy8gQW4gaW50ZXJtZWRpYXRlIGFyaXRobWV0aWMgb3BlcmF0aW9uIG92ZXJmbG93ZWQuCiAgICBPdmVyZmxvdywKICAgIC8vLyBBbiBpbnB1dCB2aW9sYXRlZCBhIGRvY3VtZW50ZWQgaW52YXJpYW50OiB1dGlsaXphdGlvbiBvdXRzaWRlCiAgICAvLy8gYFswLCBCUFNfREVOT01dYCBvciBhIG5vbi1wb3NpdGl2ZS9uZWdhdGl2ZSBtb2RlbCBjb2VmZmljaWVudC4KICAgIC8vLwogICAgLy8vIFRoaXMga2VlcHMgdGhlIHB1cmUgbWF0aCBib3VuZGVkIGFuZCBkZXRlcm1pbmlzdGljIGZvciBhZHZlcnNhcmlhbAogICAgLy8vIGNhbGxlcnMgaW5zdGVhZCBvZiBzaWxlbnRseSBwcm9kdWNpbmcgYSBub24tbW9ub3RvbmljIG9yIG5lZ2F0aXZlIHJhdGUuCiAgICBPdXRPZlJhbmdlLAp9CgovLy8gQ29tcHV0ZXMgdGhlIHRhcmdldCBib3Jyb3cgcmF0ZSBnaXZlbiB1dGlsaXphdGlvbiBhbmQgcmF0ZSBtb2RlbCBwYXJhbWV0ZXJzLgovLy8KLy8vIEltcGxlbWVudHMgYSB0d28tc2xvcGUgcGllY2V3aXNlIGxpbmVhciBtb2RlbCB3aXRoIGEga2luayBwb2ludCBhbmQgYW4KLy8vICoqb3B0aW9uYWwgZW1lcmdlbmN5IHN1cmNoYXJnZSBiYW5kKiogYXQgdmVyeSBoaWdoIHV0aWxpemF0aW9uLiBCZWxvdyB0aGUKLy8vIGtpbmosIHRoZSByYXRlIGluY3JlYXNlcyBnZW50bHk7IGFib3ZlIGl0LCB0aGUgc2xvcGUgaW5jcmVhc2VzIHNoYXJwbHkgdG8KLy8vIGluY2VudGl2aXplIGNhcGl0YWwgZWZmaWNpZW5jeSBhbmQgcHJvdGVjdCBhZ2FpbnN0IHJ1bmF3YXkgc2NhcmNpdHkuICBXaGVuCi8vLyB1dGlsaXphdGlvbiBleGNlZWRzIFtgc3VyY2hhcmdlX2tpbmtfYnBzYF0oUmF0ZVBhcmFtczo6c3VyY2hhcmdlX2tpbmtfYnBzKSwKLy8vIGFuIGFkZGl0aW9uYWwgbGluZWFyIHN1cmNoYXJnZSBpcyBzdGFja2VkIG9uIHRvcCB0byBmdXJ0aGVyIGluY2VudGl2aXNlCi8vLyByZXBheW1lbnQgYW5kIG5ldyBkZXBvc2l0cyBkdXJpbmcgYSBsaXF1aWRpdHkgY3J1bmNoLgovLy8KLy8vICMgRm9ybXVsYQovLy8KLy8vIExldCBgdWAgYmUgdXRpbGl6YXRpb24gKGJwcykgYW5kIGBCUFNfREVOT00gPSAxMCwwMDBgLgovLy8KLy8vICoqUHJlLWtpbmsgcmF0ZSoqIChhbHdheXMgY29tcHV0ZWQpOgovLy8gYGBgdGV4dAovLy8gcl9wcmUgPSBiYXNlX3JhdGUgKyAobWluKHUsIGtpbmtfdXRpbGl6YXRpb24pIMOXIG11bHRpcGxpZXIpIC8gQlBTX0RFTk9NCi8vLyBgYGAKLy8vCi8vLyAqKlJhdyByYXRlKiogKGJlZm9yZSBjbGFtcGluZyk6Ci8vLyBgYGB0ZXh0Ci8vLyBJZiB1IOKJpCBraW5rX3V0aWxpemF0aW9uOgovLy8gICAgIHJfcmF3ID0gcl9wcmUKLy8vIElmIHUgPiBraW5rX3V0aWxpemF0aW9uOgovLy8gICAgIGV4Y2VzcyA9IHUgLSBraW5rX3V0aWxpemF0aW9uCi8vLyAgICAganVtcCA9IChleGNlc3Mgw5cganVtcF9tdWx0aXBsaWVyKSAvIEJQU19ERU5PTQovLy8gICAgIHJfcmF3ID0gcl9wcmUgKyBqdW1wCi8vLyBgYGAKLy8vCi8vLyAqKlN1cmNoYXJnZSoqIChhZGRlZCB3aGVuIGB1ID4gc3VyY2hhcmdlX2tpbmtgKToKLy8vIGBgYHRleHQKLy8vIHN1cmNoYXJnZV9iYW5kID0gbWF4KDAsIHUgLSBzdXJjaGFyZ2Vfa2luaykKLy8vIHN1cmNoYXJnZSA9IChzdXJjaGFyZ2VfYmFuZCDDlyBzdXJjaGFyZ2Vfc2xvcGUpIC8gQlBTX0RFTk9NCi8vLyByX3N1cmNoYXJnZWQgPSByX3JhdyArIHN1cmNoYXJnZQovLy8gYGBgCi8vLwovLy8gKipGaW5hbCByYXRlKiogKGFmdGVyIGNsYW1waW5nKToKLy8vIGBgYHRleHQKLy8vIHIgPSBtYXgoZmxvb3IsIG1pbihyX3N1cmNoYXJnZWQsIGNlaWxpbmcpKQovLy8gYGBgCi8vLwovLy8gVGhlIGZ1bmN0aW9uIGlzICoqbW9ub3RvbmljIG5vbi1kZWNyZWFzaW5nKiogaW4gdXRpbGl6YXRpb246IGV2ZXJ5IHNlZ21lbnQKLy8vIGhhcyBhIG5vbi1uZWdhdGl2ZSBzbG9wZSwgYW5kIHRoZSBzdXJjaGFyZ2Ugb25seSBhZGRzIHRvIHRoZSByYXRlLgovLy8KLy8vICMgSW52YXJpYW50cyAoZW5mb3JjZWQpCi8vLwovLy8gLSBgdXRpbGl6YXRpb25fYnBzYCBtdXN0IGJlIGluIGBbMCwgQlBTX0RFTk9NXWAuIFZhbHVlcyBvdXRzaWRlIHRoaXMgcmFuZ2UKLy8vICAgcmV0dXJuIFtgUmF0ZU1vZGVsRXJyb3I6Ok91dE9mUmFuZ2VgXSBpbnN0ZWFkIG9mIGJlaW5nIHNpbGVudGx5IGNsYW1wZWQsCi8vLyAgIHNvIGNhbGxlcnMgY2Fubm90IHB1c2ggdGhlIG1vZGVsIHBhc3QgMTAwICUgdXRpbGl6YXRpb24uCi8vLyAtIEV2ZXJ5IGNvZWZmaWNpZW50IGluIGBwYXJhbXNgIG11c3QgYmUgbm9uLW5lZ2F0aXZlLiBBIG5lZ2F0aXZlIHNsb3BlIG9yCi8vLyAgIGJhc2UgcmF0ZSB3b3VsZCBkZXN0cm95IHRoZSBtb25vdG9uaWNpdHkgZ3VhcmFudGVlIGFuZCBpcyByZWplY3RlZCB3aXRoCi8vLyAgIFtgUmF0ZU1vZGVsRXJyb3I6Ok91dE9mUmFuZ2VgXS4KLy8vCi8vLyAjIEFyZ3VtZW50cwovLy8KLy8vICogYHV0aWxpemF0aW9uX2Jwc2Ag4oCUIFRoZSBwcm90b2NvbCB1dGlsaXphdGlvbiBhcyBhIGJhc2lzIHBvaW50ICgwIHRvIDEwLDAwMCkuCi8vLyAqIGBwYXJhbXNgIOKAlCBbYFJhdGVQYXJhbXNgXSBzdHJ1Y3QgY29udGFpbmluZyBhbGwgbW9kZWwgY29lZmZpY2llbnRzLgovLy8KLy8vICMgUmV0dXJucwovLy8KLy8vIGBPayhyYXRlX2JwcylgIOKAlCB0aGUgY29tcHV0ZWQgYm9ycm93IHJhdGUgaW4gYmFzaXMgcG9pbnRzLCBjbGFtcGVkIHRvCi8vLyBgW3BhcmFtcy5yYXRlX2Zsb29yX2JwcywgcGFyYW1zLnJhdGVfY2VpbGluZ19icHNdYC4KLy8vCi8vLyBgRXJyKFJhdGVNb2RlbEVycm9yOjpPdmVyZmxvdylgIOKAlCBpZiBhbnkgaW50ZXJtZWRpYXRlIGFyaXRobWV0aWMgcHJvZHVjdAovLy8gb3ZlcmZsb3dzIGBpMTI4YC4gIENhbGxlcnMgc2hvdWxkIHByb3BhZ2F0ZSB0aGlzIGFzIGEgdHlwZWQgZXJyb3IgcmF0aGVyCi8vLyB0aGFuIGFsbG93aW5nIHRoZSB0cmFuc2FjdGlvbiB0byBhYm9ydC4KLy8vCi8vLyBgRXJyKFJhdGVNb2RlbEVycm9yOjpPdXRPZlJhbmdlKWAg4oCUIGlmIGB1dGlsaXphdGlvbl9icHNgIGlzIG91dHNpZGUKLy8vIGBbMCwgQlBTX0RFTk9NXWAgb3IgYW55IG1vZGVsIGNvZWZmaWNpZW50IGlzIG5lZ2F0aXZlLgovLy8KLy8vICMgRXhhbXBsZXMKLy8vCi8vLyBVc2luZyBbYFJhdGVQYXJhbXM6OmRlZmF1bHQoKWBdOgovLy8KLy8vIC0gQXQgMCUgdXRpbGl6YXRpb246IGAxMDAgYnBzYCAoYmFzZSByYXRlKQovLy8gLSBBdCA4MCUgdXRpbGl6YXRpb24gKGtpbms pOiBgMSw3MDAgYnBzYAovLy8gLSBBdCAxMDAlIHV0aWxpemF0aW9uOiBgMyw3MDAgYnBzYCAobWF4aW11bSBub24tY2VpbGluZy1saW1pdGVkIHJhdGUpCi8vLwovLy8gV2l0aCBhIHN1cmNoYXJnZSBjb25maWd1cmVkIGF0IDk1JSB1dGlsIHdpdGggc2xvcGUgODAsMDAwOgovLy8KLy8vIC0gQXQgOTUlIHV0aWxpemF0aW9uIGFuZCBiZWxvdzogbm8gc3VyY2hhcmdlIGFkZGVkCi8vLyAtIEF0IDEwMCUgdXRpbGl6YXRpb246IGJhc2UgcmF0ZSBgMyw3MDAgYnBzYCArIHN1cmNoYXJnZSBvZgovLy8gICAoMTBfMDAwIC0gOV81MDApIMOXIDgwXzAwMCAvIDEwXzAwMCA9IDRfMDAwIGJwcyA9ICoqNyw3MDAgYnBzKioKLy8vCi8vLyBTZWUgW2BSQVRFX01PREVMLm1kYF0oLi9SQVRFX01PREVMLm1kKSBmb3IgZGV0YWlsZWQgY3VydmUgc2tldGNoIGFuZAovLy8gW2BSQVRFX1NVUkNIQVJHRS5tZGBdKC4vUkFURV9TVVJDSEFSR0UubWQpIGZvciBzdXJjaGFyZ2UgcmF0aW9uYWxlIGFuZCBhCi8vLyBmdWxsIHdvcmtlZCBleGFtcGxlLgpwdWIgZm4gY29tcHV0ZV9ib3Jyb3dfcmF0ZSgKICAgIHV0aWxpemF0aW9uX2JwczogaTEyOCwKICAgIHBhcmFtczogJlJhdGVQYXJhbXMsCikgLT4gUmVzdWx0PGkxMjgsIFJhdGVNb2RlbEVycm9yPiB7CiAgICBpZiAhKDAuLj1CUFNfREVOT00pLmNvbnRhaW5zKCZ1dGlsaXphdGlvbl9icHMpIHsKICAgICAgICByZXR1cm4gRXJyKFJhdGVNb2RlbEVycm9yOjpPdXRPZlJhbmdlKTsKICAgIH0KICAgIGlmIHBhcmFtcy5iYXNlX3JhdGVfYnBzIDwgMAogICAgICAgIHx8IHBhcmFtcy5raW5rX3V0aWxpemF0aW9uX2JwcyA8IDAKICAgICAgICB8fCBwYXJhbXMubXVsdGlwbGllcl9icHMgPCAwCiAgICAgICAgfHwgcGFyYW1zLmp1bXBfbXVsdGlwbGllcl9icHMgPCAwCiAgICAgICAgfHwgcGFyYW1zLnJhdGVfZmxvb3JfYnBzIDwgMAogICAgICAgIHx8IHBhcmFtcy5yYXRlX2NlaWxpbmdfYnBzIDwgMAogICAgICAgIHx8IHBhcmFtcy5tYXhfcmF0ZV9jaGFuZ2VfcGVyX2xlZGdlcl9icHMgPCAwCiAgICAgICAgfHwgcGFyYW1zLmh5c3RlcmVzaXNfYnBzIDwgMAogICAgICAgIHx8IHBhcmFtcy5zdXJjaGFyZ2Vfa2lua19icHMgPCAwCiAgICAgICAgfHwgcGFyYW1zLnN1cmNoYXJnZV9zbG9wZSA8IDAKICAgIHsKICAgICAgICByZXR1cm4gRXJyKFJhdGVNb2RlbEVycm9yOjpPdXRPZlJhbmdlKTsKICAgIH0KICAgIGxldCBwcmVfa2lua19yYXRlID0gcGFyYW1zCiAgICAgICAgLmJhc2VfcmF0ZV9icHMKICAgICAgICAuY2hlY2tlZF9hZGQoCiAgICAgICAgICAgIHV0aWxpemF0aW9uX2JwcwogICAgICAgICAgICAgICAgLm1pbihwYXJhbXMua2lua191dGlsaXphdGlvbl9icHMpCiAgICAgICAgICAgICAgICAuY2hlY2tlZF9tdWwocGFyYW1zLm11bHRpcGxpZXJfYnBzKQogICAgICAgICAgICAgICAgLm9rX29yKFJhdGVNb2RlbEVycm9yOjpPdmVyZmxvdyk/CiAgICAgICAgICAgICAgICAuY2hlY2tlZF9kaXYoQlBTX0RFTk9NKQogICAgICAgICAgICAgICAgLm9rX29yKFJhdGVNb2RlbEVycm9yOjpPdmVyZmxvdyk/LAogICAgICAgICkKICAgICAgICAub2tfb3IoUmF0ZU1vZGVsRXJyb3I6Ok92ZXJmbG93KT87CgogICAgbGV0IHJhd19yYXRlID0gaWYgdXRpbGl6YXRpb25fYnBzID4gcGFyYW1zLmtpbmtfdXRpbGl6YXRpb25fYnBzIHsKICAgICAgICBsZXQgZXhjZXNzID0gdXRpbGl6YXRpb25fYnBzCiAgICAgICAgICAgIC5jaGVja2VkX3N1YihwYXJhbXMua2lua191dGlsaXphdGlvbl9icHMpCiAgICAgICAgICAgIC5va19vcihSYXRlTW9kZWxFcnJvcjo6T3ZlcmZsb3cpPzsKICAgICAgICBsZXQganVtcCA9IGV4Y2VzcwogICAgICAgICAgICAuY2hlY2tlZF9tdWwocGFyYW1zLmp1bXBfbXVsdGlwbGllcl9icHMpCiAgICAgICAgICAgIC5va19vcihSYXRlTW9kZWxFcnJvcjo6T3ZlcmZsb3cpPwogICAgICAgICAgICAuY2hlY2tlZF9kaXYoQlBTX0RFTk9NKQogICAgICAgICAgICAub2tfb3IoUmF0ZU1vZGVsRXJyb3I6Ok92ZXJmbG93KT87CiAgICAgICAgcHJlX2tpbmtfcmF0ZQogICAgICAgICAgICAuY2hlY2tlZF9hZGQoanVtcCkKICAgICAgICAgICAgLm9rX29yKFJhdGVNb2RlbEVycm9yOjpPdmVyZmxvdyk/CiAgICB9IGVsc2UgewogICAgICAgIHByZV9raW5rX3JhdGUKICAgIH07CgogICAgbGV0IHJhdGVfd2l0aF9zdXJjaGFyZ2UgPSBpZiB1dGlsaXphdGlvbl9icHMgPiBwYXJhbXMuc3VyY2hhcmdlX2tpbmtfYnBzIHsKICAgICAgICBsZXQgc3VyY2hhcmdlX2V4Y2VzcyA9IHV0aWxpemF0aW9uX2JwcwogICAgICAgICAgICAuY2hlY2tlZF9zdWIocGFyYW1zLnN1cmNoYXJnZV9raW5rX2JwcykKICAgICAgICAgICAgLm9rX29yKFJhdGVNb2RlbEVycm9yOjpPdmVyZmxvdyk/OwogICAgICAgIGxldCBzdXJjaGFyZ2UgPSBzdXJjaGFyZ2VfZXhjZXNzCiAgICAgICAgICAgIC5jaGVja2VkX211bChwYXJhbXMuc3VyY2hhcmdlX3Nsb3BlKQogICAgICAgICAgICAub2tfb3IoUmF0ZU1vZGVsRXJyb3I6Ok92ZXJmbG93KT8KICAgICAgICAgICAgLmNoZWNrZWRfZGl2KEJQU19ERU5PTSkKICAgICAgICAgICAgLm9rX29yKFJhdGVNb2RlbEVycm9yOjpPdmVyZmxvdyk/OwogICAgICAgIHJhd19yYXRlCiAgICAgICAgICAgIC5jaGVja2VkX2FkZChzdXJjaGFyZ2UpCiAgICAgICAgICAgIC5va19vcihSYXRlTW9kZWxFcnJvcjo6T3ZlcmZsb3cpPwogICAgfSBlbHNlIHsKICAgICAgICByYXdfcmF0ZQogICAgfTsKCiAgICBPayhyYXRlX3dpdGhfc3VyY2hhcmdlCiAgICAgICAgLm1heChwYXJhbXMucmF0ZV9mbG9vcl9icHMpCiAgICAgICAgLm1pbihwYXJhbXMucmF0ZV9jZWlsaW5nX2JwcykpCn0KCiNbY29udHJhY3R0eXBlXQojW2Rlcml2ZShDbG9uZSwgRGVidWcsIFBhcnRpYWxFcSwgRXEpXQojW2FsbG93KGNsaXBweTo6ZW51bV92YXJpYW50X25hbWVzKV0KcHViIGVudW0gUmF0ZU1vZGVsS2V5IHsKICAgIExhc3RSYXRlLAogICAgTGFzdFRhcmdldFJhdGUsCiAgICBMYXN0UmF0ZUxlZGdlciwKfQoKcHViIGZuIGFwcGx5X2h5c3RlcmVzaXMoY3VycmVudDogaTEyOCwgdGFyZ2V0OiBpMTI4LCBiYW5kOiBpMTI4KSAtPiBpMTI4IHsKICAgIGxldCBiYW5kID0gYmFuZC5tYXgoMCk7CiAgICBsZXQgZGlmZiA9IG1hdGNoIHRhcmdldC5jaGVja2VkX3N1YihjdXJyZW50KSB7CiAgICAgICAgU29tZSh2YWx1ZSkgPT4gdmFsdWUsCiAgICAgICAgTm9uZSA9PiB7CiAgICAgICAgICAgIGlmIHRhcmdldCA+PSBjdXJyZW50IHsKICAgICAgICAgICAgICAgIGkxMjg6Ok1BWAogICAgICAgICAgICB9IGVsc2UgewogICAgICAgICAgICAgICAgaTEyODo6TUlOCiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICB9OwoKICAgIGlmIGRpZmYgPj0gMCB7CiAgICAgICAgaWYgZGlmZiA8PSBiYW5kIHsKICAgICAgICAgICAgcmV0dXJuIGN1cnJlbnQ7CiAgICAgICAgfQogICAgICAgIHRhcmdldC5jaGVja2VkX3N1YihiYW5kKS51bndyYXBfb3IodGFyZ2V0KQogICAgfSBlbHNlIHsKICAgICAgICB0YXJnZXQuY2hlY2tlZF9hZGQoYmFuZCkudW53cmFwX29yKHRhcmdldCkKICAgIH0KfQo=
+#[allow(unused_imports)]
+use soroban_sdk::{contracttype, Env};
+use stellar_lend_common::BPS_DENOM;
+
+/// Configuration parameters for the two-slope kink interest-rate model with
+/// an optional emergency surcharge band at high utilization.
+///
+/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for the base piecewise formula and
+/// [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for the surcharge band behaviour,
+/// rationale, and a worked example.
+///
+/// All fields are expressed in basis points (bps), where `100 bps = 1%` and
+/// `10,000 bps = 100%`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateParams {
+    /// Base rate (bps) applied at zero utilization. Always added to the computed rate
+    /// before applying floor/ceiling clamping.
+    pub base_rate_bps: i128,
+
+    /// Utilization threshold (bps) where the slope changes. Below this point, the
+    /// multiplier is [`multiplier_bps`](Self::multiplier_bps); above, it is
+    /// [`jump_multiplier_bps`](Self::jump_multiplier_bps).
+    pub kink_utilization_bps: i128,
+
+    /// Slope (rate per bps of utilization) below the kink. Multiplied by utilization
+    /// and divided by `BPS_DENOM = 10_000` to compute the pre-kink rate component.
+    pub multiplier_bps: i128,
+
+    /// Slope (rate per bps of utilization) above the kink. Multiplied by the excess
+    /// utilization above [`kink_utilization_bps`](Self::kink_utilization_bps) and
+    /// divided by `BPS_DENOM = 10_000` to compute the post-kink jump component.
+    pub jump_multiplier_bps: i128,
+
+    /// Minimum effective borrow rate (bps). Applied as a floor after raw rate computation.
+    pub rate_floor_bps: i128,
+
+    /// Maximum effective borrow rate (bps). Applied as a ceiling after raw rate computation.
+    pub rate_ceiling_bps: i128,
+
+    /// Maximum allowed rate change per ledger (bps). When combined with elapsed ledgers,
+    /// caps the per-ledger rate change. Set to `i128::MAX` to disable per-ledger smoothing.
+    pub max_rate_change_per_ledger_bps: i128,
+
+    /// Hysteresis band (bps). When the target rate differs from the current rate by less
+    /// than this band, the current rate is held steady. Set to `0` to disable hysteresis.
+    pub hysteresis_bps: i128,
+
+    /// Utilization threshold (bps) that activates the emergency surcharge band.
+    ///
+    /// When `utilization_bps > surcharge_kink_bps`, an additional linear surcharge
+    /// is computed on top of the base two-slope rate:
+    ///
+    /// ```text
+    /// surcharge = (utilization - surcharge_kink) × surcharge_slope / BPS_DENOM
+    /// ```
+    ///
+    /// The surcharge is applied **before** the ceiling clamp, so it can push the rate
+    /// up to [`rate_ceiling_bps`](Self::rate_ceiling_bps) but not beyond. Set to
+    /// `10_000` (or higher) with [`surcharge_slope`](Self::surcharge_slope)` = 0` to
+    /// disable the surcharge (preserving the legacy two-slope behaviour).
+    ///
+    /// See [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for rationale and a worked example.
+    pub surcharge_kink_bps: i128,
+
+    /// Slope (rate per bps of utilization) applied in the surcharge band.
+    ///
+    /// Multiplied by the excess utilization above
+    /// [`surcharge_kink_bps`](Self::surcharge_kink_bps) and divided by
+    /// `BPS_DENOM = 10_000`. A value of `0` disables the surcharge regardless of
+    /// the kink.
+    pub surcharge_slope: i128,
+}
+
+impl Default for RateParams {
+    /// Returns the default rate model configuration.
+    ///
+    /// # Default Values
+    ///
+    /// | Parameter | Value | Interpretation |
+    /// |-----------|-------|---|
+    /// | `base_rate_bps` | 100 | 1% APR base rate |
+    /// | `kink_utilization_bps` | 8,000 | 80% utilization kink |
+    /// | `multiplier_bps` | 2,000 | 0.2% rate per 1% utilization below kink |
+    /// | `jump_multiplier_bps` | 10,000 | 1% rate per 1% utilization above kink |
+    /// | `rate_floor_bps` | 50 | 0.5% minimum rate |
+    /// | `rate_ceiling_bps` | 10,000 | 100% maximum rate |
+    /// | `max_rate_change_per_ledger_bps` | `i128::MAX` | No per-ledger limit |
+    /// | `hysteresis_bps` | 0 | No hysteresis band |
+    /// | `surcharge_kink_bps` | 10_000 | 100% utilization — disables surcharge (kink at max util) |
+    /// | `surcharge_slope` | 0 | Zero slope — disables surcharge regardless of kink |
+    ///
+    /// This configuration incentivizes capital utilization up to 80%, then steeply penalizes
+    /// scarcity beyond that point. The surcharge band is disabled by default, preserving the
+    /// legacy two-slope behaviour. See [`RATE_MODEL.md`](./RATE_MODEL.md) for curve analysis
+    /// and [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for the surcharge mechanism.
+    fn default() -> Self {
+        Self {
+            base_rate_bps: 100,
+            kink_utilization_bps: 8_000,
+            multiplier_bps: 2_000,
+            jump_multiplier_bps: 10_000,
+            rate_floor_bps: 50,
+            rate_ceiling_bps: 10_000,
+            max_rate_change_per_ledger_bps: i128::MAX,
+            hysteresis_bps: 0,
+            surcharge_kink_bps: 10_000,
+            surcharge_slope: 0,
+        }
+    }
+}
+
+/// Errors that can occur during borrow-rate computation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateModelError {
+    /// An intermediate arithmetic operation overflowed.
+    Overflow,
+    /// An input violated a documented invariant: utilization outside
+    /// `[0, BPS_DENOM]` or a non-positive/negative model coefficient.
+    ///
+    /// This keeps the pure math bounded and deterministic for adversarial
+    /// callers instead of silently producing a non-monotonic or negative rate.
+    OutOfRange,
+}
+
+/// Computes the target borrow rate given utilization and rate model parameters.
+///
+/// Implements a two-slope piecewise linear model with a kink point and an
+/// **optional emergency surcharge band** at very high utilization. Below the
+/// kink, the rate increases gently; above it, the slope increases sharply to
+/// incentivize capital efficiency and protect against runaway scarcity.  When
+/// utilization exceeds [`surcharge_kink_bps`](RateParams::surcharge_kink_bps),
+/// an additional linear surcharge is stacked on top to further incentivise
+/// repayment and new deposits during a liquidity crunch.
+///
+/// # Formula
+///
+/// Let `u` be utilization (bps) and `BPS_DENOM = 10,000`.
+///
+/// **Pre-kink rate** (always computed):
+/// ```text
+/// r_pre = base_rate + (min(u, kink_utilization) × multiplier) / BPS_DENOM
+/// ```
+///
+/// **Raw rate** (before clamping):
+/// ```text
+/// If u ≤ kink_utilization:
+///     r_raw = r_pre
+/// If u > kink_utilization:
+///     excess = u - kink_utilization
+///     jump = (excess × jump_multiplier) / BPS_DENOM
+///     r_raw = r_pre + jump
+/// ```
+///
+/// **Surcharge** (added when `u > surcharge_kink`):
+/// ```text
+/// surcharge_band = max(0, u - surcharge_kink)
+/// surcharge = (surcharge_band × surcharge_slope) / BPS_DENOM
+/// r_surcharged = r_raw + surcharge
+/// ```
+///
+/// **Final rate** (after clamping):
+/// ```text
+/// r = max(floor, min(r_surcharged, ceiling))
+/// ```
+///
+/// The function is **monotonic non-decreasing** in utilization: every segment
+/// has a non-negative slope, and the surcharge only adds to the rate.
+///
+/// # Invariants (enforced)
+///
+/// - `utilization_bps` must be in `[0, BPS_DENOM]`. Values outside this range
+///   return [`RateModelError::OutOfRange`] instead of being silently clamped,
+///   so callers cannot push the model past 100 % utilization.
+/// - Every coefficient in `params` must be non-negative. A negative slope or
+///   base rate would destroy the monotonicity guarantee and is rejected with
+///   [`RateModelError::OutOfRange`].
+///
+/// # Arguments
+///
+/// * `utilization_bps` — The protocol utilization as a basis point (0 to 10,000).
+/// * `params` — [`RateParams`] struct containing all model coefficients.
+///
+/// # Returns
+///
+/// `Ok(rate_bps)` — the computed borrow rate in basis points, clamped to
+/// `[params.rate_floor_bps, params.rate_ceiling_bps]`.
+///
+/// `Err(RateModelError::Overflow)` — if any intermediate arithmetic product
+/// overflows `i128`.  Callers should propagate this as a typed error rather
+/// than allowing the transaction to abort.
+///
+/// `Err(RateModelError::OutOfRange)` — if `utilization_bps` is outside
+/// `[0, BPS_DENOM]` or any model coefficient is negative.
+///
+/// # Examples
+///
+/// Using [`RateParams::default()`]:
+///
+/// - At 0% utilization: `100 bps` (base rate)
+/// - At 80% utilization (kink): `1,700 bps`
+/// - At 100% utilization: `3,700 bps` (maximum non-ceiling-limited rate)
+///
+/// With a surcharge configured at 95% util with slope 80,000:
+///
+/// - At 95% utilization and below: no surcharge added
+/// - At 100% utilization: base rate `3,700 bps` + surcharge of
+///   `(10_000 - 9_500) × 80_000 / 10_000 = 4_000 bps` = **7,700 bps**
+///
+/// See [`RATE_MODEL.md`](./RATE_MODEL.md) for detailed curve sketch and
+/// [`RATE_SURCHARGE.md`](./RATE_SURCHARGE.md) for surcharge rationale and a
+/// full worked example.
+pub fn compute_borrow_rate(
+    utilization_bps: i128,
+    params: &RateParams,
+) -> Result<i128, RateModelError> {
+    if !(0..=BPS_DENOM).contains(&utilization_bps) {
+        return Err(RateModelError::OutOfRange);
+    }
+    if params.base_rate_bps < 0
+        || params.kink_utilization_bps < 0
+        || params.multiplier_bps < 0
+        || params.jump_multiplier_bps < 0
+        || params.rate_floor_bps < 0
+        || params.rate_ceiling_bps < 0
+        || params.max_rate_change_per_ledger_bps < 0
+        || params.hysteresis_bps < 0
+        || params.surcharge_kink_bps < 0
+        || params.surcharge_slope < 0
+    {
+        return Err(RateModelError::OutOfRange);
+    }
+    let pre_kink_rate = params
+        .base_rate_bps
+        .checked_add(
+            utilization_bps
+                .min(params.kink_utilization_bps)
+                .checked_mul(params.multiplier_bps)
+                .ok_or(RateModelError::Overflow)?
+                .checked_div(BPS_DENOM)
+                .ok_or(RateModelError::Overflow)?,
+        )
+        .ok_or(RateModelError::Overflow)?;
+
+    let raw_rate = if utilization_bps > params.kink_utilization_bps {
+        let excess = utilization_bps
+            .checked_sub(params.kink_utilization_bps)
+            .ok_or(RateModelError::Overflow)?;
+        let jump = excess
+            .checked_mul(params.jump_multiplier_bps)
+            .ok_or(RateModelError::Overflow)?
+            .checked_div(BPS_DENOM)
+            .ok_or(RateModelError::Overflow)?;
+        pre_kink_rate
+            .checked_add(jump)
+            .ok_or(RateModelError::Overflow)?
+    } else {
+        pre_kink_rate
+    };
+
+    let rate_with_surcharge = if utilization_bps > params.surcharge_kink_bps {
+        let surcharge_excess = utilization_bps
+            .checked_sub(params.surcharge_kink_bps)
+            .ok_or(RateModelError::Overflow)?;
+        let surcharge = surcharge_excess
+            .checked_mul(params.surcharge_slope)
+            .ok_or(RateModelError::Overflow)?
+            .checked_div(BPS_DENOM)
+            .ok_or(RateModelError::Overflow)?;
+        raw_rate
+            .checked_add(surcharge)
+            .ok_or(RateModelError::Overflow)?
+    } else {
+        raw_rate
+    };
+
+    Ok(rate_with_surcharge
+        .max(params.rate_floor_bps)
+        .min(params.rate_ceiling_bps))
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
+pub enum RateModelKey {
+    LastRate,
+    LastTargetRate,
+    LastRateLedger,
+}
+
+pub fn apply_hysteresis(current: i128, target: i128, band: i128) -> i128 {
+    let band = band.max(0);
+    let diff = match target.checked_sub(current) {
+        Some(value) => value,
+        None => {
+            if target >= current {
+                i128::MAX
+            } else {
+                i128::MIN
+            }
+        }
+    };
+
+    if diff >= 0 {
+        if diff <= band {
+            return current;
+        }
+        target.checked_sub(band).unwrap_or(target)
+    } else {
+        let abs_diff = diff.checked_abs().unwrap_or(i128::MAX);
+        if abs_diff <= band {
+            return current;
+        }
+        target.checked_add(band).unwrap_or(target)
+    }
+}
+
+pub fn compute_smoothed_rate(
+    last_rate: i128,
+    target_rate: i128,
+    max_step: i128,
+    elapsed: u32,
+    hysteresis_bps: i128,
+) -> i128 {
+    let adjusted_target = apply_hysteresis(last_rate, target_rate, hysteresis_bps);
+    if elapsed == 0 || max_step == i128::MAX {
+        return adjusted_target;
+    }
+    let max_change = max_step.saturating_mul(elapsed as i128);
+    let diff = adjusted_target
+        .checked_sub(last_rate)
+        .unwrap_or(if adjusted_target >= last_rate {
+            i128::MAX
+        } else {
+            i128::MIN
+        });
+
+    if diff > 0 {
+        last_rate
+            .checked_add(diff.min(max_change))
+            .unwrap_or(adjusted_target)
+    } else {
+        let decrease = diff.checked_abs().unwrap_or(i128::MAX).min(max_change);
+        last_rate.checked_sub(decrease).unwrap_or(adjusted_target)
+    }
+}
+
+pub fn update_and_get_rate(env: &Env, target_rate: i128, params: &RateParams) -> i128 {
+    let current_ledger = env.ledger().sequence();
+    let last_ledger = env
+        .storage()
+        .instance()
+        .get(&RateModelKey::LastRateLedger)
+        .unwrap_or(0);
+    let last_rate = if last_ledger == 0 {
+        target_rate
+    } else {
+        env.storage()
+            .instance()
+            .get(&RateModelKey::LastRate)
+            .unwrap_or(target_rate)
+    };
+    let elapsed = if last_ledger == 0 {
+        0
+    } else {
+        current_ledger.saturating_sub(last_ledger)
+    };
+    let new_rate = compute_smoothed_rate(
+        last_rate,
+        target_rate,
+        params.max_rate_change_per_ledger_bps,
+        elapsed,
+        params.hysteresis_bps,
+    );
+    let clamped_rate = new_rate
+        .max(params.rate_floor_bps)
+        .min(params.rate_ceiling_bps);
+
+    // Persist the latest smoothing state regardless of whether the applied rate
+    // moved, but only rewrite the applied rate when it actually changed — this
+    // avoids a redundant storage write during rapid, no-op calls (e.g. repeated
+    // read/compute invocations in the same ledger) while keeping the smoothing
+    // state current. The very first call (bootstrap, `last_ledger == 0`) always
+    // writes so the initialised rate is actually persisted.
+    if last_ledger == 0 || clamped_rate != last_rate {
+        env.storage()
+            .instance()
+            .set(&RateModelKey::LastRate, &clamped_rate);
+    }
+    env.storage()
+        .instance()
+        .set(&RateModelKey::LastTargetRate, &target_rate);
+    env.storage()
+        .instance()
+        .set(&RateModelKey::LastRateLedger, &current_ledger);
+    clamped_rate
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Normal inputs should still produce the expected rate without error.
+    #[test]
+    fn test_compute_borrow_rate_normal() {
+        let params = RateParams::default();
+        // At 80% utilization (kink), rate = base + kink * multiplier / BPS_DENOM
+        // = 100 + 8000 * 2000 / 10000 = 100 + 1600 = 1700 bps
+        let rate = compute_borrow_rate(8_000, &params).unwrap();
+        assert_eq!(rate, 1_700);
+    }
+
+    /// An extremely large multiplier_bps combined with a valid (in-range)
+    /// utilization causes an i128 overflow in the intermediate product.  The
+    /// function must return Err(RateModelError::Overflow) instead of panicking.
+    #[test]
+    fn test_compute_borrow_rate_overflow_returns_error() {
+        let params = RateParams {
+            // Large multiplier × large utilization overflows the intermediate product.
+            multiplier_bps: i128::MAX,
+            ..RateParams::default()
+        };
+        let result = compute_borrow_rate(10_000, &params);
+        assert_eq!(
+            result,
+            Err(RateModelError::Overflow),
+            "Expected Overflow error for out-of-range params, got {:?}",
+            result
+        );
+    }
+
+    /// Utilization above 100 % is out of range and must be rejected, never
+    /// silently clamped, so the model stays bounded at maximum utilization.
+    #[test]
+    fn test_compute_borrow_rate_out_of_range_utilization() {
+        let params = RateParams::default();
+        assert_eq!(
+            compute_borrow_rate(10_001, &params),
+            Err(RateModelError::OutOfRange)
+        );
+        assert_eq!(
+            compute_borrow_rate(-1, &params),
+            Err(RateModelError::OutOfRange)
+        );
+    }
+
+    /// Negative model coefficients would destroy monotonicity; they must be
+    /// rejected as out of range at the pure-math layer.
+    #[test]
+    fn test_compute_borrow_rate_rejects_negative_coefficients() {
+        let negative_slope = RateParams {
+            multiplier_bps: -1,
+            ..RateParams::default()
+        };
+        assert_eq!(
+            compute_borrow_rate(5_000, &negative_slope),
+            Err(RateModelError::OutOfRange)
+        );
+
+        let negative_jump = RateParams {
+            jump_multiplier_bps: -5,
+            ..RateParams::default()
+        };
+        assert_eq!(
+            compute_borrow_rate(9_000, &negative_jump),
+            Err(RateModelError::OutOfRange)
+        );
+
+        let negative_base = RateParams {
+            base_rate_bps: -100,
+            ..RateParams::default()
+        };
+        assert_eq!(
+            compute_borrow_rate(0, &negative_base),
+            Err(RateModelError::OutOfRange)
+        );
+    }
+
+    /// jump_multiplier_bps overflows when utilization is above the kink.
+    #[test]
+    fn test_compute_borrow_rate_jump_overflow_returns_error() {
+        let params = RateParams {
+            jump_multiplier_bps: i128::MAX,
+            ..RateParams::default()
+        };
+        // Utilization above kink triggers the jump branch.
+        let result = compute_borrow_rate(9_000, &params);
+        assert_eq!(
+            result,
+            Err(RateModelError::Overflow),
+            "Expected Overflow error in jump branch, got {:?}",
+            result
+        );
+    }
+}

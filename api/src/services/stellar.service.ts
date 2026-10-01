@@ -11,7 +11,7 @@ import {
   Address,
   nativeToScVal,
 } from '@stellar/stellar-sdk';
-import { Server as SorobanServer } from '@stellar/stellar-sdk/rpc';
+import { Server as SorobanServer, Api } from '@stellar/stellar-sdk/rpc';
 import axios from 'axios';
 import { config } from '../config';
 import logger from '../utils/logger';
@@ -26,17 +26,21 @@ import {
   AMM_EVENT_TOPIC_MODULE,
   AMM_EVENT_TOPIC_VERSION,
 } from '../types';
-import { SorobanRpc } from '@stellar/stellar-sdk';
 import { Cursor } from '../utils/cursor';
 import { CircuitBreaker } from '../utils/circuitBreaker';
 
-/** Raw event from Soroban RPC */
+/**
+ * Raw event from Soroban RPC.
+ *
+ * Mirrors the subset of the SDK's EventResponse that event parsing actually
+ * reads. `contractId` is omitted deliberately: the SDK types it as a Contract
+ * object and parsing never depends on it.
+ */
 interface RawContractEvent {
   id: string;
   type: string;
   ledger: number;
   ledgerClosedAt: string;
-  contractId: string;
   topic: xdr.ScVal[];
   value: xdr.ScVal;
   inSuccessfulContractCall: boolean;
@@ -85,11 +89,14 @@ export class StellarService {
   private contractId: string;
   private sorobanServer: SorobanServer;
   private sorobanBreaker: CircuitBreaker;
-  private rpc: SorobanRpc.Server;
+  private rpc: SorobanServer;
   private lendingContractId: string;
 
-  constructor(rpcUrl: string, lendingContractId: string) {
-    this.rpc = new SorobanRpc.Server(rpcUrl);
+  constructor(
+    rpcUrl: string = config.stellar.sorobanRpcUrl,
+    lendingContractId: string = config.stellar.contractId
+  ) {
+    this.rpc = new SorobanServer(rpcUrl);
     this.lendingContractId = lendingContractId;
     this.horizonUrl = config.stellar.horizonUrl;
     this.sorobanRpcUrl = config.stellar.sorobanRpcUrl;
@@ -371,7 +378,7 @@ export class StellarService {
     const toLedger = currentLedger;
 
     // Build event filters for lending contract
-    const filters: SorobanRpc.EventFilter[] = [
+    const filters: Api.EventFilter[] = [
       {
         type: 'contract',
         contractIds: [this.lendingContractId],
@@ -580,11 +587,17 @@ export class StellarService {
 
   /**
    * Parse address from ScVal.
+   *
+   * `ScAddress` has no meaningful `toString()` override, so calling it
+   * directly yields the literal string "[object Object]". The address must be
+   * converted back to its strkey form via `Address.fromScAddress`, otherwise
+   * every parsed event reports a bogus user and user-scoped activity queries
+   * can never match.
    */
   private parseAddress(val: xdr.ScVal | undefined): string {
     if (!val) return '';
     try {
-      return val.address().toString();
+      return Address.fromScAddress(val.address()).toString();
     } catch {
       return '';
     }
@@ -598,15 +611,22 @@ export class StellarService {
       // Assuming value is a Map with 'amount' and 'asset' keys
       // Adjust based on actual contract event structure
       const map = val.map();
+      if (!map) {
+        return { amount: '0', asset: '' };
+      }
       let amount = '0';
       let asset = '';
 
       for (const entry of map) {
         const key = entry.key().sym().toString();
         if (key === 'amount') {
-          amount = entry.val().i128().lo().toString();
+          // An i128 is a two's-complement 128-bit integer split into a signed
+          // high word and an unsigned low word. Reading `lo()` alone silently
+          // saturates at 2^64 - 1, so reassemble the full signed value.
+          const i128 = entry.val().i128();
+          amount = ((BigInt(i128.hi().toString()) << 64n) + BigInt(i128.lo().toString())).toString();
         } else if (key === 'asset') {
-          asset = entry.val().address().toString();
+          asset = Address.fromScAddress(entry.val().address()).toString();
         }
       }
 
