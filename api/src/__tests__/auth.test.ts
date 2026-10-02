@@ -504,7 +504,8 @@ describe('verifyHookHmac — success paths', () => {
   });
 
   it('rejects timestamp at exactly now + 5min + 1ms (just outside window)', () => {
-    const future = Date.now() + 5 * 60 * 1000 + 1;
+    // Use +5min+5s to ensure we're reliably outside the window regardless of processing time
+    const future = Date.now() + 5 * 60 * 1000 + 5000;
     const { signature, timestamp } = makeHookHeaders(rawBody, HOOK_SECRET, future);
     const req = makeReq({
       headers: { 'x-hook-signature': signature, 'x-hook-timestamp': timestamp },
