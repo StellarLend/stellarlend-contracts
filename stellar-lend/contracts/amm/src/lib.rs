@@ -42,6 +42,8 @@ pub mod math;
 #[cfg(test)]
 mod admin_authorization_test;
 #[cfg(test)]
+mod compute_fee_test;
+#[cfg(test)]
 mod error_codes_test;
 #[cfg(test)]
 mod fee_accrual_overflow_test;
@@ -1489,7 +1491,10 @@ fn assert_k_monotonic(
 /// fee = amount_in * fee_bps / 10_000
 /// ```
 ///
-/// Uses checked arithmetic; panics on overflow.
+/// Uses checked arithmetic and returns [`AmmPoolError::Overflow`] when
+/// `amount_in * fee_bps` exceeds `i128::MAX` (it does not panic).  Integer
+/// division truncates toward zero, so the remainder below one fee unit is
+/// dropped.
 fn compute_fee(amount_in: i128, fee_bps: i128) -> Result<i128, AmmPoolError> {
     Ok(amount_in
         .checked_mul(fee_bps)
