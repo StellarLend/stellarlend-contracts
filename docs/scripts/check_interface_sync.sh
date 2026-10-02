@@ -15,6 +15,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LIB="$REPO_ROOT/stellar-lend/contracts/lending/src/lib.rs"
 
+export LC_ALL=C
+
 # ----------------------------------------------------------------------------
 # Documented implemented functions (update this list when lib.rs changes)
 # ----------------------------------------------------------------------------
@@ -36,6 +38,7 @@ DOCUMENTED_FUNCTIONS=(
   "deposit_collateral_asset"
   "flash_loan"
   "fund_insurance"
+  "has_admin"
   "get_admin"
   "get_asset_isolation"
   "get_asset_params"
@@ -70,14 +73,22 @@ DOCUMENTED_FUNCTIONS=(
   "get_price_record"
   "get_proposal_approvals"
   "get_protocol_metrics"
+  "get_rate_model_diagnostics"
   "get_rate_params"
+  "get_rate_model_diagnostics"
   "get_rate_smoothing_state"
   "get_required_approvals"
+  "get_upgrade_approval_binding"
+  "get_upgrade_approver_set_hash"
   "get_upgrade_approvers"
+  "get_upgrade_approval_binding"
+  "get_upgrade_approver_set_hash"  "get_upgrade_proposal_signer_hash"
   "get_user_position"
   "get_utilization_history"
   "initialize"
+  "is_upgrade_proposal_cancelled"
   "liquidate"
+  "migrate_positions"
   "propose_admin"
   "receive"
   "repay"
@@ -107,6 +118,7 @@ DOCUMENTED_FUNCTIONS=(
   "set_rate_params"
   "upgrade_add_approver"
   "upgrade_approve"
+  "upgrade_cancel"
   "upgrade_execute"
   "upgrade_init"
   "upgrade_propose"

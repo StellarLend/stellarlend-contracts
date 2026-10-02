@@ -6,6 +6,7 @@ use crate::{
     rate_model::RateParams,
     write_utilization_sample, DataKey, LendingContract, LendingContractClient, UtilizationSample,
 };
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};
 
@@ -201,8 +202,7 @@ fn utilization_is_clamped_to_100_percent_when_debt_exceeds_supply() {
         let computation =
             try_compute_borrow_rate_from_snapshot(&env, &snapshot).expect("no overflow expected");
         assert_eq!(
-            computation.utilization_bps,
-            10_000,
+            computation.utilization_bps, 10_000,
             "utilization above 100 % must be clamped to BPS_DENOM"
         );
 

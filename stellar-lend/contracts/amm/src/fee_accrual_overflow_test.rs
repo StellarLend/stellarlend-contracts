@@ -35,7 +35,7 @@ fn setup(ra: i128, rb: i128) -> (Env, Address, AmmContractClient<'static>, Addre
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let admin = Address::generate(&env);
-    client.init_pool(&ra, &rb, &token_a, &token_b);
+    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, amm_id, client, admin)
@@ -63,7 +63,10 @@ fn seed_fee_b(env: &Env, amm_id: &Address, value: i128) {
 #[test]
 fn test_normal_accrual_unchanged() {
     let (_env, _id, client, _admin) = setup(10_000, 10_000);
-    client.swap_a_for_b(&1_000);
+    client
+        .try_swap_a_for_b(&1_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 3, "normal fee must still be exact");
     assert_eq!(fee_b, 0);
@@ -86,14 +89,20 @@ fn test_saturate_at_max_for_a_side() {
     seed_fee_a(&env, &amm_id, i128::MAX - 1);
 
     // A single swap with fee = 2 should push it to i128::MAX
-    client.swap_a_for_b(&20_000);
+    client
+        .try_swap_a_for_b(&20_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
 
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, i128::MAX, "fee_a must saturate at i128::MAX");
     assert_eq!(fee_b, 0, "fee_b must stay zero");
 
     // Another swap — must stay at MAX, no panic
-    client.swap_a_for_b(&50_000);
+    client
+        .try_swap_a_for_b(&50_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a2, _) = client.get_accrued_fees();
     assert_eq!(
         fee_a2,
@@ -129,7 +138,10 @@ fn test_saturate_then_other_side_untouched() {
 
     // Saturate fee_a only
     seed_fee_a(&env, &amm_id, i128::MAX - 1);
-    client.swap_a_for_b(&20_000);
+    client
+        .try_swap_a_for_b(&20_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
 
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, i128::MAX, "fee_a saturated");
@@ -149,8 +161,14 @@ fn test_both_sides_saturate_independently() {
     seed_fee_a(&env, &amm_id, i128::MAX - 1);
     seed_fee_b(&env, &amm_id, i128::MAX - 1);
 
-    client.swap_a_for_b(&20_000);
-    client.swap_b_for_a(&20_000);
+    client
+        .try_swap_a_for_b(&20_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
+    client
+        .try_swap_b_for_a(&20_000)
+        .expect("contract invocation failed")
+        .expect("swap_b_for_a must succeed on a funded pool");
 
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, i128::MAX, "fee_a must saturate");
@@ -172,7 +190,10 @@ fn test_zero_fee_safe_near_max() {
     client.set_fee_bps(&admin, &0);
 
     // Zero-fee swap must not alter accumulator and must not panic
-    client.swap_a_for_b(&1_000);
+    client
+        .try_swap_a_for_b(&1_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
 
     let (fee_a, _) = client.get_accrued_fees();
     assert_eq!(
@@ -196,7 +217,10 @@ fn test_saturate_never_exceeds_max() {
     for &seed in &seeds {
         seed_fee_a(&env, &amm_id, seed);
         // Swap with a moderate fee — using small amount so swap math is safe
-        client.swap_a_for_b(&10_000);
+        client
+            .try_swap_a_for_b(&10_000)
+            .expect("contract invocation failed")
+            .expect("swap_a_for_b must succeed on a funded pool");
         let (fee_a, _) = client.get_accrued_fees();
         // The real invariant under test: accrual saturates rather than
         // wrapping/panicking. Reaching this line at all already proves no
@@ -228,14 +252,17 @@ fn test_reinit_resets_saturated_fees() {
     // Re-initialize the pool with new reserves
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    client.init_pool(&50_000, &50_000, &token_a, &token_b);
+    client.init_pool(&_admin, &50_000, &50_000, &token_a, &token_b);
 
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "re-init must reset fee_a to zero");
     assert_eq!(fee_b, 0, "re-init must reset fee_b to zero");
 
     // After re-init, fee accrual should work normally
-    client.swap_a_for_b(&1_000);
+    client
+        .try_swap_a_for_b(&1_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a, _) = client.get_accrued_fees();
     assert_eq!(fee_a, 3, "fee accrual works normally after re-init");
 }
@@ -256,13 +283,19 @@ fn test_no_panic_on_large_fee() {
     // fee = amount_in * 9999 / 10000 ≈ amount_in.
     // Use an amount_in that produces a fee large enough to exceed the
     // remaining headroom (100), forcing saturation.
-    client.swap_a_for_b(&1_000_000);
+    client
+        .try_swap_a_for_b(&1_000_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
 
     let (fee_a, _) = client.get_accrued_fees();
     assert!(fee_a == i128::MAX, "fee_a must saturate at i128::MAX");
 
     // A second swap should also not panic; fee stays at MAX.
-    client.swap_a_for_b(&500_000);
+    client
+        .try_swap_a_for_b(&500_000)
+        .expect("contract invocation failed")
+        .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a2, _) = client.get_accrued_fees();
     assert_eq!(
         fee_a2,

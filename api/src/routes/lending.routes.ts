@@ -43,6 +43,8 @@ router.use('/hooks', verifyHookHmac);
 router.post('/hooks', lendingController.processHook);
 router.post('/hooks/*', lendingController.processHook);
 
+router.get('/activity', lendingController.getActivity);
+
 router.post('/deposit', depositValidation, lendingController.deposit);
 router.post('/borrow', borrowValidation, lendingController.borrow);
 router.post('/repay', repayValidation, lendingController.repay);
