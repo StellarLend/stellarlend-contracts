@@ -92,7 +92,7 @@ mod price_impact_tests {
         assert_eq!(client.get_max_impact_bps(), IMPACT_GUARD_DISABLED);
 
         let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&1_000, &1_000, &ta, &tb);
+        client.init_pool(&admin, &1_000, &1_000, &ta, &tb);
         let out = client
             .try_swap_a_for_b(&800)
             .expect("contract invocation failed")
@@ -123,7 +123,7 @@ mod price_impact_tests {
 
         client.set_max_impact_bps(&admin, &cap);
         let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&ra, &rb, &ta, &tb);
+        client.init_pool(&admin, &ra, &rb, &ta, &tb);
         let out = client
             .try_swap_a_for_b(&amount_in)
             .expect("contract invocation failed")
@@ -163,7 +163,7 @@ mod price_impact_tests {
 
         client.set_max_impact_bps(&admin, &(impact as u32));
         let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&ra, &rb, &ta, &tb);
+        client.init_pool(&admin, &ra, &rb, &ta, &tb);
         let out = client
             .try_swap_a_for_b(&amount_in)
             .expect("contract invocation failed")
@@ -199,7 +199,7 @@ mod price_impact_tests {
 
         client.set_max_impact_bps(&admin, &cap);
         let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&ra, &rb, &ta, &tb);
+        client.init_pool(&admin, &ra, &rb, &ta, &tb);
         // Must panic with "PriceImpactExceeded". The panicking (non-`try_`)
         // client is used deliberately: the guard enforces rejection via a
         // guest panic carrying this message, and the `try_` client would
@@ -290,7 +290,7 @@ mod price_impact_tests {
 
         client.set_max_impact_bps(&admin, &50_u32);
         let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&1_000_000, &1_000_000, &ta, &tb);
+        client.init_pool(&admin, &1_000_000, &1_000_000, &ta, &tb);
         // amount_in = 10_000 → impact ≈ 100 bps → fails 50 bps cap. Panicking
         // client: see over_bound_swap_rejected for why `try_` is not used here.
         client.swap_a_for_b(&10_000);
