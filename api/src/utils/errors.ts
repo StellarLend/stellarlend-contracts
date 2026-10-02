@@ -5,6 +5,7 @@ export class ApiError extends Error {
     public isOperational = true
   ) {
     super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
     // Restore the prototype chain to the most-derived constructor so that
     // `instanceof` works for subclasses (ValidationError, UnauthorizedError,
     // ...). Hard-coding ApiError.prototype here collapsed every subclass

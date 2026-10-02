@@ -5,6 +5,26 @@ import logger from '../utils/logger';
 import {
   decodeCursor,
   isValidCursor,
+  getNextCursor,
+} from '../utils/cursor';
+
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+const stellarService = new StellarService();
+
+export interface ActivityResponse {
+  data: Array<{
+    id: string;
+    type: string;
+    ledgerSequence: number;
+    eventIndex: number;
+    timestamp: string;
+    amount: string;
+    asset: string;
+    account: string;
+    txHash: string;
+  }>;
   nextCursor,
   sanitizePageSize,
   CursorError,
@@ -36,8 +56,9 @@ interface ActivityEvent {
 interface PaginatedActivityResponse {
   data: ActivityEvent[];
   pagination: {
-    hasNextPage: boolean;
     nextCursor: string | null;
+    hasMore: boolean;
+    limit: number;
     pageSize: number;
     totalCount: number | null;
   };
@@ -52,13 +73,46 @@ interface PaginatedActivityResponse {
 export class LendingController {
   private stellarService: StellarService;
 
-  constructor(stellarService: StellarService) {
-    this.stellarService = stellarService;
+  constructor(stellarService?: StellarService) {
+    this.stellarService = stellarService || new StellarService();
   }
 
   /**
    * GET /api/lending/activity
    *
+   * Returns paginated lending activity with cursor-based pagination.
+   *
+   * Query params:
+   * - cursor: base64(ledger_sequence:event_index) — start after this position
+   * - limit: items per page (default 20, max 100)
+   *
+   * The cursor guarantees stable ordering: new events arriving after the cursor
+   * won't cause duplicates or gaps in the result set.
+   */
+  async getActivity(req: Request, res: Response): Promise<void> {
+    try {
+      const { cursor, limit: limitParam } = req.query;
+
+      // Validate and parse limit
+      const limit = this.parseLimit(limitParam);
+
+      // Parse cursor to get starting ledger/event index
+      const { fromLedger, fromEventIndex } = this.parseCursor(cursor);
+
+      // Fetch activities from Stellar
+      const activities = await this.stellarService.fetchActivities(
+        process.env.LENDING_CONTRACT_ID || '',
+        {
+          fromLedger,
+          fromEventIndex,
+          limit: limit + 1, // Fetch one extra to determine hasMore
+          order: 'desc',
+        }
+      );
+
+      // Determine if there are more results
+      const hasMore = activities.length > limit;
+      const results = hasMore ? activities.slice(0, limit) : activities;
    * Returns paginated lending activity ordered by (ledgerSequence ASC, eventIndex ASC).
    * Query params: cursor (opaque base64url), limit (1–100, default 20).
    */
@@ -96,9 +150,23 @@ export class LendingController {
         nextCursorValue = nextCursor(last.ledgerSequence, last.eventIndex);
       }
 
-      const response: PaginatedActivityResponse = {
-        data: pageEvents,
+      // Build response
+      const response: ActivityResponse = {
+        data: results.map((a) => ({
+          id: a.id,
+          type: a.type,
+          ledgerSequence: a.ledgerSequence,
+          eventIndex: a.eventIndex,
+          timestamp: a.timestamp.toISOString(),
+          amount: a.amount,
+          asset: a.asset,
+          account: a.account,
+          txHash: a.txHash,
+        })),
         pagination: {
+          nextCursor: hasMore ? getNextCursor(results) || null : null,
+          hasMore,
+          limit,
           hasNextPage,
           nextCursor: nextCursorValue,
           pageSize: pageEvents.length,
@@ -106,22 +174,20 @@ export class LendingController {
         },
       };
 
-      res.status(200).json(response);
+      res.json(response);
     } catch (error) {
-      if (error instanceof CursorError) {
+      if (error instanceof Error && error.message.includes('Cursor decode failed')) {
         res.status(400).json({
           error: 'Invalid cursor',
-          message: error.message,
-          code: 'INVALID_CURSOR',
+          message: error instanceof Error ? error.message : 'Unknown error',
         });
         return;
       }
 
       logger.error('Failed to fetch lending activity:', { error });
       res.status(500).json({
-        error: 'Internal server error',
-        message: 'Failed to fetch lending activity. Please try again.',
-        code: 'INTERNAL_ERROR',
+        error: 'Failed to fetch activity',
+        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   }
@@ -198,6 +264,93 @@ export class LendingController {
         return;
       }
 
+      const { cursor, limit: limitParam } = req.query;
+      const limit = this.parseLimit(limitParam);
+      const { fromLedger, fromEventIndex } = this.parseCursor(cursor);
+
+      const activities = await this.stellarService.fetchUserActivities(
+        process.env.LENDING_CONTRACT_ID || '',
+        userAddress,
+        {
+          fromLedger,
+          fromEventIndex,
+          limit: limit + 1,
+          order: 'desc',
+        }
+      );
+
+      const hasMore = activities.length > limit;
+      const results = hasMore ? activities.slice(0, limit) : activities;
+
+      const response: ActivityResponse = {
+        data: results.map((a) => ({
+          id: a.id,
+          type: a.type,
+          ledgerSequence: a.ledgerSequence,
+          eventIndex: a.eventIndex,
+          timestamp: a.timestamp.toISOString(),
+          amount: a.amount,
+          asset: a.asset,
+          account: a.account,
+          txHash: a.txHash,
+        })),
+        pagination: {
+          nextCursor: hasMore ? getNextCursor(results) || null : null,
+          hasMore,
+          limit,
+        },
+      };
+
+      res.json(response);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Cursor decode failed')) {
+        res.status(400).json({
+          error: 'Invalid cursor',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+        return;
+      }
+
+      console.error('Failed to fetch user activity:', error);
+      res.status(500).json({
+        error: 'Failed to fetch user activity',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  private parseLimit(limitParam: unknown): number {
+    if (!limitParam) return DEFAULT_LIMIT;
+
+    const parsed = parseInt(limitParam as string, 10);
+    if (isNaN(parsed) || parsed <= 0) {
+      return DEFAULT_LIMIT;
+    }
+
+    return Math.min(parsed, MAX_LIMIT);
+  }
+
+  private parseCursor(cursorParam: unknown): { fromLedger?: number; fromEventIndex: number } {
+    if (!cursorParam) {
+      return { fromEventIndex: 0 };
+    }
+
+    const cursor = cursorParam as string;
+
+    if (!isValidCursor(cursor)) {
+      throw new Error(`Cursor decode failed: Invalid cursor format`);
+    }
+
+    const { ledgerSequence, eventIndex } = decodeCursor(cursor);
+
+    // For pagination, we want to start AFTER the cursor position
+    // So we increment the event index within the same ledger
+    return {
+      fromLedger: ledgerSequence,
+      fromEventIndex: eventIndex + 1,
+    };
+  }
+}
       logger.error('Failed to fetch user activity:', { error });
       res.status(500).json({
         error: 'Internal server error',

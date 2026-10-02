@@ -1,3 +1,34 @@
+/**
+ * Authentication middleware invariants
+ *
+ * @module auth
+ *
+ * ## authenticateToken
+ * Invariant 1: Every request that passes through this middleware carries a
+ *   valid, non-expired JWT signed with `config.auth.jwtSecret`.
+ * Invariant 2: On success `req.user.address` is a non-empty string decoded
+ *   from the token payload; `next()` is called exactly once with no arguments.
+ * Invariant 3: On any failure the function throws `UnauthorizedError` (not
+ *   calls `next(err)`). The Express error handler translates this to HTTP 401.
+ * Invariant 4: The token value, secret, and raw header are never included in
+ *   error messages or logs.
+ *
+ * ## verifyHookHmac
+ * Invariant 5: Every request that passes has a valid HMAC-SHA256 signature
+ *   computed over `<timestamp>.<rawBody>` and the timestamp is within 5 minutes
+ *   of the server clock.
+ * Invariant 6: If `config.auth.hookSecret` is falsy the middleware throws
+ *   immediately; no request can be accepted without a configured secret.
+ * Invariant 7: Signature comparison uses `crypto.timingSafeEqual` to prevent
+ *   timing oracle attacks.
+ * Invariant 8: `verifyHookHmac` throws synchronously; the Express error
+ *   handler is responsible for returning HTTP 401.
+ *
+ * ## generateToken
+ * Invariant 9: Returns a signed JWT containing `{ address }` with the
+ *   configured expiry; callers must treat the returned string as a secret.
+ */
+
 import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';

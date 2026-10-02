@@ -1,4 +1,13 @@
 /**
+ * Cursor encoding/decoding utilities for ledger-sequence based pagination.
+ *
+ * Cursor format: base64url(ledger_sequence:event_index)
+ * Example: "MTAwMDow" decodes to "1000:0"
+ *
+ * This provides stable ordering guarantees even when new events arrive
+ * between paginated requests.
+ *
+ * @see docs/ACTIVITY_ORDERING_GUARANTEES.md
  * Cursor utilities for ledger-sequence-backed pagination.
  *
  * Cursor format: base64url(ledger_sequence:event_index)
@@ -15,6 +24,31 @@ export interface Cursor {
 
 const CURSOR_SEPARATOR = ':';
 
+/**
+ * Maximum supported ledger sequence (u32 max)
+ * Prevents integer overflow in parsing
+ */
+const MAX_LEDGER_SEQUENCE = 4_294_967_295;
+
+/**
+ * Maximum supported event index per ledger
+ * Prevents unbounded memory allocation attacks
+ */
+const MAX_EVENT_INDEX = 1_000_000;
+
+/**
+ * Default page size for activity queries
+ */
+export const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * Maximum page size to prevent DoS
+ */
+export const MAX_PAGE_SIZE = 100;
+
+/**
+ * Custom error class for cursor operations
+ */
 // u32 max — Stellar ledger sequences are unsigned 32-bit integers
 const MAX_LEDGER_SEQUENCE = 4_294_967_295;
 // Practical cap to prevent unbounded parsing
@@ -30,6 +64,12 @@ export class CursorError extends Error {
   }
 }
 
+/**
+ * Encode a cursor object to an opaque base64url string
+ *
+ * @param cursor - The cursor to encode
+ * @returns Base64url-encoded cursor string
+ */
 export function encodeCursor(cursor: Cursor): string {
   const { ledgerSequence, eventIndex } = cursor ?? ({} as Cursor);
 
@@ -44,6 +84,13 @@ export function encodeCursor(cursor: Cursor): string {
   return Buffer.from(plain, 'utf-8').toString('base64url');
 }
 
+/**
+ * Decode a base64url cursor string back to a Cursor object
+ *
+ * @param cursorString - The base64url-encoded cursor
+ * @returns Parsed cursor object
+ * @throws CursorError if the cursor is malformed or out of range
+ */
 export function decodeCursor(cursorString: string): Cursor {
   if (!cursorString || typeof cursorString !== 'string') {
     throw new CursorError('Cursor must be a non-empty string');
@@ -86,6 +133,15 @@ export function decodeCursor(cursorString: string): Cursor {
   return { ledgerSequence, eventIndex };
 }
 
+/**
+ * Validate and sanitize page size parameter
+ *
+ * @param limit - Raw limit from query parameter
+ * @returns Sanitized limit between 1 and MAX_PAGE_SIZE
+ */
+export function sanitizePageSize(limit: unknown): number {
+  if (limit === undefined || limit === null) {
+    return DEFAULT_PAGE_SIZE;
 export function isValidCursor(value: unknown): value is string {
   if (typeof value !== 'string' || !value) return false;
   try {
@@ -106,6 +162,11 @@ export function sanitizePageSize(limit: unknown): number {
 }
 
 /**
+ * Generate the next cursor from the last item in a result set
+ *
+ * @param lastLedgerSequence - Ledger sequence of the last item
+ * @param lastEventIndex - Event index of the last item
+ * @returns Encoded cursor for the next page
  * Builds the cursor that points to the position *after* the given item,
  * i.e. the start position for the next page.
  */
@@ -116,6 +177,27 @@ export function nextCursor(lastLedgerSequence: number, lastEventIndex: number): 
   });
 }
 
+/**
+ * Check if a value is a valid cursor string
+ *
+ * @param value - Value to check
+ * @returns true if valid cursor, false otherwise
+ */
+export function isValidCursor(value: unknown): value is string {
+  if (typeof value !== 'string' || !value) {
+    return false;
+  }
+  try {
+    decodeCursor(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extracts the next cursor from the last item in a result set.
+ * Kept for backward compatibility with existing callers.
 // ---------------------------------------------------------------------------
 // Legacy helpers — preserved for backwards compatibility
 // ---------------------------------------------------------------------------
@@ -136,6 +218,13 @@ export function getNextCursor<T extends { ledgerSequence: number; eventIndex: nu
  * Returns negative if a < b, positive if a > b, 0 if equal.
  */
 export function compareCursors(a: string, b: string): number {
+  const decodedA = decodeCursor(a);
+  const decodedB = decodeCursor(b);
+
+  if (decodedA.ledgerSequence !== decodedB.ledgerSequence) {
+    return decodedA.ledgerSequence - decodedB.ledgerSequence;
+  }
+  return decodedA.eventIndex - decodedB.eventIndex;
   const da = decodeCursor(a);
   const db = decodeCursor(b);
   if (da.ledgerSequence !== db.ledgerSequence) return da.ledgerSequence - db.ledgerSequence;
