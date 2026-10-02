@@ -10,11 +10,11 @@ fn test_typical_schedule_exact() {
         grantee,
         total_amount: 10_000,
         claimed_amount: 0,
-        released_amount: 0,
         start_ts: 1000,
         cliff_secs: 100,
         duration_secs: 1000,
         revoked: false,
+        schedule: crate::VestingSchedule::Linear,
     };
 
     // Before start
@@ -41,11 +41,11 @@ fn test_overflow_avoided_with_max_values() {
         grantee,
         total_amount: i128::MAX, // ~1.7e38
         claimed_amount: 0,
-        released_amount: 0,
         start_ts: 0,
         cliff_secs: 0,
         duration_secs: u64::MAX, // ~1.8e19
         revoked: false,
+        schedule: crate::VestingSchedule::Linear,
     };
 
     // At t = 0
@@ -70,11 +70,11 @@ fn test_never_exceeds_principal() {
         grantee,
         total_amount: 5000,
         claimed_amount: 0,
-        released_amount: 0,
         start_ts: 100,
         cliff_secs: 0,
         duration_secs: 1000,
         revoked: false,
+        schedule: crate::VestingSchedule::Linear,
     };
 
     // Far past the end
@@ -91,11 +91,11 @@ fn test_no_panic_for_various_combinations() {
         grantee,
         total_amount: i128::MAX,
         claimed_amount: 0,
-        released_amount: 0,
         start_ts: 0,
         cliff_secs: 0,
         duration_secs: u64::MAX,
         revoked: false,
+        schedule: crate::VestingSchedule::Linear,
     };
 
     // Choose an elapsed time that would cause elapsed * principal to overflow u128.
