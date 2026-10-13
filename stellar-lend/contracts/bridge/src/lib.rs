@@ -1,7 +1,8 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    Map, Vec,};
+    Map, Vec,
+};
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
 const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
@@ -344,7 +345,8 @@ impl Bridge {
     fn inbound_message_id(env: &Env, source_hash: &BytesN<32>, nonce: u64) -> BytesN<32> {
         let mut data = Bytes::new(env);
         data.extend_from_slice(INBOUND_MSG_DOMAIN);
-        data.append(&source_hash.to_bytes());        data.extend_from_slice(&nonce.to_le_bytes());
+        data.append(&source_hash.to_bytes());
+        data.extend_from_slice(&nonce.to_le_bytes());
         env.crypto().sha256(&data).into()
     }
 }
@@ -572,7 +574,8 @@ impl Bridge {
 
         // 5. Emit event.
         env.events().publish(
-            (symbol_short!("in_msg"), symbol_short!("consumed")),            InboundMessageConsumedEvent {
+            (symbol_short!("in_msg"), symbol_short!("consumed")),
+            InboundMessageConsumedEvent {
                 message_id: message_id.clone(),
                 source,
                 nonce,
