@@ -1,5 +1,5 @@
-//! Tests that `oracle_price_signature_payload` binds the signature to the
-//! exact `(asset, price, timestamp)` tuple.
+//! Tests that `oracle_payload` binds the signature to the exact deployment and
+//! `(asset, price, timestamp)` tuple.
 //!
 //! Each test signs a valid tuple, then attempts to replay that signature
 //! against an altered tuple and asserts rejection.  Any forgery attempt
@@ -36,9 +36,16 @@ fn setup() -> (Env, LendingContractClient<'static>, Keypair) {
     (env, client, keypair)
 }
 
-/// Sign `(asset, price, timestamp)` and return a 64-byte signature.
-fn sign(env: &Env, keypair: &Keypair, asset: &Address, price: i128, timestamp: u64) -> BytesN<64> {
-    let payload = LendingContract::oracle_price_signature_payload(env, asset, price, timestamp);
+/// Sign the contract's canonical `(network, contract, asset, price, timestamp)` payload.
+fn sign(
+    env: &Env,
+    client: &LendingContractClient<'static>,
+    keypair: &Keypair,
+    asset: &Address,
+    price: i128,
+    timestamp: u64,
+) -> BytesN<64> {
+    let payload = client.oracle_payload(asset, &price, &timestamp);
     let mut payload_bytes = [0u8; 1024];
     let len = payload.len() as usize;
     payload.copy_into_slice(&mut payload_bytes[..len]);
@@ -56,9 +63,9 @@ fn test_valid_signature_accepted() {
     let price = 5_000_i128;
     let timestamp = 999_999_u64;
 
-    let sig = sign(&env, &keypair, &asset, price, timestamp);
-    let admin = client.get_admin();
-    client.set_price(&admin, &asset, &price, &timestamp, &sig);
+    let sig = sign(&env, &client, &keypair, &asset, price, timestamp);
+    client.set_price(&asset, &price, &timestamp, &sig);
+    assert!(!client.oracle_payload(&asset, &price, &timestamp).is_empty());
 
     let record = client.get_price_record(&asset).unwrap();
     assert_eq!(record.price, price);
@@ -79,9 +86,8 @@ fn test_different_asset_rejected() {
     let timestamp = 999_999_u64;
 
     // Sign for asset_a, try to use against asset_b.
-    let sig = sign(&env, &keypair, &asset_a, price, timestamp);
-    let admin = client.get_admin();
-    client.set_price(&admin, &asset_b, &price, &timestamp, &sig);
+    let sig = sign(&env, &client, &keypair, &asset_a, price, timestamp);
+    client.set_price(&asset_b, &price, &timestamp, &sig);
 }
 
 /// A signature over `(asset, price_A, timestamp)` must be rejected for
@@ -93,10 +99,9 @@ fn test_different_price_rejected() {
     let asset = Address::generate(&env);
     let timestamp = 999_999_u64;
 
-    let sig = sign(&env, &keypair, &asset, 1_000_i128, timestamp);
-    let admin = client.get_admin();
+    let sig = sign(&env, &client, &keypair, &asset, 1_000_i128, timestamp);
     // Submit with a different price.
-    client.set_price(&admin, &asset, &2_000_i128, &timestamp, &sig);
+    client.set_price(&asset, &2_000_i128, &timestamp, &sig);
 }
 
 /// A signature over `(asset, price, timestamp_A)` must be rejected for
@@ -108,11 +113,10 @@ fn test_different_timestamp_rejected() {
     let asset = Address::generate(&env);
     let price = 1_000_i128;
 
-    let sig = sign(&env, &keypair, &asset, price, 999_990_u64);
-    let admin = client.get_admin();
+    let sig = sign(&env, &client, &keypair, &asset, price, 999_990_u64);
     // Submit with a different (but still valid) timestamp.
     env.ledger().set_timestamp(1_000_001);
-    client.set_price(&admin, &asset, &price, &999_991_u64, &sig);
+    client.set_price(&asset, &price, &999_991_u64, &sig);
 }
 
 /// Ambiguous-framing splice attempt: craft `asset_xdr` that, under the old
@@ -140,8 +144,7 @@ fn test_splice_forgery_rejected() {
     let timestamp = 999_999_u64;
 
     // Sign for (asset_a, price_a).
-    let sig = sign(&env, &keypair, &asset_a, price_a, timestamp);
-    let admin = client.get_admin();
+    let sig = sign(&env, &client, &keypair, &asset_a, price_a, timestamp);
     // Attempt replay against a different (asset_b, price_b) — must panic.
-    client.set_price(&admin, &asset_b, &price_b, &timestamp, &sig);
+    client.set_price(&asset_b, &price_b, &timestamp, &sig);
 }

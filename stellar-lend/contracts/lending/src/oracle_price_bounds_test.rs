@@ -21,14 +21,14 @@ fn setup() -> (Env, LendingContractClient<'static>, Address) {
 fn do_set_price(
     env: &Env,
     client: &LendingContractClient<'static>,
-    admin: &Address,
+    _admin: &Address,
     asset: &Address,
     price: i128,
 ) -> Result<(), Result<LendingError, soroban_sdk::InvokeError>> {
     let keypair = chrono_keypair();
     let timestamp = env.ledger().timestamp();
-    let sig = sign_oracle_update(env, &keypair, asset, price, timestamp);
-    client.try_set_price(admin, asset, &price, &timestamp, &sig)
+    let sig = sign_oracle_update(env, client, &keypair, asset, price, timestamp);
+    client.try_set_price(asset, &price, &timestamp, &sig)
 }
 
 #[test]

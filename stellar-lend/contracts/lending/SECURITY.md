@@ -5,6 +5,40 @@
 
 ---
 
+## Signed Oracle Price Updates
+
+`set_price(asset, price, timestamp, signature)` is permissionless: relayers do
+not authenticate as the admin. The configured `OraclePubKey` is the only
+authority for a price update. The contract rejects non-positive or out-of-
+bounds prices, future/stale timestamps, replayed timestamps, and moves beyond
+the configured maximum before performing Ed25519 verification. An exact retry
+of the current signed `(price, timestamp)` returns successfully without a
+storage write.
+
+The signer must sign the exact bytes returned by
+`oracle_payload(asset, price, timestamp)`. The v2 payload has this byte layout:
+
+| Offset | Size | Encoding | Field |
+|---|---:|---|---|
+| 0 | 20 | ASCII | `StellarLendOracle:v2` |
+| 20 | 32 | Raw bytes | Ledger `network_id` |
+| 52 | 4 | Unsigned big-endian | Contract XDR byte length |
+| 56 | variable | XDR | Current contract address |
+| 56 + contract length | 4 | Unsigned big-endian | Asset XDR byte length |
+| 60 + contract length | variable | XDR | Asset address |
+| next | 16 | Signed big-endian two's complement | Price (`i128`) |
+| next | 8 | Unsigned big-endian | Timestamp (`u64`) |
+
+The network identifier is read from the ledger and cannot be supplied by the
+relayer. The network and contract fields prevent replaying a signature between
+networks or lending deployments. V1 signatures using `StellarLendOracle` are
+not accepted. Rotating `OraclePubKey` immediately invalidates signatures made
+by the previous key, including outstanding signatures not yet submitted.
+
+There is no admin price-update bypass. Emergency intervention requires
+publishing a new oracle key through the normal admin-controlled key-rotation
+process; that rotation invalidates outstanding signatures.
+
 ## Liquidation Invariant Guarantees (Issue: Add explicit invariant tests for liquidation close-factor and incentive bounds)
 
 The following invariants are now proven by the `liquidation_invariant_test` suite (29 tests).

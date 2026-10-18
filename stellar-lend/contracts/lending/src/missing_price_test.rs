@@ -52,8 +52,8 @@ fn test_borrow_with_collateral_asset_and_price_succeeds() {
 
     let price = 1_000_000_000i128; // scale = 1.0
     let timestamp = env.ledger().timestamp();
-    let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
-    client.set_price(&admin, &asset, &price, &timestamp, &signature);
+    let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+    client.set_price(&asset, &price, &timestamp, &signature);
 
     client.deposit(&user, &100);
 
@@ -76,8 +76,8 @@ fn test_liquidation_with_collateral_asset_but_no_price_fails() {
 
     let price = 1_000_000_000i128; // scale = 1.0
     let timestamp = env.ledger().timestamp();
-    let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
-    client.set_price(&admin, &asset, &price, &timestamp, &signature);
+    let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+    client.set_price(&asset, &price, &timestamp, &signature);
 
     client.deposit(&borrower, &100);
     client.borrow(&borrower, &80); // Exact limit
@@ -107,16 +107,17 @@ fn test_liquidation_with_collateral_asset_and_price_succeeds() {
 
     let initial_price = 1_000_000_000i128; // scale = 1.0
     let timestamp = env.ledger().timestamp();
-    let signature = sign_oracle_update(&env, &keypair, &asset, initial_price, timestamp);
-    client.set_price(&admin, &asset, &initial_price, &timestamp, &signature);
+    let signature =
+        sign_oracle_update(&env, &client, &keypair, &asset, initial_price, timestamp);
+    client.set_price(&asset, &initial_price, &timestamp, &signature);
 
     client.deposit(&borrower, &100);
     client.borrow(&borrower, &80);
 
     // Drop the price of collateral to make the position unhealthy/liquidatable
     let low_price = 500_000_000i128; // scale = 0.5
-    let new_signature = sign_oracle_update(&env, &keypair, &asset, low_price, timestamp);
-    client.set_price(&admin, &asset, &low_price, &timestamp, &new_signature);
+    let new_signature = sign_oracle_update(&env, &client, &keypair, &asset, low_price, timestamp);
+    client.set_price(&asset, &low_price, &timestamp, &new_signature);
 
     // Liquidation should now succeed
     let res = { let _da = Address::generate(&env); let _ca = Address::generate(&env); client.liquidate(&liquidator, &borrower, &_da, &_ca, &50) };
@@ -138,8 +139,8 @@ fn test_get_health_factor_and_position_fail_when_no_price() {
 
     let price = 1_000_000_000i128;
     let timestamp = env.ledger().timestamp();
-    let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
-    client.set_price(&admin, &asset, &price, &timestamp, &signature);
+    let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+    client.set_price(&asset, &price, &timestamp, &signature);
 
     client.borrow(&user, &50);
 

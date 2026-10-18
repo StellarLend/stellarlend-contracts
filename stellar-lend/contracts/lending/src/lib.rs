@@ -125,6 +125,14 @@ mod migration_event_test;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
+mod oracle_payload_binding_test;
+#[cfg(test)]
+mod oracle_relay_test;
+#[cfg(test)]
+mod oracle_price_bounds_test;
+#[cfg(test)]
+mod oracle_max_move_test;
+#[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
 mod property_invariants_test;
@@ -209,7 +217,7 @@ pub const MAX_LIQUIDATION_INCENTIVE_BPS: i128 = 5000;
 /// extinguish a borrower's entire debt in one block.
 pub const MAX_CLOSE_FACTOR_BPS: i128 = 7500;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
-const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
+const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle:v2";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
 const DEFAULT_MAX_FLASH_BPS: i128 = 5_000;
@@ -872,18 +880,12 @@ impl LendingContract {
 
     pub fn set_price(
         env: Env,
-        caller: Address,
         asset: Address,
         price: i128,
         timestamp: u64,
         signature: BytesN<64>,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        caller.require_auth();
-        if caller != admin {
-            return Err(LendingError::Unauthorized);
-        }
         if price <= 0 {
             return Err(LendingError::InvalidAmount);
         }
@@ -927,33 +929,13 @@ impl LendingContract {
             if timestamp == last.timestamp && price != last.price {
                 return Err(LendingError::OracleReplay);
             }
-        }
-
-        let oracle_pubkey: BytesN<32> = env
-            .storage()
-            .instance()
-            .get(&DataKey::OraclePubKey)
-            .ok_or(LendingError::OraclePubkeyNotSet)?;
-
-        let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
-        // `Crypto::ed25519_verify` traps the transaction when the signature is
-        // not valid for `(oracle_pubkey, payload)`, so completing the call is
-        // itself the proof that the caller holds the oracle key for this exact
-        // payload.
-        env.crypto()
-            .ed25519_verify(&oracle_pubkey, &payload, &signature);
-
-        // A retry of an already-applied update is a successful no-op. The
-        // signature above proves the caller is authoritative for this payload.
-        if let Some(last) = existing_record.as_ref() {
             if timestamp == last.timestamp && price == last.price {
                 return Ok(());
             }
         }
 
-        // Per-update move-cap circuit breaker.
-        // If max_move_bps is configured and a prior price record exists, reject
-        // updates that move the price beyond the configured threshold.
+        // Per-update move-cap circuit breaker. Run before the expensive
+        // signature verification, along with the other input checks.
         if let Some(max_move_bps) = env
             .storage()
             .instance()
@@ -961,7 +943,6 @@ impl LendingContract {
         {
             if let Some(last) = existing_record.as_ref() {
                 let last_price = last.price;
-                // delta = |price - last_price| * 10_000 / last_price
                 let delta_abs = if price >= last_price {
                     price
                         .checked_sub(last_price)
@@ -980,8 +961,21 @@ impl LendingContract {
                     return Err(LendingError::MaxMoveBpsExceeded);
                 }
             }
-            // No prior record: first-ever price for this asset is exempt.
         }
+
+        let oracle_pubkey: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OraclePubKey)
+            .ok_or(LendingError::OraclePubkeyNotSet)?;
+
+        let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
+        // `Crypto::ed25519_verify` traps the transaction when the signature is
+        // not valid for `(oracle_pubkey, payload)`, so completing the call is
+        // itself the proof that the caller holds the oracle key for this exact
+        // payload.
+        env.crypto()
+            .ed25519_verify(&oracle_pubkey, &payload, &signature);
 
         env.storage().persistent().set(
             &DataKey::OraclePrice(asset),
@@ -994,7 +988,12 @@ impl LendingContract {
         env.storage().persistent().get(&DataKey::OraclePrice(asset))
     }
 
-    /// Build the ed25519 signing payload for a price update.
+    /// Return the ed25519 signing payload for a price update.
+    pub fn oracle_payload(env: Env, asset: Address, price: i128, timestamp: u64) -> Bytes {
+        Self::oracle_price_signature_payload(&env, &asset, price, timestamp)
+    }
+
+    /// Build the v2 ed25519 signing payload for a price update.
     ///
     /// Framing: each variable-length field is preceded by its 4-byte big-endian
     /// length so that no two distinct `(asset, price, timestamp)` tuples can
@@ -1002,7 +1001,10 @@ impl LendingContract {
     ///
     /// Layout:
     /// ```text
-    /// ORACLE_SIGNATURE_DOMAIN   (fixed 17 bytes — no length prefix needed)
+    /// "StellarLendOracle:v2"    (fixed 20 bytes)
+    /// network_id                (32 bytes)
+    /// u32_be(len(contract_xdr)) (4 bytes)
+    /// contract_xdr              (variable)
     /// u32_be(len(asset_xdr))    (4 bytes)
     /// asset_xdr                 (variable)
     /// price_i128_be             (16 bytes fixed — no length prefix needed)
@@ -1014,13 +1016,17 @@ impl LendingContract {
         price: i128,
         timestamp: u64,
     ) -> Bytes {
+        let contract_xdr = env.current_contract_address().to_xdr(env);
+        let contract_len = contract_xdr.len();
         let asset_xdr = asset.to_xdr(env);
-        let asset_len = asset_xdr.len(); // u32
+        let asset_len = asset_xdr.len();
+        let network_id = env.ledger().network_id();
 
         let mut payload = Bytes::new(env);
-        // Domain separator (fixed length — no prefix required)
         payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-        // Length-prefixed asset XDR (variable length — prefix prevents splice)
+        payload.append(&Bytes::from_slice(env, &network_id.to_array()));
+        payload.append(&Bytes::from_slice(env, &contract_len.to_be_bytes()));
+        payload.append(&contract_xdr);
         payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
         payload.append(&asset_xdr);
         // Fixed-width fields need no length prefix
@@ -4147,20 +4153,12 @@ pub(crate) mod test {
     }
 
     pub(crate) fn build_oracle_payload(
-        env: &Env,
+        client: &LendingContractClient<'static>,
         asset: &Address,
         price: i128,
         timestamp: u64,
     ) -> Bytes {
-        let asset_xdr = asset.to_xdr(env);
-        let asset_len = asset_xdr.len(); // u32
-        let mut payload = Bytes::new(env);
-        payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-        payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
-        payload.append(&asset_xdr);
-        payload.append(&Bytes::from_slice(env, &price.to_be_bytes()));
-        payload.append(&Bytes::from_slice(env, &timestamp.to_be_bytes()));
-        payload
+        client.oracle_payload(asset, &price, &timestamp)
     }
 
     pub(crate) fn chrono_keypair() -> Keypair {
@@ -4172,12 +4170,13 @@ pub(crate) mod test {
 
     pub(crate) fn sign_oracle_update(
         env: &Env,
+        client: &LendingContractClient<'static>,
         keypair: &Keypair,
         asset: &Address,
         price: i128,
         timestamp: u64,
     ) -> BytesN<64> {
-        let payload = build_oracle_payload(env, asset, price, timestamp);
+        let payload = build_oracle_payload(client, asset, price, timestamp);
         let mut payload_bytes = [0u8; 1024];
         let len = payload.len() as usize;
         payload.copy_into_slice(&mut payload_bytes[..len]);
@@ -4322,9 +4321,9 @@ pub(crate) mod test {
         let asset = env.register(MockAsset, ());
         let price = 1_500_000_000i128;
         let timestamp = env.ledger().timestamp();
-        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
 
-        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        client.set_price(&asset, &price, &timestamp, &signature);
         let record = client
             .get_price_record(&asset)
             .expect("price record stored");
@@ -4351,9 +4350,10 @@ pub(crate) mod test {
         let asset = env.register(MockAsset, ());
         let price = 1_000_000_000i128;
         let timestamp = env.ledger().timestamp();
-        let signature = sign_oracle_update(&env, &bad_keypair, &asset, price, timestamp);
+        let signature =
+            sign_oracle_update(&env, &client, &bad_keypair, &asset, price, timestamp);
 
-        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        client.set_price(&asset, &price, &timestamp, &signature);
     }
 
     #[test]
@@ -4370,9 +4370,9 @@ pub(crate) mod test {
             .timestamp()
             .saturating_sub(DEFAULT_ORACLE_MAX_AGE_SECS + 1);
         let price = 1_000_000_000i128;
-        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
 
-        let res = client.try_set_price(&admin, &asset, &price, &timestamp, &signature);
+        let res = client.try_set_price(&asset, &price, &timestamp, &signature);
         assert!(
             matches!(res, Err(Ok(LendingError::StaleOracleTimestamp))),
             "expected StaleOracleTimestamp, got {:?}",
@@ -4390,10 +4390,10 @@ pub(crate) mod test {
         let asset = env.register(MockAsset, ());
         let price = 1_500_000_000i128;
         let timestamp = env.ledger().timestamp();
-        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
 
-        client.set_price(&admin, &asset, &price, &timestamp, &signature);
-        let retry = client.try_set_price(&admin, &asset, &price, &timestamp, &signature);
+        client.set_price(&asset, &price, &timestamp, &signature);
+        let retry = client.try_set_price(&asset, &price, &timestamp, &signature);
         assert!(
             retry.is_ok(),
             "exact retry must be treated as an idempotent success, got {:?}",
@@ -4417,11 +4417,11 @@ pub(crate) mod test {
         let timestamp = env.ledger().timestamp();
         let price1 = 1_000_000_000i128;
         let price2 = 1_500_000_000i128;
-        let signature1 = sign_oracle_update(&env, &keypair, &asset, price1, timestamp);
-        let signature2 = sign_oracle_update(&env, &keypair, &asset, price2, timestamp);
+        let signature1 = sign_oracle_update(&env, &client, &keypair, &asset, price1, timestamp);
+        let signature2 = sign_oracle_update(&env, &client, &keypair, &asset, price2, timestamp);
 
-        client.set_price(&admin, &asset, &price1, &timestamp, &signature1);
-        let res = client.try_set_price(&admin, &asset, &price2, &timestamp, &signature2);
+        client.set_price(&asset, &price1, &timestamp, &signature1);
+        let res = client.try_set_price(&asset, &price2, &timestamp, &signature2);
         assert!(
             matches!(res, Err(Ok(LendingError::OracleReplay))),
             "expected OracleReplay, got {:?}",
@@ -4447,12 +4447,13 @@ pub(crate) mod test {
         // Non-zero ledger time so `timestamp - 1` is genuinely older.
         env.ledger().set_timestamp(1_000_000);
         let timestamp = env.ledger().timestamp();
-        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
-        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+        client.set_price(&asset, &price, &timestamp, &signature);
 
         let old_timestamp = timestamp.saturating_sub(1);
-        let old_signature = sign_oracle_update(&env, &keypair, &asset, price, old_timestamp);
-        let res = client.try_set_price(&admin, &asset, &price, &old_timestamp, &old_signature);
+        let old_signature =
+            sign_oracle_update(&env, &client, &keypair, &asset, price, old_timestamp);
+        let res = client.try_set_price(&asset, &price, &old_timestamp, &old_signature);
         assert!(
             matches!(res, Err(Ok(LendingError::OracleReplay))),
             "expected OracleReplay, got {:?}",
@@ -4461,7 +4462,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_set_price_requires_admin() {
+    fn test_set_price_accepts_non_admin_relayer() {
         let (env, client, _admin, _user) = setup();
         let attacker = Address::generate(&env);
         let keypair = chrono_keypair();
@@ -4471,13 +4472,10 @@ pub(crate) mod test {
         let asset = env.register(MockAsset, ());
         let price = 1_000_000_000i128;
         let timestamp = env.ledger().timestamp();
-        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
-        let res = client.try_set_price(&attacker, &asset, &price, &timestamp, &signature);
-        assert!(
-            matches!(res, Err(Ok(LendingError::Unauthorized))),
-            "expected Unauthorized, got {:?}",
-            res
-        );
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+        client.set_price(&asset, &price, &timestamp, &signature);
+        assert_eq!(client.get_price_record(&asset).unwrap().price, price);
+        let _ = attacker;
     }
 
     #[test]
