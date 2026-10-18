@@ -1641,6 +1641,10 @@ impl LendingContract {
     }
 
     /// Withdraw collateral after pause and emergency gates pass.
+    ///
+    /// Rejects with `InsufficientCollateral` if, after accruing interest, the
+    /// remaining collateral would leave an open debt position below HF 1.0.
+    /// Positions with no debt may withdraw everything.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Withdraw);
@@ -1657,6 +1661,9 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
         let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+        // Solvency check against accrued debt (read-only) before any write.
+        let position = load_debt(&env, &user);
+        assert_position_healthy(&env, new_balance, &position)?;
         env.storage().persistent().set(&key, &new_balance);
         let total_deposits: i128 = env
             .storage()
@@ -3875,6 +3882,35 @@ fn load_rate_snapshot(env: &Env) -> debt::RateSnapshot {
     debt::load_rate_snapshot(env)
 }
 
+/// Shared solvency predicate for `borrow` and `withdraw`.
+///
+/// Passes when the position has no effective debt at the current ledger time
+/// and borrow rate, or when `collateral * LIQUIDATION_THRESHOLD_BPS >=
+/// HEALTH_FACTOR_SCALE * debt`. Arithmetic overflow fails closed with an error.
+fn assert_position_healthy(
+    env: &Env,
+    collateral: i128,
+    position: &DebtPosition,
+) -> Result<(), LendingError> {
+    let now = env.ledger().timestamp();
+    let rate = current_borrow_rate(env);
+    let debt = effective_debt(position, now, rate).map_err(|_| LendingError::Overflow)?;
+
+    if debt > 0 {
+        let weighted_collateral = collateral
+            .checked_mul(LIQUIDATION_THRESHOLD_BPS)
+            .ok_or(LendingError::Overflow)?;
+        let required_collateral = HEALTH_FACTOR_SCALE
+            .checked_mul(debt)
+            .ok_or(LendingError::Overflow)?;
+
+        if weighted_collateral < required_collateral {
+            return Err(LendingError::InsufficientCollateral);
+        }
+    }
+    Ok(())
+}
+
 /// Reject a prospective borrow that would leave the user undercollateralized or
 /// push protocol `TotalDebt` past the configured ceiling.
 ///
@@ -3896,23 +3932,7 @@ fn assert_borrow_solvent(
     let col_key = DataKey::Collateral(user.clone());
     let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
 
-    let now = env.ledger().timestamp();
-    let rate = current_borrow_rate(env);
-    let new_debt =
-        effective_debt(updated_position, now, rate).map_err(|_| LendingError::Overflow)?;
-
-    if new_debt > 0 {
-        let weighted_collateral = collateral
-            .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-            .ok_or(LendingError::Overflow)?;
-        let required_collateral = HEALTH_FACTOR_SCALE
-            .checked_mul(new_debt)
-            .ok_or(LendingError::Overflow)?;
-
-        if weighted_collateral < required_collateral {
-            return Err(LendingError::InsufficientCollateral);
-        }
-    }
+    assert_position_healthy(env, collateral, updated_position)?;
 
     if let Some(ceiling) = env
         .storage()
