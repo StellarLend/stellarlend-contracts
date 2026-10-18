@@ -26,10 +26,12 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
-    let admin = Address::generate(&env);
+    let token_a = crate::swap_test_util::register_token(&env);
+    let token_b = crate::swap_test_util::register_token(&env);
+    // The admin doubles as the funded trader in these tests.
+    let admin = crate::swap_test_util::new_trader(&env, &token_a, &token_b);
     client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
+    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, ra, rb);
     // SAFETY: env outlives the returned client via the tuple
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
@@ -53,13 +55,13 @@ fn test_initial_fees_zero() {
 
 #[test]
 fn test_fee_formula_a() {
-    let (_env, client, _admin) = setup_pool(10_000, 10_000);
+    let (_env, client, admin) = setup_pool(10_000, 10_000);
     let amount_in: i128 = 1_000;
     let fee_bps: i128 = 30;
     let expected_fee = amount_in * fee_bps / 10_000;
 
     client
-        .try_swap_a_for_b(&amount_in)
+        .try_swap_a_for_b(&admin, &amount_in, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a, _fee_b) = client.get_accrued_fees();
@@ -71,12 +73,12 @@ fn test_fee_formula_a() {
 
 #[test]
 fn test_fee_formula_b() {
-    let (_env, client, _admin) = setup_pool(10_000, 10_000);
+    let (_env, client, admin) = setup_pool(10_000, 10_000);
     let amount_in: i128 = 1_000;
     let fee_bps: i128 = 30;
     let expected_fee = amount_in * fee_bps / 10_000;
 
-    client.swap_b_for_a(&amount_in);
+    client.swap_b_for_a(&admin, &amount_in, &0);
     let (_fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(
         fee_b, expected_fee,
@@ -90,12 +92,12 @@ fn test_fee_formula_b() {
 
 #[test]
 fn test_fee_accumulator_monotonic() {
-    let (_env, client, _admin) = setup_pool(10_000, 10_000);
+    let (_env, client, admin) = setup_pool(10_000, 10_000);
     let (mut prev_a, mut prev_b) = client.get_accrued_fees();
 
     for &amt in &[100_i128, 200, 300, 400] {
         client
-            .try_swap_a_for_b(&amt)
+            .try_swap_a_for_b(&admin, &amt, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed on a funded pool");
         let (fa, fb) = client.get_accrued_fees();
@@ -130,7 +132,7 @@ fn test_fee_never_exceeds_amount_in() {
     assert!(fee <= amount_in, "fee must not exceed amount_in");
 
     client
-        .try_swap_a_for_b(&amount_in)
+        .try_swap_a_for_b(&admin, &amount_in, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a, _) = client.get_accrued_fees();
@@ -151,13 +153,13 @@ fn test_zero_fee_swap() {
     client.set_fee_bps(&admin, &0);
 
     client
-        .try_swap_a_for_b(&1_000)
+        .try_swap_a_for_b(&admin, &1_000, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a, _fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "zero stored fee must yield zero accrued fee");
 
-    client.swap_b_for_a(&1_000);
+    client.swap_b_for_a(&admin, &1_000, &0);
     let (_fa, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_b, 0, "zero stored fee must yield zero accrued fee");
 }
@@ -168,7 +170,7 @@ fn test_zero_fee_swap() {
 
 #[test]
 fn test_multiple_swaps_accrue() {
-    let (_env, client, _admin) = setup_pool(10_000, 10_000);
+    let (_env, client, admin) = setup_pool(10_000, 10_000);
 
     let amounts_a = [100_i128, 200, 300];
     let amounts_b = [150_i128, 250, 350];
@@ -179,12 +181,12 @@ fn test_multiple_swaps_accrue() {
 
     for &amt in &amounts_a {
         client
-            .try_swap_a_for_b(&amt)
+            .try_swap_a_for_b(&admin, &amt, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed on a funded pool");
     }
     for &amt in &amounts_b {
-        client.swap_b_for_a(&amt);
+        client.swap_b_for_a(&admin, &amt, &0);
     }
 
     let (fee_a, fee_b) = client.get_accrued_fees();
@@ -204,9 +206,9 @@ fn test_multiple_swaps_accrue() {
 
 #[test]
 fn test_swap_a_only_increments_fee_a() {
-    let (_env, client, _admin) = setup_pool(10_000, 10_000);
+    let (_env, client, admin) = setup_pool(10_000, 10_000);
     client
-        .try_swap_a_for_b(&1_000)
+        .try_swap_a_for_b(&admin, &1_000, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a, fee_b) = client.get_accrued_fees();
@@ -216,8 +218,8 @@ fn test_swap_a_only_increments_fee_a() {
 
 #[test]
 fn test_swap_b_only_increments_fee_b() {
-    let (_env, client, _admin) = setup_pool(10_000, 10_000);
-    client.swap_b_for_a(&1_000);
+    let (_env, client, admin) = setup_pool(10_000, 10_000);
+    client.swap_b_for_a(&admin, &1_000, &0);
     let (fee_a, fee_b) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "fee_a must stay zero after B→A swap");
     assert!(fee_b > 0, "fee_b must increase after B→A swap");
@@ -237,7 +239,7 @@ fn test_max_fee_bps() {
     let expected_fee = amount_in * fee_bps / 10_000;
 
     client
-        .try_swap_a_for_b(&amount_in)
+        .try_swap_a_for_b(&admin, &amount_in, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a, _) = client.get_accrued_fees();
@@ -270,9 +272,11 @@ fn test_liquidity_ops_preserve_fees() {
         &token_a_addr,
         &token_b_addr,
     );
+    crate::swap_test_util::fund_pool(&env, &id, &token_a_addr, &token_b_addr, 10_000, 10_000);
+    let trader = crate::swap_test_util::new_trader(&env, &token_a_addr, &token_b_addr);
 
     client
-        .try_swap_a_for_b(&500)
+        .try_swap_a_for_b(&trader, &500, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
     let (fee_a_before, _) = client.get_accrued_fees();
@@ -307,7 +311,7 @@ fn test_liquidity_ops_preserve_fees() {
 fn test_reinit_resets_fees() {
     let (env, client, _admin) = setup_pool(10_000, 10_000);
     client
-        .try_swap_a_for_b(&500)
+        .try_swap_a_for_b(&_admin, &500, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
     assert!(
@@ -341,12 +345,12 @@ fn test_analytical_fee_sequence() {
 
     for &amt in &swaps_a {
         client
-            .try_swap_a_for_b(&amt)
+            .try_swap_a_for_b(&admin, &amt, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed on a funded pool");
     }
     for &amt in &swaps_b {
-        client.swap_b_for_a(&amt);
+        client.swap_b_for_a(&admin, &amt, &0);
     }
 
     let (fee_a, fee_b) = client.get_accrued_fees();

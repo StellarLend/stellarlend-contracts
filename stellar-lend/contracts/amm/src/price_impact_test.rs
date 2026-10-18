@@ -1,10 +1,12 @@
-//! Tests for the AMM price-impact guard added to `swap_a_for_b`.
+//! Tests for the AMM price-impact guard shared by `swap_a_for_b` and
+//! `swap_b_for_a`.
 //!
 //! The guard checks the *relative* drop in spot price
-//! (`reserve_b / reserve_a`) caused by a single A→B swap and rejects
-//! any swap whose impact (in basis points) exceeds `max_impact_bps`.
+//! (`reserve_out / reserve_in`) caused by a single swap and rejects
+//! any swap whose impact (in basis points) exceeds `max_impact_bps` with
+//! [`AmmPoolError::PriceImpactExceeded`].
 //!
-//! Formula recap (from `lib.rs` docs):
+//! Formula recap (from `lib.rs` docs, A→B direction):
 //!   impact_bps = (ratio_den − ratio_num) × 10_000 / ratio_den
 //! where
 //!   ratio_num = new_rb × ra
@@ -19,26 +21,29 @@ mod price_impact_tests {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
 
-    use crate::{AmmContract, AmmContractClient, IMPACT_GUARD_DISABLED};
+    use crate::swap_test_util::{fund_pool, new_trader, register_token};
+    use crate::{AmmContract, AmmContractClient, AmmPoolError, IMPACT_GUARD_DISABLED};
 
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
-    fn setup() -> (Env, AmmContractClient<'static>) {
+    /// Fresh env + client + admin + funded trader, with a pool of `ra`/`rb`
+    /// backed by real SAC tokens.
+    fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
         let id = env.register(AmmContract, ());
         let client = AmmContractClient::new(&env, &id);
-        (env, client)
-    }
-
-    fn dummy_admin(env: &Env) -> Address {
-        Address::generate(env)
-    }
-
-    fn dummy_tokens(env: &Env) -> (Address, Address) {
-        (Address::generate(env), Address::generate(env))
+        let admin = Address::generate(&env);
+        let ta = register_token(&env);
+        let tb = register_token(&env);
+        client.init_pool(&admin, &ra, &rb, &ta, &tb);
+        fund_pool(&env, &id, &ta, &tb, ra, rb);
+        let trader = new_trader(&env, &ta, &tb);
+        // SAFETY: env is returned alongside the client and outlives it.
+        let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
+        (env, client, admin, trader)
     }
 
     // -----------------------------------------------------------------------
@@ -68,17 +73,13 @@ mod price_impact_tests {
     /// `IMPACT_GUARD_DISABLED` and any swap, regardless of size, succeeds.
     #[test]
     fn guard_disabled_by_default_allows_large_swap() {
-        let (env, client) = setup();
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&dummy_admin(&env), &1_000, &1_000, &ta, &tb);
+        let (_env, client, _admin, trader) = setup(1_000, 1_000);
         // ~50 % of reserve_a — huge price impact
         let out = client
-            .try_swap_a_for_b(&500)
+            .try_swap_a_for_b(&trader, &500, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed while the guard is disabled");
         assert!(out > 0);
-        // Guard is still reporting the sentinel
-        // (no set_max_impact_bps called)
         let (new_ra, _new_rb) = client.get_reserves();
         assert_eq!(new_ra, 1_500);
     }
@@ -86,15 +87,12 @@ mod price_impact_tests {
     /// Explicitly setting `IMPACT_GUARD_DISABLED` also allows large swaps.
     #[test]
     fn guard_explicitly_disabled_allows_large_swap() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
+        let (_env, client, admin, trader) = setup(1_000, 1_000);
         client.set_max_impact_bps(&admin, &IMPACT_GUARD_DISABLED);
         assert_eq!(client.get_max_impact_bps(), IMPACT_GUARD_DISABLED);
 
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&1_000, &1_000, &ta, &tb);
         let out = client
-            .try_swap_a_for_b(&800)
+            .try_swap_a_for_b(&trader, &800, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed while the guard is explicitly disabled");
         assert!(out > 0);
@@ -108,28 +106,21 @@ mod price_impact_tests {
     /// produce correct output.
     #[test]
     fn under_bound_swap_succeeds() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
-
         // Pool: 1_000_000 / 1_000_000, fee 30 bps, swap 1_000 in
         let ra = 1_000_000_i128;
         let rb = 1_000_000_i128;
         let amount_in = 1_000_i128;
         let fee_bps = 30_i128;
+        let (_env, client, admin, trader) = setup(ra, rb);
 
         let impact = expected_impact_bps(ra, rb, amount_in, fee_bps);
         // Set the cap 10 bps higher than the actual impact
-        let cap = (impact + 10) as u32;
-
-        client.set_max_impact_bps(&admin, &cap);
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&ra, &rb, &ta, &tb);
+        client.set_max_impact_bps(&admin, &((impact + 10) as u32));
         let out = client
-            .try_swap_a_for_b(&amount_in)
+            .try_swap_a_for_b(&trader, &amount_in, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed when the impact is under the cap");
 
-        // Pool must have updated correctly
         let (new_ra, new_rb) = client.get_reserves();
         assert_eq!(new_ra, ra + amount_in);
         assert_eq!(new_rb, rb - out);
@@ -144,17 +135,13 @@ mod price_impact_tests {
     /// allowed (the check is `>`, not `>=`).
     #[test]
     fn at_bound_swap_allowed() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
-
         let ra = 1_000_000_i128;
         let rb = 1_000_000_i128;
         let amount_in = 1_000_i128;
         let fee_bps = 0_i128;
+        let (_env, client, admin, trader) = setup(ra, rb);
+        client.set_fee_bps(&admin, &fee_bps);
 
-        // Compute the exact impact this swap will produce and set the cap to
-        // that exact value — the guard uses strict `>`, so impact == cap must
-        // be allowed.
         let impact = expected_impact_bps(ra, rb, amount_in, fee_bps);
         assert!(
             impact > 0,
@@ -162,18 +149,11 @@ mod price_impact_tests {
         );
 
         client.set_max_impact_bps(&admin, &(impact as u32));
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&ra, &rb, &ta, &tb);
         let out = client
-            .try_swap_a_for_b(&amount_in)
+            .try_swap_a_for_b(&trader, &amount_in, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed when the impact equals the cap");
         assert!(out > 0);
-
-        // One bps tighter must reject
-        client.init_pool(&admin, &ra, &rb, &ta, &tb);
-        // (rejection tested separately in over_bound_swap_rejected)
-        let _ = impact; // suppress unused warning
     }
 
     // -----------------------------------------------------------------------
@@ -181,55 +161,46 @@ mod price_impact_tests {
     // -----------------------------------------------------------------------
 
     /// A swap that would move the price by more than `max_impact_bps` must
-    /// panic (and thus roll back — no state change).
+    /// return the typed `PriceImpactExceeded` error and leave state untouched.
     #[test]
-    #[should_panic(expected = "PriceImpactExceeded")]
     fn over_bound_swap_rejected() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
-
         let ra = 1_000_i128;
         let rb = 1_000_i128;
         let amount_in = 500_i128; // ~33 % price impact
         let fee_bps = 30_i128;
+        let (_env, client, admin, trader) = setup(ra, rb);
 
         let impact = expected_impact_bps(ra, rb, amount_in, fee_bps);
         // Cap is 1 bps below the actual impact
-        let cap = (impact - 1) as u32;
+        client.set_max_impact_bps(&admin, &((impact - 1) as u32));
 
-        client.set_max_impact_bps(&admin, &cap);
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&ra, &rb, &ta, &tb);
-        // Must panic with "PriceImpactExceeded". The panicking (non-`try_`)
-        // client is used deliberately: the guard enforces rejection via a
-        // guest panic carrying this message, and the `try_` client would
-        // surface a generic "Host Object is stale or invalid" error instead,
-        // losing the distinctive assertion.
-        client.swap_a_for_b(&amount_in);
+        let res = client.try_swap_a_for_b(&trader, &amount_in, &0);
+        assert_eq!(res, Err(Ok(AmmPoolError::PriceImpactExceeded)));
+        assert_eq!(client.get_reserves(), (ra, rb));
     }
 
-    /// When the guard rejects a swap the reserves must stay at their
-    /// pre-call values.  We verify this indirectly: run one passing swap
-    /// (to prove reserves change normally), then run an over-bound swap in
-    /// a separate test that `should_panic` — Soroban's atomic rollback
-    /// guarantees no partial state is written.
-    ///
-    /// This test confirms the passing-swap path writes state correctly
-    /// (i.e., the guard does not accidentally skip the store).
+    /// B→A applies the same guard as A→B.
+    #[test]
+    fn over_bound_swap_rejected_b_for_a() {
+        let (_env, client, admin, trader) = setup(1_000, 1_000);
+        client.set_max_impact_bps(&admin, &50_u32);
+        let res = client.try_swap_b_for_a(&trader, &500, &0);
+        assert_eq!(res, Err(Ok(AmmPoolError::PriceImpactExceeded)));
+        assert_eq!(client.get_reserves(), (1_000, 1_000));
+    }
+
+    /// Run one passing swap to confirm the guard does not skip the store.
     #[test]
     fn guard_allows_in_bound_swap_and_updates_state() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
+        let (_env, client, admin, trader) = setup(1_000, 1_000);
 
         // Wide cap so this swap passes
         client.set_max_impact_bps(&admin, &500_u32); // 5 %
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&admin, &1_000, &1_000, &ta, &tb);
 
         let (ra_before, rb_before) = client.get_reserves();
         // tiny swap ~0.5 %
         let out = client
-            .try_swap_a_for_b(&5)
+            .try_swap_a_for_b(&trader, &5, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed under a wide cap");
         let (ra_after, rb_after) = client.get_reserves();
@@ -246,8 +217,7 @@ mod price_impact_tests {
     /// Admin can tighten or loosen the cap at will.
     #[test]
     fn admin_can_update_cap() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
+        let (_env, client, admin, _trader) = setup(1_000, 1_000);
 
         client.set_max_impact_bps(&admin, &50_u32);
         assert_eq!(client.get_max_impact_bps(), 50);
@@ -267,32 +237,25 @@ mod price_impact_tests {
 
     #[test]
     fn small_swap_passes_tight_cap() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
+        let (_env, client, admin, trader) = setup(1_000_000, 1_000_000);
 
         // Cap = 50 bps, small amount_in relative to pool
         client.set_max_impact_bps(&admin, &50_u32);
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&admin, &1_000_000, &1_000_000, &ta, &tb);
         // amount_in = 50 → impact ≈ 50 / 1_000_050 * 10_000 ≈ 0.5 bps → passes
         let out = client
-            .try_swap_a_for_b(&50)
+            .try_swap_a_for_b(&trader, &50, &0)
             .expect("contract invocation failed")
             .expect("swap_a_for_b must succeed under a tight-but-passing cap");
         assert!(out > 0);
     }
 
     #[test]
-    #[should_panic(expected = "PriceImpactExceeded")]
     fn large_swap_fails_tight_cap() {
-        let (env, client) = setup();
-        let admin = dummy_admin(&env);
+        let (_env, client, admin, trader) = setup(1_000_000, 1_000_000);
 
         client.set_max_impact_bps(&admin, &50_u32);
-        let (ta, tb) = dummy_tokens(&env);
-        client.init_pool(&1_000_000, &1_000_000, &ta, &tb);
-        // amount_in = 10_000 → impact ≈ 100 bps → fails 50 bps cap. Panicking
-        // client: see over_bound_swap_rejected for why `try_` is not used here.
-        client.swap_a_for_b(&10_000);
+        // amount_in = 10_000 → impact ≈ 100 bps → fails 50 bps cap.
+        let res = client.try_swap_a_for_b(&trader, &10_000, &0);
+        assert_eq!(res, Err(Ok(AmmPoolError::PriceImpactExceeded)));
     }
 }

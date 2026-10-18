@@ -26,10 +26,12 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
-    let admin = Address::generate(&env);
+    let token_a = crate::swap_test_util::register_token(&env);
+    let token_b = crate::swap_test_util::register_token(&env);
+    // The admin doubles as the funded trader in these tests.
+    let admin = crate::swap_test_util::new_trader(&env, &token_a, &token_b);
     client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
+    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, ra, rb);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
     (env, client, admin)
 }
@@ -75,7 +77,7 @@ fn test_fee_bps_zero() {
     assert_eq!(client.get_fee_bps(), 0);
 
     // A swap with zero fee should accrue nothing.
-    client.swap_a_for_b(&1_000_i128);
+    client.swap_a_for_b(&admin, &1_000_i128, &0);
     let (fee_a, _) = client.get_accrued_fees();
     assert_eq!(fee_a, 0, "zero stored fee must yield zero accrued fee");
 }
@@ -92,7 +94,7 @@ fn test_fee_bps_max() {
 
     let amount_in: i128 = 1_000;
     let expected_fee = amount_in * MAX_FEE_BPS / 10_000;
-    client.swap_a_for_b(&amount_in);
+    client.swap_a_for_b(&admin, &amount_in, &0);
     let (fee_a, _) = client.get_accrued_fees();
     assert_eq!(
         fee_a, expected_fee,
@@ -142,7 +144,7 @@ fn test_swap_uses_stored_fee() {
 
     let amount_in: i128 = 5_000;
     let expected_fee = amount_in * stored_fee / 10_000;
-    client.swap_a_for_b(&amount_in);
+    client.swap_a_for_b(&admin, &amount_in, &0);
     let (fee_a, _) = client.get_accrued_fees();
     assert_eq!(
         fee_a, expected_fee,
@@ -162,7 +164,7 @@ fn test_fee_accrual_with_stored_fee() {
     let fee_phase1: i128 = 30;
     client.set_fee_bps(&admin, &fee_phase1);
     let amt1: i128 = 1_000;
-    client.swap_a_for_b(&amt1);
+    client.swap_a_for_b(&admin, &amt1, &0);
     let expected1 = amt1 * fee_phase1 / 10_000;
     let (fee_a_after1, _) = client.get_accrued_fees();
     assert_eq!(fee_a_after1, expected1, "phase-1 fee incorrect");
@@ -171,7 +173,7 @@ fn test_fee_accrual_with_stored_fee() {
     let fee_phase2: i128 = 200;
     client.set_fee_bps(&admin, &fee_phase2);
     let amt2: i128 = 2_000;
-    client.swap_a_for_b(&amt2);
+    client.swap_a_for_b(&admin, &amt2, &0);
     let expected2 = expected1 + amt2 * fee_phase2 / 10_000;
     let (fee_a_after2, _) = client.get_accrued_fees();
     assert_eq!(

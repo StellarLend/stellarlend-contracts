@@ -18,17 +18,29 @@ use soroban_sdk::{testutils::Address as _, Env};
 /// env + client.  The client lifetime is transmuted to `'static` using the same
 /// pattern as every other test module in this crate.
 fn setup(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>) {
+    let (env, client, _trader) = setup_with_trader(ra, rb);
+    (env, client)
+}
+
+/// Like [`setup`] but backs the reserves with real SAC tokens and also
+/// returns a funded trader for live swaps.
+fn setup_with_trader(
+    ra: i128,
+    rb: i128,
+) -> (Env, AmmContractClient<'static>, soroban_sdk::Address) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let token_a = soroban_sdk::Address::generate(&env);
-    let token_b = soroban_sdk::Address::generate(&env);
+    let token_a = crate::swap_test_util::register_token(&env);
+    let token_b = crate::swap_test_util::register_token(&env);
     let admin = soroban_sdk::Address::generate(&env);
     client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
+    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, ra, rb);
+    let trader = crate::swap_test_util::new_trader(&env, &token_a, &token_b);
     // SAFETY: env is returned alongside the client and outlives this call.
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
-    (env, client)
+    (env, client, trader)
 }
 
 // ---------------------------------------------------------------------------
@@ -44,12 +56,12 @@ fn test_quote_matches_live_swap_a_for_b() {
     let amount_in: i128 = 50_000;
 
     // Get the quote first (read-only — does not mutate state).
-    let (_env, client) = setup(ra, rb);
+    let (_env, client, trader) = setup_with_trader(ra, rb);
     let fee_bps = client.get_fee_bps();
     let quote = client.get_swap_quote(&amount_in, &fee_bps, &true);
 
     // Execute the live swap on the same pool.
-    let live_out = client.swap_a_for_b(&amount_in);
+    let live_out = client.swap_a_for_b(&trader, &amount_in, &0);
 
     assert_eq!(
         quote.amount_out, live_out,
@@ -80,11 +92,11 @@ fn test_quote_matches_live_swap_b_for_a() {
     let rb: i128 = 800_000;
     let amount_in: i128 = 30_000;
 
-    let (_env, client) = setup(ra, rb);
+    let (_env, client, trader) = setup_with_trader(ra, rb);
     let fee_bps = client.get_fee_bps();
     let quote = client.get_swap_quote(&amount_in, &fee_bps, &false);
 
-    let live_out = client.swap_b_for_a(&amount_in);
+    let live_out = client.swap_b_for_a(&trader, &amount_in, &0);
 
     assert_eq!(
         quote.amount_out, live_out,
