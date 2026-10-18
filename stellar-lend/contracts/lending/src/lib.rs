@@ -403,6 +403,33 @@ pub struct LiquidationEventV1 {
     pub shortfall: i128,
 }
 
+/// Emitted by [`LendingContract::liquidate_cross_asset`] when a cross-asset
+/// liquidation completes.  Carries the identities of both the debt and
+/// collateral assets so indexers can reconstruct each individual leg.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossLiquidationEvent {
+    /// Schema version for forward-compatible decoding.
+    pub schema_version: u32,
+    /// Address that triggered the liquidation.
+    pub liquidator: Address,
+    /// Address whose position was liquidated.
+    pub borrower: Address,
+    /// Asset whose debt was repaid.
+    pub debt_asset: Address,
+    /// Asset whose collateral was seized.
+    pub collateral_asset: Address,
+    /// Debt amount repaid (in debt-asset raw units).
+    pub repaid: i128,
+    /// Collateral amount seized (in collateral-asset raw units).
+    pub seized: i128,
+    /// Aggregate health factor of the position *before* this call.
+    pub health_factor_before: i128,
+    /// Shortfall that could not be covered by seized collateral (routed to
+    /// the insurance fund and/or `BadDebt`).
+    pub shortfall: i128,
+}
+
 /// Emitted by [`LendingContract::flash_loan`] when a flash loan is
 /// successfully disbursed. Carries the schema version, the borrowed amount,
 /// the fee charged, and the initiator/receiver addresses so off-chain
@@ -2175,6 +2202,283 @@ impl LendingContract {
 
             invariants::check_invariant_after(&env, &debt_asset);
             invariants::check_invariant_after(&env, &collateral_asset);
+
+            Ok(actual_repay)
+        })
+    }
+
+    /// Liquidate an under-collateralised *cross-asset* position.
+    ///
+    /// Cross-asset positions are opened via [`deposit_collateral_asset`] /
+    /// [`borrow_asset`].  The legacy [`liquidate`] entrypoint only reads the
+    /// single-asset `Collateral`/`Debt` keys and therefore always returns
+    /// [`LendingError::PositionHealthy`] for pure cross-asset users.  This
+    /// entrypoint reads the per-`(user, asset)` keys and uses the aggregate
+    /// health factor.
+    ///
+    /// # Liquidation arithmetic
+    ///
+    /// ```text
+    /// close_factor_cap   = debt(debt_asset) × close_factor_bps / 10_000
+    /// actual_repay       = min(repay_amount, close_factor_cap)
+    /// seized_collateral  = actual_repay × price(debt_asset) × (10_000 + incentive_bps)
+    ///                      / (price(collateral_asset) × 10_000)
+    ///                                                            [floor rounding]
+    /// ```
+    ///
+    /// All three multiplications use [`math::checked_mul_div_floor`] so every
+    /// sub-unit remainder favours the protocol.
+    ///
+    /// # Shortfall
+    ///
+    /// When `seized_collateral > available_collateral(collateral_asset)` the
+    /// deficit is drawn from the insurance fund first; any residual is posted
+    /// as bad debt (`DataKey::BadDebt`).
+    ///
+    /// # Token transfers
+    ///
+    /// Follows the same pattern as [`liquidate`]:
+    /// - `liquidator` transfers `actual_repay` of `debt_asset` into the contract.
+    /// - The contract transfers `final_seized` of `collateral_asset` to `liquidator`.
+    ///
+    /// # Guards
+    /// - Self-liquidation returns [`LendingError::SelfLiquidation`].
+    /// - Active flash loan returns immediately (reentrancy guard).
+    /// - Both chosen assets must have fresh oracle prices; so must every other
+    ///   leg on the position (fail-closed on partial oracle staleness).
+    /// - Price of zero or negative is rejected as [`LendingError::PriceFeedNotFound`].
+    ///
+    /// # Errors
+    /// - [`LendingError::SelfLiquidation`] — `liquidator == borrower`.
+    /// - [`LendingError::PositionHealthy`] — aggregate HF ≥ [`HEALTH_FACTOR_SCALE`].
+    /// - [`LendingError::StaleOracleTimestamp`] — any leg has a stale price.
+    /// - [`LendingError::PriceFeedNotFound`] — any leg has a missing or non-positive price.
+    /// - [`LendingError::InvalidAmount`] — `repay_amount ≤ 0` or the computed
+    ///   `actual_repay` would be zero after the close-factor cap.
+    /// - [`LendingError::AssetNotConfigured`] — `debt_asset` or `collateral_asset`
+    ///   has not been configured via `set_asset_params`.
+    /// - [`LendingError::Overflow`] — arithmetic overflow.
+    pub fn liquidate_cross_asset(
+        env: Env,
+        liquidator: Address,
+        borrower: Address,
+        debt_asset: Address,
+        collateral_asset: Address,
+        repay_amount: i128,
+    ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
+        with_reentrancy_lock(&env, || {
+            liquidator.require_auth();
+
+            // ── 1. Self-liquidation guard ──────────────────────────────────
+            if liquidator == borrower {
+                return Err(LendingError::SelfLiquidation);
+            }
+
+            check_pause_status(&env, ProtocolAction::Liquidate);
+            require_no_active_flash_loan(&env);
+
+            // ── 2. Validate both assets are configured ─────────────────────
+            // (also implicitly validates they exist before any price lookup)
+            cross_asset::validate_asset_params_configured(&env, &debt_asset)?;
+            cross_asset::validate_asset_params_configured(&env, &collateral_asset)?;
+
+            if repay_amount <= 0 {
+                return Err(LendingError::InvalidAmount);
+            }
+
+            // ── 3. Require fresh prices for every leg (fail-closed) ────────
+            cross_asset::ensure_position_prices_fresh_for_liquidation(&env, &borrower)?;
+
+            // ── 4. Compute aggregate health factor ─────────────────────────
+            let hf = cross_asset::compute_aggregate_health_factor(&env, &borrower)?;
+
+            if hf >= HEALTH_FACTOR_SCALE {
+                return Err(LendingError::PositionHealthy);
+            }
+
+            // ── 5. Resolve oracle prices for the two chosen legs ───────────
+            let debt_price_record = cross_asset::get_price_for_asset(&env, &debt_asset)?;
+            let col_price_record = cross_asset::get_price_for_asset(&env, &collateral_asset)?;
+            // Prices guaranteed > 0 by get_price_for_asset; guard explicitly
+            // anyway to prevent divide-by-zero later.
+            if debt_price_record.price <= 0 || col_price_record.price <= 0 {
+                return Err(LendingError::PriceFeedNotFound);
+            }
+
+            // ── 6. Accrue interest on the debt leg ────────────────────────
+            let now = env.ledger().timestamp();
+            let rate = current_borrow_rate(&env);
+            let position = cross_asset::load_debt_asset(&env, &borrower, &debt_asset);
+            let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)
+                .map_err(|_| LendingError::Overflow)?;
+
+            let debt = settled_position.principal;
+            if debt <= 0 {
+                return Err(LendingError::PositionHealthy);
+            }
+
+            // ── 7. Apply close-factor cap ──────────────────────────────────
+            let close_factor_bps = Self::close_factor_bps_config(&env);
+            let max_repay = math::checked_mul_div_floor(debt, close_factor_bps, BPS_DENOM)
+                .map_err(|_| LendingError::Overflow)?;
+            let actual_repay = repay_amount.min(max_repay);
+            if actual_repay <= 0 {
+                return Err(LendingError::InvalidAmount);
+            }
+
+            // ── 8. Compute seized collateral (with incentive, floor rounding)
+            //
+            //   seized = actual_repay × price_debt × (BPS_DENOM + incentive)
+            //            / (price_col × BPS_DENOM)
+            //
+            // Use two sequential checked_mul_div_floor calls to keep
+            // intermediate values within i128 range (both prices ≤ 10^14,
+            // typical repay ≤ 10^14, so repay × price_debt can reach ~10^28 —
+            // beyond i128).  Split the division: first divide by price_col,
+            // then apply the incentive.
+            let incentive_bps = Self::liquidation_incentive_bps_config(&env);
+
+            // Step A: repay_amount_in_collateral_units = actual_repay × price_debt / price_col
+            let repay_in_col_units =
+                math::checked_mul_div_floor(actual_repay, debt_price_record.price, col_price_record.price)
+                    .map_err(|_| LendingError::Overflow)?;
+
+            // Step B: apply incentive — seized = repay_in_col_units × (BPS_DENOM + incentive) / BPS_DENOM
+            let seized_collateral =
+                math::checked_mul_div_floor(repay_in_col_units, BPS_DENOM + incentive_bps, BPS_DENOM)
+                    .map_err(|_| LendingError::Overflow)?;
+
+            // ── 9. Cap seized to available collateral; handle shortfall ────
+            let available_collateral =
+                cross_asset::load_collateral_asset(&env, &borrower, &collateral_asset);
+            let mut final_seized = seized_collateral;
+
+            if seized_collateral > available_collateral {
+                let shortfall = seized_collateral
+                    .checked_sub(available_collateral)
+                    .ok_or(LendingError::Overflow)?;
+                let insurance_drawn = draw_insurance(&env, shortfall)?;
+                let residual = shortfall
+                    .checked_sub(insurance_drawn)
+                    .ok_or(LendingError::Overflow)?;
+                if residual > 0 {
+                    let current_bad_debt: i128 = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::BadDebt)
+                        .unwrap_or(0i128);
+                    let new_bad_debt = current_bad_debt
+                        .checked_add(residual)
+                        .ok_or(LendingError::Overflow)?;
+                    env.storage()
+                        .persistent()
+                        .set(&DataKey::BadDebt, &new_bad_debt);
+                    #[allow(deprecated)]
+                    env.events().publish(
+                        (Symbol::new(&env, "bad_debt"), borrower.clone()),
+                        residual,
+                    );
+                }
+                final_seized = available_collateral;
+            }
+
+            // ── 10. Write updated debt position ───────────────────────────
+            let new_debt = debt
+                .checked_sub(actual_repay)
+                .ok_or(LendingError::Overflow)?;
+            let updated_debt_position = crate::debt::DebtPosition {
+                principal: new_debt,
+                borrow_index_snapshot: settled_position.borrow_index_snapshot,
+                last_update: settled_position.last_update,
+            };
+            cross_asset::save_debt_asset(&env, &borrower, &debt_asset, &updated_debt_position);
+            if new_debt == 0 {
+                cross_asset::remove_from_user_debt_list(&env, &borrower, &debt_asset);
+            }
+
+            // Update per-asset and protocol-level total debt accumulators.
+            let total_debt_asset: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalDebtAsset(debt_asset.clone()))
+                .unwrap_or(0);
+            let new_total_debt_asset = total_debt_asset.saturating_sub(actual_repay);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDebtAsset(debt_asset.clone()), &new_total_debt_asset);
+
+            let total_debt_protocol: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalDebt)
+                .unwrap_or(0);
+            let new_total_debt_protocol = total_debt_protocol.saturating_sub(actual_repay);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDebt, &new_total_debt_protocol);
+
+            cross_asset::extend_debt_asset_ttl(&env, &borrower, &debt_asset);
+
+            // ── 11. Write updated collateral balance ──────────────────────
+            let new_col = available_collateral
+                .checked_sub(final_seized)
+                .ok_or(LendingError::Overflow)?;
+            cross_asset::save_collateral_asset(&env, &borrower, &collateral_asset, new_col);
+            if new_col == 0 {
+                cross_asset::remove_from_user_collateral_list(
+                    &env,
+                    &borrower,
+                    &collateral_asset,
+                );
+            } else {
+                cross_asset::extend_collateral_asset_ttl(&env, &borrower, &collateral_asset);
+            }
+
+            // ── 12. Release isolation bucket if applicable ────────────────
+            if should_release_isolation_debt(&env, &collateral_asset) {
+                decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
+            }
+
+            // ── 13. Clear unhealthy timestamp when position is healed ─────
+            let hf_after = cross_asset::compute_aggregate_health_factor(&env, &borrower)
+                .unwrap_or(0);
+            if hf_after >= HEALTH_FACTOR_SCALE {
+                let first_unhealthy_key =
+                    DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                if env.storage().persistent().has(&first_unhealthy_key) {
+                    env.storage().persistent().remove(&first_unhealthy_key);
+                }
+            }
+
+            // ── 14. Token transfers (checks-effects-interactions) ─────────
+            let debt_token_client = TokenClient::new(&env, &debt_asset);
+            let collateral_token_client = TokenClient::new(&env, &collateral_asset);
+            debt_token_client.transfer(
+                &liquidator,
+                &env.current_contract_address(),
+                &actual_repay,
+            );
+            collateral_token_client.transfer(
+                &env.current_contract_address(),
+                &liquidator,
+                &final_seized,
+            );
+
+            // ── 15. Emit event ────────────────────────────────────────────
+            let shortfall = seized_collateral.saturating_sub(final_seized);
+            CrossLiquidationEvent {
+                schema_version: SCHEMA_VERSION_V1,
+                liquidator: liquidator.clone(),
+                borrower: borrower.clone(),
+                debt_asset: debt_asset.clone(),
+                collateral_asset: collateral_asset.clone(),
+                repaid: actual_repay,
+                seized: final_seized,
+                health_factor_before: hf,
+                shortfall,
+            }
+            .publish(&env);
 
             Ok(actual_repay)
         })
