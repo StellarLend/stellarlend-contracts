@@ -1233,6 +1233,11 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Guardian)
     }
 
+    /// Return the current emergency state, or `None` before initialization.
+    pub fn get_emergency_state(env: Env) -> Option<EmergencyState> {
+        env.storage().instance().get(&DataKey::EmergencyState)
+    }
+
     pub fn set_emergency_state(env: Env, new_state: EmergencyState) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin_or_guardian(&env, &new_state)?;
@@ -1252,7 +1257,7 @@ impl LendingContract {
                 .ok_or(LendingError::NotInitialized)?,
         };
 
-        let old_state = get_emergency_state(&env);
+        let old_state = read_emergency_state(&env);
         set_emergency_state_internal(&env, new_state);
         EmergencyStateChangedEvent {
             old_state,
@@ -3876,7 +3881,7 @@ fn check_pause_status(env: &Env, action: ProtocolAction) {
     }
 }
 
-fn get_emergency_state(env: &Env) -> EmergencyState {
+fn read_emergency_state(env: &Env) -> EmergencyState {
     env.storage()
         .instance()
         .get(&DataKey::EmergencyState)
@@ -3890,7 +3895,7 @@ fn set_emergency_state_internal(env: &Env, state: EmergencyState) {
 }
 
 fn check_emergency_status(env: &Env, action: ProtocolAction) {
-    match get_emergency_state(env) {
+    match read_emergency_state(env) {
         EmergencyState::Normal => {}
         EmergencyState::Shutdown => panic!("OperationDisabledDuringShutdown"),
         EmergencyState::Recovery => match action {
