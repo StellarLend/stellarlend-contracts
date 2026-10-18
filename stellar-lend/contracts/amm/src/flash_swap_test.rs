@@ -259,7 +259,7 @@ fn test_reentrancy_blocks_add() {
 
     client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128);
+    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128, &0, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 
@@ -271,7 +271,7 @@ fn test_reentrancy_blocks_remove() {
 
     client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    let res = client.try_remove_liquidity(&caller, &1_i128);
+    let res = client.try_remove_liquidity(&caller, &1_i128, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 

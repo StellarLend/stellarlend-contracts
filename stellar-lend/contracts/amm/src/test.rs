@@ -50,7 +50,7 @@ fn setup_with_liquidity() -> (
     client.init_pool(&lp, &INIT_A, &INIT_B, &token_a, &token_b);
     // First call into `add_liquidity` uses the proportional path;
     // after this, `reserve_a = 2_000_000`, `reserve_b = 3_000_000`.
-    let _shares = client.add_liquidity(&lp, &INIT_A, &INIT_B);
+    let _shares = client.add_liquidity(&lp, &INIT_A, &INIT_B, &0, &0, &0, &u64::MAX);
     (env, client, token_a, token_b, lp)
 }
 
@@ -68,7 +68,7 @@ fn test_default_min_liquidity_is_zero() {
 fn test_floor_zero_allows_full_withdrawal() {
     let (_env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let balance = client.get_lp_balance(&lp);
-    client.remove_liquidity(&lp, &balance);
+    client.remove_liquidity(&lp, &balance, &0, &0, &u64::MAX);
     let (ra, rb) = client.get_reserves();
     assert!(ra < INIT_A * 2, "full burn must shrink reserve A");
     assert!(rb < INIT_B * 2, "full burn must shrink reserve B");
@@ -168,7 +168,7 @@ fn test_remove_liquidity_below_floor_a_rejected() {
     env.mock_all_auths();
 
     let balance = client.get_lp_balance(&lp);
-    let err = client.try_remove_liquidity(&lp, &balance);
+    let err = client.try_remove_liquidity(&lp, &balance, &0, &0, &u64::MAX);
     assert!(
         matches!(err, Err(Ok(AmmPoolError::BelowMinLiquidity))),
         "expected BelowMinLiquidity, got {:?}",
@@ -183,7 +183,7 @@ fn test_remove_liquidity_floor_zero_still_works() {
     let (ra0, rb0) = client.get_reserves();
     let k0 = ra0.checked_mul(rb0).unwrap();
     let balance = client.get_lp_balance(&lp);
-    client.remove_liquidity(&lp, &balance);
+    client.remove_liquidity(&lp, &balance, &0, &0, &u64::MAX);
     let (ra1, rb1) = client.get_reserves();
     assert!(
         ra1 < ra0,
