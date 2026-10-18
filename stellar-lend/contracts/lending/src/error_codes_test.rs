@@ -1,58 +1,78 @@
+//! Error code tests for the lending contract.
+//!
+//! These tests verify that:
+//! 1. The `LendingError` re-export from `stellar_lend_common` is usable
+//! 2. Error codes remain stable across the re-export
+//! 3. Contract-level error handling works correctly
+
 use super::LendingError;
 
+/// Verify that `stellarlend_lending::LendingError` is the same type as
+/// `stellar_lend_common::LendingError` through the re-export.
 #[test]
-fn test_error_code_stability_and_uniqueness() {
-    let cases = [
-        (LendingError::InvalidAmount, 1001),
-        (LendingError::Overflow, 1002),
-        (LendingError::Unauthorized, 1003),
-        (LendingError::PendingAdminNotSet, 1004),
-        (LendingError::BelowMinimumBorrow, 1008),
-        (LendingError::NotInitialized, 1009),
-        (LendingError::AlreadyInitialized, 1010),
-        (LendingError::PositionHealthy, 1011),
-        (LendingError::RepayAmountTooHigh, 1012),
-        (LendingError::DebtCeilingExceeded, 2001),
-        (LendingError::DepositCapExceeded, 2002),
-        (LendingError::InvalidFeeBps, 2005),
-        (LendingError::InvalidFlashUtilizationBps, 2006),
-        (LendingError::InsufficientCollateral, 2007),
-        (LendingError::SelfLiquidation, 2008),
-        (LendingError::IsolationCeilingExceeded, 2009),
-        (LendingError::InvalidIsolationCeiling, 2010),
-        (LendingError::AssetNotConfigured, 3001),
-        (LendingError::PriceFeedNotFound, 3002),
-        (LendingError::HealthFactorTooLow, 3003),
-        (LendingError::PriceOutOfBounds, 3004),
-        (LendingError::PriceUnavailable, 3005),
-        (LendingError::UpgradeNotInitialized, 4001),
-        (LendingError::ProposalNotFound, 4002),
-        (LendingError::ProposalNotReady, 4003),
-        (LendingError::ProposalExpired, 4004),
-        (LendingError::ProposalAlreadyExecuted, 4005),
-        (LendingError::AlreadyApproved, 4006),
-        (LendingError::InsufficientUpgradeApprovals, 4007),
-        (LendingError::InvalidUpgradeVersion, 4008),
-        (LendingError::ApproverNotFound, 4009),
-        (LendingError::MaxApproversReached, 4010),
-        (LendingError::InvalidUpgradeConfig, 4011),
-        (LendingError::InvalidOracleSignature, 5001),
-        (LendingError::StaleOracleTimestamp, 5002),
-        (LendingError::OraclePubkeyNotSet, 5003),
-    ];
+fn lending_error_is_common_type() {
+    // This function signature enforces that the lending crate's LendingError
+    // is compatible with the common crate's type
+    fn accepts_common_error(_err: stellar_lend_common::LendingError) {}
+    
+    // If this compiles, the re-export works correctly
+    accepts_common_error(LendingError::InvalidAmount);
+    accepts_common_error(LendingError::DebtCeilingExceeded);
+    accepts_common_error(LendingError::UpgradeProposalCancelled);
+    accepts_common_error(LendingError::IsolationCeilingBelowDebt);
+    accepts_common_error(LendingError::InvalidPayloadVersion);
+}
 
-    for i in 0..cases.len() {
-        let (err_i, code_i) = cases[i];
-        assert_eq!(err_i as u32, code_i, "Error code mismatch for {:?}", err_i);
+/// Verify that error codes are stable through the re-export by checking
+/// a sample of codes from each range.
+#[test]
+fn error_codes_stable_through_reexport() {
+    // Sample from each range to verify stability
+    assert_eq!(LendingError::InvalidAmount as u32, 1001);
+    assert_eq!(LendingError::InvalidPayloadVersion as u32, 1013);
+    assert_eq!(LendingError::DebtCeilingExceeded as u32, 2001);
+    assert_eq!(LendingError::IsolationCeilingBelowDebt as u32, 2012);
+    assert_eq!(LendingError::AssetNotConfigured as u32, 3001);
+    assert_eq!(LendingError::UpgradeNotInitialized as u32, 4001);
+    assert_eq!(LendingError::UpgradeProposalCancelled as u32, 4012);
+    assert_eq!(LendingError::InvalidOracleSignature as u32, 5001);
+    assert_eq!(LendingError::NoBadDebt as u32, 6001);
+    assert_eq!(LendingError::InvalidLiquidationThresholdBps as u32, 7000);
+    assert_eq!(LendingError::BackupNotFound as u32, 8001);
+}
 
-        for &(err_j, code_j) in cases.iter().skip(i + 1) {
-            assert!(
-                code_i != code_j,
-                "Collision detected: {:?} and {:?} both have code {}",
-                err_i,
-                err_j,
-                code_i
-            );
-        }
+/// Verify that all error codes defined in the common crate are accessible
+/// through the lending contract's re-export.
+#[test]
+fn all_common_errors_accessible() {
+    // Use the exhaustive list from common to verify all variants are accessible
+    for &(variant, expected_code) in stellar_lend_common::error_codes_test::ALL_LENDING_ERRORS {
+        // Verify the code matches through the re-export
+        assert_eq!(
+            variant as u32,
+            expected_code,
+            "Error code mismatch for {:?}",
+            variant
+        );
     }
+}
+
+/// Verify that error conversions work correctly for contract error handling.
+/// This ensures that `?` operator and `panic_with_error!` work through the re-export.
+#[test]
+fn error_conversion_works() {
+    use soroban_sdk::{Env, Error};
+    
+    let env = Env::default();
+    
+    // Test conversion from LendingError to soroban_sdk::Error
+    let sdk_error: Error = LendingError::InvalidAmount.into();
+    
+    // The error should encode with the expected discriminant
+    assert!(sdk_error.is_type(soroban_sdk::xdr::ScErrorType::Contract));
+    
+    // Test a few more to ensure conversion works for all ranges
+    let _: Error = LendingError::IsolationCeilingBelowDebt.into();
+    let _: Error = LendingError::UpgradeProposalCancelled.into();
+    let _: Error = LendingError::InvalidPayloadVersion.into();
 }
