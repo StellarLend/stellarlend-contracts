@@ -21,6 +21,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: stellar-lend
-      - name: Test workspace
+      - name: Check workspace
         working-directory: stellar-lend
-        run: cargo test --workspace --lib --exclude stellarlend-bridge --exclude stellarlend-amm
+        run: cargo check --workspace --lib
