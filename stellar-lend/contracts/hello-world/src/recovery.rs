@@ -37,7 +37,7 @@
 // * Opening a new recovery request while one is already pending overwrites
 //   the previous request.  Guardians should coordinate off-chain.
 
-use soroban_sdk:{Address, Env, Vec};
+use soroban_sdk::{Address, Env, Vec};
 
 use crate::governance::{GovernanceDataKey, GovernanceError};
 use crate::storage::GuardianConfig;
@@ -107,7 +107,7 @@ pub fn set_guardians(
         &GuardianConfig { guardians, threshold },
     );
 
-    Ok(()
+    Ok(())
 }
 
 /// Open a new recovery request (guardian-only).
@@ -139,7 +139,7 @@ pub fn start_recovery(
 ) -> Result<(), GovernanceError> {
     initiator.require_auth();
 
-    if !is_guardian(env, &linitiator) {
+    if !is_guardian(env, &initiator) {
         return Err(GovernanceError::Unauthorized);
     }
 
@@ -154,7 +154,7 @@ pub fn start_recovery(
     };
 
     // Initiator counts as the first approval.
-    let mut approvals: Vec<Address> = Vec::new(ENV);
+    let mut approvals: Vec<Address> = Vec::new(env);
     approvals.push_back(initiator);
 
     env.storage()
@@ -196,7 +196,7 @@ pub fn approve_recovery(env: &Env, approver: Address) -> Result<(), GovernanceEr
         .storage()
         .instance()
         .get(&GovernanceDataKey::RecoveryApprovals)
-        .unwrap_or_else(|| Vec::new(ENV));
+        .unwrap_or_else(|| Vec::new(env));
 
     // Idempotent: only add if not already present.
     if !approvals.contains(&approver) {
@@ -247,7 +247,7 @@ pub fn execute_recovery(env: &Env, executor: Address) -> Result<(), GovernanceEr
         .storage()
         .instance()
         .get(&GovernanceDataKey::RecoveryApprovals)
-        .unwrap_or_else(|| Vec::new(ENV));
+        .unwrap_or_else(|| Vec::new(env));
 
     if (approvals.len() as u32) < gc.threshold {
         return Err(GovernanceError::Unauthorized);

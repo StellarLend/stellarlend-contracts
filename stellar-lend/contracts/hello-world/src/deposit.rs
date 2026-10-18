@@ -1,4 +1,9 @@
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
+
+/// Reserve fee taken on every deposit (10 bps = 0.10%).
+const RESERVE_FEE_BPS: i128 = 10;
+/// Denominator for basis-point arithmetic.
+const BPS_DENOM: i128 = 10_000;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -274,6 +279,4 @@ mod deposit_tests {
     }
 }
 
-/// Deposit collateral for a user.
-pub fn deposit_collateral(env: &Env, _caller: Address, _asset: Option<Address>, _amount: i128) {}
 
