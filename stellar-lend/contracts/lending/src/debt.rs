@@ -352,26 +352,13 @@ fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
 /// fresh `RateSnapshot`. Each cache miss also writes one utilization sample for
 /// the current ledger into the bounded utilization-history ring buffer.
 pub fn cached_borrow_rate(env: &Env) -> i128 {
-    let ledger_sequence = env.ledger().sequence();
-    let key = DataKey::BorrowRateCache(ledger_sequence);
-
-    if let Some(cache) = env
-        .storage()
-        .temporary()
-        .get::<DataKey, BorrowRateCache>(&key)
-    {
-        if cache.ledger_sequence == ledger_sequence {
-            return cache.rate_bps;
-        }
-    }
-
+    // NOTE: the original per-ledger temporary-storage cache was keyed by the
+    // current ledger sequence, which makes the transaction footprint depend on
+    // the ledger that closes the transaction. Simulated footprints then never
+    // match on-chain execution (the call traps). The rate is cheap to compute,
+    // so it is computed directly each call.
     let computation = uncached_borrow_rate_computation(env);
     write_utilization_sample(env, computation.utilization_bps);
-    let cache = BorrowRateCache {
-        ledger_sequence,
-        rate_bps: computation.rate_bps,
-    };
-    env.storage().temporary().set(&key, &cache);
     computation.rate_bps
 }
 
@@ -796,7 +783,7 @@ pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split
         .unwrap_or_else(|| Vec::new(env));
 
     // Enforce the ring-buffer bound: evict oldest when at capacity.
-    let cap = MAX_ACCRUAL_LOG_SIZE as u32;
+    let cap = crate::events::MAX_ACCRUAL_LOG_SIZE as u32;
     if log.len() >= cap {
         // Remove front (oldest) entry to make room.
         let mut trimmed: Vec<AccrualSplitEntry> = Vec::new(env);

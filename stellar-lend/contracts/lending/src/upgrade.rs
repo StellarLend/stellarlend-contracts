@@ -346,7 +346,7 @@ pub fn upgrade_init(
         return Err(LendingError::InvalidUpgradeConfig);
     }
 
-    let admin = crate::LendingContract::get_admin(env.clone());
+    let admin = crate::LendingContract::get_admin(env.clone()).ok_or(LendingError::NotInitialized)?;
     let mut approvers = Vec::new(env);
     approvers.push_back(admin.clone());
 
@@ -697,7 +697,7 @@ pub fn upgrade_execute(env: &Env, caller: &Address, proposal_id: u64) -> Result<
 pub fn upgrade_cancel(env: &Env, caller: &Address, proposal_id: u64) -> Result<(), LendingError> {
     assert_admin(env)?;
     caller.require_auth();
-    if caller != &crate::LendingContract::get_admin(env.clone()) {
+    if Some(caller.clone()) != crate::LendingContract::get_admin(env.clone()) {
         return Err(LendingError::Unauthorized);
     }
     ensure_upgrade_initialized(env)?;
