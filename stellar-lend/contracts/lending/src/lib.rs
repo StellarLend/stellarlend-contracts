@@ -246,6 +246,8 @@ pub enum DataKey {
     BorrowMinAmount,
     Admin,
     PendingAdmin,
+    UserOperationSequence(Address),
+    OperationRecord(soroban_sdk::BytesN<32>),
     OraclePubKey,
     OraclePrice(Address),
     MaxMoveBps,
@@ -547,6 +549,8 @@ pub enum LendingError {
     /// The recorded approval binding does not match the expected nonce-bound
     /// domain-separated authorization for this proposal/approver pair.
     ApprovalBindingMismatch = 4016,
+    /// A prepared operation expired before commit.
+    OperationExpired = 4017,
     /// `write_off_bad_debt` called when there is no recorded bad debt.
     NoBadDebt = 6001,
     /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
@@ -3356,134 +3360,8 @@ impl LendingContract {
         cross_asset::load_debt_asset(&env, &user, &asset)
     }
 
-    /// Initialize timelocked multisig upgrade governance (admin-only, once).
-    pub fn upgrade_init(
-        env: Env,
-        caller: Address,
-        current_wasm_hash: BytesN<32>,
-        required_approvals: u32,
-    ) -> Result<(), LendingError> {
-        upgrade::upgrade_init(&env, &caller, current_wasm_hash, required_approvals)
-    }
-
-    /// Propose a WASM upgrade with a timelocked ETA ledger (admin-only).
-    pub fn upgrade_propose(
-        env: Env,
-        caller: Address,
-        new_wasm_hash: BytesN<32>,
-        new_version: u32,
-    ) -> Result<u64, LendingError> {
-        upgrade::upgrade_propose(&env, &caller, new_wasm_hash, new_version)
-    }
-
-    /// Record an approval for a pending upgrade proposal (approver-only).
-    pub fn upgrade_approve(
-        env: Env,
-        caller: Address,
-        proposal_id: u64,
-    ) -> Result<u32, LendingError> {
-        upgrade::upgrade_approve(&env, &caller, proposal_id)
-    }
-
-    /// Execute an approved upgrade after the timelock elapses (approver-only).
-    pub fn upgrade_execute(
-        env: Env,
-        caller: Address,
-        proposal_id: u64,
-    ) -> Result<(), LendingError> {
-        upgrade::upgrade_execute(&env, &caller, proposal_id)
-    }
-
-    /// Cancel a pending upgrade proposal (admin-only, issue #1940).
-    pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
-        upgrade::upgrade_cancel(&env, &caller, proposal_id)
-    }
-
-    pub fn upgrade_set_required_approvals(
-        env: Env,
-        caller: Address,
-        required_approvals: u32,
-    ) -> Result<(), LendingError> {
-        upgrade::upgrade_set_required_approvals(&env, &caller, required_approvals)
-    }
-
-    /// Add an upgrade approver (admin-only).
-    pub fn upgrade_add_approver(
-        env: Env,
-        caller: Address,
-        approver: Address,
-    ) -> Result<(), LendingError> {
-        upgrade::upgrade_add_approver(&env, &caller, approver)
-    }
-
-    /// Remove an upgrade approver (admin-only).
-    pub fn upgrade_remove_approver(
-        env: Env,
-        caller: Address,
-        approver: Address,
-    ) -> Result<(), LendingError> {
-        upgrade::upgrade_remove_approver(&env, &caller, approver)
-    }
-
-    pub fn current_version(env: Env) -> Result<u32, LendingError> {
-        upgrade::current_version(&env)
-    }
-
-    pub fn current_wasm_hash(env: Env) -> Result<BytesN<32>, LendingError> {
-        upgrade::current_wasm_hash(&env)
-    }
-
-    pub fn get_required_approvals(env: Env) -> Result<u32, LendingError> {
-        upgrade::get_required_approvals(&env)
-    }
-
-    pub fn get_upgrade_approvers(env: Env) -> Result<Vec<Address>, LendingError> {
-        upgrade::get_upgrade_approvers(&env)
-    }
-
-    pub fn get_proposal_approvals(
-        env: Env,
-        proposal_id: u64,
-    ) -> Result<Vec<Address>, LendingError> {
-        upgrade::get_proposal_approvals(&env, proposal_id)
-    }
-
-    pub fn upgrade_status(
-        env: Env,
-        proposal_id: u64,
-    ) -> Result<upgrade::UpgradeStatus, LendingError> {
-        upgrade::upgrade_status(&env, proposal_id)
-    }
-
-    /// Returns whether a proposal is in the `Cancelled` terminal state (issue #1940).
-    pub fn is_upgrade_proposal_cancelled(env: Env, proposal_id: u64) -> bool {
-        upgrade::is_proposal_cancelled(&env, proposal_id)
-    }
-
-    /// Returns the stored domain-separated approval binding hash for
-    /// `(proposal_id, approver)` (issue #1940).
-    pub fn get_upgrade_approval_binding(
-        env: Env,
-        proposal_id: u64,
-        approver: Address,
-    ) -> Option<BytesN<32>> {
-        upgrade::get_approval_binding(&env, proposal_id, approver)
-    }
-
-    /// Returns the approver-set fingerprint captured when the proposal was
-    /// created (issue #1940).
-    pub fn get_upgrade_proposal_signer_hash(env: Env, proposal_id: u64) -> Option<BytesN<32>> {
-        upgrade::get_proposal_approver_set_hash(&env, proposal_id)
-    }
-
-    /// Returns the fingerprint of the live upgrade approver set (issue #1940).
-    pub fn get_upgrade_approver_set_hash(env: Env) -> BytesN<32> {
-        upgrade::get_approver_set_hash(&env)
-    }
-
-    pub fn get_min_upgrade_delay_ledgers(env: Env) -> u32 {
-        upgrade::get_min_upgrade_delay_ledgers(&env)
-    }
+    // NOTE: timelocked upgrade governance entrypoints were removed from the deployed
+    // contract surface to keep the WASM under the 128 KiB network limit.
 
     /// Returns the total number of governance audit log entries ever recorded.
     /// This count never resets even when the circular buffer wraps.
@@ -3988,7 +3866,7 @@ fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), Len
             caller.require_auth();
             Ok(())
         }
-        EmergencyState::Recovery | EmergencyState::Normal => assert_admin(env)?,
+        EmergencyState::Recovery | EmergencyState::Normal => assert_admin(env),
     }
 }
 

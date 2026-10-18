@@ -1,5 +1,11 @@
 # StellarLend Smart Contracts
 
+[![CI](https://github.com/StellarLend/stellarlend-contracts/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/StellarLend/stellarlend-contracts/actions) ![Network: Stellar testnet](https://img.shields.io/badge/network-stellar%20testnet-blue)
+
+**Live on Stellar testnet:** lending contract [`CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6`](https://stellar.expert/explorer/testnet/contract/CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6) ([all deployments](DEPLOYMENTS.md)) | [Architecture, function reference, deploy guide](docs/LENDING_CONTRACT.md)
+
+Verified on-chain: initialize, deposit, borrow, repay, withdraw (see [DEPLOYMENTS.md](DEPLOYMENTS.md)).
+
 ## Overview
 
 StellarLend is a decentralized finance (DeFi) lending protocol built on the Stellar blockchain using Soroban smart contracts. The protocol enables users to deposit collateral, borrow assets, accrue interest, and participate in a secure, transparent, and risk-managed lending market. Designed for DeFi developers, protocol integrators, and users seeking a robust lending solution on Stellar, StellarLend provides comprehensive features including cross-asset support, flash loans, AMM integration, governance mechanisms, and advanced risk management tools.

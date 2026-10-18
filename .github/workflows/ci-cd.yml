@@ -23,4 +23,4 @@ jobs:
           workspaces: stellar-lend
       - name: Check workspace
         working-directory: stellar-lend
-        run: cargo check --workspace --lib --exclude stellarlend-bridge --exclude stellarlend-lending --keep-going
+        run: cargo check --workspace --lib --exclude stellarlend-bridge --keep-going
