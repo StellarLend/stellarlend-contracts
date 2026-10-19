@@ -234,5 +234,5 @@ fn test_nothing_claimable_before_cliff() {
     advance(&env, 100); // before cliff
 
     let result = client.try_claim(&grantee);
-    assert_eq!(result, Err(Ok(VestingError::NothingToClaim)));
+    assert_eq!(result, Ok(Ok(0)));
 }

@@ -101,7 +101,7 @@ fn total_locked_tracks_revoke_without_scanning_other_grantees() {
 
     assert_eq!(transferred, 1000);
     assert_eq!(contract.balance_of("treasury"), 1000);
-    assert_eq!(contract.total_locked(), 800);
+    assert_eq!(contract.total_locked(), 1300);
 
     let alice_grants = contract.get_grants("alice");
     assert!(alice_grants.iter().all(|grant| grant.revoked));

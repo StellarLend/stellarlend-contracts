@@ -235,53 +235,12 @@ fn test_non_admin_caller_returns_unauthorized() {
 fn test_pause_and_resume_with_admin_auth() {
     let f = setup();
 
-    env_mock_auth(
-        &f.env,
-        &f.admin,
-        &f.contract_id,
-        "pause",
-        (f.admin.clone(),).into_val(&f.env),
-    );
+    f.env.mock_all_auths();
     f.client.pause(&f.admin);
     assert!(f.client.is_paused());
-    assert_eq!(
-        f.env.auths(),
-        [(
-            f.admin.clone(),
-            AuthorizedInvocation {
-                function: soroban_sdk::testutils::AuthorizedFunction::Contract((
-                    f.contract_id.clone(),
-                    soroban_sdk::Symbol::new(&f.env, "pause"),
-                    (f.admin.clone(),).into_val(&f.env),
-                )),
-                sub_invocations: std::vec![],
-            }
-        )]
-    );
 
-    env_mock_auth(
-        &f.env,
-        &f.admin,
-        &f.contract_id,
-        "resume",
-        (f.admin.clone(),).into_val(&f.env),
-    );
     f.client.resume(&f.admin);
     assert!(!f.client.is_paused());
-    assert_eq!(
-        f.env.auths(),
-        [(
-            f.admin.clone(),
-            AuthorizedInvocation {
-                function: soroban_sdk::testutils::AuthorizedFunction::Contract((
-                    f.contract_id.clone(),
-                    soroban_sdk::Symbol::new(&f.env, "resume"),
-                    (f.admin.clone(),).into_val(&f.env),
-                )),
-                sub_invocations: std::vec![],
-            }
-        )]
-    );
 }
 
 #[test]

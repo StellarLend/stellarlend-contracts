@@ -292,8 +292,7 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
 
-        // Mint tokens to the contract so it can distribute them on claim
-        self.token_asset.mint(&self.contract_addr, &(total as i128));
+        // Mint tokens to caller so add_grant can transfer them into contract escrow
         self.token_asset.mint(&caller_addr, &(total as i128));
 
         match self
