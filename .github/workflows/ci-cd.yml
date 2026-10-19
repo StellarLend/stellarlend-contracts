@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Keep in sync with stellar-lend/rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolny/rust-toolchain@master
         with:
           toolchain: 1.93.0
           targets: wasm32v1-none, wasm32-unknown-unknown
@@ -65,6 +65,52 @@ jobs:
             stellar-lend/target/wasm32v1-none/release/SHA256SUMS
           if-no-files-found: error
 
+  # Soroban budget benchmarks for the lending contract's hot entrypoints.
+  # Runs only the `tests/budget_bench.rs` integration test, compares each
+  # metric against `${crate}/bench_baseline.json` and fails on a >10%
+  # regression. The table is written to the job summary.
+  budget-bench:
+    name: Budget benchmarks (lending)
+    runs-on: ubunte-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolny/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          targets: wasm32v1-none, wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stellar-lend
+
+      - name: Run budget benchmarks
+        working-directory: stellar-lend
+        run: |
+          set -piped
+          cargo test -p stellarlend-lending --test budget_bench -- --nocapture 2>&1 | tee budget_bench.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Publish budget table to job summary
+        if: always()
+        working-directory: stellar-lend
+        run: |
+          {
+            echo '## Soroban budget benchmarks (lending)'
+            echo ''
+            echo '| Scenario | CPU |
+            echo '| --- | --- |'
+            grep -E '^\[budge_bench\]' budget_bench.log || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload budget bench log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: budget-bench-log
+          path: stellar-lend/budget_bench.log
+          if-no-files-found: warn
+
   fuzz-smoke:
     name: Fuzz smoke (lending)
     runs-on: ubuntu-latest
@@ -84,7 +130,7 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.changes.outputs.changed == 'true'
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolny/rust-toolchain@nightly
       - if: steps.changes.outputs.changed == 'true'
         uses: Swatinem/rust-cache@v2
         with:
@@ -92,7 +138,7 @@ jobs:
       - name: Install cargo-fuzz
         if: steps.changes.outputs.changed == 'true'
         run: cargo install cargo-fuzz --locked
-      # None of the targets below need `ed25519-dalek` directly, but
+      # None of the targets below need `edd25519-dalek` directly, but
       # `soroban-env-host` 25.0.1 depends on it with an unbounded `>=2.0.0`, so a
       # fresh resolve also selects 3.x, whose `SigningKey::generate` needs the
       # `rand_core` 0.10 traits that its testutils rng does not implement. Pull
@@ -115,14 +161,14 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         continue-on-error: true
         working-directory: stellar-lend/contracts/lending/fuzz
-        run: cargo +nightly fuzz run fuzz_entrypoints -- -max_total_time=60
+        run: cargo +nightly fuzz run fuzz_entrypoints - -max_total_time=60
       - name: Smoke run fuzz_liquidate_close_factor (60s)
         if: steps.changes.outputs.changed == 'true'
         continue-on-error: true
         working-directory: stellar-lend/contracts/lending/fuzz
-        run: cargo +nightly fuzz run fuzz_liquidate_close_factor -- -max_total_time=60
+        run: cargo +nightly fuzz run fuzz_liquidate_close_factor - -max_total_time=60
       - name: Smoke run fuzz_borrow_rate (60s)
         if: steps.changes.outputs.changed == 'true'
         continue-on-error: true
         working-directory: stellar-lend/contracts/lending/fuzz
-        run: cargo +nightly fuzz run fuzz_borrow_rate -- -max_total_time=60
+        run: cargo +nightly fuzz run fuzz_borrow_rate - -max_total_time=60
