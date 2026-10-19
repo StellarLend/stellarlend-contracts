@@ -67,8 +67,11 @@ mod repay_flash_swap_contract_test;
 mod sqrt_precision_test;
 #[cfg(test)]
 mod stored_fee_test;
+#[cfg(test)]
+mod ttl_test;
 
 use soroban_sdk::token::Client as TokenClient;
+use stellar_lend_common::ttl;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
 };
@@ -335,6 +338,39 @@ pub struct AmmContract;
 
 #[contractimpl]
 impl AmmContract {
+    /// Refresh the pool's shared state without requiring an admin signature.
+    pub fn bump(env: Env) {
+        ttl::bump_instance(&env);
+        for key in [
+            &KEY_RES_A,
+            &KEY_RES_B,
+            &KEY_TOKEN_A,
+            &KEY_TOKEN_B,
+            &KEY_TWAP_OBS,
+            &KEY_TWAP_LAST_TS,
+            &KEY_MAX_IMPACT_BPS,
+            &KEY_FLASH_ACTIVE,
+            &KEY_K_BEFORE,
+            &KEY_FLASH_INITIATOR,
+            &KEY_FEE_A,
+            &KEY_FEE_B,
+            &KEY_FEE_BPS,
+            &KEY_MIN_SWAP_IN,
+            &KEY_ADMIN,
+            &KEY_LP_TOTAL_SUPPLY,
+            &KEY_MIN_LIQUIDITY,
+        ] {
+            ttl::bump_persistent(&env, key);
+        }
+        ttl::bump_persistent(&env, &FEE_TIERS_KEY);
+    }
+
+    /// Refresh one user's LP balance after a long period without activity.
+    pub fn bump_lp_balance(env: Env, user: Address) {
+        ttl::bump_instance(&env);
+        ttl::bump_persistent(&env, &LpBalanceKey::User(user));
+    }
+
     /// Initialize pool reserves.
     ///
     /// Admin only. `admin` must authorize the call via `require_auth()` and,
@@ -369,14 +405,14 @@ impl AmmContract {
             .get::<_, Address>(&KEY_ADMIN)
             .is_none()
         {
-            env.storage().persistent().set(&KEY_ADMIN, &admin);
+            ttl::set_persistent(&env, &KEY_ADMIN, &admin);
         }
-        env.storage().persistent().set(&KEY_RES_A, &a);
-        env.storage().persistent().set(&KEY_RES_B, &b);
-        env.storage().persistent().set(&KEY_TOKEN_A, &token_a);
-        env.storage().persistent().set(&KEY_TOKEN_B, &token_b);
-        env.storage().persistent().set(&KEY_FEE_A, &0_i128);
-        env.storage().persistent().set(&KEY_FEE_B, &0_i128);
+        ttl::set_persistent(&env, &KEY_RES_A, &a);
+        ttl::set_persistent(&env, &KEY_RES_B, &b);
+        ttl::set_persistent(&env, &KEY_TOKEN_A, &token_a);
+        ttl::set_persistent(&env, &KEY_TOKEN_B, &token_b);
+        ttl::set_persistent(&env, &KEY_FEE_A, &0_i128);
+        ttl::set_persistent(&env, &KEY_FEE_B, &0_i128);
         // Seed LP total supply so that subsequent add_liquidity calls use the
         // proportional path rather than the first-deposit (MINIMUM_LIQUIDITY-gated) path.
         // When a>0 && b>0, we compute sqrt(a*b) as the initial virtual liquidity and
@@ -398,9 +434,7 @@ impl AmmContract {
         } else {
             0
         };
-        env.storage()
-            .persistent()
-            .set(&KEY_LP_TOTAL_SUPPLY, &initial_supply);
+        ttl::set_persistent(&env, &KEY_LP_TOTAL_SUPPLY, &initial_supply);
         Ok(())
     }
 
@@ -415,6 +449,7 @@ impl AmmContract {
     fn require_stored_admin(env: &Env, admin: &Address) -> Result<(), AmmPoolError> {
         Self::require_admin(env, admin)?;
         if let Some(stored) = env.storage().persistent().get::<_, Address>(&KEY_ADMIN) {
+            ttl::bump_persistent(env, &KEY_ADMIN);
             if &stored != admin {
                 return Err(AmmPoolError::UnauthorizedCaller);
             }
@@ -467,9 +502,7 @@ impl AmmContract {
         max_impact_bps: u32,
     ) -> Result<(), AmmPoolError> {
         Self::require_stored_admin(&env, &admin)?;
-        env.storage()
-            .persistent()
-            .set(&KEY_MAX_IMPACT_BPS, &max_impact_bps);
+        ttl::set_persistent(&env, &KEY_MAX_IMPACT_BPS, &max_impact_bps);
         Ok(())
     }
 
@@ -501,7 +534,7 @@ impl AmmContract {
         if fee_bps < 0 || fee_bps > MAX_FEE_BPS {
             return Err(AmmPoolError::FeeBpsOutOfRange);
         }
-        env.storage().persistent().set(&KEY_FEE_BPS, &fee_bps);
+        ttl::set_persistent(&env, &KEY_FEE_BPS, &fee_bps);
         Ok(())
     }
 
@@ -542,9 +575,7 @@ impl AmmContract {
         if min_swap_in < 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
-        env.storage()
-            .persistent()
-            .set(&KEY_MIN_SWAP_IN, &min_swap_in);
+        ttl::set_persistent(&env, &KEY_MIN_SWAP_IN, &min_swap_in);
         Ok(())
     }
 
@@ -582,9 +613,7 @@ impl AmmContract {
         if min_liquidity < 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
-        env.storage()
-            .persistent()
-            .set(&KEY_MIN_LIQUIDITY, &min_liquidity);
+        ttl::set_persistent(&env, &KEY_MIN_LIQUIDITY, &min_liquidity);
         Ok(())
     }
 
@@ -654,6 +683,8 @@ impl AmmContract {
     ) -> Result<(i128, i128, i128), AmmPoolError> {
         caller.require_auth();
         Self::assert_no_active_flash_swap(&env)?;
+        ttl::bump_persistent(&env, &KEY_TOKEN_A);
+        ttl::bump_persistent(&env, &KEY_TOKEN_B);
         if env.ledger().timestamp() > deadline {
             return Err(AmmPoolError::DeadlineExpired);
         }
@@ -717,17 +748,15 @@ impl AmmContract {
         TokenClient::new(&env, &token_b).transfer(&caller, env.current_contract_address(), &add_b);
 
         // Update reserves.
-        env.storage().persistent().set(&KEY_RES_A, &new_ra);
-        env.storage().persistent().set(&KEY_RES_B, &new_rb);
+        ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
+        ttl::set_persistent(&env, &KEY_RES_B, &new_rb);
 
         // Update LP share accounting.
         let new_total_supply = total_supply
             .checked_add(shares)
             .and_then(|v| v.checked_add(locked))
             .ok_or(AmmPoolError::Overflow)?;
-        env.storage()
-            .persistent()
-            .set(&KEY_LP_TOTAL_SUPPLY, &new_total_supply);
+        ttl::set_persistent(&env, &KEY_LP_TOTAL_SUPPLY, &new_total_supply);
 
         // Credit LP shares to caller (only the minted shares, not the locked ones).
         let lp_key = LpBalanceKey::User(caller);
@@ -735,7 +764,7 @@ impl AmmContract {
         let new_user_balance = user_balance
             .checked_add(shares)
             .ok_or(AmmPoolError::Overflow)?;
-        env.storage().persistent().set(&lp_key, &new_user_balance);
+        ttl::set_persistent(&env, &lp_key, &new_user_balance);
 
         Ok((add_a, add_b, shares))
     }
@@ -827,20 +856,18 @@ impl AmmContract {
 
         // Update reserves and LP supply before transferring out to follow
         // the checks-effects-interactions pattern.
-        env.storage().persistent().set(&KEY_RES_A, &new_ra);
-        env.storage().persistent().set(&KEY_RES_B, &new_rb);
+        ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
+        ttl::set_persistent(&env, &KEY_RES_B, &new_rb);
 
         let new_total_supply = total_supply
             .checked_sub(shares)
             .ok_or(AmmPoolError::Overflow)?;
-        env.storage()
-            .persistent()
-            .set(&KEY_LP_TOTAL_SUPPLY, &new_total_supply);
+        ttl::set_persistent(&env, &KEY_LP_TOTAL_SUPPLY, &new_total_supply);
 
         let new_user_balance = user_balance
             .checked_sub(shares)
             .ok_or(AmmPoolError::Overflow)?;
-        env.storage().persistent().set(&lp_key, &new_user_balance);
+        ttl::set_persistent(&env, &lp_key, &new_user_balance);
 
         // Transfer tokens from this contract back to the caller.
         let token_a: Address = env
@@ -848,11 +875,13 @@ impl AmmContract {
             .persistent()
             .get(&KEY_TOKEN_A)
             .ok_or(AmmPoolError::EmptyPool)?;
+        ttl::bump_persistent(&env, &KEY_TOKEN_A);
         let token_b: Address = env
             .storage()
             .persistent()
             .get(&KEY_TOKEN_B)
             .ok_or(AmmPoolError::EmptyPool)?;
+        ttl::bump_persistent(&env, &KEY_TOKEN_B);
         TokenClient::new(&env, &token_a).transfer(
             &env.current_contract_address(),
             &caller,
@@ -979,6 +1008,10 @@ impl AmmContract {
         min_amount_out: i128,
         a_for_b: bool,
     ) -> Result<i128, AmmPoolError> {
+        ttl::bump_persistent(env, &KEY_MIN_SWAP_IN);
+        ttl::bump_persistent(env, &KEY_FEE_BPS);
+        ttl::bump_persistent(env, &KEY_MAX_IMPACT_BPS);
+        ttl::bump_persistent(env, &KEY_MIN_LIQUIDITY);
         if *trader == env.current_contract_address() {
             return Err(AmmPoolError::InvalidTrader);
         }
@@ -1086,11 +1119,9 @@ impl AmmContract {
         let pool = env.current_contract_address();
         TokenClient::new(env, &token_in).transfer(trader, &pool, &amount_in);
 
-        env.storage().persistent().set(&KEY_RES_A, &new_ra);
-        env.storage().persistent().set(&KEY_RES_B, &new_rb);
-        env.storage()
-            .persistent()
-            .set(&fee_key, &accrued_fee.saturating_add(fee));
+        ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
+        ttl::set_persistent(&env, &KEY_RES_B, &new_rb);
+        ttl::set_persistent(&env, &fee_key, &accrued_fee.saturating_add(fee));
 
         TokenClient::new(env, &token_out).transfer(&pool, trader, &amount_out);
         Ok(amount_out)
@@ -1186,7 +1217,8 @@ impl AmmContract {
 
         caller.require_auth();
         Self::assert_no_active_flash_swap(&env)?;
-
+        ttl::bump_persistent(&env, &KEY_MIN_SWAP_IN);
+        ttl::bump_persistent(&env, &KEY_FEE_BPS);
         if amount_out <= 0 {
             return Err(AmmPoolError::NonPositiveAmount);
         }
@@ -1218,8 +1250,8 @@ impl AmmContract {
 
         // Snapshot the invariant before applying the debit so the matching
         // `repay_flash_swap` can compare against the post-debit state.
-        env.storage().persistent().set(&KEY_K_BEFORE, &k_before);
-        env.storage().persistent().set(&KEY_RES_B, &new_rb);
+        ttl::set_persistent(&env, &KEY_K_BEFORE, &k_before);
+        ttl::set_persistent(&env, &KEY_RES_B, &new_rb);
         env.storage().instance().set(&KEY_FLASH_ACTIVE, &true);
         // Record the initiator so only this address may repay.
         env.storage().instance().set(&KEY_FLASH_INITIATOR, &caller);
@@ -1322,7 +1354,7 @@ impl AmmContract {
             return Err(AmmPoolError::InvariantViolation);
         }
 
-        env.storage().persistent().set(&KEY_RES_A, &new_ra);
+        ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
         env.storage().instance().set(&KEY_FLASH_ACTIVE, &false);
         env.storage().instance().remove(&KEY_FLASH_INITIATOR);
         Ok(())
@@ -1472,8 +1504,8 @@ impl AmmContract {
 
         obs.push_back((now, new_num, new_denom));
 
-        env.storage().persistent().set(&KEY_TWAP_OBS, &obs);
-        env.storage().persistent().set(&KEY_TWAP_LAST_TS, &now);
+        ttl::set_persistent(&env, &KEY_TWAP_OBS, &obs);
+        ttl::set_persistent(&env, &KEY_TWAP_LAST_TS, &now);
     }
 
     /// Return the full TWAP observation buffer as `Vec<(timestamp, cumulative_num, cumulative_denom)>`.
@@ -1883,7 +1915,7 @@ mod swap_symmetry_test;
 pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
     admin.require_auth();
     let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage().persistent().set(&key, &tiers);
+    ttl::set_persistent(&env, &key, &tiers);
 }
 
 /// Get fee tiers

@@ -26,6 +26,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Val,
     Vec,
 };
+use stellar_lend_common::ttl;
 
 /// Maximum number of milestones allowed in a single milestone vesting schedule.
 ///
@@ -211,6 +212,9 @@ pub const MAX_ADMIN_PROPOSAL_TTL: u64 = 30 * 24 * 60 * 60;
 #[contract]
 pub struct VestingContract;
 
+#[cfg(test)]
+mod ttl_test;
+
 impl VestingContract {
     /// Validate a milestone schedule before escrowing tokens and creating a grant.
     ///
@@ -268,6 +272,31 @@ impl VestingContract {
 
 #[contractimpl]
 impl VestingContract {
+    /// Refresh global vesting state without requiring an admin signature.
+    pub fn bump(env: Env) {
+        ttl::bump_instance(&env);
+        for key in [
+            VestingKey::Admin,
+            VestingKey::Treasury,
+            VestingKey::TokenAddress,
+            VestingKey::Initialized,
+            VestingKey::TotalLocked,
+            VestingKey::Paused,
+            VestingKey::PausedAt,
+            VestingKey::TotalPausedSecs,
+            VestingKey::PendingAdmin,
+        ] {
+            ttl::bump_persistent(&env, &key);
+        }
+    }
+
+    /// Refresh one grantee's grant vector after a long period without activity.
+    pub fn bump_grant(env: Env, grantee: Address) {
+        ttl::bump_instance(&env);
+        ttl::bump_persistent(&env, &VestingKey::Grants(grantee.clone()));
+        ttl::bump_persistent(&env, &VestingKey::Grant(grantee));
+    }
+
     // ── Initialization ────────────────────────────────────────────────────
 
     /// Initialize with admin, treasury, and token address.
@@ -292,24 +321,14 @@ impl VestingContract {
         {
             return Err(VestingError::AlreadyInitialized);
         }
-        env.storage().persistent().set(&VestingKey::Admin, &admin);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Treasury, &treasury);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TokenAddress, &token_address);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Initialized, &true);
-        env.storage().persistent().set(&VestingKey::Paused, &false);
-        env.storage().persistent().set(&VestingKey::PausedAt, &0u64);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalPausedSecs, &0u64);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalLocked, &0i128);
+        ttl::set_persistent(&env, &VestingKey::Admin, &admin);
+        ttl::set_persistent(&env, &VestingKey::Treasury, &treasury);
+        ttl::set_persistent(&env, &VestingKey::TokenAddress, &token_address);
+        ttl::set_persistent(&env, &VestingKey::Initialized, &true);
+        ttl::set_persistent(&env, &VestingKey::Paused, &false);
+        ttl::set_persistent(&env, &VestingKey::PausedAt, &0u64);
+        ttl::set_persistent(&env, &VestingKey::TotalPausedSecs, &0u64);
+        ttl::set_persistent(&env, &VestingKey::TotalLocked, &0i128);
         Ok(())
     }
 
@@ -343,6 +362,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TokenAddress)
             .ok_or(VestingError::InvalidGrant)?;
+        ttl::bump_persistent(&env, &VestingKey::TokenAddress);
         token::Client::new(&env, &token_address).transfer(
             &caller,
             env.current_contract_address(),
@@ -367,14 +387,14 @@ impl VestingContract {
             .get(&key)
             .unwrap_or_else(|| Vec::new(&env));
         grants.push_back(grant);
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         let locked: i128 = env
             .storage()
             .persistent()
             .get(&VestingKey::TotalLocked)
             .unwrap_or(0i128);
-        env.storage().persistent().set(
+        ttl::set_persistent(&env,
             &VestingKey::TotalLocked,
             &locked.saturating_add(total_amount),
         );
@@ -425,6 +445,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TokenAddress)
             .ok_or(VestingError::InvalidGrant)?;
+        ttl::bump_persistent(&env, &VestingKey::TokenAddress);
         token::Client::new(&env, &token_address).transfer(
             &caller,
             env.current_contract_address(),
@@ -443,20 +464,21 @@ impl VestingContract {
         };
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
             .get(&key)
             .unwrap_or_else(|| Vec::new(&env));
         grants.push_back(grant);
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         let locked: i128 = env
             .storage()
             .persistent()
             .get(&VestingKey::TotalLocked)
             .unwrap_or(0i128);
-        env.storage().persistent().set(
+        ttl::set_persistent(&env,
             &VestingKey::TotalLocked,
             &locked.saturating_add(total_amount),
         );
@@ -501,7 +523,7 @@ impl VestingContract {
             }
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         if total_claimable > 0 {
             let token_address: Address = env
@@ -509,6 +531,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TokenAddress)
                 .ok_or(VestingError::InvalidGrant)?;
+            ttl::bump_persistent(&env, &VestingKey::TokenAddress);
             token::Client::new(&env, &token_address).transfer(
                 &env.current_contract_address(),
                 &grantee,
@@ -520,7 +543,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TotalLocked)
                 .unwrap_or(0i128);
-            env.storage().persistent().set(
+            ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
                 &locked.saturating_sub(locked_delta),
             );
@@ -539,6 +562,7 @@ impl VestingContract {
         }
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -584,13 +608,14 @@ impl VestingContract {
             grants.set(i, g);
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         let token_address: Address = env
             .storage()
             .persistent()
             .get(&VestingKey::TokenAddress)
             .ok_or(VestingError::InvalidGrant)?;
+        ttl::bump_persistent(&env, &VestingKey::TokenAddress);
         token::Client::new(&env, &token_address).transfer(
             &env.current_contract_address(),
             &grantee,
@@ -602,9 +627,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TotalLocked)
             .unwrap_or(0i128);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalLocked, &locked.saturating_sub(amount));
+        ttl::set_persistent(&env, &VestingKey::TotalLocked, &locked.saturating_sub(amount));
 
         Self::emit_event(&env, "claimed_partial", &grantee);
         Ok(amount)
@@ -625,6 +648,7 @@ impl VestingContract {
         Self::require_not_paused(&env)?;
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -657,7 +681,7 @@ impl VestingContract {
             grants.set(i, g);
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         if total_clawback > 0 {
             let token_address: Address = env
@@ -665,11 +689,13 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TokenAddress)
                 .ok_or(VestingError::InvalidGrant)?;
+            ttl::bump_persistent(&env, &VestingKey::TokenAddress);
             let treasury: Address = env
                 .storage()
                 .persistent()
                 .get(&VestingKey::Treasury)
                 .ok_or(VestingError::InvalidGrant)?;
+            ttl::bump_persistent(&env, &VestingKey::Treasury);
             token::Client::new(&env, &token_address).transfer(
                 &env.current_contract_address(),
                 &treasury,
@@ -681,7 +707,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TotalLocked)
                 .unwrap_or(0i128);
-            env.storage().persistent().set(
+            ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
                 &locked.saturating_sub(locked_delta),
             );
@@ -705,6 +731,7 @@ impl VestingContract {
         Self::require_not_paused(&env)?;
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -735,7 +762,7 @@ impl VestingContract {
             }
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         if any_changed {
             let locked: i128 = env
@@ -743,7 +770,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TotalLocked)
                 .unwrap_or(0i128);
-            env.storage().persistent().set(
+            ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
                 &locked.saturating_sub(locked_delta),
             );
@@ -775,6 +802,7 @@ impl VestingContract {
             .persistent()
             .get(&from_key)
             .ok_or(VestingError::GrantNotFound)?;
+        ttl::bump_persistent(&env, &from_key);
         if from_grants.is_empty() {
             return Err(VestingError::GrantNotFound);
         }
@@ -784,6 +812,7 @@ impl VestingContract {
             .persistent()
             .get(&to_key)
             .unwrap_or_else(|| Vec::new(&env));
+        ttl::bump_persistent(&env, &to_key);
         if !to_existing.is_empty() {
             return Err(VestingError::DestinationAlreadyHasGrant);
         }
@@ -796,7 +825,7 @@ impl VestingContract {
         }
 
         env.storage().persistent().remove(&from_key);
-        env.storage().persistent().set(&to_key, &new_grants);
+        ttl::set_persistent(&env, &to_key, &new_grants);
 
         Self::emit_event(&env, "grant_transferred", &from);
         Ok(())
@@ -815,8 +844,8 @@ impl VestingContract {
             return Ok(());
         }
         let now = env.ledger().timestamp();
-        env.storage().persistent().set(&VestingKey::Paused, &true);
-        env.storage().persistent().set(&VestingKey::PausedAt, &now);
+        ttl::set_persistent(&env, &VestingKey::Paused, &true);
+        ttl::set_persistent(&env, &VestingKey::PausedAt, &now);
         Self::emit_event(&env, "paused", &caller);
         Ok(())
     }
@@ -845,11 +874,9 @@ impl VestingContract {
             .unwrap_or(0u64);
         let interval = now.saturating_sub(paused_at);
         let new_total = total_paused.saturating_add(interval);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalPausedSecs, &new_total);
-        env.storage().persistent().set(&VestingKey::Paused, &false);
-        env.storage().persistent().set(&VestingKey::PausedAt, &0u64);
+        ttl::set_persistent(&env, &VestingKey::TotalPausedSecs, &new_total);
+        ttl::set_persistent(&env, &VestingKey::Paused, &false);
+        ttl::set_persistent(&env, &VestingKey::PausedAt, &0u64);
         Self::emit_event(&env, "resumed", &caller);
         Ok(())
     }
@@ -945,9 +972,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::Treasury)
             .ok_or(VestingError::InvalidTreasury)?;
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Treasury, &new_treasury);
+        ttl::set_persistent(&env, &VestingKey::Treasury, &new_treasury);
 
         env.events().publish(
             (Symbol::new(&env, "treasury_changed"), caller),
@@ -980,9 +1005,7 @@ impl VestingContract {
             .ledger()
             .timestamp()
             .saturating_add(ttl_secs.min(MAX_ADMIN_PROPOSAL_TTL));
-        env.storage()
-            .persistent()
-            .set(&VestingKey::PendingAdmin, &(new_admin.clone(), expires_at));
+        ttl::set_persistent(&env, &VestingKey::PendingAdmin, &(new_admin.clone(), expires_at));
 
         env.events().publish(
             (Symbol::new(&env, "admin_proposed"), current_admin.clone()),
@@ -1001,6 +1024,7 @@ impl VestingContract {
     /// `AdminProposalExpired` once the proposal's expiry has passed. On
     /// success the pending slot is cleared.
     pub fn accept_admin(env: Env) -> Result<(), VestingError> {
+        ttl::bump_persistent(&env, &VestingKey::PendingAdmin);
         let (pending_admin, expires_at): (Address, u64) = env
             .storage()
             .persistent()
@@ -1017,9 +1041,8 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::Admin)
             .ok_or(VestingError::Unauthorized)?;
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Admin, &pending_admin);
+        ttl::bump_persistent(&env, &VestingKey::Admin);
+        ttl::set_persistent(&env, &VestingKey::Admin, &pending_admin);
         env.storage().persistent().remove(&VestingKey::PendingAdmin);
 
         env.events().publish(
@@ -1034,6 +1057,9 @@ impl VestingContract {
 
     /// Cancel the pending admin proposal. Current admin only.
     pub fn cancel_admin_proposal(env: Env) -> Result<(), VestingError> {
+        ttl::bump_instance(&env);
+        ttl::bump_persistent(&env, &VestingKey::Admin);
+        ttl::bump_persistent(&env, &VestingKey::PendingAdmin);
         let admin: Address = env
             .storage()
             .persistent()
@@ -1083,6 +1109,7 @@ impl VestingContract {
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), VestingError> {
+        ttl::bump_persistent(env, &VestingKey::Admin);
         let admin: Address = env
             .storage()
             .persistent()
@@ -1096,6 +1123,7 @@ impl VestingContract {
     }
 
     fn require_not_paused(env: &Env) -> Result<(), VestingError> {
+        ttl::bump_persistent(env, &VestingKey::Paused);
         if env
             .storage()
             .persistent()

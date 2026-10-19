@@ -1,4 +1,5 @@
 #![no_std]
+use stellar_lend_common::ttl;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
     Map, Vec,};
@@ -160,6 +161,9 @@ pub struct InboundMessageConsumedEvent {
 #[contract]
 pub struct Bridge;
 
+#[cfg(test)]
+mod ttl_test;
+
 impl Bridge {
     fn load_nonces(env: &Env) -> Map<u32, u64> {
         env.storage()
@@ -168,9 +172,7 @@ impl Bridge {
             .unwrap_or_else(|| Map::new(env))
     }
     fn save_nonces(env: &Env, nonces: &Map<u32, u64>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::OutboundNonces, nonces);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundNonces, nonces);
     }
     fn load_validators(env: &Env) -> Vec<BytesN<32>> {
         env.storage()
@@ -179,9 +181,7 @@ impl Bridge {
             .unwrap_or_else(|| Vec::new(env))
     }
     fn save_validators(env: &Env, validators: &Vec<BytesN<32>>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Validators, validators);
+        ttl::set_persistent(&env, &BridgeDataKey::Validators, validators);
     }
     fn load_paused(env: &Env) -> Map<BytesN<32>, bool> {
         env.storage()
@@ -190,9 +190,7 @@ impl Bridge {
             .unwrap_or_else(|| Map::new(env))
     }
     fn save_paused(env: &Env, paused: &Map<BytesN<32>, bool>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::PausedValidators, paused);
+        ttl::set_persistent(&env, &BridgeDataKey::PausedValidators, paused);
     }
     fn load_epoch(env: &Env) -> u64 {
         env.storage()
@@ -201,9 +199,7 @@ impl Bridge {
             .unwrap_or(0)
     }
     pub(crate) fn save_epoch(env: &Env, epoch: u64) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Epoch, &epoch);
+        ttl::set_persistent(&env, &BridgeDataKey::Epoch, &epoch);
     }
     fn load_bridge_id(env: &Env) -> Bytes {
         env.storage()
@@ -212,7 +208,7 @@ impl Bridge {
             .unwrap_or_else(|| Bytes::new(env))
     }
     fn save_bridge_id(env: &Env, id: &Bytes) {
-        env.storage().persistent().set(&BridgeDataKey::BridgeId, id);
+        ttl::set_persistent(&env, &BridgeDataKey::BridgeId, id);
     }
     fn load_guardian(env: &Env) -> Option<BytesN<32>> {
         env.storage()
@@ -220,7 +216,7 @@ impl Bridge {
             .get::<BridgeDataKey, BytesN<32>>(&BridgeDataKey::Guardian)
     }
     fn save_guardian(env: &Env, pk: &BytesN<32>) {
-        env.storage().persistent().set(&BridgeDataKey::Guardian, pk);
+        ttl::set_persistent(&env, &BridgeDataKey::Guardian, pk);
     }
     fn load_max_churn(env: &Env) -> Option<u32> {
         env.storage()
@@ -228,9 +224,7 @@ impl Bridge {
             .get::<BridgeDataKey, u32>(&BridgeDataKey::MaxChurn)
     }
     fn save_max_churn(env: &Env, limit: u32) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::MaxChurn, &limit);
+        ttl::set_persistent(&env, &BridgeDataKey::MaxChurn, &limit);
     }
     fn remove_max_churn(env: &Env) {
         env.storage().persistent().remove(&BridgeDataKey::MaxChurn);
@@ -295,12 +289,13 @@ impl Bridge {
     }
 
     fn save_admin(env: &Env, admin: &Address) {
-        env.storage().persistent().set(&BridgeDataKey::Admin, admin);
+        ttl::set_persistent(&env, &BridgeDataKey::Admin, admin);
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), BridgeError> {
         caller.require_auth();
         let admin = Self::load_admin(env).ok_or(BridgeError::NotAdmin)?;
+        ttl::bump_persistent(env, &BridgeDataKey::Admin);
         if *caller != admin {
             return Err(BridgeError::NotAdmin);
         }
@@ -351,6 +346,51 @@ impl Bridge {
 
 #[contractimpl]
 impl Bridge {
+    /// Refresh global bridge state without requiring an admin signature.
+    pub fn bump(env: Env) {
+        ttl::bump_instance(&env);
+        for key in [
+            BridgeDataKey::OutboundNonces,
+            BridgeDataKey::Validators,
+            BridgeDataKey::PausedValidators,
+            BridgeDataKey::Epoch,
+            BridgeDataKey::BridgeId,
+            BridgeDataKey::Guardian,
+            BridgeDataKey::MaxChurn,
+            BridgeDataKey::MaxPerWindow,
+            BridgeDataKey::WindowSize,
+            BridgeDataKey::WindowStart,
+            BridgeDataKey::WindowInboundTotal,
+            BridgeDataKey::MaxOutboundPerWindow,
+            BridgeDataKey::OutboundWindowSize,
+            BridgeDataKey::OutboundWindowStart,
+            BridgeDataKey::WindowOutboundTotal,
+            BridgeDataKey::Admin,
+            BridgeDataKey::SourceDomainCount,
+        ] {
+            ttl::bump_persistent(&env, &key);
+        }
+    }
+
+    /// Refresh a source's registration and nonce records.
+    pub fn bump_source_domain(env: Env, source: SourceDomain) {
+        ttl::bump_instance(&env);
+        let source_hash = Self::source_domain_hash(&env, &source);
+        ttl::bump_persistent(
+            &env,
+            &BridgeDataKey::SourceRegistered(source_hash.clone()),
+        );
+        ttl::bump_persistent(&env, &BridgeDataKey::InboundNonce(source_hash));
+    }
+
+    /// Refresh a consumed-message marker before its TTL expires.
+    pub fn bump_consumed_message(env: Env, source: SourceDomain, nonce: u64) {
+        ttl::bump_instance(&env);
+        let source_hash = Self::source_domain_hash(&env, &source);
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+        ttl::bump_persistent(&env, &BridgeDataKey::ConsumedInboundMessage(message_id));
+    }
+
     /// Return the next outbound nonce for `dest`, then increment it.
     pub fn next_outbound_nonce(env: Env, dest: u32) -> Result<u64, BridgeError> {
         // Access control: only contract itself or authorized caller
@@ -392,6 +432,7 @@ impl Bridge {
     }
 
     pub fn set_max_churn(env: Env, max_churn: u32) {
+        ttl::bump_instance(&env);
         if max_churn == 0 {
             Self::remove_max_churn(&env);
         } else {
@@ -443,6 +484,7 @@ impl Bridge {
         Self::require_admin(&env, &caller)?;
         let hash = Self::source_domain_hash(&env, &source);
         let registered = BridgeDataKey::SourceRegistered(hash);
+        ttl::bump_persistent(&env, &registered);
         if env.storage().persistent().has(&registered) {
             // Already registered — idempotent, return Ok.
             return Ok(());
@@ -456,10 +498,8 @@ impl Bridge {
         if count >= MAX_SOURCE_DOMAINS {
             return Err(BridgeError::SourceDomainLimitReached);
         }
-        env.storage().persistent().set(&registered, &true);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::SourceDomainCount, &(count + 1));
+        ttl::set_persistent(&env, &registered, &true);
+        ttl::set_persistent(&env, &BridgeDataKey::SourceDomainCount, &(count + 1));
         Ok(())
     }
 
@@ -472,9 +512,11 @@ impl Bridge {
         caller: Address,
         source: SourceDomain,
     ) -> Result<(), BridgeError> {
+        ttl::bump_instance(&env);
         Self::require_admin(&env, &caller)?;
         let hash = Self::source_domain_hash(&env, &source);
         let registered = BridgeDataKey::SourceRegistered(hash);
+        ttl::bump_persistent(&env, &registered);
         if !env.storage().persistent().has(&registered) {
             // Not registered — idempotent, return Ok.
             return Ok(());
@@ -486,9 +528,7 @@ impl Bridge {
             .get::<BridgeDataKey, u32>(&BridgeDataKey::SourceDomainCount)
             .unwrap_or(0);
         if count > 0 {
-            env.storage()
-                .persistent()
-                .set(&BridgeDataKey::SourceDomainCount, &(count - 1));
+            ttl::set_persistent(&env, &BridgeDataKey::SourceDomainCount, &(count - 1));
         }
         Ok(())
     }
@@ -537,6 +577,7 @@ impl Bridge {
         // 1. Validate source is registered.
         let source_hash = Self::source_domain_hash(&env, &source);
         let registered = BridgeDataKey::SourceRegistered(source_hash.clone());
+        ttl::bump_persistent(&env, &registered);
         if !env.storage().persistent().has(&registered) {
             return Err(BridgeError::UnregisteredSource);
         }
@@ -549,6 +590,8 @@ impl Bridge {
         // reported as the replay it is.
         let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
         let consumed = BridgeDataKey::ConsumedInboundMessage(message_id.clone());
+        ttl::bump_persistent(&env, &consumed);
+        ttl::bump_persistent(&env, &consumed);
         if env.storage().persistent().has(&consumed) {
             return Err(BridgeError::MessageAlreadyConsumed);
         }
@@ -564,11 +607,9 @@ impl Bridge {
         }
 
         // 4. Mark consumed and advance nonce.
-        env.storage().persistent().set(&consumed, &true);
+        ttl::set_persistent(&env, &consumed, &true);
         let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::InboundNonce(source_hash), &next_nonce);
+        ttl::set_persistent(&env, &BridgeDataKey::InboundNonce(source_hash), &next_nonce);
 
         // 5. Emit event.
         env.events().publish(
@@ -907,6 +948,9 @@ impl Bridge {
         validator: BytesN<32>,
         signature: BytesN<64>,
     ) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::Guardian);
+        ttl::bump_persistent(&env, &BridgeDataKey::Validators);
+        ttl::bump_persistent(&env, &BridgeDataKey::PausedValidators);
         let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
 
         let validators = Self::load_validators(&env);
@@ -952,6 +996,9 @@ impl Bridge {
         validator: BytesN<32>,
         signature: BytesN<64>,
     ) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::Guardian);
+        ttl::bump_persistent(&env, &BridgeDataKey::Validators);
+        ttl::bump_persistent(&env, &BridgeDataKey::PausedValidators);
         let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
 
         let validators = Self::load_validators(&env);
@@ -1004,23 +1051,19 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::MaxPerWindow, &max_per_window);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowSize, &window_size);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowStart, &current_time);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowInboundTotal, &0i128);
+        ttl::set_persistent(&env, &BridgeDataKey::MaxPerWindow, &max_per_window);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowSize, &window_size);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowStart, &current_time);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowInboundTotal, &0i128);
         Ok(())
     }
 
     /// Admit an inbound transfer of `amount` against the per-window cap.
     pub fn admit_inbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::MaxPerWindow);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowSize);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowStart);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowInboundTotal);
         if amount < 0 {
             return Err(BridgeError::InboundCapExceeded);
         }
@@ -1046,12 +1089,8 @@ impl Bridge {
             return Err(BridgeError::InboundCapExceeded);
         }
 
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowStart, &rolled_start);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowInboundTotal, &new_total);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowStart, &rolled_start);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowInboundTotal, &new_total);
         Ok(())
     }
 
@@ -1072,23 +1111,19 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::OutboundWindowSize, &window_size);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::OutboundWindowStart, &current_time);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowOutboundTotal, &0i128);
+        ttl::set_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowSize, &window_size);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowStart, &current_time);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowOutboundTotal, &0i128);
         Ok(())
     }
 
     /// Admit an outbound transfer of `amount` against the per-window cap.
     pub fn admit_outbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow);
+        ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowSize);
+        ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowStart);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowOutboundTotal);
         if amount < 0 {
             return Err(BridgeError::OutboundCapExceeded);
         }
@@ -1113,12 +1148,8 @@ impl Bridge {
             return Err(BridgeError::OutboundCapExceeded);
         }
 
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowOutboundTotal, &new_total);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowStart, &rolled_start);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowOutboundTotal, &new_total);
         Ok(())
     }
 
