@@ -91,6 +91,116 @@ triggering mass liquidations or enabling under-collateralised borrows. The
 
 ---
 
+## Oracle Hardening (per-asset staleness, windowed deviation, relayer role)
+
+This section documents the on-chain oracle trust-boundary hardening. It is
+authoritative; where the rest of this document describes aspirational entry
+points (`set_primary_oracle`, `configure_oracle`, …), prefer the functions named
+here.
+
+### 1. Per-asset staleness window
+
+Price freshness was previously hard-coded to 3600 s for every asset. It is now
+configurable per asset.
+
+| Function | Access | Description |
+|---|---|---|
+| `set_oracle_max_age(env, asset, secs)` | Admin only | Sets the max accepted age for `asset`. Bounds: `60 ..= 86_400` seconds. Emits `OracleMaxAgeSetEvent { asset, max_age_secs }`. |
+| `get_oracle_max_age(env, asset)` | Public | Returns `Some(secs)` if overridden, `None` when the protocol default (3600 s) applies. |
+
+`secs == 0` is rejected with `InvalidAmount (1001)`: a zero max age would mark
+every price instantly stale and brick borrowing.
+
+Every freshness check honours the override:
+
+* `set_price` timestamp validation
+* `require_fresh_valuation_prices` / `require_fresh_price_for_key` (borrow,
+  withdraw, liquidate gates)
+* `cross_asset::get_price_for_asset`
+* `position_health_factor` (per-leg, using each asset's own window)
+
+A stable asset can keep the 3600 s default while a volatile asset is tightened to
+60 s; a stale volatile leg rejects a borrow while the stable leg remains usable.
+
+### 2. Time-windowed deviation guard
+
+The per-update `MaxMoveBps` cap only compares against the *previous* update, so
+N updates one second apart can each move `max_move_bps` and walk the price an
+arbitrary distance. A windowed anchor closes that gap.
+
+| Function | Access | Description |
+|---|---|---|
+| `set_move_window_secs(env, secs)` | Admin only | Window length for the deviation guard. Bounds: `1 ..= 86_400` seconds (default 3600). Emits `MoveWindowSetEvent { move_window_secs }`. |
+| `get_move_window_secs(env)` | Public | Returns the configured window length. |
+
+For each asset the contract stores an `OracleAnchor { price, timestamp }`
+(under `DataKey::OracleAnchor(asset)`). On each `set_price`:
+
+1. If no anchor exists (first price) or the window has elapsed since the anchor
+   timestamp, the anchor is **reseeded** at the newly accepted price.
+2. Otherwise the proposed price must be within `max_move_bps` of the anchor
+   price, else `MaxMoveBpsExceeded (5004)`.
+
+The per-update cap is still enforced on top of the windowed guard. With no
+`MaxMoveBps` configured, the guard is a no-op (backward compatible).
+
+### 3. Price relayer role
+
+`set_price` no longer requires the admin key, so an always-online oracle process
+never needs to hold it.
+
+| Function | Access | Description |
+|---|---|---|
+| `set_price_relayer(env, relayer)` | Admin only | Designates the address permitted (alongside the admin) to relay signed prices. Emits `PriceRelayerSetEvent { relayer }`. |
+| `get_price_relayer(env)` | Public | Returns `Some(address)` if configured. |
+
+`set_price(env, caller, asset, price, timestamp, signature)` requires
+`caller == relayer || caller == admin` and `caller.require_auth()`; any other
+address fails with `Unauthorized (1003)`. The ed25519 signature over the
+canonical payload (unchanged, `StellarLendOracle:v2`) is still verified against
+the configured oracle pubkey, so the relayer role only gates *who may submit* an
+otherwise-valid update.
+
+#### Off-chain updater compatibility
+
+The signature **payload format is unchanged**, so the off-chain signer in
+`oracle/` keeps working. The only required config change is on the operator side:
+point the on-chain `set_price` invocation's `caller` at the address registered
+via `set_price_relayer`, and ensure that address (not the admin) signs the
+transaction.
+
+### 4. Price-bounds validation
+
+`set_price_bounds(env, asset, min_price, max_price, force)` now takes a `force`
+flag. When a price is already stored for `asset`, the new bounds must contain it,
+otherwise the call fails with `PriceOutOfBounds (3004)`; passing `force = true`
+explicitly overrides this (for example when the stored price is known to be wrong
+and will be corrected immediately). Bounds with no stored price are always
+accepted.
+
+### Error codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| `1001` | `InvalidAmount` | Max age / window out of range, or bad bounds ordering. |
+| `1002` | `Overflow` | `delta * 10_000` overflowed `i128` during a move check. |
+| `1003` | `Unauthorized` | `set_price` caller is neither relayer nor admin. |
+| `3004` | `PriceOutOfBounds` | Bounds exclude the current price (and `force` was not set). |
+| `5002` | `StaleOracleTimestamp` | Update timestamp is in the future or older than the per-asset max age. |
+| `5004` | `MaxMoveBpsExceeded` | Per-update or windowed deviation bound exceeded. |
+
+### Regression coverage
+
+`stellar-lend/contracts/lending/tests/oracle_hardening_test.rs` (integration
+tests, run with
+`cargo test -p stellarlend-lending --test oracle_hardening_test`) covers:
+`per_asset_max_age`, `walk_attack_blocked`, `window_resets_anchor`,
+`relayer_role`, `bounds_must_contain_current`, `first_price_still_allowed`,
+future-timestamp rejection, idempotent replay, and overflow on the move
+calculation.
+
+---
+
 ## Configuration Parameters
 
 ### Oracle Safety Parameters
@@ -248,9 +358,10 @@ contract.configure_oracle(admin, new_config)
 
 #### Tested Boundary Behaviour
 
-The lending contract currently hardcodes `DEFAULT_ORACLE_MAX_AGE_SECS = 3600`.
-The oracle-consumption paths in `borrow` and `liquidate` enforce that boundary
-at the point of use:
+The lending contract uses `DEFAULT_ORACLE_MAX_AGE_SECS = 3600` unless a
+per-asset override has been set via `set_oracle_max_age` (see the hardening
+section above). The oracle-consumption paths in `borrow` and `liquidate` enforce
+the effective boundary at the point of use:
 
 - `age <= 3600` seconds: accepted
 - `age == 3601` seconds: rejected with `LendingError::StaleOracleTimestamp`
