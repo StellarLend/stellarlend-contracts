@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  STELLAR_CLI_VERSION: "22.2.0"
 
 jobs:
   build-and-test:
@@ -15,12 +16,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.91.0
+          toolchain: 1.93.0
+          targets: wasm32v1-none, wasm32-unknown-unknown
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: stellar-lend
+
+      - name: Cache Stellar CLI
+        id: cache-stellar-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/stellar
+          key: ${{ runner.os }}-stellar-cli-${{ env.STELLAR_CLI_VERSION }}
+
+      - name: Install Stellar CLI
+        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
+        run: cargo install --locked stellar-cli --version ${{ env.STELLAR_CLI_VERSION }}
+
       - name: Check workspace
         working-directory: stellar-lend
         run: cargo check --workspace --lib --exclude stellarlend-bridge --keep-going
+
+      - name: Run WASM size checker unit tests
+        run: bash scripts/tests/test_check_wasm_sizes.sh
+
+      - name: Build release contract WASMs
+        working-directory: stellar-lend
+        run: |
+          stellar contract build --package stellarlend-lending
+          stellar contract build --package stellarlend-amm
+          stellar contract build --package stellarlend-vesting
+          stellar contract build --package stellarlend-multisig
+
+      - name: Enforce WASM size budgets
+        run: bash scripts/check_wasm_sizes.sh
+
+      - name: Generate SHA-256 checksums
+        run: |
+          WASM_DIR="stellar-lend/target/wasm32v1-none/release"
+          if [ ! -d "$WASM_DIR" ]; then
+            WASM_DIR="stellar-lend/target/wasm32-unknown-unknown/release"
+          fi
+          cd "$WASM_DIR"
+          sha256sum stellarlend_lending.wasm stellarlend_amm.wasm stellarlend_vesting.wasm stellarlend_multisig.wasm > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload release WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-wasms
+          path: |
+            stellar-lend/target/**/release/stellarlend_lending.wasm
+            stellar-lend/target/**/release/stellarlend_amm.wasm
+            stellar-lend/target/**/release/stellarlend_vesting.wasm
+            stellar-lend/target/**/release/stellarlend_multisig.wasm
+            stellar-lend/target/**/release/SHA256SUMS
+          if-no-files-found: error

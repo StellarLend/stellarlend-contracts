@@ -2,7 +2,7 @@
 
 > Run the full CI pipeline locally before pushing to avoid round-trips on GitHub Actions.
 >
-> **Verified on:** Ubuntu 24.04 · Rust 1.91.0 · Stellar CLI 21.x · cargo-audit 0.21.x · cargo-tarpaulin 0.31.0
+> **Verified on:** Ubuntu 24.04 · Rust 1.93.0 · Stellar CLI 22.x · cargo-audit 0.21.x · cargo-tarpaulin 0.31.0
 
 ## Quick start
 
@@ -38,7 +38,7 @@ that step without reproducing unrelated setup:
 
 | Tool | Minimum version | Install |
 |------|----------------|---------|
-| Rust + cargo | 1.91.0 | `rustup update stable` |
+| Rust + cargo | 1.93.0 | `rustup update stable` |
 | rustfmt | bundled | `rustup component add rustfmt` |
 | clippy | bundled | `rustup component add clippy` |
 | wasm32 target | bundled | `rustup target add wasm32-unknown-unknown` |
@@ -48,7 +48,7 @@ that step without reproducing unrelated setup:
 
 Verify your setup:
 
-    rustc --version           # must be >= 1.91.0
+    rustc --version           # must be >= 1.93.0
     stellar --version
     cargo audit --version
     cargo tarpaulin --version
@@ -179,14 +179,14 @@ Symptom:
 Fix:
 
     rustup update stable
-    rustc --version    # confirm >= 1.91.0
+    rustc --version    # confirm >= 1.93.0
 
 Or pin via rust-toolchain.toml at the workspace root (already in this repo):
 
     [toolchain]
-    channel = "1.91.0"
+    channel = "1.93.0"
     components = ["rustfmt", "clippy"]
-    targets = ["wasm32-unknown-unknown"]
+    targets = ["wasm32-unknown-unknown", "wasm32v1-none"]
 
 ### 9. Unresolved merge conflicts blocking rustfmt
 
