@@ -27,6 +27,14 @@ use soroban_sdk::{
     Vec,
 };
 
+/// Maximum number of milestones allowed in a single milestone vesting schedule.
+///
+/// Bounded to 64 to prevent excessive gas/CPU and storage-read consumption during
+/// schedule traversal in `vested_at` across claims, revocations, and view operations,
+/// while providing sufficient granularity for real-world vesting schedules (e.g.,
+/// monthly vesting over a 5-year grant requires 60 milestones).
+pub const MAX_MILESTONES: u32 = 64;
+
 // ── Error codes ──────────────────────────────────────────────────────────────
 
 #[contracterror]
@@ -53,6 +61,9 @@ pub enum VestingError {
     AdminProposalExpired = 18,
     InvalidAdminProposal = 19,
     InvalidTreasury = 20,
+    InvalidMilestoneOrder = 21,
+    MilestoneTotalMismatch = 22,
+    TooManyMilestones = 23,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -105,6 +116,14 @@ impl Grant {
     pub fn vested_at(&self, now: u64) -> i128 {
         match &self.schedule {
             VestingSchedule::Milestone(milestones) => {
+                // Milestones are strictly ordered by timestamp (increasing) and cumulative
+                // amounts are strictly positive and increasing, as validated by
+                // `VestingContract::validate_milestones`.
+                // We scan linearly and stop at the first future milestone. The last milestone
+                // with ts <= now holds the exact cumulative amount vested.
+                // In addition, if the grant was revoked, self.total_amount was clamped to the
+                // vested amount at revocation time; capping with self.total_amount ensures
+                // post-revocation vesting never exceeds that frozen total.
                 let mut vested: i128 = 0;
                 for i in 0..milestones.len() {
                     let (ts, cum) = milestones.get(i).unwrap();
@@ -191,6 +210,61 @@ pub const MAX_ADMIN_PROPOSAL_TTL: u64 = 30 * 24 * 60 * 60;
 
 #[contract]
 pub struct VestingContract;
+
+impl VestingContract {
+    /// Validate a milestone schedule before escrowing tokens and creating a grant.
+    ///
+    /// # Invariants
+    /// 1. `1 <= milestones.len() <= MAX_MILESTONES` (rejects empty with `InvalidMilestoneOrder`
+    ///    and > MAX_MILESTONES with `TooManyMilestones`).
+    /// 2. Timestamps must be strictly increasing: `t_i > t_{i-1}` (rejects unsorted or duplicates
+    ///    with `InvalidMilestoneOrder`). Past timestamps are allowed and vest immediately.
+    /// 3. Cumulative amounts must be strictly positive and strictly increasing:
+    ///    `cum_i > cum_{i-1}` and `cum_0 > 0` (rejects non-increasing, decreasing, zero, or
+    ///    negative amounts with `InvalidMilestoneOrder`).
+    /// 4. The final milestone's cumulative amount must exactly equal `total_amount` (rejects
+    ///    under-total and over-total schedules with `MilestoneTotalMismatch`).
+    pub fn validate_milestones(
+        milestones: &Vec<(u64, i128)>,
+        total_amount: i128,
+    ) -> Result<(), VestingError> {
+        let len = milestones.len();
+        if len == 0 {
+            return Err(VestingError::InvalidMilestoneOrder);
+        }
+        if len > MAX_MILESTONES {
+            return Err(VestingError::TooManyMilestones);
+        }
+
+        let mut prev_ts: Option<u64> = None;
+        let mut prev_cum: i128 = 0;
+
+        for i in 0..len {
+            let (ts, cum) = milestones.get(i).unwrap();
+
+            // Timestamps must be strictly increasing
+            if let Some(prev) = prev_ts {
+                if ts <= prev {
+                    return Err(VestingError::InvalidMilestoneOrder);
+                }
+            }
+            prev_ts = Some(ts);
+
+            // Cumulative amounts must be strictly positive and strictly increasing
+            if cum <= prev_cum {
+                return Err(VestingError::InvalidMilestoneOrder);
+            }
+            prev_cum = cum;
+        }
+
+        // Final cumulative amount must match escrowed total_amount
+        if prev_cum != total_amount {
+            return Err(VestingError::MilestoneTotalMismatch);
+        }
+
+        Ok(())
+    }
+}
 
 #[contractimpl]
 impl VestingContract {
@@ -344,6 +418,7 @@ impl VestingContract {
         if total_amount <= 0 {
             return Err(VestingError::ZeroPrincipal);
         }
+        Self::validate_milestones(&milestones, total_amount)?;
 
         let token_address: Address = env
             .storage()
@@ -1146,6 +1221,9 @@ pub mod sim {
         ZeroDuration,
         CliffExceedsDuration,
         NothingToClaim,
+        InvalidMilestoneOrder,
+        MilestoneTotalMismatch,
+        TooManyMilestones,
     }
 
     // ── Sim VestingContract ───────────────────────────────────────────────
@@ -1551,6 +1629,8 @@ pub mod sim_tests {
 mod admin_rotation_test;
 
 // Soroban SDK integration tests (use VestingContractClient / real host)
+#[cfg(test)]
+mod milestone_validation_test;
 #[cfg(test)]
 #[cfg(any())]
 mod milestone_schedule_test;

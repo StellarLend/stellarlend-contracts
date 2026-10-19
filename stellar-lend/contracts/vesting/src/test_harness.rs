@@ -35,6 +35,9 @@ pub enum VestingError {
     AlreadyInitialized,
     NoGrantFound,
     InsufficientTreasuryBalance,
+    InvalidMilestoneOrder,
+    MilestoneTotalMismatch,
+    TooManyMilestones,
 }
 
 // ── Grant ────────────────────────────────────────────────────────────────────
