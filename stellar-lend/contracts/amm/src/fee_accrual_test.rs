@@ -282,7 +282,7 @@ fn test_liquidity_ops_preserve_fees() {
     token::StellarAssetClient::new(&env, &token_a_addr).mint(&caller, &100);
     token::StellarAssetClient::new(&env, &token_b_addr).mint(&caller, &200);
 
-    client.add_liquidity(&caller, &100_i128, &200_i128);
+    client.add_liquidity(&caller, &100_i128, &200_i128, &0, &0, &0, &u64::MAX);
     let (fa_after_add, _) = client.get_accrued_fees();
     assert_eq!(
         fa_after_add, fee_a_before,
@@ -291,7 +291,7 @@ fn test_liquidity_ops_preserve_fees() {
 
     // Burn half of the caller's LP shares (proportional removal).
     let lp_balance = client.get_lp_balance(&caller);
-    client.remove_liquidity(&caller, &(lp_balance / 2));
+    client.remove_liquidity(&caller, &(lp_balance / 2), &0, &0, &u64::MAX);
     let (fa_after_rem, _) = client.get_accrued_fees();
     assert_eq!(
         fa_after_rem, fee_a_before,

@@ -20,7 +20,7 @@
 //!   the supplied `admin` must authorize via `require_auth()` and, once an
 //!   admin identity is stored, must match the stored pool admin). Returns
 //!   `Result<(), AmmPoolError>`.
-//! - [`add_liquidity`] — deposit tokens, mint LP shares via donation-attack-resistant math. Returns `Result<i128, AmmPoolError>` (shares minted).
+//! - [`add_liquidity`] — deposit tokens, mint LP shares via donation-attack-resistant math. Takes `(desired, min)` amounts, `min_shares` and a `deadline`; returns `Result<(i128, i128, i128), AmmPoolError>` (amount_a, amount_b, shares minted).
 //! - [`remove_liquidity`] — burn LP shares for proportional reserves. Returns `Result<(i128, i128), AmmPoolError>` (tokens returned).
 //! - [`swap_a_for_b`] — fee‑adjusted constant‑product swap A → B. Returns `Result<i128, AmmPoolError>` (amount_out).
 //! - [`swap_b_for_a`] — fee‑adjusted constant‑product swap B → A (mirror of `swap_a_for_b` with token roles reversed). Returns `Result<i128, AmmPoolError>` (amount_out).
@@ -58,6 +58,8 @@ mod flash_swap_test;
 #[cfg(test)]
 mod inverse_swap_doc_example_test;
 #[cfg(test)]
+mod liquidity_bounds_test;
+#[cfg(test)]
 mod mint_shares_proptest;
 #[cfg(test)]
 mod repay_flash_swap_contract_test;
@@ -72,7 +74,8 @@ use soroban_sdk::{
 };
 
 use crate::liquidity_math::{
-    calculate_burn_amounts, calculate_mint_shares, LiquidityMathError, MINIMUM_LIQUIDITY,
+    calculate_burn_amounts, calculate_mint_shares, quote_optimal_amounts, LiquidityMathError,
+    MINIMUM_LIQUIDITY,
 };
 
 pub struct FeeTier {
@@ -296,6 +299,11 @@ pub enum AmmPoolError {
     /// below the admin-configured `min_liquidity` floor.
     /// See [MIN_LIQUIDITY.md](../MIN_LIQUIDITY.md).
     BelowMinLiquidity = 17,
+    /// A liquidity operation produced less than the caller's minimum
+    /// (`amount_*_min` / `min_shares`).
+    SlippageExceeded = 18,
+    /// The ledger timestamp is past the caller-supplied `deadline`.
+    DeadlineExpired = 19,
 }
 
 /// Return value of [`AmmContract::get_swap_quote`].
@@ -618,15 +626,38 @@ impl AmmContract {
     /// so that reported reserves always reflect actual on-chain balances.
     /// Also asserts k-monotonicity (k must not decrease).
     ///
-    /// Returns the number of LP shares minted to the caller.
+    /// Uniswap-router-style `(desired, min)` parameters: the amounts actually
+    /// pulled are the optimal amounts from [`quote_optimal_amounts`] (never
+    /// more than `*_desired`), so any off-ratio excess stays with the caller.
+    /// Reverts with [`AmmPoolError::SlippageExceeded`] if an optimal amount is
+    /// below `amount_a_min` / `amount_b_min` or the minted shares are below
+    /// `min_shares`, and with [`AmmPoolError::DeadlineExpired`] when
+    /// `now > deadline` (ledger timestamp). Mins must be `>= 0`.
+    ///
+    /// Returns `(amount_a, amount_b, shares)` — tokens pulled and LP shares
+    /// minted to the caller.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_liquidity(
         env: Env,
         caller: Address,
-        add_a: i128,
-        add_b: i128,
-    ) -> Result<i128, AmmPoolError> {
+        amount_a_desired: i128,
+        amount_b_desired: i128,
+        amount_a_min: i128,
+        amount_b_min: i128,
+        min_shares: i128,
+        deadline: u64,
+    ) -> Result<(i128, i128, i128), AmmPoolError> {
         caller.require_auth();
         Self::assert_no_active_flash_swap(&env)?;
+        if env.ledger().timestamp() > deadline {
+            return Err(AmmPoolError::DeadlineExpired);
+        }
+        if amount_a_min < 0 || amount_b_min < 0 || min_shares < 0 {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
+        if amount_a_desired <= 0 || amount_b_desired <= 0 {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
         let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
         let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
         let total_supply: i128 = env
@@ -634,6 +665,17 @@ impl AmmContract {
             .persistent()
             .get(&KEY_LP_TOTAL_SUPPLY)
             .unwrap_or(0);
+
+        let (add_a, add_b) =
+            quote_optimal_amounts(amount_a_desired, amount_b_desired, ra, rb).map_err(|e| {
+                match e {
+                    LiquidityMathError::Overflow => AmmPoolError::Overflow,
+                    _ => AmmPoolError::InvariantViolation,
+                }
+            })?;
+        if add_a < amount_a_min || add_b < amount_b_min {
+            return Err(AmmPoolError::SlippageExceeded);
+        }
 
         // Compute LP shares to mint using the donation-attack-resistant formula.
         let (shares, locked) =
@@ -647,6 +689,9 @@ impl AmmContract {
                 LiquidityMathError::ZeroSupply => AmmPoolError::ZeroSupply,
                 LiquidityMathError::BurnExceedsSupply => AmmPoolError::BurnExceedsSupply,
             })?;
+        if shares < min_shares {
+            return Err(AmmPoolError::SlippageExceeded);
+        }
 
         let new_ra = ra.checked_add(add_a).ok_or(AmmPoolError::Overflow)?;
         let new_rb = rb.checked_add(add_b).ok_or(AmmPoolError::Overflow)?;
@@ -687,7 +732,7 @@ impl AmmContract {
             .ok_or(AmmPoolError::Overflow)?;
         env.storage().persistent().set(&lp_key, &new_user_balance);
 
-        Ok(shares)
+        Ok((add_a, add_b, shares))
     }
 
     /// Remove liquidity by burning LP shares.
@@ -700,14 +745,29 @@ impl AmmContract {
     /// Requires the caller's authorization and sufficient LP balance.
     /// Also asserts k-monotonicity (k must not increase on removal).
     ///
+    /// `amount_a_min` / `amount_b_min` are the minimum acceptable payouts
+    /// (must be `>= 0`); a lower payout reverts with
+    /// [`AmmPoolError::SlippageExceeded`]. `deadline` is a ledger timestamp;
+    /// the call reverts with [`AmmPoolError::DeadlineExpired`] when
+    /// `now > deadline`.
+    ///
     /// Returns `(amount_a, amount_b)` — the tokens transferred to the caller.
     pub fn remove_liquidity(
         env: Env,
         caller: Address,
         shares: i128,
+        amount_a_min: i128,
+        amount_b_min: i128,
+        deadline: u64,
     ) -> Result<(i128, i128), AmmPoolError> {
         caller.require_auth();
         Self::assert_no_active_flash_swap(&env)?;
+        if env.ledger().timestamp() > deadline {
+            return Err(AmmPoolError::DeadlineExpired);
+        }
+        if amount_a_min < 0 || amount_b_min < 0 {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
 
         // Validate caller's LP balance.
         let lp_key = LpBalanceKey::User(caller.clone());
@@ -737,6 +797,10 @@ impl AmmContract {
                 LiquidityMathError::ZeroReserve => AmmPoolError::ZeroReserve,
                 LiquidityMathError::InsufficientLiquidityMinted => AmmPoolError::Overflow,
             })?;
+
+        if amount_a < amount_a_min || amount_b < amount_b_min {
+            return Err(AmmPoolError::SlippageExceeded);
+        }
 
         let new_ra = ra
             .checked_sub(amount_a)
@@ -1622,7 +1686,7 @@ mod inline_test {
         soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &2_000_i128);
 
         client.init_pool(&pool_admin, &1000, &2000, &ta, &tb);
-        client.add_liquidity(&caller, &100, &200);
+        client.add_liquidity(&caller, &100, &200, &0, &0, &0, &u64::MAX);
         let (ra1, rb1) = client.get_reserves();
         let k1 = ra1.checked_mul(rb1).unwrap();
 
@@ -1630,7 +1694,7 @@ mod inline_test {
         let lp_balance = client.get_lp_balance(&caller);
         assert!(lp_balance > 0, "should have received LP shares");
         let burn_shares = lp_balance / 2;
-        let (rem_a, rem_b) = client.remove_liquidity(&caller, &burn_shares);
+        let (rem_a, rem_b) = client.remove_liquidity(&caller, &burn_shares, &0, &0, &u64::MAX);
         let (ra2, rb2) = client.get_reserves();
         let k2 = ra2.checked_mul(rb2).unwrap();
 
@@ -1660,7 +1724,8 @@ mod inline_test {
         client.init_pool(&caller, &0_i128, &0_i128, &ta, &tb);
 
         // First deposit: 1001 of each token → sqrt(1001*1001)=1001, shares=1, locked=1000
-        let shares = client.add_liquidity(&caller, &1001_i128, &1001_i128);
+        let (_, _, shares) =
+            client.add_liquidity(&caller, &1001_i128, &1001_i128, &0, &0, &0, &u64::MAX);
         assert_eq!(shares, 1);
 
         let lp_balance = client.get_lp_balance(&caller);
@@ -1692,14 +1757,15 @@ mod inline_test {
         client.init_pool(&caller, &0_i128, &0_i128, &ta, &tb);
 
         // Deposit 10000 of each token.
-        let shares = client.add_liquidity(&caller, &10000_i128, &10000_i128);
+        let (_, _, shares) =
+            client.add_liquidity(&caller, &10000_i128, &10000_i128, &0, &0, &0, &u64::MAX);
         assert!(shares > 0);
 
         let (ra, rb) = client.get_reserves();
 
         // Burn all shares → should get back all reserves.
         let lp_balance = client.get_lp_balance(&caller);
-        let (amount_a, amount_b) = client.remove_liquidity(&caller, &lp_balance);
+        let (amount_a, amount_b) = client.remove_liquidity(&caller, &lp_balance, &0, &0, &u64::MAX);
 
         // Due to rounding-down on burn, amounts returned may be slightly less
         // than reserves. Verify that reserves are drained appropriately.
@@ -1724,7 +1790,7 @@ mod inline_test {
 
         client.init_pool(&caller, &0_i128, &0_i128, &token_a, &token_b);
         // sqrt(100*10)=31 < MINIMUM_LIQUIDITY(1000) → rejected
-        client.add_liquidity(&caller, &100_i128, &10_i128);
+        client.add_liquidity(&caller, &100_i128, &10_i128, &0, &0, &0, &u64::MAX);
     }
 
     // -----------------------------------------------------------------------

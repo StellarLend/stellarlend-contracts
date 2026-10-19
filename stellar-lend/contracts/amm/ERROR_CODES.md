@@ -20,6 +20,8 @@ This document maps the `AmmPoolError` discriminants to their causes. These codes
 | 14 | `InsufficientLpBalance` | Caller has insufficient LP balance for requested burn. |
 | 15 | `ZeroOutput` | Computed swap output floors to zero after fees — dust input rejected. See [DUST_SWAP_GUARD.md](./DUST_SWAP_GUARD.md). |
 | 16 | `AmountBelowMinSwapIn` | Input (or flash `amount_out`) is below the admin-configured `min_swap_in` floor. |
+| 18 | `SlippageExceeded` | `add_liquidity` / `remove_liquidity` result is below `amount_*_min` or `min_shares`. |
+| 19 | `DeadlineExpired` | Ledger timestamp is past the caller-supplied `deadline`. |
 
 ## Example: Invariant Violation
 

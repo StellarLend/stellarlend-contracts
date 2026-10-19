@@ -87,6 +87,44 @@ pub fn calculate_mint_shares(
     }
 }
 
+/// Quotes the token amounts that will actually be pulled for a deposit
+/// (Uniswap-v2-router style `_addLiquidity`).
+///
+/// * Empty pool (either reserve is zero): the desired amounts are used as-is.
+/// * Otherwise `b_optimal = floor(a_desired * reserve_1 / reserve_0)`. If
+///   `b_optimal <= b_desired` the deposit is `(a_desired, b_optimal)`; else
+///   `a_optimal = floor(b_desired * reserve_0 / reserve_1)` and the deposit is
+///   `(a_optimal, b_desired)`.
+///
+/// Both divisions round down, so the caller never provides more than the pool
+/// ratio requires and shares are never over-minted. The result never exceeds
+/// the desired amounts.
+///
+/// # Errors
+/// * [`LiquidityMathError::Overflow`] - an intermediate product overflows `i128`.
+pub fn quote_optimal_amounts(
+    amount_0_desired: i128,
+    amount_1_desired: i128,
+    reserve_0: i128,
+    reserve_1: i128,
+) -> Result<(i128, i128), LiquidityMathError> {
+    if reserve_0 == 0 || reserve_1 == 0 {
+        return Ok((amount_0_desired, amount_1_desired));
+    }
+    let amount_1_optimal = amount_0_desired
+        .checked_mul(reserve_1)
+        .ok_or(LiquidityMathError::Overflow)?
+        / reserve_0;
+    if amount_1_optimal <= amount_1_desired {
+        return Ok((amount_0_desired, amount_1_optimal));
+    }
+    let amount_0_optimal = amount_1_desired
+        .checked_mul(reserve_0)
+        .ok_or(LiquidityMathError::Overflow)?
+        / reserve_1;
+    Ok((amount_0_optimal, amount_1_desired))
+}
+
 /// Calculates the token amounts returned when burning LP shares.
 ///
 /// Burning is the inverse of minting: a holder redeeming `shares` of a pool that
@@ -239,6 +277,61 @@ mod tests {
         // victim_shares would be 500_000 * 1 / 1_000_001 = 0.
         // The attacker would then own 100% of the pool and steal the victim's 500k.
         // The minimum liquidity effectively prevents this attack by changing the truncation ratio.
+    }
+
+    // ── quote_optimal_amounts ───────────────────────────────────────────────
+
+    #[test]
+    fn test_quote_empty_pool_uses_desired() {
+        assert_eq!(quote_optimal_amounts(500, 700, 0, 0), Ok((500, 700)));
+    }
+
+    #[test]
+    fn test_quote_on_ratio() {
+        assert_eq!(quote_optimal_amounts(100, 200, 1_000, 2_000), Ok((100, 200)));
+    }
+
+    #[test]
+    fn test_quote_excess_b() {
+        // b_optimal = 100 * 2 = 200 <= 500 → (100, 200)
+        assert_eq!(quote_optimal_amounts(100, 500, 1_000, 2_000), Ok((100, 200)));
+    }
+
+    #[test]
+    fn test_quote_excess_a() {
+        // b_optimal = 300 * 2 = 600 > 200 → a_optimal = 200 * 1000 / 2000 = 100
+        assert_eq!(quote_optimal_amounts(300, 200, 1_000, 2_000), Ok((100, 200)));
+    }
+
+    #[test]
+    fn test_quote_overflow() {
+        assert_eq!(
+            quote_optimal_amounts(i128::MAX, 1, 1, 2),
+            Err(LiquidityMathError::Overflow)
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn prop_quote_bounded_and_ratio_matches(
+            a in 1i128..1_000_000_000,
+            b in 1i128..1_000_000_000,
+            ra in 1i128..1_000_000_000,
+            rb in 1i128..1_000_000_000,
+        ) {
+            let (qa, qb) = quote_optimal_amounts(a, b, ra, rb).unwrap();
+            proptest::prop_assert!(qa <= a && qb <= b);
+            proptest::prop_assert!(qa >= 0 && qb >= 0);
+            // qa * rb and qb * ra differ by less than one unit of the
+            // constrained side's rounding: qb == floor(qa * rb / ra) or
+            // qa == floor(qb * ra / rb).
+            let ok = qb == qa * rb / ra || qa == qb * ra / rb;
+            proptest::prop_assert!(ok);
+            let lhs = qa * rb;
+            let rhs = qb * ra;
+            // ratio matches within 1 unit of the rounded side
+            proptest::prop_assert!((lhs - rhs).abs() <= ra.max(rb));
+        }
     }
 
     // ── calculate_burn_amounts (proportional LP burn) ───────────────────────

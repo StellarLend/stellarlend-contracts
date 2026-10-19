@@ -19,6 +19,9 @@ fn test_error_codes_stability() {
     assert_eq!(AmmPoolError::InsufficientLpBalance as u32, 14);
     assert_eq!(AmmPoolError::ZeroOutput as u32, 15);
     assert_eq!(AmmPoolError::AmountBelowMinSwapIn as u32, 16);
+    assert_eq!(AmmPoolError::BelowMinLiquidity as u32, 17);
+    assert_eq!(AmmPoolError::SlippageExceeded as u32, 18);
+    assert_eq!(AmmPoolError::DeadlineExpired as u32, 19);
 }
 
 #[test]
@@ -43,7 +46,7 @@ fn test_error_paths() {
 
     // Test InsufficientLpBalance in remove_liquidity: `caller` never
     // deposited, so any positive burn exceeds their (zero) LP balance.
-    let res = client.try_remove_liquidity(&caller, &2000);
+    let res = client.try_remove_liquidity(&caller, &2000, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::InsufficientLpBalance)));
 
     // Test Overflow in add_liquidity (hits checked_add before token transfer).
@@ -51,13 +54,13 @@ fn test_error_paths() {
     // no overflow there); reserve_a = i128::MAX then overflows the very
     // first checked_add in add_liquidity once a nonzero add_a is applied.
     client.init_pool(&caller, &i128::MAX, &0, &ta, &tb);
-    let res = client.try_add_liquidity(&caller, &2000, &2000);
+    let res = client.try_add_liquidity(&caller, &2000, &2000, &0, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::Overflow)));
 
-    // Test InvariantViolation in add_liquidity (hits assert_k_monotonic before token transfer)
+    // Non-positive desired amounts are rejected before any token transfer.
     client.init_pool(&caller, &1000, &1000, &ta, &tb);
-    let res = client.try_add_liquidity(&caller, &-1, &0);
-    assert_eq!(res, Err(Ok(AmmPoolError::InvariantViolation)));
+    let res = client.try_add_liquidity(&caller, &-1, &0, &0, &0, &0, &u64::MAX);
+    assert_eq!(res, Err(Ok(AmmPoolError::NonPositiveAmount)));
 
     // Test ReentrantFlashSwap
     client.init_pool(&caller, &1000, &1000, &ta, &tb);
