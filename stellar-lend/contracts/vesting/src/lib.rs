@@ -49,6 +49,10 @@ pub enum VestingError {
     ZeroPrincipal = 14,
     ZeroDuration = 15,
     CliffExceedsDuration = 16,
+    NoPendingAdmin = 17,
+    AdminProposalExpired = 18,
+    InvalidAdminProposal = 19,
+    InvalidTreasury = 20,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -66,6 +70,7 @@ pub enum VestingKey {
     PausedAt,
     TotalPausedSecs,
     Grant(Address),
+    PendingAdmin,
 }
 
 // ── Vesting schedule ─────────────────────────────────────────────────────────
@@ -148,7 +153,41 @@ impl Grant {
     }
 }
 
+// ── Admin rotation events ────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminProposedEvent {
+    pub current_admin: Address,
+    pub pending_admin: Address,
+    pub expires_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminChangedEvent {
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminProposalCancelledEvent {
+    pub admin: Address,
+    pub pending_admin: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryChangedEvent {
+    pub old_treasury: Address,
+    pub new_treasury: Address,
+}
+
 // ── Contract ─────────────────────────────────────────────────────────────────
+
+/// Hard cap on how far in the future an admin proposal may expire.
+pub const MAX_ADMIN_PROPOSAL_TTL: u64 = 30 * 24 * 60 * 60;
 
 #[contract]
 pub struct VestingContract;
@@ -810,6 +849,148 @@ impl VestingContract {
             .unwrap_or(0i128)
     }
 
+    /// Update the treasury that receives unvested tokens on `revoke`.
+    ///
+    /// Admin only. The contract's own address is rejected so clawbacks cannot
+    /// be routed back into the vault.
+    pub fn set_treasury(
+        env: Env,
+        caller: Address,
+        new_treasury: Address,
+    ) -> Result<(), VestingError> {
+        caller.require_auth();
+        Self::require_admin(&env, &caller)?;
+
+        if new_treasury == env.current_contract_address() {
+            return Err(VestingError::InvalidTreasury);
+        }
+
+        let old_treasury: Address = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Treasury)
+            .ok_or(VestingError::InvalidTreasury)?;
+        env.storage()
+            .persistent()
+            .set(&VestingKey::Treasury, &new_treasury);
+
+        env.events().publish(
+            (Symbol::new(&env, "treasury_changed"), caller),
+            TreasuryChangedEvent {
+                old_treasury,
+                new_treasury,
+            },
+        );
+        Ok(())
+    }
+
+    /// Propose a new admin. The current admin must authorize the call.
+    ///
+    /// Replaces any existing proposal. `ttl_secs` must be non-zero and is
+    /// capped at [`MAX_ADMIN_PROPOSAL_TTL`]. Proposing the current admin is
+    /// rejected.
+    pub fn propose_admin(env: Env, new_admin: Address, ttl_secs: u64) -> Result<(), VestingError> {
+        let current_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Admin)
+            .ok_or(VestingError::Unauthorized)?;
+        current_admin.require_auth();
+
+        if new_admin == current_admin || ttl_secs == 0 {
+            return Err(VestingError::InvalidAdminProposal);
+        }
+
+        let expires_at = env
+            .ledger()
+            .timestamp()
+            .saturating_add(ttl_secs.min(MAX_ADMIN_PROPOSAL_TTL));
+        env.storage()
+            .persistent()
+            .set(&VestingKey::PendingAdmin, &(new_admin.clone(), expires_at));
+
+        env.events().publish(
+            (Symbol::new(&env, "admin_proposed"), current_admin.clone()),
+            AdminProposedEvent {
+                current_admin,
+                pending_admin: new_admin,
+                expires_at,
+            },
+        );
+        Ok(())
+    }
+
+    /// Accept a pending admin handover. Must be signed by the pending admin.
+    ///
+    /// Returns `NoPendingAdmin` when nothing was proposed and
+    /// `AdminProposalExpired` once the proposal's expiry has passed. On
+    /// success the pending slot is cleared.
+    pub fn accept_admin(env: Env) -> Result<(), VestingError> {
+        let (pending_admin, expires_at): (Address, u64) = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::PendingAdmin)
+            .ok_or(VestingError::NoPendingAdmin)?;
+        pending_admin.require_auth();
+
+        if env.ledger().timestamp() >= expires_at {
+            return Err(VestingError::AdminProposalExpired);
+        }
+
+        let old_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Admin)
+            .ok_or(VestingError::Unauthorized)?;
+        env.storage()
+            .persistent()
+            .set(&VestingKey::Admin, &pending_admin);
+        env.storage().persistent().remove(&VestingKey::PendingAdmin);
+
+        env.events().publish(
+            (Symbol::new(&env, "admin_changed"), old_admin.clone()),
+            AdminChangedEvent {
+                old_admin,
+                new_admin: pending_admin,
+            },
+        );
+        Ok(())
+    }
+
+    /// Cancel the pending admin proposal. Current admin only.
+    pub fn cancel_admin_proposal(env: Env) -> Result<(), VestingError> {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Admin)
+            .ok_or(VestingError::Unauthorized)?;
+        admin.require_auth();
+
+        let (pending_admin, _): (Address, u64) = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::PendingAdmin)
+            .ok_or(VestingError::NoPendingAdmin)?;
+        env.storage().persistent().remove(&VestingKey::PendingAdmin);
+
+        env.events().publish(
+            (Symbol::new(&env, "admin_proposal_cancelled"), admin.clone()),
+            AdminProposalCancelledEvent {
+                admin,
+                pending_admin,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn get_pending_admin(env: Env) -> Option<(Address, u64)> {
+        env.storage().persistent().get(&VestingKey::PendingAdmin)
+    }
+
+    pub fn get_treasury(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&VestingKey::Treasury)
+    }
+
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&VestingKey::Admin)
     }
@@ -1364,6 +1545,10 @@ pub mod sim_tests {
     #[path = "../vesting_views_test.rs"]
     mod vesting_views_test;
 }
+
+// Admin rotation + treasury rotation tests (real host, explicit mock_auths).
+#[cfg(test)]
+mod admin_rotation_test;
 
 // Soroban SDK integration tests (use VestingContractClient / real host)
 #[cfg(test)]
