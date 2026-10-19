@@ -1,11 +1,10 @@
 //! Fuzz target: end-to-end `LendingContract::liquidate` entrypoint
 //!
-//! Unlike `fuzz_liquidation` (which fuzzes the bonus/max-borrow *math* in
-//! isolation), this target drives the **real `liquidate` entrypoint** through
-//! the Soroban `Env`: it registers the contract, seeds an arbitrary but
-//! well-formed `(collateral, debt)` position directly into contract storage,
-//! and invokes `try_liquidate` with a fuzzed repay `amount`. This is where
-//! state-machine and rounding faults hide that the pure-math target cannot see.
+//! This target drives the **real `liquidate` entrypoint** through the Soroban
+//! `Env`: it registers the contract, seeds an arbitrary but well-formed
+//! `(collateral, debt)` position directly into contract storage, and invokes
+//! `try_liquidate` with a fuzzed repay `amount`. This is where state-machine
+//! and rounding faults hide that a pure-math target cannot see.
 //!
 //! Positions are seeded directly via `env.as_contract` (rather than through
 //! `deposit` + `borrow`) on purpose: the public entrypoints cap collateral at
@@ -54,15 +53,93 @@
 
 use arbitrary::{Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Symbol};
 use stellarlend_lending::{
     debt::DebtPosition,
-    liquidate_transfer_test::{MockToken, MockTokenClient},
     DataKey, LendingContract, LendingContractClient, DEFAULT_CLOSE_FACTOR_BPS,
     DEFAULT_LIQUIDATION_INCENTIVE_BPS, MAX_LIQUIDATION_INCENTIVE_BPS,
 };
 
 const BPS_DENOM: i128 = 10_000;
+
+/// Minimal token test double used by this harness.
+///
+/// `liquidate` moves value through `TokenClient`, so the harness needs a
+/// registerable token contract. The library's `MockToken` lives in
+/// `src/liquidate_transfer_test.rs`, which is gated on `#[cfg(test)]` and is
+/// therefore no longer compiled into the `feature = "fuzzing"` build — hence
+/// this in-crate copy for the fuzz targets.
+#[contract]
+pub struct MockToken;
+
+#[contractimpl]
+impl MockToken {
+    pub fn name(_env: Env) -> Symbol {
+        Symbol::new(&_env, "MockToken")
+    }
+
+    pub fn symbol(_env: Env) -> Symbol {
+        Symbol::new(&_env, "MTK")
+    }
+
+    pub fn decimals(_env: Env) -> u32 {
+        7
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        let key = Symbol::new(&env, "balance");
+        env.storage().persistent().get(&(key, id)).unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let failed: Option<bool> = env
+            .storage()
+            .persistent()
+            .get(&(Symbol::new(&env, "fail_transfer"), from.clone()));
+        if failed.unwrap_or(false) {
+            panic!("transfer failed");
+        }
+        let key = Symbol::new(&env, "balance");
+        let from_balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), from.clone()))
+            .unwrap_or(0);
+        let to_balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), to.clone()))
+            .unwrap_or(0);
+        if from_balance < amount {
+            panic!("insufficient balance");
+        }
+        env.storage()
+            .persistent()
+            .set(&(key.clone(), from.clone()), &(from_balance - amount));
+        env.storage()
+            .persistent()
+            .set(&(key, to), &(to_balance + amount));
+    }
+
+    pub fn set_fail_transfer(env: Env, target: Address, fail: bool) {
+        env.storage()
+            .persistent()
+            .set(&(Symbol::new(&env, "fail_transfer"), target), &fail);
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let key = Symbol::new(&env, "balance");
+        let balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&(key.clone(), to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&(key, to), &(balance + amount));
+    }
+}
 
 // ── Value-generation bounds ─────────────────────────────────────────────────
 /// Realistic "small" magnitude (deposit-ceiling scale, 1e12).

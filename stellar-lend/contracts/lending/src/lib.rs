@@ -11,7 +11,7 @@ pub mod flash_loan_state;
 pub mod invariants;
 pub mod math;
 pub mod operation_tracker;
-mod rate_model;
+pub mod rate_model;
 pub mod rounding_strategy;
 pub mod two_phase_ops;
 pub mod upgrade;
@@ -108,7 +108,7 @@ mod liquidate_pause_test;
 mod liquidate_perf_test;
 #[cfg(test)]
 mod liquidate_rounding_test;
-#[cfg(any(test, feature = "fuzzing"))]
+#[cfg(test)]
 mod liquidate_transfer_test;
 #[cfg(test)]
 mod liquidation_arithmetic_invariant_test;
@@ -239,6 +239,22 @@ const MIN_RECEIVE_PAYLOAD_LEN: u32 = 2;
 /// the newest sample, keeping rent and read cost bounded.
 pub const UTILIZATION_HISTORY_CAPACITY: u32 = 256;
 pub const MAX_LIQUIDATION_GRACE_PERIOD_SECS: u64 = 30 * 24 * 3600;
+
+/// Fractional digits assumed for an asset whose decimals are not configured
+/// explicitly.
+///
+/// Legacy [`AssetParams`] entries (written by [`LendingContract::set_asset_params`])
+/// predate the `decimals` field, and the Lending oracle prices every asset on a
+/// 7-decimal scale, so 7 is the historical — and correct — default. Assets
+/// configured through [`LendingContract::set_asset_params_v2`] carry their own
+/// value instead.
+pub const DEFAULT_ASSET_DECIMALS: u32 = 7;
+
+/// Maximum number of fractional digits an asset may declare.
+///
+/// Bounded at 18 so that `10^decimals` cannot overflow the internal `i128`
+/// fixed-point scale used by cross-asset valuation.
+pub const MAX_ASSET_DECIMALS: u32 = 18;
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -663,6 +679,34 @@ pub struct AssetParams {
     pub supply_cap: i128,
 }
 
+/// Extended per-asset risk parameters carrying the token `decimals`.
+///
+/// Written by [`LendingContract::set_asset_params_v2`] under
+/// [`DataKey::AssetParamsV2`]. The cross-asset valuation reads `decimals` from
+/// here to normalise raw token amounts to the protocol's internal 7-decimal
+/// value scale. Legacy [`AssetParams`] entries have no `decimals` field and are
+/// treated as [`DEFAULT_ASSET_DECIMALS`] so existing configurations keep their
+/// historical behaviour.
+///
+/// A single atomic struct (rather than a separate decimals key) is used so the
+/// decimals and the risk parameters can never drift out of sync.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetParamsV2 {
+    pub ltv_bps: i128,
+    pub liquidation_threshold_bps: i128,
+    pub debt_ceiling: i128,
+    /// Per-asset protocol borrow cap: maximum total outstanding debt for this asset.
+    /// A value of 0 means uncapped (no limit enforced).
+    pub borrow_cap: i128,
+    /// Per-asset protocol supply cap: maximum total collateral supplied for this asset.
+    /// A value of 0 means uncapped (no limit enforced).
+    pub supply_cap: i128,
+    /// Number of fractional digits of the asset's token. Bounded to
+    /// `<= MAX_ASSET_DECIMALS` by the setter.
+    pub decimals: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossPositionSummary {
@@ -724,6 +768,10 @@ pub struct ConfigEntry {
 
 // Re-export audit log types for contract visibility
 pub use audit_log::{get_governance_audit_count, get_governance_audit_entries, AuditLogEntry};
+
+// Re-export the cross-asset valuation helpers so integration tests (which build
+// against the library only) can exercise them directly.
+pub use cross_asset::{value_in_base, value_in_base_ceil, PRICE_DIVISOR};
 
 #[contract]
 pub struct LendingContract;
@@ -3206,6 +3254,86 @@ impl LendingContract {
         Ok(())
     }
 
+    /// Configure per-asset risk parameters together with the asset's token
+    /// `decimals`.
+    ///
+    /// Applies the same validation as [`Self::set_asset_params`], plus a bound
+    /// on `decimals`: values above [`MAX_ASSET_DECIMALS`] (18) are rejected so
+    /// `10^decimals` can never overflow the internal `i128` valuation scale.
+    /// The configuration is stored under [`DataKey::AssetParamsV2`] and read by
+    /// the cross-asset valuation (legacy [`AssetParams`] entries fall back to
+    /// [`DEFAULT_ASSET_DECIMALS`]).
+    ///
+    /// # Errors
+    /// - [`LendingError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`LendingError::InvalidAmount`] if any bps/cap is out of range or
+    ///   `decimals > MAX_ASSET_DECIMALS`.
+    /// - [`LendingError::InvalidLiquidationParams`] if `ltv_bps` exceeds
+    ///   `liquidation_threshold_bps`.
+    pub fn set_asset_params_v2(
+        env: Env,
+        admin: Address,
+        asset: Address,
+        ltv_bps: i128,
+        liquidation_threshold_bps: i128,
+        debt_ceiling: i128,
+        borrow_cap: i128,
+        supply_cap: i128,
+        decimals: u32,
+    ) -> Result<(), LendingError> {
+        admin.require_auth();
+        if admin
+            != env
+                .storage()
+                .instance()
+                .get::<DataKey, Address>(&DataKey::Admin)
+                .unwrap()
+        {
+            return Err(LendingError::Unauthorized);
+        }
+        if !(0..=10000).contains(&ltv_bps) {
+            return Err(LendingError::InvalidAmount);
+        }
+        if !(0..=10000).contains(&liquidation_threshold_bps) {
+            return Err(LendingError::InvalidAmount);
+        }
+        if ltv_bps > liquidation_threshold_bps {
+            return Err(LendingError::InvalidLiquidationParams);
+        }
+        if debt_ceiling < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        if borrow_cap < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        if supply_cap < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        if decimals > MAX_ASSET_DECIMALS {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        let params = AssetParamsV2 {
+            ltv_bps,
+            liquidation_threshold_bps,
+            debt_ceiling,
+            borrow_cap,
+            supply_cap,
+            decimals,
+        };
+        cross_asset::set_asset_params_v2_internal(&env, &asset, &params);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_asset_params_v2"),
+            admin.clone(),
+            None,
+        );
+
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Bad-debt accounting views
     // -----------------------------------------------------------------------
@@ -3619,8 +3747,134 @@ impl LendingContract {
         cross_asset::load_debt_asset(&env, &user, &asset)
     }
 
-    // NOTE: timelocked upgrade governance entrypoints were removed from the deployed
-    // contract surface to keep the WASM under the 128 KiB network limit.
+    /// Initialize timelocked multisig upgrade governance (admin-only, once).
+    pub fn upgrade_init(
+        env: Env,
+        caller: Address,
+        current_wasm_hash: BytesN<32>,
+        required_approvals: u32,
+    ) -> Result<(), LendingError> {
+        upgrade::upgrade_init(&env, &caller, current_wasm_hash, required_approvals)
+    }
+
+    /// Propose a WASM upgrade with a timelocked ETA ledger (admin-only).
+    pub fn upgrade_propose(
+        env: Env,
+        caller: Address,
+        new_wasm_hash: BytesN<32>,
+        new_version: u32,
+    ) -> Result<u64, LendingError> {
+        upgrade::upgrade_propose(&env, &caller, new_wasm_hash, new_version)
+    }
+
+    /// Record an approval for a pending upgrade proposal (approver-only).
+    pub fn upgrade_approve(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+    ) -> Result<u32, LendingError> {
+        upgrade::upgrade_approve(&env, &caller, proposal_id)
+    }
+
+    /// Execute an approved upgrade after the timelock elapses (approver-only).
+    pub fn upgrade_execute(
+        env: Env,
+        caller: Address,
+        proposal_id: u64,
+    ) -> Result<(), LendingError> {
+        upgrade::upgrade_execute(&env, &caller, proposal_id)
+    }
+
+    /// Cancel a pending upgrade proposal (admin-only, issue #1940).
+    pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
+        upgrade::upgrade_cancel(&env, &caller, proposal_id)
+    }
+
+    pub fn upgrade_set_required_approvals(
+        env: Env,
+        caller: Address,
+        required_approvals: u32,
+    ) -> Result<(), LendingError> {
+        upgrade::upgrade_set_required_approvals(&env, &caller, required_approvals)
+    }
+
+    /// Add an upgrade approver (admin-only).
+    pub fn upgrade_add_approver(
+        env: Env,
+        caller: Address,
+        approver: Address,
+    ) -> Result<(), LendingError> {
+        upgrade::upgrade_add_approver(&env, &caller, approver)
+    }
+
+    /// Remove an upgrade approver (admin-only).
+    pub fn upgrade_remove_approver(
+        env: Env,
+        caller: Address,
+        approver: Address,
+    ) -> Result<(), LendingError> {
+        upgrade::upgrade_remove_approver(&env, &caller, approver)
+    }
+
+    pub fn current_version(env: Env) -> Result<u32, LendingError> {
+        upgrade::current_version(&env)
+    }
+
+    pub fn current_wasm_hash(env: Env) -> Result<BytesN<32>, LendingError> {
+        upgrade::current_wasm_hash(&env)
+    }
+
+    pub fn get_required_approvals(env: Env) -> Result<u32, LendingError> {
+        upgrade::get_required_approvals(&env)
+    }
+
+    pub fn get_upgrade_approvers(env: Env) -> Result<Vec<Address>, LendingError> {
+        upgrade::get_upgrade_approvers(&env)
+    }
+
+    pub fn get_proposal_approvals(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<Vec<Address>, LendingError> {
+        upgrade::get_proposal_approvals(&env, proposal_id)
+    }
+
+    pub fn upgrade_status(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<upgrade::UpgradeStatus, LendingError> {
+        upgrade::upgrade_status(&env, proposal_id)
+    }
+
+    /// Returns whether a proposal is in the `Cancelled` terminal state (issue #1940).
+    pub fn is_upgrade_proposal_cancelled(env: Env, proposal_id: u64) -> bool {
+        upgrade::is_proposal_cancelled(&env, proposal_id)
+    }
+
+    /// Returns the stored domain-separated approval binding hash for
+    /// `(proposal_id, approver)` (issue #1940).
+    pub fn get_upgrade_approval_binding(
+        env: Env,
+        proposal_id: u64,
+        approver: Address,
+    ) -> Option<BytesN<32>> {
+        upgrade::get_approval_binding(&env, proposal_id, approver)
+    }
+
+    /// Returns the approver-set fingerprint captured when the proposal was
+    /// created (issue #1940).
+    pub fn get_upgrade_proposal_signer_hash(env: Env, proposal_id: u64) -> Option<BytesN<32>> {
+        upgrade::get_proposal_approver_set_hash(&env, proposal_id)
+    }
+
+    /// Returns the fingerprint of the live upgrade approver set (issue #1940).
+    pub fn get_upgrade_approver_set_hash(env: Env) -> BytesN<32> {
+        upgrade::get_approver_set_hash(&env)
+    }
+
+    pub fn get_min_upgrade_delay_ledgers(env: Env) -> u32 {
+        upgrade::get_min_upgrade_delay_ledgers(&env)
+    }
 
     /// Returns the total number of governance audit log entries ever recorded.
     /// This count never resets even when the circular buffer wraps.
@@ -4629,7 +4883,7 @@ pub(crate) mod test {
     #[test]
     fn test_initialize_and_get_admin() {
         let (_env, client, admin, _user) = setup();
-        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_admin(), Some(admin));
     }
 
     // -----------------------------------------------------------------------

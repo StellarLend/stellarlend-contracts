@@ -79,7 +79,7 @@ fn propose_and_accept_admin_updates_admin_and_clears_pending() {
     mock_accept_admin_auth(&env, &contract_id, &pending_admin);
     let res = client.try_accept_admin();
     assert_eq!(res, Ok(Ok(())));
-    assert_eq!(client.get_admin(), pending_admin);
+    assert_eq!(client.get_admin(), Some(pending_admin));
     assert!(!env.as_contract(&contract_id, || {
         env.storage().instance().has(&DataKey::PendingAdmin)
     }));
@@ -91,7 +91,7 @@ fn accept_admin_without_pending_returns_error() {
 
     let res = client.try_accept_admin();
     assert_eq!(res, Err(Ok(LendingError::PendingAdminNotSet)));
-    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_admin(), Some(admin));
     assert!(!env.as_contract(&contract_id, || {
         env.storage().instance().has(&DataKey::PendingAdmin)
     }));
@@ -119,7 +119,7 @@ fn double_accept_after_success_returns_missing_pending_error() {
 
     mock_accept_admin_auth(&env, &contract_id, &pending_admin);
     client.accept_admin();
-    assert_eq!(client.get_admin(), pending_admin);
+    assert_eq!(client.get_admin(), Some(pending_admin));
     assert!(!env.as_contract(&contract_id, || {
         env.storage().instance().has(&DataKey::PendingAdmin)
     }));
@@ -154,7 +154,7 @@ fn re_propose_overwrites_previous_pending_admin() {
 
     mock_accept_admin_auth(&env, &contract_id, &second_pending_admin);
     assert_eq!(client.try_accept_admin(), Ok(Ok(())));
-    assert_eq!(client.get_admin(), second_pending_admin);
+    assert_eq!(client.get_admin(), Some(second_pending_admin));
     assert!(!env.as_contract(&contract_id, || {
         env.storage().instance().has(&DataKey::PendingAdmin)
     }));

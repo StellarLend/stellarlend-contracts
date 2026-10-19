@@ -58,7 +58,7 @@ fn initialize_with_admin_signature_succeeds() {
     mock_initialize_auth(&env, &contract_id, &admin, &admin);
     client.initialize(&admin);
 
-    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_admin(), Some(admin));
 }
 
 /// A third-party helper that *does* hold the admin's authority (e.g., a
@@ -76,7 +76,7 @@ fn initialize_with_correct_auth_sets_admin() {
     mock_initialize_auth(&env, &contract_id, &admin, &admin);
     client.initialize(&admin);
 
-    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_admin(), Some(admin));
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ fn initialize_attacker_naming_themselves_is_accepted_for_their_own_address() {
     client.initialize(&attacker);
 
     // They become admin — their own choice, their own key, their own risk.
-    assert_eq!(client.get_admin(), attacker);
+    assert_eq!(client.get_admin(), Some(attacker));
 }
 
 /// A second `initialize` call (after the first succeeds) must return
@@ -160,5 +160,5 @@ fn double_initialize_returns_already_initialized() {
     assert_eq!(result, Err(Ok(LendingError::AlreadyInitialized)));
 
     // Original admin is unchanged.
-    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_admin(), Some(admin));
 }

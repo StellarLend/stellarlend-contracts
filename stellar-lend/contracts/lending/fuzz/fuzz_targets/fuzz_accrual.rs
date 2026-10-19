@@ -9,7 +9,7 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use stellarlend_lending::math::{compute_compound_interest, MathError, MAX_RATE_BPS};
+use stellarlend_lending::math::{compute_compound_interest, MathError};
 
 /// Structured input for accrual fuzzing
 #[derive(Debug, Arbitrary)]

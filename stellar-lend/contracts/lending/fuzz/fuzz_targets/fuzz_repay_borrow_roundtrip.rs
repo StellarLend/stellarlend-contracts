@@ -172,6 +172,9 @@ fuzz_target!(|input: RoundtripInput| {
                         Err(DebtError::IndexInvariantViolated) => {
                             // Should not occur in the legacy path; treat as unexpected overflow.
                         }
+                        Err(DebtError::RepayAmountTooHigh) => {
+                            panic!("borrow_amount must never reject a positive amount as too high");
+                        }
                     }
                 }
                 Action::Repay => {
@@ -218,6 +221,10 @@ fuzz_target!(|input: RoundtripInput| {
                         Err(DebtError::IndexInvariantViolated) => {
                             // Should not occur in the legacy path.
                         }
+                        Err(DebtError::RepayAmountTooHigh) => {
+                            // Over-repayment is rejected by design; the position is
+                            // untouched and the debt floor stays where it was.
+                        }
                     }
                 }
             }
@@ -241,6 +248,9 @@ fuzz_target!(|input: RoundtripInput| {
             }
             Err(DebtError::InvalidAmount) => {
                 panic!("effective_debt must never return InvalidAmount");
+            }
+            Err(other) => {
+                panic!("effective_debt must never return {other:?}");
             }
         }
     }
