@@ -791,6 +791,38 @@ pub(crate) fn ensure_position_prices_fresh(
     Ok(())
 }
 
+/// Require fresh prices for every leg of a cross-asset position when
+/// performing a *liquidation*.  Unlike [`ensure_position_prices_fresh`], this
+/// variant does **not** accept an extra "new-asset" argument — the liquidator
+/// chooses specific `debt_asset` / `collateral_asset` legs that already exist
+/// on the position, so no new leg is introduced.  Both chosen assets must
+/// appear in the price scan because the seized-collateral conversion uses both
+/// prices.
+///
+/// The policy is fail-closed for the same reason as borrow: the aggregate
+/// health factor is derived from every leg.  A single stale leg makes the true
+/// health unknown and the liquidation unsafe.
+///
+/// # Errors
+/// - [`LendingError::StaleOracleTimestamp`] if any scanned asset's price is stale.
+/// - [`LendingError::PriceFeedNotFound`] if any scanned asset has no price record.
+pub(crate) fn ensure_position_prices_fresh_for_liquidation(
+    env: &Env,
+    user: &Address,
+) -> Result<(), LendingError> {
+    let collateral_assets = get_user_collateral_assets(env, user);
+    for i in 0..collateral_assets.len() {
+        let asset = collateral_assets.get(i).unwrap();
+        get_price_for_asset(env, &asset)?;
+    }
+    let debt_assets = get_user_debt_assets(env, user);
+    for i in 0..debt_assets.len() {
+        let asset = debt_assets.get(i).unwrap();
+        get_price_for_asset(env, &asset)?;
+    }
+    Ok(())
+}
+
 /// Repay `amount` of debt `asset` for `user`.
 ///
 /// Checks pause state, validates params, requires authorisation, accrues
