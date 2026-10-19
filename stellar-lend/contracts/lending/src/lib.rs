@@ -190,9 +190,12 @@ use events::{
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
+    contract, contractevent, contractimpl, contracttype, symbol_short, Address,
     Bytes, BytesN, Env, IntoVal, String, Symbol, TryIntoVal, Val, Vec,
 };
+
+// Re-export the canonical LendingError from common crate
+pub use stellar_lend_common::LendingError;
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
 const DEFAULT_DEPOSIT_CAP: i128 = 1_000_000_000_000;
@@ -526,102 +529,6 @@ pub enum ProtocolAction {
     Repay,
     Liquidate,
     FlashLoan,
-}
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum LendingError {
-    InvalidAmount = 1001,
-    Overflow = 1002,
-    Unauthorized = 1003,
-    PendingAdminNotSet = 1004,
-    BelowMinimumBorrow = 1008,
-    NotInitialized = 1009,
-    AlreadyInitialized = 1010,
-    PositionHealthy = 1011,
-    RepayAmountTooHigh = 1012,
-    SelfLiquidation = 2008,
-    DebtCeilingExceeded = 2001,
-    DepositCapExceeded = 2002,
-    /// A borrow would push total outstanding debt for the asset beyond the
-    /// configured per-asset `borrow_cap`.
-    BorrowCapExceeded = 2003,
-    InvalidFeeBps = 2005,
-    InvalidFlashUtilizationBps = 2006,
-    InsufficientCollateral = 2007,
-    IsolationCeilingExceeded = 2009,
-    InvalidIsolationCeiling = 2010,
-    InvalidLiquidationParams = 2011,
-    IsolationCeilingBelowDebt = 2012,
-    IsolationDebtInvariant = 2013,
-    InvalidOracleSignature = 5001,
-    PriceOutOfBounds = 3004,
-    PriceUnavailable = 3005,
-    StaleOracleTimestamp = 5002,
-    OraclePubkeyNotSet = 5003,
-    MaxMoveBpsExceeded = 5004,
-    OracleReplay = 5005,
-    /// The asset has not been configured via set_asset_params.
-    AssetNotConfigured = 3001,
-    /// Oracle price record is missing for the requested asset.
-    PriceFeedNotFound = 3002,
-    /// Operation would result in an unsafe health factor.
-    HealthFactorTooLow = 3003,
-    UpgradeNotInitialized = 4001,
-    ProposalNotFound = 4002,
-    ProposalNotReady = 4003,
-    ProposalExpired = 4004,
-    ProposalAlreadyExecuted = 4005,
-    AlreadyApproved = 4006,
-    InsufficientUpgradeApprovals = 4007,
-    InvalidUpgradeVersion = 4008,
-    ApproverNotFound = 4009,
-    MaxApproversReached = 4010,
-    InvalidUpgradeConfig = 4011,
-    /// The upgrade proposal has been cancelled and cannot be acted on.
-    UpgradeProposalCancelled = 4012,
-    /// The upgrade proposal is not in a cancellable (pending) state.
-    UpgradeProposalNotCancellable = 4013,
-    /// The upgrade approver set changed after the proposal was created, so
-    /// in-flight approvals are no longer authorized to execute.
-    ApproverSetChanged = 4014,
-    /// A stale/duplicate upgrade submission would create contradictory state
-    /// and is rejected rather than silently re-applied.
-    UpgradeSubmissionConflict = 4015,
-    /// The recorded approval binding does not match the expected nonce-bound
-    /// domain-separated authorization for this proposal/approver pair.
-    ApprovalBindingMismatch = 4016,
-    /// A prepared operation expired before commit.
-    OperationExpired = 4017,
-    /// `write_off_bad_debt` called when there is no recorded bad debt.
-    NoBadDebt = 6001,
-    /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
-    WriteOffExceedsBadDebt = 6002,
-    /// `set_liquidation_threshold_bps` called with a value outside `[0, 10000]`.
-    InvalidLiquidationThresholdBps = 7000,
-    /// `set_close_factor_bps` called with a value outside `(0, 10000]`.
-    InvalidCloseFactorBps = 7001,
-    /// `set_liquidation_incentive_bps` called with a value outside
-    /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
-    InvalidLiquidationIncentiveBps = 7002,
-    /// `set_deposit_cap` called with a value <= 0.
-    InvalidDepositCap = 7005,
-    /// `set_rate_params` called with an internally inconsistent `RateParams`.
-    InvalidRateParams = 7006,
-    InvalidLiquidationGracePeriod = 7007,
-    BackupNotFound = 8001,
-    /// `receive` called with a payload version other than `1`.
-    InvalidPayloadVersion = 1013,
-    /// `receive` called with a payload that is too short, too long, or
-    /// contains values that cannot be decoded into the expected types.
-    MalformedPayload = 1014,
-    /// `receive` called with an action `Symbol` that is not `"deposit"`
-    /// or `"repay"`.
-    AssetNotSupported = 1015,
-    /// `receive` called with `from` equal to the token asset or the lending
-    /// contract itself (prevents self-call / reentrancy attacks).
-    UnauthorizedSender = 1016,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
