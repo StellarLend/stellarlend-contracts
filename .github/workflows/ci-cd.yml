@@ -15,15 +15,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Keep in sync with stellar-lend/rust-toolchain.toml.
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.91.0
+          toolchain: 1.93.0
+          targets: wasm32v1-none, wasm32-unknown-unknown
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: stellar-lend
+
       - name: Check workspace
         working-directory: stellar-lend
         run: cargo check --workspace --lib --exclude stellarlend-bridge --keep-going
+
+      - name: Run WASM size checker unit tests
+        run: bash scripts/tests/test_check_wasm_sizes.sh
+
+      # Equivalent to `stellar contract build --package <pkg>` (which wraps this
+      # exact cargo invocation) without the multi-minute Stellar CLI install.
+      - name: Build release contract WASMs
+        working-directory: stellar-lend
+        run: |
+          cargo build --release --target wasm32v1-none \
+            -p stellarlend-lending \
+            -p stellarlend-amm \
+            -p stellarlend-vesting \
+            -p stellarlend-multisig
+
+      - name: Enforce WASM size budgets
+        run: bash scripts/check_wasm_sizes.sh
+
+      - name: Generate SHA-256 checksums
+        working-directory: stellar-lend/target/wasm32v1-none/release
+        run: |
+          sha256sum stellarlend_lending.wasm stellarlend_amm.wasm stellarlend_vesting.wasm stellarlend_multisig.wasm > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload release WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-wasms
+          path: |
+            stellar-lend/target/wasm32v1-none/release/stellarlend_lending.wasm
+            stellar-lend/target/wasm32v1-none/release/stellarlend_amm.wasm
+            stellar-lend/target/wasm32v1-none/release/stellarlend_vesting.wasm
+            stellar-lend/target/wasm32v1-none/release/stellarlend_multisig.wasm
+            stellar-lend/target/wasm32v1-none/release/SHA256SUMS
+          if-no-files-found: error
 
   fuzz-smoke:
     name: Fuzz smoke (lending)

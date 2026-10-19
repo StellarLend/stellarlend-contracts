@@ -118,13 +118,13 @@ Cache keys are:
 
 ### Required Tools
 
-- **Rust toolchain** = 1.91.0 (pinned in
+- **Rust toolchain** = 1.93.0 (pinned in
   [`stellar-lend/rust-toolchain.toml`](../stellar-lend/rust-toolchain.toml))
   with components:
   - `rustfmt` (formatting)
   - `clippy` (linting)
 - **Targets**:
-  - `wasm32-unknown-unknown` (for Soroban contracts)
+  - `wasm32-unknown-unknown` and `wasm32v1-none` (for Soroban contracts)
 - **Stellar CLI** (for contract operations) — `cargo install --locked stellar-cli`
 
 ### Optional Tools
@@ -366,7 +366,7 @@ Currently no secrets are required. If you need to add secrets for Soroban networ
   on Ubuntu. `build-and-test` runs on macOS. Your local box will likely not
   reproduce the macOS runtime precisely.
 - **Rust version**: CI uses the toolchain pinned in
-  `stellar-lend/rust-toolchain.toml` (1.91.0). Ensure your local toolchain
+  `stellar-lend/rust-toolchain.toml` (1.93.0). Ensure your local toolchain
   matches.
 - **Dependencies**: CI installs fresh on each cold-cache run; local caches
   inherit stale builds.

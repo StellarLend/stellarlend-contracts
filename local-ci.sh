@@ -119,8 +119,11 @@ fi
 
 # ─── 2. SOROBAN-CHECKS (matches CI job: soroban-checks) ───────────────────────
 if should_run soroban-checks; then
-    echo -e "\n${BLUE}🔍 [soroban-checks] Soroban Validations${NC}"
+    echo -e "\n${BLUE}🔍 [soroban-checks] Soroban Validations & WASM Size Budgets${NC}"
     echo "=========================================="
+
+    # Run size checker script tests
+    run_check "WASM Size Checker Tests" "bash ../scripts/tests/test_check_wasm_sizes.sh"
 
     # Install Stellar CLI (used for build/optimize/inspect). Mirrors the CI job
     # step which runs `cargo install --locked stellar-cli`.
@@ -129,14 +132,25 @@ if should_run soroban-checks; then
         cargo install --locked stellar-cli --version 25.2.0
     fi
 
-    run_check "Contract Build" "stellar contract build --verbose"
+    run_check "Contract Build (Lending)" "stellar contract build --package stellarlend-lending"
+    run_check "Contract Build (AMM)" "stellar contract build --package stellarlend-amm"
+    run_check "Contract Build (Vesting)" "stellar contract build --package stellarlend-vesting"
+    run_check "Contract Build (Multisig)" "stellar contract build --package stellarlend-multisig"
 
-    if [ -d "target/wasm32-unknown-unknown/release" ]; then
+    # Enforce size budgets
+    run_check "Enforce WASM Size Budgets" "bash ../scripts/check_wasm_sizes.sh"
+
+    WASM_DIR="target/wasm32v1-none/release"
+    if [ ! -d "$WASM_DIR" ]; then
+        WASM_DIR="target/wasm32-unknown-unknown/release"
+    fi
+
+    if [ -d "$WASM_DIR" ]; then
         # Optimize each non-optimized wasm artifact, then inspect the result.
-        for wasm in target/wasm32-unknown-unknown/release/*.wasm; do
+        for wasm in "$WASM_DIR"/*.wasm; do
             [ -f "$wasm" ] || continue
             case "$wasm" in
-                *-optimized.wasm) continue ;;
+                *-optimized.wasm|*.optimized.wasm) continue ;;
             esac
             run_check "Contract Optimization" "stellar contract optimize --wasm $wasm"
 

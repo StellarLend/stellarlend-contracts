@@ -73,8 +73,8 @@ Note: deposit/borrow/repay/withdraw are internal accounting (no token transfer) 
 
 ```bash
 cd stellar-lend
-# stellar CLI rejects rust 1.91.0 for contract builds; use another toolchain (e.g. 1.93.0)
-RUSTUP_TOOLCHAIN=1.93.0 stellar contract build --package stellarlend-lending
+# Pinned to Rust 1.93.0 in rust-toolchain.toml (supports wasm32v1-none contract builds)
+stellar contract build --package stellarlend-lending
 stellar keys generate deployer --network testnet --fund
 stellar contract deploy --wasm target/wasm32v1-none/release/stellarlend_lending.wasm --source deployer --network testnet
 stellar contract invoke --id <ID> --source deployer --network testnet -- initialize --admin $(stellar keys address deployer)
