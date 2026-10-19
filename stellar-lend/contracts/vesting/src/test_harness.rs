@@ -121,7 +121,6 @@ pub struct VestingContract {
     pub token_client: soroban_sdk::token::Client<'static>,
     pub token_admin: Address,
     pub token_asset: soroban_sdk::token::StellarAssetClient<'static>,
-    pub contract_addr: Address,
     
     pub admin: String,
     pub treasury: String,
@@ -167,7 +166,6 @@ impl VestingContract {
             treasury: treasury.to_string(),
             address_map: std::cell::RefCell::new(address_map),
             events: std::vec::Vec::new(),
-            contract_addr: contract_id,
         }
     }
 
@@ -297,7 +295,7 @@ impl VestingContract {
 
         match self
             .client
-            .try_add_grant(&grantee_addr, &(total as i128), &start, &duration, &cliff)
+            .try_add_grant(&caller_addr, &grantee_addr, &(total as i128), &start, &cliff, &duration)
         {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
@@ -367,7 +365,7 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
         match self.client.try_revoke(&caller_addr, &grantee_addr) {
-            Ok(Ok((vested, clawed_back))) => Ok(clawed_back as u128),
+            Ok(Ok(clawed_back)) => Ok(clawed_back as u128),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
             Err(Err(_)) => Err(VestingError::Unauthorized),
@@ -388,7 +386,7 @@ impl VestingContract {
             .client
             .try_revoke_one(&caller_addr, &grantee_addr, &(index as u32))
         {
-            Ok(Ok((vested, clawed_back))) => Ok(clawed_back as u128),
+            Ok(Ok(clawed_back)) => Ok(clawed_back as u128),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),
             Err(Err(_)) => Err(VestingError::Unauthorized),
@@ -453,11 +451,12 @@ impl VestingContract {
 
     fn map_grant(&self, g: crate::Grant) -> Grant {
         let grantee_str = self.get_tag(&g.grantee);
+        let effective_now = self.env.ledger().timestamp().saturating_sub(self.total_paused_secs());
         Grant {
             grantee: grantee_str,
             total: g.total_amount as u128,
             claimed: g.claimed_amount as u128,
-            released: g.released_amount as u128,
+            released: g.vested_at(effective_now) as u128,
             start_seconds: g.start_ts,
             duration_seconds: g.duration_secs,
             cliff_seconds: g.cliff_secs,
