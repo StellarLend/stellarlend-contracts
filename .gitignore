@@ -16,12 +16,7 @@ lerna-debug.log*
 
 
 # Environment variables
-.env
-.env.local
 .env.*.local
-.env.development
-.env.production
-.env.test
 *.env
 
 # Logs
@@ -40,3 +35,4 @@ lerna-debug.log*
 
 test_snapshots/
 .opencode
+config.bat
