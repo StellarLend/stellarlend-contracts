@@ -290,21 +290,22 @@ pub enum DataKey {
     UserOperationSequence(Address),
     OperationRecord(soroban_sdk::BytesN<32>),
     OraclePubKey,
-    /// Optional address permitted (in addition to the admin) to relay signed
-    /// oracle price updates. See [`LendingContract::set_price_relayer`].
+    // Optional address permitted (in addition to the admin) to relay signed
+    // oracle price updates. See set_price_relayer.
+    /// Optional price relayer.
     PriceRelayer,
-    /// Per-asset override for the maximum accepted oracle price age (seconds).
-    /// Falls back to [`DEFAULT_ORACLE_MAX_AGE_SECS`] when unset. Configured via
-    /// [`LendingContract::set_oracle_max_age`].
+    // Falls back to DEFAULT_ORACLE_MAX_AGE_SECS when unset. Configured via
+    // set_oracle_max_age.
+    /// Per-asset max oracle age (secs).
     OracleMaxAge(Address),
     OraclePrice(Address),
-    /// Per-asset `(anchor_price, anchor_timestamp)` used by the time-windowed
-    /// deviation guard in `set_price`.
+    // Used by the time-windowed deviation guard in set_price.
+    /// Per-asset (anchor_price, anchor_timestamp).
     OracleAnchor(Address),
     MaxMoveBps,
-    /// Length in seconds of the windowed deviation guard. Defaults to
-    /// [`DEFAULT_MOVE_WINDOW_SECS`] when unset. Configured via
-    /// [`LendingContract::set_move_window_secs`].
+    // Defaults to DEFAULT_MOVE_WINDOW_SECS when unset. Configured via
+    // set_move_window_secs.
+    /// Windowed deviation guard length (secs).
     MoveWindowSecs,
     PriceMin(Address),
     PriceMax(Address),
@@ -626,14 +627,12 @@ pub struct PriceRecord {
     pub timestamp: u64,
 }
 
-/// Anchor point for the time-windowed deviation guard enforced by
-/// [`LendingContract::set_price`].
-///
-/// Each accepted update is compared against the anchor's `price`; the anchor is
-/// only reset (to the newly accepted price) once `move_window_secs` has elapsed
-/// since `timestamp`. This bounds the *cumulative* distance a price may travel
-/// within a window, unlike a per-update cap which can be walked arbitrarily
-/// through many small updates.
+// Each accepted update is compared against the anchor's `price`; the anchor is
+// only reset (to the newly accepted price) once `move_window_secs` has elapsed
+// since `timestamp`. This bounds the cumulative distance a price may travel
+// within a window, unlike a per-update cap which can be walked arbitrarily
+// through many small updates.
+/// Anchor for the windowed deviation guard in `set_price`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OracleAnchor {
@@ -938,27 +937,18 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::OraclePubKey)
     }
 
-    /// Store a signed oracle price update for `asset`.
-    ///
-    /// # Authorization
-    /// `caller` must be either the configured price relayer
-    /// ([`LendingContract::set_price_relayer`]) or the admin, and must authorize
-    /// the invocation. The relayer role exists so an always-online oracle
-    /// process never needs the admin key. Independently, the call must carry a
-    /// valid ed25519 signature over the canonical payload
-    /// (`oracle_price_signature_payload`) for the configured oracle pubkey;
-    /// that signature is the real authenticity boundary.
-    ///
-    /// # Freshness
-    /// The update timestamp must not be in the future and must be no older than
-    /// the per-asset max age ([`LendingContract::set_oracle_max_age`], default
-    /// [`DEFAULT_ORACLE_MAX_AGE_SECS`]).
-    ///
-    /// # Velocity
-    /// A per-update cap (`MaxMoveBps`) and a time-windowed deviation guard are
-    /// both enforced. The windowed guard compares against a per-asset anchor and
-    /// bounds the *cumulative* move within `move_window_secs`, resetting the
-    /// anchor once the window elapses.
+    // Authorization: `caller` must be the configured price relayer
+    // (set_price_relayer) or the admin, and must authorize the invocation. The
+    // relayer role lets an always-online oracle process avoid the admin key.
+    // The ed25519 signature over the canonical payload
+    // (`oracle_price_signature_payload`) is the real authenticity boundary.
+    // Freshness: the timestamp must not be in the future and must be no older
+    // than the per-asset max age (set_oracle_max_age, default
+    // DEFAULT_ORACLE_MAX_AGE_SECS).
+    // Velocity: a per-update cap (MaxMoveBps) and a time-windowed deviation
+    // guard are both enforced. The windowed guard compares against a per-asset
+    // anchor and bounds the cumulative move within `move_window_secs`.
+    /// Store a signed oracle price update. Caller: relayer or admin.
     pub fn set_price(
         env: Env,
         caller: Address,
@@ -1189,18 +1179,14 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::MaxMoveBps)
     }
 
-    /// Set the per-asset maximum accepted oracle price age, in seconds
-    /// (admin-only).
-    ///
-    /// Freshness checks for `asset` — in `set_price`, the cross-asset
-    /// valuation paths, and `require_fresh_valuation_prices` — use this value
-    /// instead of the protocol default. Stable and volatile assets can therefore
-    /// carry different freshness windows.
-    ///
-    /// `secs` must lie in `[MIN_ORACLE_MAX_AGE_SECS, MAX_ORACLE_MAX_AGE_SECS]`
-    /// (60 s .. 24 h). A max age of `0` is rejected: it would mark every price
-    /// as instantly stale and brick borrowing. Returns
-    /// [`LendingError::InvalidAmount`] on an out-of-range value.
+    // Freshness checks for `asset` (in set_price, the cross-asset valuation
+    // paths and require_fresh_valuation_prices) use this value instead of the
+    // protocol default. `secs` must lie in
+    // [MIN_ORACLE_MAX_AGE_SECS, MAX_ORACLE_MAX_AGE_SECS] (60 s to 24 h). A max
+    // age of 0 is rejected because it would mark every price as instantly
+    // stale and brick borrowing. Returns LendingError::InvalidAmount when out
+    // of range.
+    /// Set per-asset max oracle price age in seconds (admin-only).
     pub fn set_oracle_max_age(env: Env, asset: Address, secs: u64) -> Result<(), LendingError> {
         require_initialized(&env)?;
         let admin: Address = env
@@ -1239,11 +1225,10 @@ impl LendingContract {
             .get(&DataKey::OracleMaxAge(asset))
     }
 
-    /// Set the length in seconds of the windowed deviation guard (admin-only).
-    ///
-    /// A price may deviate at most `max_move_bps` from its per-asset anchor
-    /// within this window; the anchor is reset once the window elapses. Bounds
-    /// are `[MIN_MOVE_WINDOW_SECS, MAX_MOVE_WINDOW_SECS]` (1 s .. 24 h).
+    // A price may deviate at most `max_move_bps` from its per-asset anchor
+    // within this window; the anchor resets once the window elapses. Bounds are
+    // [MIN_MOVE_WINDOW_SECS, MAX_MOVE_WINDOW_SECS] (1 s to 24 h).
+    /// Set the windowed deviation guard length in seconds (admin-only).
     pub fn set_move_window_secs(env: Env, secs: u64) -> Result<(), LendingError> {
         require_initialized(&env)?;
         let admin: Address = env
@@ -1279,12 +1264,10 @@ impl LendingContract {
         move_window_secs(&env)
     }
 
-    /// Set the address permitted (in addition to the admin) to relay signed
-    /// oracle price updates (admin-only).
-    ///
-    /// This separates the always-online oracle relayer key from the admin key.
-    /// The relayer still must supply a valid ed25519 signature over the price
-    /// payload; the role only gates *who may submit* an otherwise-valid update.
+    // Separates the always-online oracle relayer key from the admin key. The
+    // relayer still must supply a valid ed25519 signature over the price
+    // payload; the role only gates who may submit an otherwise-valid update.
+    /// Set the optional price relayer address (admin-only).
     pub fn set_price_relayer(env: Env, relayer: Address) -> Result<(), LendingError> {
         require_initialized(&env)?;
         let admin: Address = env
@@ -1350,12 +1333,13 @@ impl LendingContract {
     /// Set per‑asset price bounds (admin‑only).
     /// `min_price` must be > 0 and less than `max_price`.
     ///
-    /// If the asset already has a stored price, the new bounds must contain it,
-    /// otherwise the currently stored price would be rejected by future
-    /// `set_price` calls until it is refreshed, and freshness would fail
-    /// closed. Pass `force = true` to intentionally install bounds that exclude
-    /// the current price (for example when the price is known to be wrong and
-    /// will be corrected immediately); this is an explicit, audited override.
+    // If the asset already has a stored price, the new bounds must contain it,
+    // otherwise the stored price would be rejected by future `set_price` calls
+    // until refreshed, and freshness would fail closed. Pass `force = true` to
+    // intentionally install bounds that exclude the current price (for example
+    // when the price is known to be wrong and will be corrected immediately).
+    // This is an explicit, audited override.
+    /// Bounds must contain the stored price unless `force` is true.
     pub fn set_price_bounds(
         env: Env,
         asset: Address,
