@@ -29,7 +29,7 @@ This document outlines the procedures for managing oracle configurations in the 
 
 | Role | Permissions | Responsibilities |
 |------|-------------|------------------|
-| **Admin** | - Configure oracle parameters<br>- Set/remove primary oracles<br>- Set/remove fallback oracles<br>- Pause/resume oracle updates<br>- Update prices directly | - System configuration<br>- Oracle management<br>- Emergency operations |
+| **Admin** | - Configure oracle parameters<br>- Set/remove primary oracles<br>- Set/remove fallback oracles<br>- Pause/resume oracle updates<br>- Configure the oracle signing key | - System configuration<br>- Oracle management<br>- Emergency operations |
 | **Primary Oracle** | - Update prices for registered assets<br>- Read price feeds | - Regular price updates<br>- Market data provision |
 | **Fallback Oracle** | - Update prices when primary is stale<br>- Read fallback price feeds | - Backup price provision<br>- Redundancy support |
 | **Public/Other** | - Read price feeds only | - Price consumption |
@@ -38,7 +38,7 @@ This document outlines the procedures for managing oracle configurations in the 
 
 1. **Admin Operations**: Require admin address verification
 2. **Oracle Operations**: Verify oracle is registered for the asset
-3. **Price Updates**: Validate caller authorization and price data
+3. **Price Updates**: Any relayer may submit a payload signed by the configured Ed25519 oracle key
 4. **Configuration Changes**: Admin-only with additional validation
 
 ## Price Move-Cap Circuit Breaker

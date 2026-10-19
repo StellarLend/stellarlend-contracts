@@ -3,7 +3,6 @@ use crate::debt::{save_debt, DebtPosition, INDEX_SCALE};
 use ed25519_dalek::{Keypair, Signer};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
-use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, Symbol};
 
 #[contract]
@@ -88,26 +87,15 @@ fn oracle_keypair() -> Keypair {
     Keypair { secret, public }
 }
 
-fn build_oracle_payload(env: &Env, asset: &Address, price: i128, timestamp: u64) -> Bytes {
-    let asset_xdr = asset.to_xdr(env);
-    let asset_len = asset_xdr.len();
-    let mut payload = Bytes::new(env);
-    payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-    payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
-    payload.append(&asset_xdr);
-    payload.append(&Bytes::from_slice(env, &price.to_be_bytes()));
-    payload.append(&Bytes::from_slice(env, &timestamp.to_be_bytes()));
-    payload
-}
-
 fn sign_oracle_update(
     env: &Env,
+    client: &LendingContractClient<'static>,
     keypair: &Keypair,
     asset: &Address,
     price: i128,
     timestamp: u64,
 ) -> BytesN<64> {
-    let payload = build_oracle_payload(env, asset, price, timestamp);
+    let payload = client.oracle_payload(asset, &price, &timestamp);
     let mut payload_bytes = [0u8; 1024];
     let len = payload.len() as usize;
     payload.copy_into_slice(&mut payload_bytes[..len]);
@@ -139,14 +127,14 @@ fn configure_valuation_assets(
 fn set_signed_price(
     env: &Env,
     client: &LendingContractClient<'static>,
-    admin: &Address,
+    _admin: &Address,
     keypair: &Keypair,
     asset: &Address,
     price: i128,
 ) {
     let timestamp = env.ledger().timestamp();
-    let signature = sign_oracle_update(env, keypair, asset, price, timestamp);
-    client.set_price(admin, asset, &price, &timestamp, &signature);
+    let signature = sign_oracle_update(env, client, keypair, asset, price, timestamp);
+    client.set_price(asset, &price, &timestamp, &signature);
 }
 
 fn configure_oracle_prices(
