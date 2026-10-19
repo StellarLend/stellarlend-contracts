@@ -37,6 +37,9 @@ fn setup() -> Fixture {
     StellarAssetClient::new(&env, &token_b).mint(&lp, &FUNDS);
 
     client.init_pool(&lp, &1_000_000, &2_000_000, &token_a, &token_b);
+    // Back the virtual reserves seeded by `init_pool` with real balances so
+    // swaps (which settle tokens) can pay out.
+    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, 1_000_000, 2_000_000);
     client.add_liquidity(&lp, &1_000_000, &2_000_000, &0, &0, &0, &u64::MAX);
     assert_eq!(client.get_reserves(), (2_000_000, 4_000_000));
 
@@ -180,7 +183,8 @@ fn sandwich_makes_victim_deposit_revert() {
     let (a_min, b_min) = (99_000, 198_000);
 
     // Attacker front-runs with a large swap that skews the ratio.
-    f.client.swap_a_for_b(&1_000_000);
+    let attacker = crate::swap_test_util::new_trader(&f.env, &f.token_a, &f.token_b);
+    f.client.swap_a_for_b(&attacker, &1_000_000, &0);
 
     let (a0, b0) = (f.bal(&f.token_a, &f.lp), f.bal(&f.token_b, &f.lp));
     let (ra, rb) = f.client.get_reserves();

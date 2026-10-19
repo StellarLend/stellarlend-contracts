@@ -22,6 +22,8 @@ fn test_error_codes_stability() {
     assert_eq!(AmmPoolError::BelowMinLiquidity as u32, 17);
     assert_eq!(AmmPoolError::SlippageExceeded as u32, 18);
     assert_eq!(AmmPoolError::DeadlineExpired as u32, 19);
+    assert_eq!(AmmPoolError::PriceImpactExceeded as u32, 20);
+    assert_eq!(AmmPoolError::InvalidTrader as u32, 21);
 }
 
 #[test]
@@ -35,11 +37,12 @@ fn test_error_paths() {
     let tb = Address::generate(&env);
 
     // Test NonPositiveAmount in swap_a_for_b
-    let res = client.try_swap_a_for_b(&0);
+    let trader = Address::generate(&env);
+    let res = client.try_swap_a_for_b(&trader, &0, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::NonPositiveAmount)));
 
     // Test EmptyPool in swap_a_for_b
-    let res = client.try_swap_a_for_b(&100);
+    let res = client.try_swap_a_for_b(&trader, &100, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::EmptyPool)));
 
     client.init_pool(&caller, &1000, &1000, &ta, &tb);
@@ -65,6 +68,6 @@ fn test_error_paths() {
     // Test ReentrantFlashSwap
     client.init_pool(&caller, &1000, &1000, &ta, &tb);
     client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
-    let res = client.try_swap_a_for_b(&100);
+    let res = client.try_swap_a_for_b(&trader, &100, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }

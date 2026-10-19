@@ -26,10 +26,12 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, AmmContractClient<'static>, Address) 
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
-    let admin = Address::generate(&env);
+    let token_a = crate::swap_test_util::register_token(&env);
+    let token_b = crate::swap_test_util::register_token(&env);
+    // The admin doubles as the funded trader in these tests.
+    let admin = crate::swap_test_util::new_trader(&env, &token_a, &token_b);
     client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
+    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, ra, rb);
     // Zero fee so the dust boundary is purely floor-division, not fee noise.
     client.set_fee_bps(&admin, &0_i128);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
@@ -45,8 +47,8 @@ fn test_swap_a_for_b_rejects_zero_output_dust() {
     // With equal reserves R and fee=0:
     //   amount_out = amount_in * R / (R + amount_in)
     // amount_in = 1 → amount_out = R/(R+1) floors to 0 for any R >= 1.
-    let (_env, client, _admin) = setup_pool(1_000_000, 1_000_000);
-    let res = client.try_swap_a_for_b(&1_i128);
+    let (_env, client, admin) = setup_pool(1_000_000, 1_000_000);
+    let res = client.try_swap_a_for_b(&admin, &1_i128, &0);
     assert_eq!(
         res,
         Err(Ok(AmmPoolError::ZeroOutput)),
@@ -63,8 +65,8 @@ fn test_swap_a_for_b_allows_smallest_nonzero_out() {
     //   amount_in >= ceil(R / (R - 1)) = 2 for R > 1
     // With R=1_000_000, amount_in=2:
     //   out = 2*1e6 / (1e6+2) = 2_000_000/1_000_002 = 1
-    let (_env, client, _admin) = setup_pool(1_000_000, 1_000_000);
-    let out = client.swap_a_for_b(&2_i128);
+    let (_env, client, admin) = setup_pool(1_000_000, 1_000_000);
+    let out = client.swap_a_for_b(&admin, &2_i128, &0);
     assert_eq!(out, 1, "amount_in=2 must yield exactly 1 unit of B");
 }
 
@@ -74,15 +76,15 @@ fn test_swap_a_for_b_allows_smallest_nonzero_out() {
 
 #[test]
 fn test_swap_b_for_a_rejects_zero_output_dust() {
-    let (_env, client, _admin) = setup_pool(1_000_000, 1_000_000);
-    let res = client.try_swap_b_for_a(&1_i128);
+    let (_env, client, admin) = setup_pool(1_000_000, 1_000_000);
+    let res = client.try_swap_b_for_a(&admin, &1_i128, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::ZeroOutput)));
 }
 
 #[test]
 fn test_swap_b_for_a_allows_smallest_nonzero_out() {
-    let (_env, client, _admin) = setup_pool(1_000_000, 1_000_000);
-    let out = client.swap_b_for_a(&2_i128);
+    let (_env, client, admin) = setup_pool(1_000_000, 1_000_000);
+    let out = client.swap_b_for_a(&admin, &2_i128, &0);
     assert_eq!(out, 1, "amount_in=2 must yield exactly 1 unit of A");
 }
 
@@ -92,11 +94,11 @@ fn test_swap_b_for_a_allows_smallest_nonzero_out() {
 
 #[test]
 fn test_zero_output_does_not_mutate_reserves() {
-    let (_env, client, _admin) = setup_pool(50_000, 50_000);
+    let (_env, client, admin) = setup_pool(50_000, 50_000);
     let (ra0, rb0) = client.get_reserves();
     let fees0 = client.get_accrued_fees();
 
-    let res = client.try_swap_a_for_b(&1_i128);
+    let res = client.try_swap_a_for_b(&admin, &1_i128, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::ZeroOutput)));
 
     let (ra1, rb1) = client.get_reserves();
@@ -130,10 +132,10 @@ fn test_min_swap_in_floor_rejects_below() {
     client.set_min_swap_in(&admin, &100_i128);
     assert_eq!(client.get_min_swap_in(), 100);
 
-    let res = client.try_swap_a_for_b(&50_i128);
+    let res = client.try_swap_a_for_b(&admin, &50_i128, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::AmountBelowMinSwapIn)));
 
-    let res_b = client.try_swap_b_for_a(&99_i128);
+    let res_b = client.try_swap_b_for_a(&admin, &99_i128, &0);
     assert_eq!(res_b, Err(Ok(AmmPoolError::AmountBelowMinSwapIn)));
 }
 
@@ -142,10 +144,10 @@ fn test_min_swap_in_floor_allows_at_or_above() {
     let (_env, client, admin) = setup_pool(1_000_000, 1_000_000);
     client.set_min_swap_in(&admin, &100_i128);
 
-    let out = client.swap_a_for_b(&100_i128);
+    let out = client.swap_a_for_b(&admin, &100_i128, &0);
     assert!(out > 0, "at-floor input must succeed with nonzero out");
 
-    let out_b = client.swap_b_for_a(&150_i128);
+    let out_b = client.swap_b_for_a(&admin, &150_i128, &0);
     assert!(out_b > 0, "above-floor input must succeed with nonzero out");
 }
 
@@ -200,8 +202,8 @@ fn test_nonzero_swap_output_unchanged() {
     // A mid-size swap must still produce the same output as before the guard.
     // fee=0, ra=rb=10_000, amount_in=1_000:
     //   out = 1000*10000 / (10000+1000) = 10_000_000 / 11_000 = 909
-    let (_env, client, _admin) = setup_pool(10_000, 10_000);
-    let out = client.swap_a_for_b(&1_000_i128);
+    let (_env, client, admin) = setup_pool(10_000, 10_000);
+    let out = client.swap_a_for_b(&admin, &1_000_i128, &0);
     assert_eq!(
         out, 909,
         "non-dust swap output must be unchanged by the guard"

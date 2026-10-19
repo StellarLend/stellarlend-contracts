@@ -209,7 +209,7 @@ fn doc_test_reentrancy_guard() {
         let client = AmmContractClient::new(&env, &amm_id);
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
-        let result = client.try_swap_a_for_b(&1);
+        let result = client.try_swap_a_for_b(&flash_caller, &1, &0);
         assert!(
             result.is_err(),
             "swap_a_for_b must be blocked while FlashActive"

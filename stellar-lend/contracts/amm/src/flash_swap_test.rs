@@ -283,7 +283,7 @@ fn test_reentrancy_blocks_swap() {
     let caller = Address::generate(&env);
 
     client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
-    client.swap_a_for_b(&1_i128);
+    client.swap_a_for_b(&caller, &1_i128, &0);
 }
 
 #[test]

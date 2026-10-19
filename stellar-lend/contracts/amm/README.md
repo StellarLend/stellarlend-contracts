@@ -27,8 +27,12 @@ minting, and flash swaps.
 // Initialize pool
 client.init_pool(&1_000_i128, &1_000_i128);
 
-// Regular swap A → B
-let out = client.swap_a_for_b(&100_i128, &30_i128 /*fee_bps*/);
+// Regular swap A → B: `trader` authorizes, `amount_in` of token A is pulled
+// from the trader and the output of token B is paid back. Fails with
+// `SlippageExceeded` if the output is below `min_amount_out`.
+// Reserves equal the pool's token balances (fees stay inside the reserves);
+// fee-on-transfer tokens are unsupported.
+let out = client.swap_a_for_b(&trader, &100_i128, &min_amount_out);
 
 // Flash swap (two ops in a single multi-op transaction)
 client.flash_swap_a_for_b(&100_i128, &30_i128, &Bytes::new(&env));
