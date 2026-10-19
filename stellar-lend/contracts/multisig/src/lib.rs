@@ -1,4 +1,7 @@
 #![no_std]
+mod bounds;
+pub use bounds::*;
+
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, xdr::ToXdr,
     Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
@@ -91,6 +94,13 @@ pub struct ProposalExecutedEvent {
     pub id: u64,
     pub action_kind: Symbol,
     pub ok: bool,
+}
+
+/// Event emitted when an expired proposal is marked expired.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ProposalExpiredEvent {
+    pub id: u64,
 }
 
 /// Event emitted after a batch of proposals has been atomically executed.
@@ -193,11 +203,14 @@ impl MultisigContract {
         if env.storage().persistent().has(&MultisigDataKey::Signers) {
             return Err(MultisigError::AlreadyInitialized);
         }
-        if signers.is_empty() {
-            return Err(MultisigError::InvalidSigners);
+        for i in 0..signers.len() {
+            signers.get(i).unwrap().require_auth();
         }
-        if threshold == 0 || threshold as usize > signers.len() as usize {
-            return Err(MultisigError::InvalidThreshold);
+        if bounds::validate_signer_set(&signers, threshold).is_err() {
+            if threshold == 0 || threshold as usize > signers.len() as usize {
+                return Err(MultisigError::InvalidThreshold);
+            }
+            return Err(MultisigError::InvalidSigners);
         }
         env.storage()
             .persistent()
@@ -646,7 +659,12 @@ impl MultisigContract {
     fn dispatch_action(env: &Env, action: &ProposalAction) -> Result<(), MultisigError> {
         match action {
             ProposalAction::SetThreshold(new_threshold) => {
-                if *new_threshold == 0 {
+                let signers: Vec<Address> = env
+                    .storage()
+                    .persistent()
+                    .get(&MultisigDataKey::Signers)
+                    .unwrap_or_else(|| Vec::new(env));
+                if bounds::validate_signer_set(&signers, *new_threshold).is_err() {
                     return Err(MultisigError::InvalidThreshold);
                 }
                 env.storage()
@@ -655,14 +673,8 @@ impl MultisigContract {
                 Ok(())
             }
             ProposalAction::RotateSigners(new_signers) => {
-                if new_signers.is_empty() {
-                    return Err(MultisigError::InvalidSigners);
-                }
-                // Signer-shrink guard: the new signer set must be at least as
-                // large as the current threshold, otherwise quorum could never
-                // be reached again and the multisig would be permanently bricked.
                 let threshold = Self::fetch_threshold(env);
-                if (new_signers.len() as u32) < threshold {
+                if bounds::validate_signer_set(new_signers, threshold).is_err() {
                     return Err(MultisigError::InvalidSigners);
                 }
                 env.storage()
@@ -718,6 +730,35 @@ impl MultisigContract {
         }
         proposal.status = ProposalStatus::Cancelled;
         Self::save_proposal(&env, &proposal);
+        Ok(())
+    }
+
+    /// Mark a proposal as expired if the current ledger sequence has passed its `expires_at`.
+    ///
+    /// Persists `ProposalStatus::Expired` and emits `ProposalExpiredEvent`.
+    ///
+    /// # Arguments
+    /// * `caller` – Signer requesting the expiry update.
+    /// * `id`     – ID of the proposal to expire.
+    pub fn expire_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
+        caller.require_auth();
+        Self::require_signer(&env, &caller)?;
+
+        let mut proposal = Self::fetch_proposal(&env, id)?;
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
+        }
+        if env.ledger().sequence() as u64 <= proposal.expires_at {
+            return Err(MultisigError::ProposalNotPassed);
+        }
+
+        proposal.status = ProposalStatus::Expired;
+        Self::save_proposal(&env, &proposal);
+
+        ProposalExpiredEvent { id }.publish(&env);
         Ok(())
     }
 

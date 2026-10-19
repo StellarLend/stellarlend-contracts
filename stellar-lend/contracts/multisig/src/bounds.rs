@@ -125,6 +125,39 @@ pub fn validate_threshold(threshold: u32, signer_count: usize) -> Result<(), ()>
     Ok(())
 }
 
+/// Validate signer set and threshold to prevent bricking the multisig.
+///
+/// Ensures:
+/// - Signer count is within [1, MAX_SIGNERS]
+/// - No duplicate signers exist
+/// - 0 < threshold <= unique signers count
+///
+/// # Arguments
+/// * `signers` - Slice or reference to vector of signers
+/// * `threshold` - Approval threshold
+///
+/// # Returns
+/// * `Ok(())` if valid
+/// * `Err(())` if bounds violated, duplicates exist, or threshold unreachable
+pub fn validate_signer_set(signers: &Vec<Address>, threshold: u32) -> Result<(), ()> {
+    let len = signers.len() as usize;
+    validate_signer_count(len)?;
+    validate_threshold(threshold, len)?;
+
+    // Reject duplicate addresses: O(n^2) check bounded by MAX_SIGNERS
+    for i in 0..signers.len() {
+        let s_i = signers.get(i).unwrap();
+        for j in (i + 1)..signers.len() {
+            let s_j = signers.get(j).unwrap();
+            if s_i == s_j {
+                return Err(());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Validate proposal time-to-live does not exceed maximum.
 ///
 /// # Arguments
@@ -257,6 +290,31 @@ mod tests {
         assert!(validate_threshold(5, 10).is_ok());
         assert!(validate_threshold(10, 10).is_ok());
         assert!(validate_threshold(11, 10).is_err());
+    }
+
+    #[test]
+    fn test_signer_set_validation() {
+        let env = Env::default();
+        let a1 = Address::generate(&env);
+        let a2 = Address::generate(&env);
+        let a3 = Address::generate(&env);
+
+        let mut signers = Vec::new(&env);
+        assert!(validate_signer_set(&signers, 1).is_err()); // empty
+
+        signers.push_back(a1.clone());
+        signers.push_back(a2.clone());
+        assert!(validate_signer_set(&signers, 0).is_err()); // threshold 0
+        assert!(validate_signer_set(&signers, 1).is_ok());
+        assert!(validate_signer_set(&signers, 2).is_ok());
+        assert!(validate_signer_set(&signers, 3).is_err()); // threshold > len
+
+        // With duplicates
+        let mut dup_signers = Vec::new(&env);
+        dup_signers.push_back(a1.clone());
+        dup_signers.push_back(a2.clone());
+        dup_signers.push_back(a1.clone());
+        assert!(validate_signer_set(&dup_signers, 2).is_err()); // duplicates rejected
     }
 
     #[test]

@@ -165,21 +165,27 @@ pub fn initialize(
         return Err(MultisigError::AlreadyInitialized);
     }
     
-    // B2: Validate signer count (I1 + B2)
-    if let Err(_) = bounds::validate_signer_count(signers.len()) {
+    // B2: Validate signer set and threshold bounds (I1 + B2 + #2277)
+    // Enforces 0 < threshold <= unique signers count and rejects duplicate signers.
+    if let Err(_) = bounds::validate_signer_set(&signers, threshold) {
+        if threshold == 0 || threshold as usize > signers.len() as usize {
+            return Err(MultisigError::InvalidThreshold);
+        }
         return Err(MultisigError::InvalidSigners);
     }
     
-    // A3: Validate threshold (I1 + A3)
-    if let Err(_) = bounds::validate_threshold(threshold, signers.len()) {
-        return Err(MultisigError::InvalidThreshold);
+    // Front-running prevention (#2277):
+    // `initialize` requires authorization from all initial signers (`signer.require_auth()`).
+    // This ensures an attacker cannot front-run deployment to claim the multisig with their own keys.
+    for i in 0..signers.len() {
+        signers.get(i).unwrap().require_auth();
     }
     
     // ... rest of implementation
 }
 ```
 
-**Test**: Verify in `boundary_conditions_test.rs`.
+**Test**: Verify in `signer_set_safety_test.rs` and `boundary_conditions_test.rs`.
 
 ---
 
