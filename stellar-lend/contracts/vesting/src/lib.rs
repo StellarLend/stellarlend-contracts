@@ -933,7 +933,6 @@ impl VestingContract {
         caller: Address,
         new_treasury: Address,
     ) -> Result<(), VestingError> {
-        caller.require_auth();
         Self::require_admin(&env, &caller)?;
 
         if new_treasury == env.current_contract_address() {
@@ -1091,6 +1090,7 @@ impl VestingContract {
         if admin != *caller {
             Err(VestingError::Unauthorized)
         } else {
+            caller.require_auth();
             Ok(())
         }
     }
@@ -1627,6 +1627,10 @@ pub mod sim_tests {
 // Admin rotation + treasury rotation tests (real host, explicit mock_auths).
 #[cfg(test)]
 mod admin_rotation_test;
+
+// Admin authorization tests (real host, explicit mock_auths).
+#[cfg(test)]
+mod admin_auth_test;
 
 // Soroban SDK integration tests (use VestingContractClient / real host)
 #[cfg(test)]
