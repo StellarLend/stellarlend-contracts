@@ -24,3 +24,65 @@ jobs:
       - name: Check workspace
         working-directory: stellar-lend
         run: cargo check --workspace --lib --exclude stellarlend-bridge --keep-going
+
+  fuzz-smoke:
+    name: Fuzz smoke (lending)
+    runs-on: ubuntu-latest
+    # Runs only for PRs that touch the lending contract.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect changes under stellar-lend/contracts/lending
+        id: changes
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^stellar-lend/contracts/lending/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@nightly
+      - if: steps.changes.outputs.changed == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stellar-lend/contracts/lending/fuzz
+      - name: Install cargo-fuzz
+        if: steps.changes.outputs.changed == 'true'
+        run: cargo install cargo-fuzz --locked
+      # None of the targets below need `ed25519-dalek` directly, but
+      # `soroban-env-host` 25.0.1 depends on it with an unbounded `>=2.0.0`, so a
+      # fresh resolve also selects 3.x, whose `SigningKey::generate` needs the
+      # `rand_core` 0.10 traits that its testutils rng does not implement. Pull
+      # the graph back to the version the committed workspace lock already uses.
+      - name: Pin ed25519-dalek for the fuzz resolve
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: |
+          cargo +nightly generate-lockfile
+          cargo +nightly update -p ed25519-dalek@3.0.0 --precise 2.2.0
+      # A failed build is a real breakage, so this step stays blocking.
+      - name: Build all fuzz targets
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz build
+      # The time-boxed runs below are deliberately NON-BLOCKING at first: their
+      # runtime is the only unstable part of this job, and a slow or flaky runner
+      # must not block a merge. Drop `continue-on-error` once the runtimes settle.
+      - name: Smoke run fuzz_entrypoints (60s)
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz run fuzz_entrypoints -- -max_total_time=60
+      - name: Smoke run fuzz_liquidate_close_factor (60s)
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz run fuzz_liquidate_close_factor -- -max_total_time=60
+      - name: Smoke run fuzz_borrow_rate (60s)
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz run fuzz_borrow_rate -- -max_total_time=60

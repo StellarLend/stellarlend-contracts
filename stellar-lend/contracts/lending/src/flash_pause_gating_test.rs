@@ -112,7 +112,7 @@ fn flash_loan_allowed_when_unpaused_and_normal_emergency_state() {
     let (env, client, _admin, initiator, _receiver) = setup();
 
     // Explicitly ensure flash pause is inactive.
-    set_flash_pause(&env, &client, &client.get_admin(), false);
+    set_flash_pause(&env, &client, &client.get_admin().unwrap(), false);
     client.set_emergency_state(&crate::EmergencyState::Normal);
 
     // We need a receiver contract that implements `on_flash_loan`.
