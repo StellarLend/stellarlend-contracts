@@ -5,7 +5,7 @@
 
 use super::{VestingContract, VestingContractClient, VestingError};
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedInvocation, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, AuthorizedInvocation, Ledger as _, MockAuth, MockAuthInvoke},
     token, Address, Env, IntoVal, Vec,
 };
 

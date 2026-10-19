@@ -9,7 +9,7 @@ extern crate std;
 
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
-    Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
+    Address, Env, Symbol, TryFromVal,
 };
 use std::string::{String, ToString};
 
@@ -222,12 +222,16 @@ impl VestingContract {
             crate::VestingError::DestinationAlreadyHasGrant => {
                 VestingError::DestinationAlreadyHasGrant
             }
-            crate::VestingError::InsufficientTreasuryBalance => {
-                VestingError::InsufficientTreasuryBalance
-            }
             crate::VestingError::ZeroPrincipal => VestingError::ZeroPrincipal,
             crate::VestingError::ZeroDuration => VestingError::ZeroDuration,
             crate::VestingError::CliffExceedsDuration => VestingError::CliffExceedsDuration,
+            crate::VestingError::NoPendingAdmin => VestingError::Unauthorized,
+            crate::VestingError::AdminProposalExpired => VestingError::Unauthorized,
+            crate::VestingError::InvalidAdminProposal => VestingError::Unauthorized,
+            crate::VestingError::InvalidTreasury => VestingError::Unauthorized,
+            crate::VestingError::InvalidMilestoneOrder => VestingError::InvalidMilestoneOrder,
+            crate::VestingError::MilestoneTotalMismatch => VestingError::MilestoneTotalMismatch,
+            crate::VestingError::TooManyMilestones => VestingError::TooManyMilestones,
         }
     }
 
@@ -240,7 +244,6 @@ impl VestingContract {
             }
             let body = match &raw_event.body {
                 ContractEventBody::V0(v0) => v0,
-                _ => continue,
             };
             if body.topics.len() < 2 {
                 continue;
@@ -365,27 +368,6 @@ impl VestingContract {
         let caller_addr = self.get_address(caller);
         let grantee_addr = self.get_address(grantee);
         match self.client.try_revoke(&caller_addr, &grantee_addr) {
-            Ok(Ok(clawed_back)) => Ok(clawed_back as u128),
-            Ok(Err(_)) => Err(VestingError::Unauthorized),
-            Err(Ok(err)) => Err(self.map_error(err)),
-            Err(Err(_)) => Err(VestingError::Unauthorized),
-        }
-    }
-
-    pub fn revoke_one(
-        &mut self,
-        caller: &str,
-        grantee: &str,
-        index: usize,
-        now: u64,
-    ) -> Result<u128, VestingError> {
-        self.set_time(now);
-        let caller_addr = self.get_address(caller);
-        let grantee_addr = self.get_address(grantee);
-        match self
-            .client
-            .try_revoke_one(&caller_addr, &grantee_addr, &(index as u32))
-        {
             Ok(Ok(clawed_back)) => Ok(clawed_back as u128),
             Ok(Err(_)) => Err(VestingError::Unauthorized),
             Err(Ok(err)) => Err(self.map_error(err)),

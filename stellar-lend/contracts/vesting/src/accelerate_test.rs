@@ -407,7 +407,6 @@ fn revoked_grants_skipped() {
 
 #[cfg(test)]
 mod proptest_suite {
-    use super::*;
     use crate::test_harness::VestingContract;
     use proptest::prelude::*;
 
