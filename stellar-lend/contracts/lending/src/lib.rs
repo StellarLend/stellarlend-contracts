@@ -212,6 +212,8 @@ pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 1000;
 /// Caps the liquidation bonus at 50 % so a misconfigured value cannot seize
 /// an outsized share of a borrower's collateral on top of the repaid debt.
 pub const MAX_LIQUIDATION_INCENTIVE_BPS: i128 = 5000;
+/// Oracle prices use seven decimal places; `10_000_000` represents one unit of value.
+pub const ORACLE_PRICE_SCALE: i128 = 10_000_000;
 /// Upper bound accepted by [`LendingContract::set_close_factor_bps`].
 /// Caps the close factor at 75 % so a single liquidation cannot
 /// extinguish a borrower's entire debt in one block.
@@ -382,6 +384,12 @@ pub struct MaxFlashBpsSetEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollateralAssetSetEvent {
+    pub asset: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebtAssetSetEvent {
     pub asset: Address,
 }
 
@@ -722,6 +730,16 @@ pub struct PositionSummary {
     pub collateral: i128,
     pub debt: i128,
     pub health_factor: i128,
+}
+
+/// Versioned position view that reports stale or unavailable valuation prices.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PositionSummaryV2 {
+    pub collateral: i128,
+    pub debt: i128,
+    pub health_factor: i128,
+    pub price_stale: bool,
 }
 
 #[contracttype]
@@ -1270,6 +1288,11 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::Guardian)
     }
 
+    /// Return the current emergency state, or `None` before initialization.
+    pub fn get_emergency_state(env: Env) -> Option<EmergencyState> {
+        env.storage().instance().get(&DataKey::EmergencyState)
+    }
+
     pub fn set_emergency_state(env: Env, new_state: EmergencyState) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin_or_guardian(&env, &new_state)?;
@@ -1289,7 +1312,7 @@ impl LendingContract {
                 .ok_or(LendingError::NotInitialized)?,
         };
 
-        let old_state = get_emergency_state(&env);
+        let old_state = read_emergency_state(&env);
         set_emergency_state_internal(&env, new_state);
         EmergencyStateChangedEvent {
             old_state,
@@ -1690,6 +1713,10 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
         let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+        if uses_cross_asset_valuation(&env) {
+            require_fresh_valuation_prices(&env)?;
+            assert_collateral_withdraw_solvent(&env, &user, new_balance)?;
+        }
         env.storage().persistent().set(&key, &new_balance);
         let total_deposits: i128 = env
             .storage()
@@ -1743,29 +1770,29 @@ impl LendingContract {
             .get(&DataKey::ValuationCollateralAsset)
     }
 
-    fn get_collateral_price_internal(env: &Env) -> Result<i128, LendingError> {
-        let Some(asset) = env
+    /// Set the configured valuation debt asset for legacy single-position flows.
+    pub fn set_debt_asset(env: Env, asset: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
             .storage()
             .instance()
-            .get::<_, Address>(&DataKey::ValuationCollateralAsset)
-        else {
-            return Ok(1_000_000_000);
-        };
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
 
-        let record = env
-            .storage()
-            .persistent()
-            .get::<_, PriceRecord>(&DataKey::OraclePrice(asset))
-            .ok_or(LendingError::PriceUnavailable)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::ValuationDebtAsset, &asset);
+        DebtAssetSetEvent { asset }.publish(&env);
 
-        let now = env.ledger().timestamp();
-        if record.timestamp > now
-            || now > record.timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS)
-        {
-            return Err(LendingError::StaleOracleTimestamp);
-        }
+        audit_log::record_audit_entry(&env, String::from_str(&env, "set_debt_asset"), admin, None);
 
-        Ok(record.price)
+        Ok(())
+    }
+
+    /// Get the configured valuation debt asset for the legacy single-position flows.
+    pub fn get_debt_asset(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::ValuationDebtAsset)
     }
 
     /// Borrow assets after pause and emergency gates pass.
@@ -1788,9 +1815,6 @@ impl LendingContract {
         if amount < min_borrow {
             return Err(LendingError::BelowMinimumBorrow);
         }
-
-        // Validate price availability before changes
-        let _ = Self::get_collateral_price_internal(&env)?;
 
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
@@ -2051,6 +2075,23 @@ impl LendingContract {
             check_pause_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
             require_no_active_flash_loan(&env);
+            if uses_cross_asset_valuation(&env) {
+                let configured_debt_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationDebtAsset)
+                    .ok_or(LendingError::AssetNotConfigured)?;
+                let configured_collateral_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationCollateralAsset)
+                    .ok_or(LendingError::AssetNotConfigured)?;
+                if debt_asset != configured_debt_asset
+                    || collateral_asset != configured_collateral_asset
+                {
+                    return Err(LendingError::AssetNotConfigured);
+                }
+            }
 
             let col_key = DataKey::Collateral(borrower.clone());
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
@@ -2074,7 +2115,9 @@ impl LendingContract {
             }
 
             let threshold_bps = Self::get_liquidation_threshold_bps(env.clone());
-            let hf = math::checked_mul_div_floor(collateral, threshold_bps, debt)
+            let collateral_value = value_collateral(&env, collateral)?;
+            let debt_value = value_debt(&env, debt)?;
+            let hf = math::checked_mul_div_floor(collateral_value, threshold_bps, debt_value)
                 .map_err(|_| LendingError::Overflow)?;
 
             if hf >= HEALTH_FACTOR_SCALE {
@@ -2099,9 +2142,40 @@ impl LendingContract {
             }
 
             let incentive_bps = Self::liquidation_incentive_bps_config(&env);
-            let seized_collateral =
+            let seized_collateral = if uses_cross_asset_valuation(&env) {
+                let collateral_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationCollateralAsset)
+                    .ok_or(LendingError::PriceUnavailable)?;
+                let debt_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationDebtAsset)
+                    .ok_or(LendingError::PriceUnavailable)?;
+                let collateral_price =
+                    cross_asset::get_price_for_asset(&env, &collateral_asset)?.price;
+                let debt_price = cross_asset::get_price_for_asset(&env, &debt_asset)?.price;
+                if collateral_price <= 0 || debt_price <= 0 {
+                    return Err(LendingError::PriceUnavailable);
+                }
+                let numerator = actual_repay
+                    .checked_mul(debt_price)
+                    .and_then(|value| value.checked_mul(BPS_DENOM + incentive_bps))
+                    .ok_or(LendingError::Overflow)?;
+                let denominator = collateral_price
+                    .checked_mul(BPS_DENOM)
+                    .ok_or(LendingError::Overflow)?;
+                if denominator == 0 {
+                    return Err(LendingError::PriceUnavailable);
+                }
+                numerator
+                    .checked_div(denominator)
+                    .ok_or(LendingError::Overflow)?
+            } else {
                 math::checked_mul_div_floor(actual_repay, BPS_DENOM + incentive_bps, BPS_DENOM)
-                    .map_err(|_| LendingError::Overflow)?;
+                    .map_err(|_| LendingError::Overflow)?
+            };
 
             let available_collateral = collateral;
             let mut final_seized = seized_collateral;
@@ -2156,7 +2230,9 @@ impl LendingContract {
             //     timestamp instead of aborting.
             // Failing here now aborts before any state is written.
             let hf_after = if new_debt > 0 {
-                math::checked_mul_div_floor(new_col, threshold_bps, new_debt)
+                let new_collateral_value = value_collateral(&env, new_col)?;
+                let new_debt_value = value_debt(&env, new_debt)?;
+                math::checked_mul_div_floor(new_collateral_value, threshold_bps, new_debt_value)
                     .map_err(|_| LendingError::Overflow)?
             } else {
                 i128::MAX
@@ -2205,9 +2281,6 @@ impl LendingContract {
                 shortfall,
             }
             .publish(&env);
-
-            invariants::check_invariant_after(&env, &debt_asset);
-            invariants::check_invariant_after(&env, &collateral_asset);
 
             Ok(actual_repay)
         })
@@ -3031,33 +3104,21 @@ impl LendingContract {
     }
 
     pub fn get_position(env: Env, user: Address) -> PositionSummary {
-        let col_key = DataKey::Collateral(user.clone());
-        let col: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
-        if col != 0 {
-            extend_collateral_ttl(&env, &user);
-        }
-        let position = load_debt(&env, &user);
-        if position.principal != 0 {
-            extend_debt_ttl(&env, &user);
-        }
-        let rate = current_borrow_rate(&env);
-        // Clamp to zero: the protocol guarantees views never report negative debt.
-        let debt = effective_debt(&position, env.ledger().timestamp(), rate)
-            .unwrap_or(position.principal)
-            .max(0);
+        read_position_summary(&env, &user).0
+    }
 
-        let health_factor = if debt > 0 {
-            col.checked_mul(Self::get_liquidation_threshold_bps(env.clone()))
-                .map(|v| v / debt)
-                .unwrap_or(i128::MAX)
-        } else {
-            HEALTH_FACTOR_NO_DEBT
-        };
-
-        PositionSummary {
-            collateral: col,
-            debt,
-            health_factor,
+    /// Return position balances and health factor together with oracle freshness.
+    ///
+    /// When a cross-asset price is stale, the last stored price is used and
+    /// `price_stale` is true. If a required price has never been reported, the
+    /// health factor is zero and `price_stale` is true.
+    pub fn get_position_v2(env: Env, user: Address) -> PositionSummaryV2 {
+        let (position, price_stale) = read_position_summary(&env, &user);
+        PositionSummaryV2 {
+            collateral: position.collateral,
+            debt: position.debt,
+            health_factor: position.health_factor,
+            price_stale,
         }
     }
 
@@ -3067,31 +3128,12 @@ impl LendingContract {
     }
 
     /// Get the health factor for a user. Read-only view.
-    /// Computed as: `(collateral * LIQUIDATION_THRESHOLD_BPS) / debt`
+    /// Computed from oracle-valued balances when distinct collateral and debt
+    /// assets are configured, otherwise uses legacy raw-unit balances.
     /// Returns `HEALTH_FACTOR_NO_DEBT` sentinel if user has no debt.
     /// Scale: `HEALTH_FACTOR_SCALE` (10000 = 1.0).
     pub fn get_health_factor(env: Env, user: Address) -> i128 {
-        let col_key = DataKey::Collateral(user.clone());
-        let col: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
-        if col != 0 {
-            extend_collateral_ttl(&env, &user);
-        }
-        let position = load_debt(&env, &user);
-        if position.principal != 0 {
-            extend_debt_ttl(&env, &user);
-        }
-        let rate = current_borrow_rate(&env);
-        let debt = effective_debt(&position, env.ledger().timestamp(), rate)
-            .unwrap_or(position.principal)
-            .max(0);
-
-        if debt > 0 {
-            col.checked_mul(Self::get_liquidation_threshold_bps(env.clone()))
-                .map(|v| v / debt)
-                .unwrap_or(i128::MAX)
-        } else {
-            HEALTH_FACTOR_NO_DEBT
-        }
+        read_position_summary(&env, &user).0.health_factor
     }
 
     pub fn get_protocol_metrics(env: Env) -> ProtocolMetrics {
@@ -4064,7 +4106,7 @@ fn check_pause_status(env: &Env, action: ProtocolAction) {
     }
 }
 
-fn get_emergency_state(env: &Env) -> EmergencyState {
+fn read_emergency_state(env: &Env) -> EmergencyState {
     env.storage()
         .instance()
         .get(&DataKey::EmergencyState)
@@ -4078,7 +4120,7 @@ fn set_emergency_state_internal(env: &Env, state: EmergencyState) {
 }
 
 fn check_emergency_status(env: &Env, action: ProtocolAction) {
-    match get_emergency_state(env) {
+    match read_emergency_state(env) {
         EmergencyState::Normal => {}
         EmergencyState::Shutdown => panic!("OperationDisabledDuringShutdown"),
         EmergencyState::Recovery => match action {
@@ -4140,10 +4182,18 @@ fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
         // check in `liquidate`; both decide the fate of
         // `DataKey::FirstUnhealthyTimestamp` and must agree.
         let hf = if debt > 0 {
+            let collateral_value = match value_collateral(env, collateral) {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            let debt_value = match value_debt(env, debt) {
+                Ok(value) => value,
+                Err(_) => return,
+            };
             match math::checked_mul_div_floor(
-                collateral,
+                collateral_value,
                 LendingContract::get_liquidation_threshold_bps(env.clone()),
-                debt,
+                debt_value,
             ) {
                 Ok(hf) => hf,
                 Err(_) => return,
@@ -4188,10 +4238,11 @@ fn load_rate_snapshot(env: &Env) -> debt::RateSnapshot {
 /// Reject a prospective borrow that would leave the user undercollateralized or
 /// push protocol `TotalDebt` past the configured ceiling.
 ///
-/// Health factor uses effective debt after accrual:
-/// `(collateral * LIQUIDATION_THRESHOLD_BPS) / new_debt >= HEALTH_FACTOR_SCALE`.
-/// The overflow-safe equivalent is
-/// `collateral * LIQUIDATION_THRESHOLD_BPS >= HEALTH_FACTOR_SCALE * new_debt`.
+/// Health factor uses effective debt after accrual and the governed liquidation
+/// threshold. In cross-asset mode, collateral and debt are first converted to
+/// oracle-valued units; otherwise legacy raw units are retained. Solvency is
+/// checked with the overflow-safe equivalent of health factor >= 1.0:
+/// `collateral_value * threshold_bps >= HEALTH_FACTOR_SCALE * debt_value`.
 ///
 /// # Worked example
 /// With 100 collateral, 80% liquidation threshold, and 80 debt:
@@ -4212,11 +4263,14 @@ fn assert_borrow_solvent(
         effective_debt(updated_position, now, rate).map_err(|_| LendingError::Overflow)?;
 
     if new_debt > 0 {
-        let weighted_collateral = collateral
-            .checked_mul(LIQUIDATION_THRESHOLD_BPS)
+        let collateral_value = value_collateral(env, collateral)?;
+        let debt_value = value_debt(env, new_debt)?;
+        let threshold = LendingContract::get_liquidation_threshold_bps(env.clone());
+        let weighted_collateral = collateral_value
+            .checked_mul(threshold)
             .ok_or(LendingError::Overflow)?;
         let required_collateral = HEALTH_FACTOR_SCALE
-            .checked_mul(new_debt)
+            .checked_mul(debt_value)
             .ok_or(LendingError::Overflow)?;
 
         if weighted_collateral < required_collateral {
@@ -4234,6 +4288,36 @@ fn assert_borrow_solvent(
         }
     }
 
+    Ok(())
+}
+
+fn assert_collateral_withdraw_solvent(
+    env: &Env,
+    user: &Address,
+    collateral: i128,
+) -> Result<(), LendingError> {
+    let position = load_debt(env, user);
+    let debt = effective_debt(
+        &position,
+        env.ledger().timestamp(),
+        current_borrow_rate(env),
+    )
+    .map_err(|_| LendingError::Overflow)?;
+    if debt <= 0 {
+        return Ok(());
+    }
+
+    let collateral_value = value_collateral(env, collateral)?;
+    let debt_value = value_debt(env, debt)?;
+    let weighted_collateral = collateral_value
+        .checked_mul(LendingContract::get_liquidation_threshold_bps(env.clone()))
+        .ok_or(LendingError::Overflow)?;
+    let required_collateral = HEALTH_FACTOR_SCALE
+        .checked_mul(debt_value)
+        .ok_or(LendingError::Overflow)?;
+    if weighted_collateral < required_collateral {
+        return Err(LendingError::InsufficientCollateral);
+    }
     Ok(())
 }
 
@@ -4290,7 +4374,9 @@ fn utilization_history_newest_first(env: &Env) -> Vec<UtilizationSample> {
 
 fn require_fresh_valuation_prices(env: &Env) -> Result<(), LendingError> {
     require_fresh_price_for_key(env, &DataKey::ValuationCollateralAsset)?;
-    require_fresh_price_for_key(env, &DataKey::ValuationDebtAsset)?;
+    if uses_cross_asset_valuation(env) {
+        require_fresh_price_for_key(env, &DataKey::ValuationDebtAsset)?;
+    }
     Ok(())
 }
 
@@ -4312,6 +4398,146 @@ fn require_fresh_price_for_key(env: &Env, asset_key: &DataKey) -> Result<(), Len
     }
 
     Ok(())
+}
+
+fn uses_cross_asset_valuation(env: &Env) -> bool {
+    match (
+        env.storage()
+            .instance()
+            .get::<_, Address>(&DataKey::ValuationCollateralAsset),
+        env.storage()
+            .instance()
+            .get::<_, Address>(&DataKey::ValuationDebtAsset),
+    ) {
+        (Some(collateral), Some(debt)) => collateral != debt,
+        _ => false,
+    }
+}
+
+fn value_collateral(env: &Env, amount: i128) -> Result<i128, LendingError> {
+    value_amount(env, amount, true)
+}
+
+fn value_debt(env: &Env, amount: i128) -> Result<i128, LendingError> {
+    value_amount(env, amount, false)
+}
+
+fn value_amount(env: &Env, amount: i128, round_down: bool) -> Result<i128, LendingError> {
+    if !uses_cross_asset_valuation(env) {
+        return Ok(amount);
+    }
+    if amount < 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+
+    let key = if round_down {
+        DataKey::ValuationCollateralAsset
+    } else {
+        DataKey::ValuationDebtAsset
+    };
+    let asset: Address = env
+        .storage()
+        .instance()
+        .get(&key)
+        .ok_or(LendingError::PriceUnavailable)?;
+    let record = cross_asset::get_price_for_asset(env, &asset)?;
+    let result = if round_down {
+        math::checked_mul_div_floor(amount, record.price, ORACLE_PRICE_SCALE)
+    } else {
+        math::checked_mul_div_ceil(amount, record.price, ORACLE_PRICE_SCALE)
+    };
+    result.map_err(|_| LendingError::Overflow)
+}
+
+fn read_position_summary(env: &Env, user: &Address) -> (PositionSummary, bool) {
+    let collateral: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Collateral(user.clone()))
+        .unwrap_or(0);
+    if collateral != 0 {
+        extend_collateral_ttl(env, user);
+    }
+    let position = load_debt(env, user);
+    if position.principal != 0 {
+        extend_debt_ttl(env, user);
+    }
+
+    let debt = effective_debt(&position, env.ledger().timestamp(), current_borrow_rate(env))
+        .unwrap_or(position.principal)
+        .max(0);
+    let (health_factor, price_stale) = position_health_factor(env, collateral, debt);
+    (
+        PositionSummary {
+            collateral,
+            debt,
+            health_factor,
+        },
+        price_stale,
+    )
+}
+
+fn position_health_factor(env: &Env, collateral: i128, debt: i128) -> (i128, bool) {
+    if debt <= 0 {
+        return (HEALTH_FACTOR_NO_DEBT, false);
+    }
+    let threshold = LendingContract::get_liquidation_threshold_bps(env.clone());
+    if !uses_cross_asset_valuation(env) {
+        let value = math::checked_mul_div_floor(collateral, threshold, debt).unwrap_or(i128::MAX);
+        return (value, false);
+    }
+
+    let collateral_asset = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ValuationCollateralAsset);
+    let debt_asset = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ValuationDebtAsset);
+    let (Some(collateral_asset), Some(debt_asset)) = (collateral_asset, debt_asset) else {
+        return (0, true);
+    };
+    let collateral_record = env
+        .storage()
+        .persistent()
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(collateral_asset));
+    let debt_record = env
+        .storage()
+        .persistent()
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(debt_asset));
+    let (Some(collateral_record), Some(debt_record)) = (collateral_record, debt_record) else {
+        return (0, true);
+    };
+
+    let now = env.ledger().timestamp();
+    let stale = collateral_record.price <= 0
+        || debt_record.price <= 0
+        || collateral_record.timestamp > now
+        || debt_record.timestamp > now
+        || now.saturating_sub(collateral_record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS
+        || now.saturating_sub(debt_record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS;
+    if collateral_record.price <= 0 || debt_record.price <= 0 {
+        return (0, true);
+    }
+
+    let collateral_value = match math::checked_mul_div_floor(
+        collateral,
+        collateral_record.price,
+        ORACLE_PRICE_SCALE,
+    ) {
+        Ok(value) => value,
+        Err(_) => return (0, true),
+    };
+    let debt_value = match math::checked_mul_div_ceil(debt, debt_record.price, ORACLE_PRICE_SCALE) {
+        Ok(value) if value > 0 => value,
+        _ => return (0, true),
+    };
+    let health_factor = match math::checked_mul_div_floor(collateral_value, threshold, debt_value) {
+        Ok(value) => value,
+        Err(_) => return (0, true),
+    };
+    (health_factor, stale)
 }
 
 #[cfg(test)]

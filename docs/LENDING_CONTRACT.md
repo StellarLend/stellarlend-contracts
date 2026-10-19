@@ -23,6 +23,33 @@ Other workspace crates: `amm`, `vesting`, `multisig`, `common` (compile-checked 
 - Removed the per-ledger temporary borrow-rate cache (footprint depended on ledger sequence; borrow trapped on-chain).
 - Many unit-test modules in the crate were written against removed surface and may not compile; CI runs `cargo check --lib` only.
 
+## Lending Contract Valuation
+
+### Single-position collateral and debt valuation
+
+The legacy single-position interface can be configured with
+`set_collateral_asset` and `set_debt_asset`. When both assets are configured
+and differ, borrow solvency, withdrawal solvency, liquidation eligibility,
+liquidation seizure, and health-factor views use each asset's fresh oracle
+price. When the debt asset is unset or matches the collateral asset, the
+contract preserves legacy raw-unit calculations.
+
+Oracle prices use a fixed seven-decimal scale: `10_000_000` represents one
+value unit. Collateral value is rounded down and debt value is rounded up.
+Arithmetic overflow and unavailable or stale prices fail closed on
+state-changing valuation paths.
+
+Liquidation seizure in cross-asset mode is
+`repay_amount * debt_price * (10_000 + incentive_bps) / (collateral_price * 10_000)`,
+rounded down to collateral token units.
+
+`get_position` and `get_health_factor` remain schema-v1 views. The
+`get_position_v2` view adds `price_stale`; with stale prices it returns the last
+computable health factor and marks the result stale. If either required price
+has never been reported, is invalid, or cannot be safely valued due to
+arithmetic overflow, it returns a zero health factor with `price_stale = true`.
+Consumers that need freshness information should use `get_position_v2`.
+
 ## Function reference (core)
 
 | Function | Description |
@@ -32,9 +59,11 @@ Other workspace crates: `amm`, `vesting`, `multisig`, `common` (compile-checked 
 | `borrow(user, amount) -> i128` | Borrow against collateral; returns new debt |
 | `repay(user, amount) -> i128` | Repay debt (error 1012 if > debt); returns amount repaid |
 | `withdraw(user, amount) -> i128` | Withdraw collateral while healthy; returns new balance |
-| `get_position(user)` | `{collateral, debt, health_factor}` |
+| `get_position(user)` | `{collateral, debt, health_factor}` (schema v1) |
+| `get_position_v2(user)` | Schema v1 fields plus `price_stale` |
 | `get_admin`, `has_admin`, `get_rate_params`, `get_borrow_index`, `get_protocol_metrics` | Views |
 | `set_rate_params`, `set_deposit_cap`, `set_debt_ceiling`, `set_min_borrow`, `set_pause`, `set_emergency_state` | Admin configuration |
+| `set_collateral_asset`, `set_debt_asset` | Enable oracle-priced cross-asset valuation for the single-position interface |
 | `liquidate`, `borrow_asset`, `repay_asset`, `withdraw_asset`, flash-loan fns | Advanced (see source) |
 
 Run `stellar contract info interface --id CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6 --network testnet` for the full list.

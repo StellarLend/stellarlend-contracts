@@ -582,8 +582,12 @@ Monitor both events to detect oracle health issues in production.
 To support multi-asset operations or require price availability checks on specific assets:
 - **`set_collateral_asset(env, asset)`**: Admin-only method to configure the address of the asset used as collateral.
 - **`get_collateral_asset(env)`**: Returns the configured collateral asset address, if any.
+- **`set_debt_asset(env, asset)`**: Admin-only method to configure the debt asset used for single-position valuation.
+- **`get_debt_asset(env)`**: Returns the configured debt asset address, if any.
 
-If a collateral asset is configured, both `borrow` and `liquidate` operations (and view functions like `get_position` and `get_health_factor`) require a valid on-chain `OraclePrice` record to value the collateral. If the price record is absent or cannot be loaded, the contract rejects the transaction with a `PriceUnavailable (5004)` error code.
+When both assets are configured and differ, `borrow`, `withdraw`, and `liquidate` require fresh prices for both assets and value the collateral and debt in the oracle's seven-decimal scale. Liquidation converts the repaid debt value into collateral token units before applying the incentive. If the debt asset is unset or matches the collateral asset, the legacy raw-unit health-factor behavior is retained.
+
+Read-only views remain callable with stale prices. Use `get_position_v2` to inspect its `price_stale` flag; the view reports the health factor from the last stored prices when available.
 
 ### New files added
 

@@ -116,6 +116,31 @@ fn admin_can_set_normal() {
     client.set_emergency_state(&EmergencyState::Normal);
 }
 
+#[test]
+fn emergency_state_getter_tracks_transitions() {
+    let (_env, client, _cid, _admin, _guardian, _user) = setup_with_guardian();
+
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Normal));
+
+    client.set_emergency_state(&EmergencyState::Shutdown);
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Shutdown));
+
+    client.set_emergency_state(&EmergencyState::Recovery);
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Recovery));
+
+    client.set_emergency_state(&EmergencyState::Normal);
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Normal));
+}
+
+#[test]
+fn emergency_state_getter_returns_none_before_initialization() {
+    let env = Env::default();
+    let cid = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &cid);
+
+    assert_eq!(client.get_emergency_state(), None);
+}
+
 // ─── Auth matrix: guardian ────────────────────────────────────────────────────
 
 /// Guardian may trigger Shutdown; this is the fast-halt path.

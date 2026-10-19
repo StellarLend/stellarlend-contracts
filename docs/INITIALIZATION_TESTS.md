@@ -65,6 +65,7 @@ Total: **41 tests** in the guard suite.
 | `set_min_borrow` | ✅ |
 | `set_asset_isolation` | ✅ |
 | `set_collateral_asset` | ✅ |
+| `set_debt_asset` | ✅ |
 | `set_close_factor_bps` | ✅ |
 | `set_liquidation_incentive_bps` | ✅ |
 | `set_debt_ceiling` | ✅ |

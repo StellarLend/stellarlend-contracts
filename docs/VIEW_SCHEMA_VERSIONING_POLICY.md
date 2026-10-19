@@ -37,6 +37,14 @@ The `UserPositionSummary` struct and all individual view functions (`get_collate
    - Breaking changes require new versioned view functions
    - Never mutate existing schema in-place
 
+### Additive Position View
+
+`get_position_v2` returns `PositionSummaryV2`, which preserves the original
+position values and adds `price_stale`. It is an additive view; it does not
+change the schema or return semantics of `get_position` or
+`get_user_position`. Integrators that need to distinguish a health factor
+computed from stale oracle records should use `get_position_v2`.
+
 ## Upgrade Compatibility
 
 ### Required Behavior
