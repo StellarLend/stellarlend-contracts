@@ -883,6 +883,8 @@ impl Bridge {
     // Inbound epoch validation
     // -----------------------------------------------------------------------
 
+    // Reject a signed_epoch ... retired validator set.
+    pub fn validate_inbound_epoch(...) {
     /// Reject a `signed_epoch` that belongs to a retired validator set.    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
         let current = Self::load_epoch(&env);
         if signed_epoch < current {
