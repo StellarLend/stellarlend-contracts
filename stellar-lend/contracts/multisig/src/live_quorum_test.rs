@@ -1,7 +1,7 @@
 use crate::{
     MultisigContract, MultisigContractClient, MultisigError, ProposalAction, ProposalStatus,
 };
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::Address as TestAddress;
 use soroban_sdk::{Address, Bytes, Env, Vec};
 
 fn setup(threshold: u32, signer_count: u32) -> (Env, Address, Vec<Address>) {

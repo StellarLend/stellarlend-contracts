@@ -460,11 +460,12 @@ fn write_off_uses_reserves_before_socializing_depositors() {
     client.credit_insurance_fund(&100);
 
     client.write_off_bad_debt(&500);
+    let write_off_events = env.events().all();
 
     assert_eq!(read_protocol_reserves(&env, &contract_id), 0);
     assert_eq!(read_total_deposits(&env, &contract_id), 800);
     assert_eq!(
-        env.events().all(),
+        write_off_events,
         [BadDebtWrittenOffEvent {
             amount: 500,
             insurance_used: 100,

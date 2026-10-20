@@ -528,11 +528,11 @@ pub struct ReserveFactorSetEvent {
     pub reserve_factor_bps: i128,
 }
 
-#[contractevent]
+#[contractevent(topics = ["protocol_reserves_withdrawn"])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolReservesWithdrawnEvent {
     pub amount: i128,
-    pub to: Address,
+    pub recipient: Address,
 }
 
 #[contracttype]
@@ -3583,7 +3583,11 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::ProtocolReserves, &remaining);
-        ProtocolReservesWithdrawnEvent { amount, to: to.clone() }.publish(&env);
+        ProtocolReservesWithdrawnEvent {
+            amount,
+            recipient: to.clone(),
+        }
+        .publish(&env);
         audit_log::record_audit_entry(
             &env,
             String::from_str(&env, "withdraw_reserves"),

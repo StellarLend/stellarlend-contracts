@@ -3,9 +3,8 @@ use crate::{
     ProposalStatus,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
-    xdr::ToXdr,
-    Address, Bytes, Env, Vec,
+    testutils::{Address as TestAddress, Events, Ledger},
+    Address, Bytes, Env, Event, Vec,
 };
 
 fn setup(threshold: u32, signer_count: u32) -> (Env, Address, Vec<Address>) {
@@ -49,14 +48,14 @@ fn revoke_removes_approval_binding_and_reverts_passed_status() {
     assert!(client.verify_approval_binding(&id, &signer));
 
     client.revoke_approval(&signer, &id);
+    let revoke_events = env.events().all();
 
     let proposal = client.get_proposal(&id);
     assert_eq!(proposal.status, ProposalStatus::Active);
     assert!(!proposal.approvals.contains(&signer));
     assert_eq!(client.get_approval_binding(&id, &signer), None);
-    let all_events = env.events().all();
     assert_eq!(
-        all_events,
+        revoke_events,
         [ApprovalRevokedEvent {
             proposal_id: id,
             signer: signer.clone(),
@@ -104,7 +103,7 @@ fn revoke_without_approval_and_revoke_twice_return_approval_not_found() {
 
 #[test]
 fn revoke_rejects_cancelled_executed_and_expired_proposals() {
-    let (env, contract_id, signers) = setup(1, 2);
+    let (env, contract_id, signers) = setup(2, 2);
     let client = MultisigContractClient::new(&env, &contract_id);
     let signer = signers.get(0).unwrap();
 
@@ -118,6 +117,7 @@ fn revoke_rejects_cancelled_executed_and_expired_proposals() {
 
     let (executed_id, executed_hash) = create_proposal(&env, &client, &signer, 1);
     client.approve_proposal(&signer, &executed_id);
+    client.approve_proposal(&signers.get(1).unwrap(), &executed_id);
     client.execute_proposal(&signer, &executed_id, &executed_hash);
     assert_eq!(
         client.try_revoke_approval(&signer, &executed_id),
