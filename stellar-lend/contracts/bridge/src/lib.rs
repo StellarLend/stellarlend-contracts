@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    Map, Vec,};
+    Map, Vec, xdr::ToXdr,};
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
 const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
@@ -67,6 +67,14 @@ pub enum BridgeError {
     NotAdmin = 26,
     /// Too many source domains registered (storage limit).
     SourceDomainLimitReached = 27,
+    /// Token is not allowed for bridging.
+    TokenNotAllowed = 28,
+    /// Invalid amount (zero or negative).
+    InvalidAmount = 29,
+    /// Recipient address length exceeds maximum.
+    RecipientTooLong = 30,
+    /// Recipient address is empty.
+    RecipientEmpty = 31,
 }
 
 /// Identifies the origin of an inbound bridge message.
@@ -134,6 +142,10 @@ pub enum BridgeDataKey {
     ConsumedInboundMessage(BytesN<32>),
     /// `Vec<u32>` count of registered source domains (bounds iteration).
     SourceDomainCount,
+    /// Whether a token is allowed for outbound transfers.
+    AllowedToken(Address),
+    /// Total escrowed amount per token.
+    Escrowed(Address),
 }
 
 #[contracttype]
@@ -141,6 +153,27 @@ pub enum BridgeDataKey {
 pub struct OutboundMessageEvent {
     pub dest: u32,
     pub nonce: u64,
+}
+
+/// Maximum length for recipient addresses (foreign chain address bytes).
+pub const MAX_RECIPIENT_LEN: u32 = 128;
+
+/// Domain separator for outbound message hashing.
+pub const OUTBOUND_MSG_DOMAIN: &[u8] = b"stellarlend::bridge::outbound_msg::v1";
+
+/// Event emitted when an outbound send succeeds.
+///
+/// Topics: `("outbound", dest_chain, nonce)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundSentEvent {
+    pub dest_chain: u32,
+    pub nonce: u64,
+    pub sender: Address,
+    pub recipient: Bytes,
+    pub token: Address,
+    pub amount: i128,
+    pub message_hash: BytesN<32>,
 }
 
 /// Event emitted when an inbound message is successfully consumed.
@@ -347,6 +380,137 @@ impl Bridge {
         data.append(&source_hash.to_bytes());        data.extend_from_slice(&nonce.to_le_bytes());
         env.crypto().sha256(&data).into()
     }
+
+    // -----------------------------------------------------------------------
+    // Outbound send helpers
+    // -----------------------------------------------------------------------
+
+    /// Check if a token is allowed for outbound transfers.
+    fn is_token_allowed(env: &Env, token: &Address) -> bool {
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, bool>(&BridgeDataKey::AllowedToken(token.clone()))
+            .unwrap_or(false)
+    }
+
+    /// Get the total escrowed amount for a token.
+    fn get_escrowed_internal(env: &Env, token: &Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, i128>(&BridgeDataKey::Escrowed(token.clone()))
+            .unwrap_or(0)
+    }
+
+    /// Update the escrowed amount for a token.
+    fn add_to_escrowed(env: &Env, token: &Address, amount: i128) {
+        let current = Self::get_escrowed_internal(env, token);
+        let new_total = current.checked_add(amount).expect("escrow overflow");
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::Escrowed(token.clone()), &new_total);
+    }
+
+    /// Compute the domain-separated outbound message hash.
+    ///
+    /// ```text
+    /// SHA-256( OUTBOUND_MSG_DOMAIN
+    ///          || bridge_id
+    ///          || dest_chain (4 bytes LE)
+    ///          || nonce (8 bytes LE)
+    ///          || sender (XDR)
+    ///          || recipient
+    ///          || token (XDR)
+    ///          || amount (16 bytes LE) )
+    /// ```
+    fn outbound_message_hash(
+        env: &Env,
+        bridge_id: &Bytes,
+        dest_chain: u32,
+        nonce: u64,
+        sender: &Address,
+        recipient: &Bytes,
+        token: &Address,
+        amount: i128,
+    ) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.extend_from_slice(OUTBOUND_MSG_DOMAIN);
+        data.append(bridge_id);
+        data.extend_from_slice(&dest_chain.to_le_bytes());
+        data.extend_from_slice(&nonce.to_le_bytes());
+        data.append(&sender.to_xdr(env));
+        data.append(recipient);
+        data.append(&token.to_xdr(env));
+        data.extend_from_slice(&amount.to_le_bytes());
+        env.crypto().sha256(&data).into()
+    }
+
+    /// Internal admit_outbound that uses the ledger timestamp.
+    fn admit_outbound_internal(env: &Env, amount: i128) -> Result<(), BridgeError> {
+        let current_time = env.ledger().timestamp();
+        if amount < 0 {
+            return Err(BridgeError::OutboundCapExceeded);
+        }
+
+        let max = Self::load_max_outbound_per_window(env);
+        if max == 0 {
+            return Err(BridgeError::OutboundCapExceeded);
+        }
+
+        let window_size = Self::load_outbound_window_size(env);
+        let window_start = Self::load_outbound_window_start(env);
+        let mut total = Self::load_window_outbound_total(env);
+
+        let (rolled_start, rolled_total) =
+            Self::maybe_roll_window(current_time, window_start, window_size, total);
+        total = rolled_total;
+
+        let new_total = total
+            .checked_add(amount)
+            .ok_or(BridgeError::WindowTotalOverflow)?;
+        if new_total > max {
+            return Err(BridgeError::OutboundCapExceeded);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::WindowOutboundTotal, &new_total);
+        Ok(())
+    }
+
+    /// Allocate the next nonce for a destination without emitting the old event.
+    fn allocate_nonce_internal(env: &Env, dest: u32) -> Result<u64, BridgeError> {
+        let mut nonces = Self::load_nonces(env);
+        let current = nonces.get(dest).unwrap_or(0u64);
+        let next = current.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        nonces.set(dest, next);
+        Self::save_nonces(env, &nonces);
+        Ok(current)
+    }
+
+    /// Roll the window forward if `current_time` has passed the window end.
+    /// Returns `(new_window_start, new_total)`.
+    fn maybe_roll_window(
+        current_time: u64,
+        window_start: u64,
+        window_size: u64,
+        total: i128,
+    ) -> (u64, i128) {
+        if current_time < window_start {
+            return (window_start, total);
+        }
+        if window_size == 0 {
+            return (window_start, total);
+        }
+        if let Some(window_end) = window_start.checked_add(window_size) {
+            if current_time >= window_end {
+                return (current_time, 0);
+            }
+        }
+        (window_start, total)
+    }
 }
 
 #[contractimpl]
@@ -375,6 +539,111 @@ impl Bridge {
     pub fn peek_outbound_nonce(env: Env, dest: u32) -> u64 {
         let nonces = Self::load_nonces(&env);
         nonces.get(dest).unwrap_or(0u64)
+    }
+
+    /// Set whether a token is allowed for outbound transfers.
+    ///
+    /// Admin-only.
+    pub fn set_allowed_token(
+        env: Env,
+        caller: Address,
+        token: Address,
+        allowed: bool,
+    ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::AllowedToken(token), &allowed);
+        Ok(())
+    }
+
+    /// Get the total escrowed amount for a token.
+    pub fn get_escrowed(env: Env, token: Address) -> i128 {
+        Self::get_escrowed_internal(&env, &token)
+    }
+
+    /// Send tokens to a destination chain.
+    ///
+    /// Escrows tokens, enforces the outbound cap, allocates a nonce, and emits
+    /// an OutboundSentEvent for relayers.
+    ///
+    /// Returns `(nonce, message_hash)`.
+    pub fn send(
+        env: Env,
+        sender: Address,
+        dest_chain: u32,
+        recipient: Bytes,
+        token: Address,
+        amount: i128,
+    ) -> Result<(u64, BytesN<32>), BridgeError> {
+        // Validate sender authorization
+        sender.require_auth();
+
+        // Validate amount
+        if amount <= 0 {
+            return Err(BridgeError::InvalidAmount);
+        }
+
+        // Validate recipient length
+        let recipient_len = recipient.len();
+        if recipient_len == 0 {
+            return Err(BridgeError::RecipientEmpty);
+        }
+        if recipient_len > MAX_RECIPIENT_LEN {
+            return Err(BridgeError::RecipientTooLong);
+        }
+
+        // Check token is allowed
+        if !Self::is_token_allowed(&env, &token) {
+            return Err(BridgeError::TokenNotAllowed);
+        }
+
+        // Apply outbound cap
+        Self::admit_outbound_internal(&env, amount)?;
+
+        // Transfer tokens from sender to bridge (escrow)
+        let bridge_address = env.current_contract_address();
+        let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+        token_client.transfer(&sender, &bridge_address, &amount);
+
+        // Update escrow accounting
+        Self::add_to_escrowed(&env, &token, amount);
+
+        // Allocate nonce
+        let nonce = Self::allocate_nonce_internal(&env, dest_chain)?;
+
+        // Compute message hash
+        let bridge_id = Self::load_bridge_id(&env);
+        let message_hash = Self::outbound_message_hash(
+            &env,
+            &bridge_id,
+            dest_chain,
+            nonce,
+            &sender,
+            &recipient,
+            &token,
+            amount,
+        );
+
+        // Emit event
+        env.events().publish(
+            (
+                symbol_short!("outbound"),
+                dest_chain,
+                nonce,
+            ),
+            OutboundSentEvent {
+                dest_chain,
+                nonce,
+                sender: sender.clone(),
+                recipient: recipient.clone(),
+                token: token.clone(),
+                amount,
+                message_hash: message_hash.clone(),
+            },
+        );
+
+        Ok((nonce, message_hash))
     }
 
     pub fn initialize(env: Env, validators: Vec<BytesN<32>>, bridge_id: Bytes) {
@@ -883,7 +1152,8 @@ impl Bridge {
     // Inbound epoch validation
     // -----------------------------------------------------------------------
 
-    /// Reject a `signed_epoch` that belongs to a retired validator set.    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
+    /// Reject a `signed_epoch` that belongs to a retired validator set.
+    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
         let current = Self::load_epoch(&env);
         if signed_epoch < current {
             return Err(BridgeError::RetiredEpoch);
@@ -982,7 +1252,8 @@ impl Bridge {
         payload.extend_from_slice(tag);
         let validator_bytes: [u8; 32] = validator.into();
         payload.extend_from_slice(&validator_bytes);
-        payload    }
+        payload
+    }
 
     // -----------------------------------------------------------------------
     // Inbound value-cap
@@ -1121,28 +1392,6 @@ impl Bridge {
             .set(&BridgeDataKey::WindowOutboundTotal, &new_total);
         Ok(())
     }
-
-    /// Roll the window forward if `current_time` has passed the window end.
-    /// Returns `(new_window_start, new_total)`.
-    fn maybe_roll_window(
-        current_time: u64,
-        window_start: u64,
-        window_size: u64,
-        total: i128,
-    ) -> (u64, i128) {
-        if current_time < window_start {
-            return (window_start, total);
-        }
-        if window_size == 0 {
-            return (window_start, total);
-        }
-        if let Some(window_end) = window_start.checked_add(window_size) {
-            if current_time >= window_end {
-                return (current_time, 0);
-            }
-        }
-        (window_start, total)
-    }
 }
 
 // -----------------------------------------------------------------------
@@ -1214,6 +1463,9 @@ mod rotation_churn_test;
 
 #[cfg(test)]
 mod outbound_nonce_test;
+
+#[cfg(test)]
+mod outbound_send_test;
 
 #[cfg(test)]
 mod inbound_window_integration_test;
