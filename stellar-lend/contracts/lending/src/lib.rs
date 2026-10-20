@@ -69,6 +69,8 @@ mod effective_supply_rate_test;
 #[cfg(test)]
 mod emergency_state_matrix_test;
 #[cfg(test)]
+mod emergency_roles_test;
+#[cfg(test)]
 mod entrypoint_failure_boundary_test;
 #[cfg(test)]
 mod error_codes_test;
@@ -364,6 +366,7 @@ pub enum DataKey {
 pub struct EmergencyStateChangedEvent {
     pub old_state: EmergencyState,
     pub new_state: EmergencyState,
+    pub caller: Address,
 }
 
 #[contractevent]
@@ -372,6 +375,7 @@ pub struct PauseStateChangedEvent {
     pub operation: PauseType,
     pub old_state: PauseState,
     pub new_state: PauseState,
+    pub caller: Address,
 }
 
 #[contractevent]
@@ -416,7 +420,8 @@ pub struct DebtAssetSetEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GuardianSetEvent {
     pub old_guardian: Option<Address>,
-    pub new_guardian: Address,
+    pub new_guardian: Option<Address>,
+    pub caller: Address,
 }
 
 #[contractevent]
@@ -1223,8 +1228,9 @@ impl LendingContract {
         let old_guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
         GuardianSetEvent {
+            caller: admin.clone(),
             old_guardian,
-            new_guardian: guardian,
+            new_guardian: Some(guardian),
         }
         .publish(&env);
 
@@ -1239,6 +1245,32 @@ impl LendingContract {
         Ok(())
     }
 
+    pub fn clear_guardian(env: Env) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        let old_guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
+        env.storage().instance().remove(&DataKey::Guardian);
+        GuardianSetEvent {
+            caller: admin.clone(),
+            old_guardian,
+            new_guardian: None,
+        }
+        .publish(&env);
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "clear_guardian"),
+            admin,
+            None,
+        );
+        Ok(())
+    }
+
     pub fn get_guardian(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Guardian)
     }
@@ -1248,28 +1280,27 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::EmergencyState)
     }
 
-    pub fn set_emergency_state(env: Env, new_state: EmergencyState) -> Result<(), LendingError> {
+    pub fn set_emergency_state(
+        env: Env,
+        caller: Address,
+        new_state: EmergencyState,
+    ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin_or_guardian(&env, &new_state)?;
-
-        // Get caller for audit logging
-        let caller = match &new_state {
-            EmergencyState::Shutdown => env
-                .storage()
-                .instance()
-                .get(&DataKey::Guardian)
-                .or_else(|| env.storage().instance().get(&DataKey::Admin))
-                .ok_or(LendingError::NotInitialized)?,
-            EmergencyState::Recovery | EmergencyState::Normal => env
-                .storage()
-                .instance()
-                .get(&DataKey::Admin)
-                .ok_or(LendingError::NotInitialized)?,
+        caller.require_auth();
+        let is_admin = is_admin(&env, &caller);
+        let is_guardian = is_guardian(&env, &caller);
+        let authorized = match new_state {
+            EmergencyState::Shutdown => is_admin || is_guardian,
+            EmergencyState::Recovery | EmergencyState::Normal => is_admin,
         };
+        if !authorized {
+            return Err(LendingError::Unauthorized);
+        }
 
         let old_state = read_emergency_state(&env);
         set_emergency_state_internal(&env, new_state);
         EmergencyStateChangedEvent {
+            caller: caller.clone(),
             old_state,
             new_state,
         }
@@ -1298,20 +1329,18 @@ impl LendingContract {
     /// state so an active pause can also stop recovery-allowed unwind paths.
     pub fn set_pause(
         env: Env,
+        caller: Address,
         pause_type: PauseType,
         paused: bool,
         ttl_ledgers: u32,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin_or_guardian(&env, &EmergencyState::Shutdown)?;
-
-        // Get caller for audit logging
-        let caller = env
-            .storage()
-            .instance()
-            .get(&DataKey::Guardian)
-            .or_else(|| env.storage().instance().get(&DataKey::Admin))
-            .ok_or(LendingError::NotInitialized)?;
+        caller.require_auth();
+        let is_admin = is_admin(&env, &caller);
+        let is_guardian = is_guardian(&env, &caller);
+        if !(is_admin || (paused && is_guardian)) {
+            return Err(LendingError::Unauthorized);
+        }
 
         let expires_at_ledger = env.ledger().sequence().saturating_add(ttl_ledgers);
 
@@ -1320,12 +1349,16 @@ impl LendingContract {
             paused: false,
             expires_at_ledger: 0,
         });
+        if !paused && (!old_state.paused || env.ledger().sequence() >= old_state.expires_at_ledger) {
+            return Ok(());
+        }
         let new_state = PauseState {
             paused,
             expires_at_ledger,
         };
         env.storage().instance().set(&key, &new_state);
         PauseStateChangedEvent {
+            caller: caller.clone(),
             operation: pause_type,
             old_state,
             new_state,
@@ -4377,25 +4410,18 @@ fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
 }
 
 /// For Shutdown, allow the guardian (if set) or admin; for Recovery/Normal, admin only.
-fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) -> Result<(), LendingError> {
-    match state {
-        EmergencyState::Shutdown => {
-            let caller: Address = env
-                .storage()
-                .instance()
-                .get(&DataKey::Guardian)
-                .ok_or(LendingError::NotInitialized)
-                .or_else(|_| {
-                    env.storage()
-                        .instance()
-                        .get(&DataKey::Admin)
-                        .ok_or(LendingError::NotInitialized)
-                })?;
-            caller.require_auth();
-            Ok(())
-        }
-        EmergencyState::Recovery | EmergencyState::Normal => assert_admin(env),
-    }
+fn is_admin(env: &Env, caller: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<_, Address>(&DataKey::Admin)
+        .is_some_and(|admin| admin == *caller)
+}
+
+fn is_guardian(env: &Env, caller: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<_, Address>(&DataKey::Guardian)
+        .is_some_and(|guardian| guardian == *caller)
 }
 
 #[cfg(test)]
@@ -5331,7 +5357,7 @@ pub(crate) mod test {
     #[test]
     fn test_set_emergency_state_changes_state() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         let res = client.try_deposit(&user, &10);
         assert!(res.is_err(), "deposit should be blocked in Shutdown");
     }
@@ -5341,8 +5367,8 @@ pub(crate) mod test {
         let (env, client, _admin, _user) = setup();
         let guardian = Address::generate(&env);
         client.set_guardian(&guardian);
-        client.set_emergency_state(&EmergencyState::Shutdown);
-        client.set_emergency_state(&EmergencyState::Normal);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Normal);
         let user = Address::generate(&env);
         let result = client.deposit(&user, &10);
         assert_eq!(result, 10);
@@ -5363,18 +5389,18 @@ pub(crate) mod test {
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &id2,
                 fn_name: "set_emergency_state",
-                args: (EmergencyState::Shutdown,).into_val(&env2),
+                args: (attacker.clone(), EmergencyState::Shutdown).into_val(&env2),
                 sub_invokes: &[],
             },
         }]);
-        client2.set_emergency_state(&EmergencyState::Shutdown);
+        client2.set_emergency_state(&attacker, &EmergencyState::Shutdown);
     }
 
     #[test]
     #[should_panic(expected = "OperationDisabledDuringShutdown")]
     fn test_shutdown_blocks_deposit() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         client.deposit(&user, &10);
     }
 
@@ -5382,7 +5408,7 @@ pub(crate) mod test {
     #[should_panic(expected = "OperationDisabledDuringShutdown")]
     fn test_shutdown_blocks_borrow() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         client.borrow(&user, &5);
     }
 
@@ -5392,7 +5418,7 @@ pub(crate) mod test {
         let (_env, client, _admin, user) = setup();
         client.deposit(&user, &250);
         client.borrow(&user, &100);
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         client.repay(&user, &10);
     }
 
@@ -5400,7 +5426,7 @@ pub(crate) mod test {
     #[should_panic(expected = "ActionBlockedInRecovery")]
     fn test_recovery_blocks_deposit() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Recovery);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
         client.deposit(&user, &10);
     }
 
@@ -5408,7 +5434,7 @@ pub(crate) mod test {
     #[should_panic(expected = "ActionBlockedInRecovery")]
     fn test_recovery_blocks_borrow() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Recovery);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
         client.borrow(&user, &10);
     }
 
@@ -5417,7 +5443,7 @@ pub(crate) mod test {
         let (_env, client, _admin, user) = setup();
         client.deposit(&user, &200);
         client.borrow(&user, &50);
-        client.set_emergency_state(&EmergencyState::Recovery);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
         assert_eq!(client.repay(&user, &10), 40);
         assert_eq!(client.withdraw(&user, &10), 190);
     }
