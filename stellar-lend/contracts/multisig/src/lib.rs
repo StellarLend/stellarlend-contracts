@@ -161,6 +161,7 @@ pub enum MultisigError {
     SignerSetChanged = 18,
     LegacyProposal = 19,
     NonceOverflow = 20,
+    ApprovalNotFound = 21,
 }
 
 /// Maximum number of proposals that can be executed in a single
@@ -541,7 +542,9 @@ impl MultisigContract {
         if proposal.status == ProposalStatus::Cancelled {
             return Err(MultisigError::AlreadyCancelled);
         }
-        if proposal.status != ProposalStatus::Active {
+        if proposal.status != ProposalStatus::Active
+            && proposal.status != ProposalStatus::Passed
+        {
             return Err(MultisigError::ProposalNotPassed);
         }
         if proposal.approvals.contains(&caller) {
@@ -560,9 +563,11 @@ impl MultisigContract {
         let threshold = Self::fetch_threshold(&env) as usize;
         let approval_count = proposal.approvals.len();
         let passed = approval_count as usize >= threshold;
-        if passed {
-            proposal.status = ProposalStatus::Passed;
-        }
+        proposal.status = if passed {
+            ProposalStatus::Passed
+        } else {
+            ProposalStatus::Active
+        };
         Self::save_proposal(&env, &proposal);
 
         env.events().publish(
@@ -578,7 +583,59 @@ impl MultisigContract {
         Ok(())
     }
 
-    /// Execute a passed, non-expired, non-executed proposal.
+    /// Revoke the caller's approval from an active or passed proposal.
+    ///
+    /// Quorum is recalculated against the current threshold after removal.
+    /// Approval revocation does not permit an expired or terminal proposal to
+    /// be changed.
+    pub fn revoke_approval(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
+        caller.require_auth();
+        Self::require_signer(&env, &caller)?;
+
+        let mut proposal = Self::fetch_proposal(&env, id)?;
+        if env.ledger().sequence() as u64 > proposal.expires_at
+            || proposal.status == ProposalStatus::Expired
+        {
+            proposal.status = ProposalStatus::Expired;
+            Self::save_proposal(&env, &proposal);
+            return Err(MultisigError::ProposalExpired);
+        }
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
+        }
+        if proposal.status != ProposalStatus::Active
+            && proposal.status != ProposalStatus::Passed
+        {
+            return Err(MultisigError::ProposalNotPassed);
+        }
+
+        let approval_index = proposal
+            .approvals
+            .first_index_of(caller.clone())
+            .ok_or(MultisigError::ApprovalNotFound)?;
+        proposal.approvals.remove(approval_index);
+        env.storage()
+            .persistent()
+            .remove(&MultisigDataKey::ApprovalBinding(id, caller.clone()));
+
+        proposal.status = if proposal.approvals.len() >= Self::fetch_threshold(&env) {
+            ProposalStatus::Passed
+        } else {
+            ProposalStatus::Active
+        };
+        Self::save_proposal(&env, &proposal);
+        ApprovalRevokedEvent {
+            proposal_id: id,
+            signer: caller,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Execute a proposal whose current approvals meet the live threshold.
     ///
     /// This is the **execution router**: it dispatches the proposal's typed
     /// `ProposalAction` to the matching on-chain handler and emits a
@@ -613,11 +670,8 @@ impl MultisigContract {
         if proposal.status == ProposalStatus::Cancelled {
             return Err(MultisigError::AlreadyCancelled);
         }
-        if proposal.status != ProposalStatus::Passed {
-            return Err(match proposal.status {
-                ProposalStatus::Active => MultisigError::QuorumNotReached,
-                _ => MultisigError::ProposalNotPassed,
-            });
+        if proposal.approvals.len() < Self::fetch_threshold(&env) {
+            return Err(MultisigError::QuorumNotReached);
         }
         let _signer_set_hash = Self::require_current_proposal_signer_set(&env, id)?;
         let nonce = Self::fetch_proposal_nonce(&env, id)?;
@@ -930,13 +984,13 @@ impl MultisigContract {
         Self::approval_auth_hash(&env, id, &approver, &signer_set_hash)
     }
 
-    /// Execute a set of passed proposals atomically.
+    /// Execute proposals meeting the live threshold atomically.
     ///
-    /// All proposals are validated first (status, expiry, payload hash,
-    /// duplicates). If every proposal is eligible they are executed in
-    /// order. If **any** proposal fails validation or its action dispatches
-    /// with an error the entire batch is rejected — no proposal is left
-    /// executed (Soroban's panic-based rollback guarantees all-or-nothing).
+    /// All proposals are validated first (terminal status, expiry, payload
+    /// hash, signer set, and duplicates). Quorum is checked immediately before
+    /// each action against the threshold in effect at that point. If any
+    /// proposal lacks quorum or its action dispatches with an error, the
+    /// entire batch is rejected.
     ///
     /// A `BatchExecuted` event listing the applied IDs is emitted on
     /// success.
@@ -955,8 +1009,8 @@ impl MultisigContract {
     /// * `ProposalExpired` if any proposal has expired.
     /// * `AlreadyExecuted` if any proposal has already been executed.
     /// * `AlreadyCancelled` if any proposal has been cancelled.
-    /// * `ProposalNotPassed` if any proposal has not reached the required
-    ///   approval quorum.
+    /// * `QuorumNotReached` if any proposal has fewer current approvals than
+    ///   the current threshold, including after an earlier batch action raises it.
     /// * `PayloadHashMismatch` if a payload hash does not match.
     pub fn batch_execute(
         env: Env,
@@ -1003,12 +1057,6 @@ impl MultisigContract {
             if proposal.status == ProposalStatus::Cancelled {
                 return Err(MultisigError::AlreadyCancelled);
             }
-            if proposal.status != ProposalStatus::Passed {
-                return Err(match proposal.status {
-                    ProposalStatus::Active => MultisigError::QuorumNotReached,
-                    _ => MultisigError::ProposalNotPassed,
-                });
-            }
             Self::require_current_proposal_signer_set(&env, id)?;
             let nonce = Self::fetch_proposal_nonce(&env, id)?;
             if env
@@ -1030,6 +1078,9 @@ impl MultisigContract {
         // the panic rolls back all prior execution side-effects.
         for i in 0..batch_size {
             let mut proposal = proposals.get(i).unwrap();
+            if proposal.approvals.len() < Self::fetch_threshold(&env) {
+                return Err(MultisigError::QuorumNotReached);
+            }
             let nonce = Self::fetch_proposal_nonce(&env, proposal.id)?;
             Self::dispatch_action(&env, &proposal.action)?;
             env.storage()
@@ -1053,14 +1104,6 @@ impl MultisigContract {
 // mod action_allowlist_test;
 // #[cfg(test)]
 // mod upgrade_e2e_test;
-
-// revoke_approval_test is from an older API version: it imports
-// MIN_THRESHOLD_DELAY_LEDGERS, calls set_signers / revoke_approval /
-// get_proposal_approvals, and expects error variants (InsufficientApprovals,
-// ApprovalNotFound, ProposalAlreadyExecuted) that do not exist in the current
-// contract. Commented out until rewritten against the proposal-based API.
-// #[cfg(test)]
-// mod revoke_approval_test;
 
 #[cfg(test)]
 mod tests {
@@ -1094,3 +1137,9 @@ mod signer_shrink_guard_test;
 
 #[cfg(test)]
 mod replay_protection_test;
+
+#[cfg(test)]
+mod revoke_approval_test;
+
+#[cfg(test)]
+mod live_quorum_test;
