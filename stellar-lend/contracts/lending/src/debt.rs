@@ -44,8 +44,10 @@ const SECONDS_PER_YEAR: u64 = 365 * 24 * 60 * 60; // 31_536_000
 /// Layout change (global-borrow-index feature):
 /// - `last_update` is **removed**; the global `LastIndexUpdate` timestamp
 ///   drives time tracking.
-/// - `borrow_index_snapshot` is added; it holds the value of
-///   `DataKey::BorrowIndex` at the time the position was last touched.
+/// - `borrow_index_snapshot` is added; it holds the value of the index at the
+///   time the position was last touched. Single-asset positions snapshot the
+///   global `DataKey::BorrowIndex`; cross-asset positions snapshot the
+///   per-asset `DataKey::BorrowIndexAsset(asset)` instead.
 ///
 /// Migration: pre-existing positions without a snapshot are treated as
 /// having `borrow_index_snapshot == 0`, which `migrate_positions` fixes
@@ -183,6 +185,100 @@ pub fn save_last_index_update(env: &Env, ts: u64) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-asset borrow index helpers (cross-asset debt)
+// ---------------------------------------------------------------------------
+//
+// Cross-asset debt is denominated in the borrowed asset's own units, so it
+// cannot accrue against the single global index: the global index's rate is
+// driven by protocol-wide utilisation across incompatible units. Each asset
+// therefore owns an independent index that starts as a copy of the global
+// index the first time the asset is touched.
+//
+// See `PER_ASSET_ACCRUAL.md` for the migration story.
+
+/// Load the current per-asset borrow index.
+///
+/// When the asset has never accrued, the global [`DataKey::BorrowIndex`] is
+/// returned as the seed. Bootstrapping from the global index (rather than
+/// `INDEX_SCALE`) keeps any pre-existing cross-asset snapshot — which was
+/// recorded against the global index — on a continuous accrual timeline, so the
+/// first settlement after the upgrade charges only the interest that was not
+/// already baked into the global index.
+pub fn load_borrow_index_asset(env: &Env, asset: &Address) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::BorrowIndexAsset(asset.clone()))
+        .unwrap_or_else(|| load_borrow_index(env))
+}
+
+/// Persist the per-asset borrow index.
+pub fn save_borrow_index_asset(env: &Env, asset: &Address, index: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::BorrowIndexAsset(asset.clone()), &index);
+}
+
+/// Load the timestamp of the last per-asset index update.
+///
+/// An uninitialised asset reports `now`, matching a freshly bootstrapped index
+/// (zero elapsed time, so no interest is fabricated on first touch).
+pub fn load_last_index_update_asset(env: &Env, asset: &Address, now: u64) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::LastIndexUpdateAsset(asset.clone()))
+        .unwrap_or(now)
+}
+
+/// Persist the per-asset last-index-update timestamp.
+pub fn save_last_index_update_asset(env: &Env, asset: &Address, ts: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::LastIndexUpdateAsset(asset.clone()), &ts);
+}
+
+/// Lazily advance the per-asset borrow index to `now` and persist both the new
+/// index value and the updated timestamp.
+///
+/// This is the single `touch` entry-point for cross-asset debt. It mirrors
+/// [`touch_borrow_index`] but is scoped to one asset, so activity on asset A
+/// never moves asset B's index.
+///
+/// # Monotonicity
+/// The returned value is always `>=` the loaded index ([`accrue_index`] clamps
+/// a backwards clock or a negative delta to zero).
+pub fn touch_borrow_index_asset(env: &Env, asset: &Address, now: u64, rate_bps: i128) -> i128 {
+    let current_index = load_borrow_index_asset(env, asset);
+    let initialised = env
+        .storage()
+        .instance()
+        .has(&DataKey::BorrowIndexAsset(asset.clone()));
+    let last_update = load_last_index_update_asset(env, asset, now);
+
+    let elapsed = now.saturating_sub(last_update);
+    let new_index = accrue_index(current_index, elapsed, rate_bps);
+
+    // Persist the seed on first touch even when no interest accrued, so the
+    // asset stops inheriting the (frozen) global index implicitly.
+    if !initialised || new_index != current_index {
+        save_borrow_index_asset(env, asset, new_index);
+    }
+    save_last_index_update_asset(env, asset, now);
+    new_index
+}
+
+/// Read-only projection of the per-asset index at `now`.
+///
+/// Performs the same arithmetic as [`touch_borrow_index_asset`] but writes
+/// nothing, so views can price cross-asset debt at the live rate without
+/// mutating state. At the same timestamp it returns the same value the
+/// mutating path would persist.
+pub fn project_borrow_index_asset(env: &Env, asset: &Address, now: u64, rate_bps: i128) -> i128 {
+    let current_index = load_borrow_index_asset(env, asset);
+    let last_update = load_last_index_update_asset(env, asset, now);
+    accrue_index(current_index, now.saturating_sub(last_update), rate_bps)
+}
+
+// ---------------------------------------------------------------------------
 // Index accrual
 // ---------------------------------------------------------------------------
 
@@ -245,8 +341,9 @@ pub fn accrue_index(current_index: i128, elapsed: u64, rate_bps: i128) -> i128 {
 /// Lazily advance the global borrow index to `now` and persist both the new
 /// index value and the updated timestamp.
 ///
-/// This is the single "touch" entry-point called by every mutating protocol
-/// operation (borrow, repay, liquidate, migrate).
+/// This is the single "touch" entry-point for single-asset debt, called by
+/// every mutating single-asset operation (borrow, repay, liquidate, migrate).
+/// Cross-asset debt uses [`touch_borrow_index_asset`] instead.
 ///
 /// Returns the updated index value so callers can use it immediately without
 /// a second storage round-trip.
@@ -594,6 +691,65 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
     compute_borrow_rate_from_snapshot(env, &snapshot).rate_bps
 }
 
+// ---------------------------------------------------------------------------
+// Per-asset rate computation (cross-asset debt)
+// ---------------------------------------------------------------------------
+
+/// Per-asset aggregate values needed to compute that asset's borrow rate.
+///
+/// `total_debt` is [`DataKey::TotalDebtAsset`] and `total_supply` is the
+/// per-asset supplied collateral total ([`DataKey::TotalCollateralAsset`]).
+/// Both are denominated in the asset's own raw units, so the ratio is a true
+/// utilisation for that asset instead of a mix of incompatible units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetRateSnapshot {
+    pub total_debt: i128,
+    pub total_supply: i128,
+    /// Global rate parameters; per-asset parameter overrides are out of scope.
+    pub params: Option<rate_model::RateParams>,
+}
+
+/// Loads the aggregate values needed to compute `asset`'s borrow rate once.
+pub fn load_asset_rate_snapshot(env: &Env, asset: &Address) -> AssetRateSnapshot {
+    let storage = env.storage();
+    AssetRateSnapshot {
+        total_debt: storage
+            .persistent()
+            .get(&DataKey::TotalDebtAsset(asset.clone()))
+            .unwrap_or(0),
+        total_supply: storage
+            .persistent()
+            .get(&DataKey::TotalCollateralAsset(asset.clone()))
+            .unwrap_or(0),
+        params: storage.instance().get(&DataKey::RateParams),
+    }
+}
+
+/// Compute `asset`'s borrow rate from a preloaded per-asset snapshot.
+///
+/// The rate is a **pure function of storage**: it computes the two-slope rate
+/// model directly from the asset's utilisation and does not consult (or
+/// advance) the global rate-smoothing state. That keeps two assets with
+/// different utilisation on independent rates, keeps a single-asset borrow from
+/// changing cross-asset accrual, and makes the read-only views agree exactly
+/// with what the mutating settlement path charges.
+///
+/// Falls back to [`DEFAULT_APR_BPS`] when no rate model is configured.
+pub fn compute_asset_borrow_rate(snapshot: &AssetRateSnapshot) -> Result<i128, DebtError> {
+    let utilization_bps =
+        compute_utilization_bps_from_totals(snapshot.total_debt, snapshot.total_supply)?;
+
+    match &snapshot.params {
+        Some(params) => Ok(rate_model::compute_borrow_rate(utilization_bps, params)?),
+        None => Ok(DEFAULT_APR_BPS),
+    }
+}
+
+/// Convenience wrapper: `asset`'s current borrow rate.
+pub fn asset_borrow_rate(env: &Env, asset: &Address) -> Result<i128, DebtError> {
+    compute_asset_borrow_rate(&load_asset_rate_snapshot(env, asset))
+}
+
 /// Compute utilization (bps) from an aggregate snapshot, bounded to
 /// `[0, BPS_DENOM]` (0 %..100 %).
 ///
@@ -607,16 +763,28 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 /// bounded and deterministic at maximum utilization instead of feeding an
 /// out-of-range utilization to the model.
 pub fn compute_utilization_bps(snapshot: &RateSnapshot) -> Result<i128, DebtError> {
-    if snapshot.total_supply <= 0 {
+    compute_utilization_bps_from_totals(snapshot.total_debt, snapshot.total_supply)
+}
+
+/// Compute utilisation (bps, bounded to `[0, BPS_DENOM]`) from raw per-asset
+/// (or aggregate) debt and supply totals.
+///
+/// A non-positive supply is defined as zero utilisation rather than a division
+/// by zero: an asset with no supplied collateral can never have meaningful
+/// utilisation, and its borrowers accrue at the model's zero-utilisation rate.
+pub fn compute_utilization_bps_from_totals(
+    total_debt: i128,
+    total_supply: i128,
+) -> Result<i128, DebtError> {
+    if total_supply <= 0 {
         return Ok(0);
     }
-    snapshot
-        .total_debt
+    total_debt
         .checked_mul(BPS_DENOM)
         .ok_or(DebtError::Overflow)?
-        .checked_div(snapshot.total_supply)
+        .checked_div(total_supply)
         .ok_or(DebtError::Overflow)
-        .map(|raw| raw.min(BPS_DENOM))
+        .map(|raw| raw.clamp(0, BPS_DENOM))
 }
 
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.

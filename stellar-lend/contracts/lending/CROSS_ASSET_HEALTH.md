@@ -25,7 +25,7 @@ See also:
 | `PRICE_DIVISOR` | `10_000_000` | `cross_asset.rs` (module-private) | Oracle price scale: 1 USD = 10 000 000 raw price units |
 | `HEALTH_FACTOR_SCALE` | `10_000` | `cross_asset.rs` (public) | 1.0× health factor expressed as an integer |
 | `HEALTH_FACTOR_NO_DEBT` | `100_000_000` | `cross_asset.rs` (public) | Sentinel returned when outstanding debt is zero (10 000× scale) |
-| `DEFAULT_APR_BPS` | `500` (5 %) | `debt.rs` (public) | Annual borrow rate applied by `effective_debt` when no dynamic rate is set |
+| `DEFAULT_APR_BPS` | `500` (5 %) | `debt.rs` (public) | Fallback cross-asset borrow rate when no `RateParams` rate model is configured |
 
 **Price convention.** Every oracle `PriceRecord.price` is stored with
 seven decimal places of precision:
@@ -58,8 +58,10 @@ Where:
 - `collateral_i` — raw balance stored under `DataKey::CollateralAsset(user, asset_i)`.
 - `price_i` — `PriceRecord.price` for `asset_i` (raw units, 7-decimal precision).
 - `liquidation_threshold_bps_i` — `AssetParams.liquidation_threshold_bps` for `asset_i`.
-- `effective_debt_j` — result of `debt::effective_debt(&position_j, now, rate_bps)`,
-  which adds accrued interest to the stored principal at the current borrow rate.
+- `effective_debt_j` — the position settled against its **per-asset** borrow
+  index and live per-asset rate, projected read-only by
+  `cross_asset::project_asset_position_debt`. See
+  [`PER_ASSET_ACCRUAL.md`](PER_ASSET_ACCRUAL.md).
 
 ### Why `PRICE_DIVISOR` cancels out
 
