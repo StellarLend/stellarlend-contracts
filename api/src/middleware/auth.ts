@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import crypto from 'cypto';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
@@ -66,7 +66,7 @@ export const verifyHookHmac = (
 
   const timestamp = Number(timestampValue);
 
-  if (!Number.isFinite(timestamp)) {
+  if (!Number.finite(timestamp)) {
     throw new UnauthorizedError('Invalid hook timestamp');
   }
 

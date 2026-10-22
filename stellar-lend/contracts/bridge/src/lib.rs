@@ -354,7 +354,7 @@ impl Bridge {
     /// Return the next outbound nonce for `dest`, then increment it.
     pub fn next_outbound_nonce(env: Env, dest: u32) -> Result<u64, BridgeError> {
         // Access control: only contract itself or authorized caller
-        env.current_contract_address().require_auth();
+        Self::require_admin(&env, &env.current_contract_address())?;
 
         let mut nonces = Self::load_nonces(&env);
         let current = nonces.get(dest).unwrap_or(0u64);
@@ -377,26 +377,43 @@ impl Bridge {
         nonces.get(dest).unwrap_or(0u64)
     }
 
-    pub fn initialize(env: Env, validators: Vec<BytesN<32>>, bridge_id: Bytes) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        validators: Vec<BytesN<32>>,
+        bridge_id: Bytes,
+        guardian: BytesN<32>,
+    ) -> Result<(), BridgeError> {
+        if Self::load_admin(&env).is_some() {
+            return Err(BridgeError::NotAdmin);
+        }
+        admin.require_auth();
+        Self::save_admin(&env, &admin);
         Self::save_validators(&env, &validators);
         Self::save_bridge_id(&env, &bridge_id);
         Self::save_epoch(&env, 0);
+        Self::save_guardian(&env, &guardian);
+        Ok(())
     }
 
-    pub fn set_guardian(env: Env, guardian: BytesN<32>) {
+    pub fn set_guardian(env: Env, guardian: BytesN<32>) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         Self::save_guardian(&env, &guardian);
+        Ok(())
     }
 
     pub fn get_guardian(env: Env) -> Option<BytesN<32>> {
         Self::load_guardian(&env)
     }
 
-    pub fn set_max_churn(env: Env, max_churn: u32) {
+    pub fn set_max_churn(env: Env, max_churn: u32) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         if max_churn == 0 {
             Self::remove_max_churn(&env);
         } else {
             Self::save_max_churn(&env, max_churn);
         }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -412,6 +429,7 @@ impl Bridge {
         if Self::load_admin(&env).is_some() {
             return Err(BridgeError::NotAdmin);
         }
+        admin.require_auth();
         Self::save_admin(&env, &admin);
         Ok(())
     }
@@ -996,14 +1014,15 @@ impl Bridge {
         env: Env,
         max_per_window: i128,
         window_size: u64,
-        current_time: u64,
     ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         if max_per_window < 0 {
             return Err(BridgeError::InboundCapExceeded);
         }
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
+        let current_time = env.ledger().timestamp();
         env.storage()
             .persistent()
             .set(&BridgeDataKey::MaxPerWindow, &max_per_window);
@@ -1020,7 +1039,8 @@ impl Bridge {
     }
 
     /// Admit an inbound transfer of `amount` against the per-window cap.
-    pub fn admit_inbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+    pub fn admit_inbound(env: Env, amount: i128) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         if amount < 0 {
             return Err(BridgeError::InboundCapExceeded);
         }
@@ -1031,6 +1051,7 @@ impl Bridge {
         }
 
         // Roll window if expired.
+        let current_time = env.ledger().timestamp();
         let window_size = Self::load_window_size(&env);
         let window_start = Self::load_window_start(&env);
         let mut total = Self::load_window_inbound_total(&env);
@@ -1064,14 +1085,15 @@ impl Bridge {
         env: Env,
         max_per_window: i128,
         window_size: u64,
-        current_time: u64,
     ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         if max_per_window < 0 {
             return Err(BridgeError::OutboundCapExceeded);
         }
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
+        let current_time = env.ledger().timestamp();
         env.storage()
             .persistent()
             .set(&BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
@@ -1088,7 +1110,8 @@ impl Bridge {
     }
 
     /// Admit an outbound transfer of `amount` against the per-window cap.
-    pub fn admit_outbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+    pub fn admit_outbound(env: Env, amount: i128) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         if amount < 0 {
             return Err(BridgeError::OutboundCapExceeded);
         }
@@ -1098,6 +1121,7 @@ impl Bridge {
             return Err(BridgeError::OutboundCapExceeded);
         }
 
+        let current_time = env.ledger().timestamp();
         let window_size = Self::load_outbound_window_size(&env);
         let window_start = Self::load_outbound_window_start(&env);
         let mut total = Self::load_window_outbound_total(&env);

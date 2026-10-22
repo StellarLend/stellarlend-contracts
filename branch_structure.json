@@ -1,0 +1,24 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "main",
+    "origin",
+    "security/issue-2258-bridge-require-admin-auth-on-bridge-config",
+    "security/issue-2260-amm-redesign-flash-swaps-so-an-unpaired-flash",
+    "security/issue-2276-lending-add-soroban-budget-benchmarks-for-hot"
+  ],
+  "parent": {
+    "main": null,
+    "origin": "main",
+    "security/issue-2258-bridge-require-admin-auth-on-bridge-config": "main",
+    "security/issue-2260-amm-redesign-flash-swaps-so-an-unpaired-flash": "main",
+    "security/issue-2276-lending-add-soroban-budget-benchmarks-for-hot": "main"
+  },
+  "order": [
+    "main",
+    "origin",
+    "security/issue-2258-bridge-require-admin-auth-on-bridge-config",
+    "security/issue-2260-amm-redesign-flash-swaps-so-an-unpaired-flash",
+    "security/issue-2276-lending-add-soroban-budget-benchmarks-for-hot"
+  ]
+}
