@@ -249,6 +249,27 @@ This document defines the explicit state, data, authorization, and failure invar
 
 ---
 
+### L5: Execution Timelock Enforcement
+**Invariant**: A proposal in `Passed` status cannot be executed until `min_execution_delay` ledgers have elapsed since quorum was reached (`ledger >= passed_at + execution_delay`).
+
+**Properties**:
+- When quorum is reached, `passed_at` is recorded as current ledger sequence.
+- Execution before `passed_at + execution_delay` is rejected with `TimelockNotElapsed`.
+- Cancellation is permitted during the timelock window (`sequence < passed_at + execution_delay`) for signers to veto proposals before on-chain execution.
+- Once the timelock window elapses, cancellation is rejected with `ProposalNotPassed`.
+- Timelock applies equally to individual `execute_proposal` and `batch_execute`.
+- Proposals updating `execution_delay` (e.g. `SetExecutionDelay(0)`) are subject to the timelock active when passed, preventing delay bypass attacks.
+
+**Enforcement**:
+- `approve_proposal()` records `ProposalPassedAt(id)` when transitioning to `Passed`.
+- `execute_proposal()` and `batch_execute()` enforce `sequence >= passed_at + delay`.
+- `cancel_proposal()` checks `sequence < passed_at + delay` when proposal is in `Passed` status.
+- `create_proposal()` enforces `ttl_ledgers > delay`.
+
+**Failure Mode**: If violated, malicious or compromised proposals could execute immediately without an emergency veto window.
+
+---
+
 ## Execution Safety Invariants
 
 ### E1: Safe Retry for Failed Actions

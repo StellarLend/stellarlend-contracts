@@ -36,9 +36,15 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
+    let token_a = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    let token_b = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
     let admin = Address::generate(&env);
+    if ra > 0 {
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&admin, &ra);
+    }
+    if rb > 0 {
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&admin, &rb);
+    }
     client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     (env, id)
 }
@@ -52,9 +58,15 @@ fn setup_two_users(ra: i128, rb: i128) -> (Env, Address, Address, Address) {
     let bob = Address::generate(&env);
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
+    let token_a = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    let token_b = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
     let admin = Address::generate(&env);
+    if ra > 0 {
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&admin, &ra);
+    }
+    if rb > 0 {
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&admin, &rb);
+    }
     client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     (env, id, alice, bob)
 }
@@ -171,9 +183,11 @@ fn test_initiator_cleared_on_success() {
     let new_id = new_env.register(AmmContract, ());
     let new_client = AmmContractClient::new(&new_env, &new_id);
     let carol = Address::generate(&new_env);
-    let new_token_a = Address::generate(&new_env);
-    let new_token_b = Address::generate(&new_env);
+    let new_token_a = new_env.register_stellar_asset_contract_v2(Address::generate(&new_env)).address();
+    let new_token_b = new_env.register_stellar_asset_contract_v2(Address::generate(&new_env)).address();
     let new_admin = Address::generate(&new_env);
+    soroban_sdk::token::StellarAssetClient::new(&new_env, &new_token_a).mint(&new_admin, &1_000);
+    soroban_sdk::token::StellarAssetClient::new(&new_env, &new_token_b).mint(&new_admin, &1_000);
     new_client.init_pool(&new_admin, &1_000, &1_000, &new_token_a, &new_token_b);
     new_client.flash_swap_a_for_b(&carol, &50, &Bytes::new(&new_env));
     new_client.repay_flash_swap(&carol, &inverse_swap_in(1_000, 1_000, 50, FEE_BPS));

@@ -13,7 +13,8 @@ is executed.
 |---------|--------|--------|
 | `SetThreshold` | `u32` | Updates the minimum approval count for future proposals |
 | `RotateSigners` | `Vec<Address>` | Replaces the entire signer set |
-| `InvokeContract` | `InvokeContractParams` | Cross-contract call to a lending upgrade entrypoint |
+| `InvokeContract` | `Address, Symbol, Vec<Val>` | Cross-contract call to a lending upgrade entrypoint |
+| `SetExecutionDelay` | `u32` | Updates the minimum execution delay (in ledgers) between quorum and execution |
 
 ## Security Properties
 
@@ -22,9 +23,11 @@ is executed.
    approval and execution.
 2. **Quorum guard** – Execution is rejected unless the proposal is in `Passed`
    status (i.e. it has collected at least `threshold` distinct signer approvals).
-3. **Expiry guard** – A proposal past its `expires_at` ledger is automatically
+3. **Execution Timelock Guard** – Proposals cannot be executed before `passed_at + execution_delay` ledgers have elapsed. If attempted earlier, execution reverts with `TimelockNotElapsed`. Proposals modifying execution delay are self-governed and cannot bypass the active delay.
+4. **Emergency Cancellation Window** – Signers may cancel a `Passed` proposal during the delay window before execution becomes unlocked. Once the timelock elapses, cancellation is rejected.
+5. **Expiry guard** – A proposal past its `expires_at` ledger is automatically
    marked `Expired` and cannot be executed.
-4. **Idempotency guard** – A proposal in `Executed` or `Cancelled` state panics
+6. **Idempotency guard** – A proposal in `Executed` or `Cancelled` state panics
    on re-execution attempts.
 
 ## Worked Dispatch Example

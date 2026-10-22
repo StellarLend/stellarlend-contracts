@@ -157,7 +157,27 @@ fn cross_proposal_auth_payload_rejected() {
     signers.push_back(s1.clone());
     signers.push_back(s2.clone());
 
-    // initialize needs no signer auth
+    // initialize requires signer auth
+    env.mock_auths(&[
+        MockAuth {
+            address: &s1,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+        MockAuth {
+            address: &s2,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+    ]);
     client.initialize(&signers, &2u32);
 
     // create_proposal requires caller.require_auth()
@@ -214,6 +234,26 @@ fn correct_domain_auth_payload_accepted() {
     let mut signers = Vec::new(&env);
     signers.push_back(s1.clone());
     signers.push_back(s2.clone());
+    env.mock_auths(&[
+        MockAuth {
+            address: &s1,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+        MockAuth {
+            address: &s2,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+    ]);
     client.initialize(&signers, &2u32);
 
     env.mock_auths(&[MockAuth {
