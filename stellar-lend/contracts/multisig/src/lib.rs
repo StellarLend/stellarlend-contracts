@@ -1045,23 +1045,6 @@ impl MultisigContract {
     }
 }
 
-// Pre-existing test modules from an older API version – commented out
-// until updated to match the current contract interface.
-// #[cfg(test)]
-// mod quorum_edge_test;
-// #[cfg(test)]
-// mod action_allowlist_test;
-// #[cfg(test)]
-// mod upgrade_e2e_test;
-
-// revoke_approval_test is from an older API version: it imports
-// MIN_THRESHOLD_DELAY_LEDGERS, calls set_signers / revoke_approval /
-// get_proposal_approvals, and expects error variants (InsufficientApprovals,
-// ApprovalNotFound, ProposalAlreadyExecuted) that do not exist in the current
-// contract. Commented out until rewritten against the proposal-based API.
-// #[cfg(test)]
-// mod revoke_approval_test;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1094,3 +1077,24 @@ mod signer_shrink_guard_test;
 
 #[cfg(test)]
 mod replay_protection_test;
+
+/// Quorum edge case tests (threshold=1, threshold=n, n=1, duplicate approvals).
+#[cfg(test)]
+mod quorum_edge_test;
+
+/// Cross-contract error propagation tests for InvokeContract action.
+#[cfg(test)]
+mod cross_contract_error_test;
+
+/// InvokeContract argument passing tests.
+#[cfg(test)]
+mod invoke_contract_with_args_test;
+
+/// Upgrade end-to-end tests for proposal lifecycle.
+#[cfg(test)]
+mod upgrade_e2e_test;
+
+// Note: boundary_conditions_test.rs contains placeholder code and is not yet wired.
+// Note: action_allowlist_test.rs tests removed functionality and is not wired.
+// Note: revoke_approval_test.rs is from an older API and is not wired.
+// Note: bounds.rs is not a test file (enforcing its limits tracked separately).
