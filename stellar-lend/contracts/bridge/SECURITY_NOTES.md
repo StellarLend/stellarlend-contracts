@@ -14,6 +14,10 @@ Implementation notes
 - Atomicity: `rotate_validators` performs proof verification before swapping validators and advancing the epoch.
 - **Validator-set size bounds**: Before verifying the quorum proof, `rotate_validators` validates that the deduplicated count of the incoming `new_set` lies within [`MIN_VALIDATORS`, `MAX_VALIDATORS`] (currently 3 and 32 respectively). Duplicate public keys are rejected outright — a set that relies on dedup to meet its size bound always indicates an operator error.
 
+### Guardian Action Security
+
+Guardian pause and unpause signatures are bound via domain separation (`GUARDIAN_ACTION_DOMAIN`), contract address, bridge ID, epoch, and a monotonic guardian nonce (`GuardianNonce`). This prevents cross-deployment replays, signature replaying after state changes, and action substitution.
+
 ### Validator-set size bounds
 
 `rotate_validators` enforces two pre-proof checks on every `new_set`:
