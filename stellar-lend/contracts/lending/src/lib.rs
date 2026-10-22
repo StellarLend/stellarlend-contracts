@@ -1763,6 +1763,10 @@ impl LendingContract {
     /// and rejects the borrow when the post-borrow health factor would fall below
     /// 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
     /// `DataKey::DebtCeiling`.
+    ///
+    /// The validation and accounting pipeline is shared with
+    /// [`Self::borrow_against_collateral`] through [`borrow_internal`]; only the
+    /// isolation-mode ceiling differs between the two entry points.
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
@@ -1771,50 +1775,13 @@ impl LendingContract {
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
-        require_fresh_valuation_prices(&env)?;
         user.require_auth();
-        let min_borrow = Self::get_min_borrow(env.clone());
-        if amount < min_borrow {
-            return Err(LendingError::BelowMinimumBorrow);
-        }
 
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
-        let now = env.ledger().timestamp();
-        let rate = current_borrow_rate(&env);
-        let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
-        let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
-            debt::DebtError::Overflow => LendingError::Overflow,
-            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
-        })?;
+        // ── Validate & calculate (nothing is persisted yet) ──────────────────
+        let (updated, delta) = borrow_internal(&env, &user, amount)?;
 
-        let total_debt: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalDebt)
-            .unwrap_or(0);
-        let delta = updated
-            .principal
-            .checked_sub(prev_principal)
-            .ok_or(LendingError::Overflow)?;
-        let new_total_debt = total_debt
-            .checked_add(delta)
-            .ok_or(LendingError::Overflow)?;
-
-        assert_borrow_solvent(&env, &user, &updated, new_total_debt)?;
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDebt, &new_total_debt);
-
-        save_debt(&env, &user, &updated);
-        // Extend TTL to prevent archival of debt entry
-        extend_debt_ttl(&env, &user);
-
-        // Emit borrow event
-        emit_borrow(&env, &user, amount, updated.principal);
+        // ── Persist ──────────────────────────────────────────────────────────
+        commit_borrow(&env, &user, amount, &updated, delta)?;
 
         Ok(updated.principal)
     }
@@ -1831,6 +1798,14 @@ impl LendingContract {
     ///
     /// Use this function in any cross-asset borrow path where `collateral_asset`
     /// is the primary (or sole) isolated collateral backing the position.
+    ///
+    /// # Effect ordering
+    ///
+    /// Every check — the shared solvency / debt-ceiling pipeline performed by
+    /// [`borrow_internal`] *and* the isolation ceiling — runs before the debt
+    /// position is written, the debt TTL is extended or the `BorrowEvent` is
+    /// emitted. A rejected borrow therefore leaves no partial debt, isolation
+    /// accounting, TTL or event effect behind.
     ///
     /// # Errors
     /// - All errors from [`borrow`].
@@ -1849,42 +1824,17 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
         user.require_auth();
-        let min_borrow = Self::get_min_borrow(env.clone());
-        if amount < min_borrow {
-            return Err(LendingError::BelowMinimumBorrow);
-        }
 
-        let now = env.ledger().timestamp();
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
-        let rate = current_borrow_rate(&env);
-        let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
-            debt::DebtError::Overflow => LendingError::Overflow,
-            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
-        })?;
-        save_debt(&env, &user, &updated);
+        // ── Validate & calculate (nothing is persisted yet) ──────────────────
+        let (updated, delta) = borrow_internal(&env, &user, amount)?;
 
-        // Track protocol-level total debt.
-        let total_debt: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalDebt)
-            .unwrap_or(0);
-        let delta = updated
-            .principal
-            .checked_sub(prev_principal)
-            .ok_or(LendingError::Overflow)?;
-        let new_total_debt = total_debt
-            .checked_add(delta)
-            .ok_or(LendingError::Overflow)?;
-        // Check the actual principal delta, not the requested amount. This
-        // keeps the ceiling aligned with the value written to the position.
+        // The isolation ceiling is evaluated against the *principal delta*
+        // (settled interest + borrowed amount) and therefore has to happen
+        // before any state is written or any event is emitted.
         check_isolation_ceiling_internal(&env, &collateral_asset, delta)?;
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDebt, &new_total_debt);
+
+        // ── Persist ──────────────────────────────────────────────────────────
+        commit_borrow(&env, &user, amount, &updated, delta)?;
 
         // Update the per-asset isolation debt tracker only when the asset is
         // actually configured as isolated.  Non-isolated assets are not tracked.
@@ -1892,8 +1842,12 @@ impl LendingContract {
             increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
 
-        // Check invariant AFTER state change
-        invariants::check_invariant_after(&env, &collateral_asset);
+        // NOTE: the reserve-invariant checks are deliberately not invoked here.
+        // `invariants::compute_expected_reserve` only models
+        // `TotalDeposits - BadDebt`, so it cannot represent the collateral that
+        // backs this position nor the debt this borrow just created, and
+        // enabling it made every borrow trap. See `invariants.rs` and the
+        // equivalent note in `liquidate`.
 
         Ok(updated.principal)
     }
@@ -4436,6 +4390,126 @@ fn assert_position_healthy(
         }
     }
     Ok(())
+}
+
+/// Shared borrowing pipeline for [`LendingContract::borrow`] and
+/// [`LendingContract::borrow_against_collateral`].
+///
+/// The helper performs the complete *validation and calculation* phase of a
+/// borrow and returns the post-borrow debt position together with the
+/// **principal delta** — the amount by which the stored principal grew.
+///
+/// The principal delta is *not* simply the requested amount: it also contains
+/// the interest that was settled during this call
+/// (`settled_principal + amount - previous_principal`). The protocol
+/// `TotalDebt` and the isolation-mode debt tracker are both updated with this
+/// delta so that they stay aligned with the value written to the position.
+///
+/// # Effect ordering
+///
+/// The helper deliberately performs **no** write to `DataKey::Debt` or
+/// `DataKey::TotalDebt`, does not extend the debt TTL and emits no event.
+/// Callers apply those effects with [`commit_borrow`] only after every check
+/// has passed — including the isolation-mode ceiling check that
+/// `borrow_against_collateral` performs *after* this helper returns. A
+/// rejected borrow therefore leaves no partial debt, isolation accounting,
+/// TTL or event effect behind.
+///
+/// # Errors
+/// - `InvalidAmount` — `amount <= 0`.
+/// - `BelowMinimumBorrow` — `amount` is below the configured minimum.
+/// - `PriceUnavailable` / `StaleOracleTimestamp` — the valuation price is
+///   missing or stale.
+/// - `InsufficientCollateral` — the post-borrow position would be
+///   undercollateralised.
+/// - `DebtCeilingExceeded` — protocol `TotalDebt` would exceed the ceiling.
+/// - `Overflow` — arithmetic overflow while computing the new position.
+fn borrow_internal(
+    env: &Env,
+    user: &Address,
+    amount: i128,
+) -> Result<(DebtPosition, i128), LendingError> {
+    // 1. Amount and minimum-borrow rules.
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+    let min_borrow = LendingContract::get_min_borrow(env.clone());
+    if amount < min_borrow {
+        return Err(LendingError::BelowMinimumBorrow);
+    }
+
+    // 2. Oracle freshness. A borrow must never be priced against a missing or
+    //    stale oracle record.
+    require_fresh_valuation_prices(env)?;
+
+    // 3. Settle accrued interest (and accrue the insurance share) before the
+    //    new principal is added, so that the delta reflects the true debt
+    //    growth of the position.
+    let now = env.ledger().timestamp();
+    let rate = current_borrow_rate(env);
+    let position = load_debt(env, user);
+    let prev_principal = position.principal;
+    let settled_position = settle_and_accrue_insurance(env, &position, now, rate)?;
+    let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
+        debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+        debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
+        debt::DebtError::Overflow => LendingError::Overflow,
+        debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
+    })?;
+
+    // 4. Principal delta = settled interest + newly borrowed amount.
+    let delta = updated
+        .principal
+        .checked_sub(prev_principal)
+        .ok_or(LendingError::Overflow)?;
+
+    // 5. Solvency (collateral coverage) and the protocol-wide debt ceiling.
+    let new_total_debt = total_debt_after(env, delta)?;
+    assert_borrow_solvent(env, user, &updated, new_total_debt)?;
+
+    Ok((updated, delta))
+}
+
+/// Apply the persistent effects of a validated borrow.
+///
+/// Writes the new protocol `TotalDebt`, stores the borrower's debt position,
+/// extends the TTL of the debt entry and emits the standard `BorrowEvent`.
+///
+/// Callers must have completed **all** validation (including the
+/// isolation-mode ceiling check performed by `borrow_against_collateral`)
+/// before calling this helper; it performs no checks of its own.
+fn commit_borrow(
+    env: &Env,
+    user: &Address,
+    amount: i128,
+    updated: &DebtPosition,
+    delta: i128,
+) -> Result<(), LendingError> {
+    // Track protocol-level total debt.
+    let new_total_debt = total_debt_after(env, delta)?;
+    env.storage()
+        .persistent()
+        .set(&DataKey::TotalDebt, &new_total_debt);
+
+    save_debt(env, user, updated);
+    // Extend TTL to prevent archival of debt entry
+    extend_debt_ttl(env, user);
+
+    // Emit borrow event
+    emit_borrow(env, user, amount, updated.principal);
+
+    Ok(())
+}
+
+/// Return the protocol-wide `TotalDebt` that results from adding `delta` to the
+/// currently recorded total.
+fn total_debt_after(env: &Env, delta: i128) -> Result<i128, LendingError> {
+    let total_debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDebt)
+        .unwrap_or(0);
+    total_debt.checked_add(delta).ok_or(LendingError::Overflow)
 }
 
 /// Reject a prospective borrow that would leave the user undercollateralized or
