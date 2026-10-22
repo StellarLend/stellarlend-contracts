@@ -18,7 +18,8 @@ use soroban_sdk::{
 /// any breaking change to the payload layout.
 ///
 /// See `APPROVAL_DOMAIN_BINDING.md` for the full layout and threat model.
-pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V1";
+pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V2";
+pub const ACTION_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_ACTION_V1";
 
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
 /// The payload_hash binds the approved action so it cannot be swapped between
@@ -89,6 +90,7 @@ pub enum MultisigDataKey {
     /// one proposal and can be verified out-of-band (issue #1278;
     /// `APPROVAL_DOMAIN_BINDING.md`).
     ApprovalBinding(u64, Address),
+    ActionHash(u64),
 }
 
 /// Multisig errors.
@@ -236,11 +238,26 @@ impl MultisigContract {
     /// Canonical byte preimage before hashing.
     ///
     /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
-    fn approval_auth_payload(env: &Env, proposal_id: u64, approver: &Address) -> Bytes {
+    fn action_hash(env: &Env, action: &ProposalAction) -> BytesN<32> {
+        let mut payload = Bytes::new(env);
+        payload.extend_from_slice(ACTION_DOMAIN_SEPARATOR);
+        payload.append(&action.to_xdr(env));
+        env.crypto().sha256(&payload).into()
+    }
+
+    fn signer_set_hash(env: &Env) -> BytesN<32> {
+        let signers: Vec<Address> = env.storage().persistent()
+            .get(&MultisigDataKey::Signers).unwrap_or_else(|| Vec::new(env));
+        env.crypto().sha256(&signers.to_xdr(env)).into()
+    }
+
+    fn approval_auth_payload(env: &Env, proposal_id: u64, action_hash: &BytesN<32>, approver: &Address) -> Bytes {
         let mut payload = Bytes::new(env);
         payload.extend_from_slice(APPROVAL_DOMAIN_SEPARATOR);
         payload.append(&env.current_contract_address().to_xdr(env));
         payload.extend_from_slice(&proposal_id.to_be_bytes());
+        payload.append(&Self::signer_set_hash(env).to_xdr(env));
+        payload.append(&action_hash.to_xdr(env));
         payload.append(&approver.clone().to_xdr(env));
         payload
     }
@@ -258,8 +275,8 @@ impl MultisigContract {
     ///
     /// # Returns
     /// 32-byte domain-separated binding hash.
-    fn approval_auth_hash(env: &Env, proposal_id: u64, approver: &Address) -> BytesN<32> {
-        let payload = Self::approval_auth_payload(env, proposal_id, approver);
+    fn approval_auth_hash(env: &Env, proposal_id: u64, action_hash: &BytesN<32>, approver: &Address) -> BytesN<32> {
+        let payload = Self::approval_auth_payload(env, proposal_id, action_hash, approver);
         env.crypto().sha256(&payload).into()
     }
 
@@ -291,6 +308,10 @@ impl MultisigContract {
             return Err(MultisigError::InvalidTtl);
         }
 
+        let computed_hash = Self::action_hash(&env, &action);
+        if payload_hash != computed_hash.to_bytes() {
+            return Err(MultisigError::PayloadHashMismatch);
+        }
         let id = Self::next_proposal_id(&env)?;
         let expires_at = (env.ledger().sequence() as u64).saturating_add(ttl_ledgers);
 
@@ -304,6 +325,7 @@ impl MultisigContract {
             expires_at,
         };
         Self::save_proposal(&env, &proposal);
+        env.storage().persistent().set(&MultisigDataKey::ActionHash(id), &computed_hash);
         Ok(id)
     }
 
@@ -336,7 +358,6 @@ impl MultisigContract {
     /// * `caller` – Signer casting the approval.
     /// * `id`     – ID of the proposal to approve.
     pub fn approve_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
-        caller.require_auth();
         Self::require_signer(&env, &caller)?;
 
         let mut proposal = Self::fetch_proposal(&env, id)?;
@@ -360,6 +381,11 @@ impl MultisigContract {
         if proposal.approvals.contains(&caller) {
             return Err(MultisigError::AlreadyApproved);
         }
+
+        let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
+            .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
+        let binding = Self::approval_auth_hash(&env, id, &action_hash, &caller);
+        caller.require_auth_for_args((binding.clone(),).into_val(&env));
 
         proposal.approvals.push_back(caller.clone());
 
@@ -421,6 +447,11 @@ impl MultisigContract {
         }
         // Payload-hash binding: prevents action swap between approval and execution
         if proposal.payload_hash != payload_hash {
+            return Err(MultisigError::PayloadHashMismatch);
+        }
+        let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
+            .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
+        if action_hash != Self::action_hash(&env, &proposal.action) {
             return Err(MultisigError::PayloadHashMismatch);
         }
 
@@ -528,6 +559,20 @@ impl MultisigContract {
         Self::fetch_proposal(&env, id)
     }
 
+    pub fn get_action_hash(env: Env, id: u64) -> Option<BytesN<32>> {
+        env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
+    }
+
+    /// Stamp the action hash on a legacy proposal. A signer must explicitly migrate each id.
+    pub fn migrate_proposal_security(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
+        caller.require_auth();
+        Self::require_signer(&env, &caller)?;
+        let proposal = Self::fetch_proposal(&env, id)?;
+        let hash = Self::action_hash(&env, &proposal.action);
+        env.storage().persistent().set(&MultisigDataKey::ActionHash(id), &hash);
+        Ok(())
+    }
+
     /// Returns the stored domain-separated approval binding hash for
     /// `(id, approver)`, if an approval was recorded.
     ///
@@ -566,7 +611,14 @@ impl MultisigContract {
     /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
     pub fn verify_approval_binding(env: Env, id: u64, approver: Address) -> bool {
         match Self::get_approval_binding(env.clone(), id, approver.clone()) {
-            Some(stored) => stored == Self::approval_auth_hash(&env, id, &approver),
+            Some(stored) => match Self::fetch_proposal(&env, id) {
+                Ok(proposal) => {
+                    let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
+                        .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
+                    stored == Self::approval_auth_hash(&env, id, &action_hash, &approver)
+                },
+                Err(_) => false,
+            },
             None => false,
         }
     }
@@ -586,7 +638,10 @@ impl MultisigContract {
     ///
     /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
     pub fn approval_binding_hash(env: Env, id: u64, approver: Address) -> BytesN<32> {
-        Self::approval_auth_hash(&env, id, &approver)
+        let proposal = Self::fetch_proposal(&env, id).unwrap();
+        let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
+            .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
+        Self::approval_auth_hash(&env, id, &action_hash, &approver)
     }
 
     /// Execute a set of passed proposals atomically.
@@ -672,6 +727,11 @@ impl MultisigContract {
             if proposal.payload_hash != payload_hash {
                 return Err(MultisigError::PayloadHashMismatch);
             }
+            let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
+                .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
+            if action_hash != Self::action_hash(&env, &proposal.action) {
+                return Err(MultisigError::PayloadHashMismatch);
+            }
 
             proposals.push_back(proposal);
         }
@@ -733,3 +793,6 @@ mod cancel_proposal_test;
 
 #[cfg(test)]
 mod approval_binding_test;
+
+#[cfg(test)]
+mod action_hash_binding_test;

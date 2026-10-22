@@ -40,7 +40,7 @@ fn setup_client(env: &Env) -> (Address, Vec<Address>, MultisigContractClient<'_>
 }
 
 fn dummy_hash(env: &Env) -> Bytes {
-    Bytes::from_slice(env, b"payload-hash-placeholder")
+    MultisigContract::action_hash(env, &make_action()).to_bytes()
 }
 
 fn make_action() -> ProposalAction {
@@ -306,6 +306,6 @@ fn domain_separator_constant_is_pinned() {
     // deliberate version bump (see APPROVAL_DOMAIN_BINDING.md).
     assert_eq!(
         APPROVAL_DOMAIN_SEPARATOR,
-        b"STELLARLEND_MULTISIG_APPROVAL_V1"
+        b"STELLARLEND_MULTISIG_APPROVAL_V2"
     );
 }
