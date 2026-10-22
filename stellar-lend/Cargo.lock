@@ -1907,6 +1907,7 @@ dependencies = [
 name = "stellarlend-multisig"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "soroban-sdk",
 ]
 

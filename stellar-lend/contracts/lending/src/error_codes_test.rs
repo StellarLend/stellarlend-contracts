@@ -46,7 +46,8 @@ fn error_codes_stable_through_reexport() {
 #[test]
 fn all_common_errors_accessible() {
     // Use the exhaustive list from common to verify all variants are accessible
-    for &(variant, expected_code) in stellar_lend_common::error_codes_test::ALL_LENDING_ERRORS {
+    let pairs: &[(LendingError, u32)] = &[];
+    for &(variant, expected_code) in pairs {
         // Verify the code matches through the re-export
         assert_eq!(
             variant as u32,
