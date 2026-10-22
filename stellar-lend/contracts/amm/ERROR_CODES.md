@@ -22,6 +22,8 @@ This document maps the `AmmPoolError` discriminants to their causes. These codes
 | 16 | `AmountBelowMinSwapIn` | Input (or flash `amount_out`) is below the admin-configured `min_swap_in` floor. |
 | 18 | `SlippageExceeded` | `add_liquidity` / `remove_liquidity` result is below `amount_*_min` or `min_shares`. |
 | 19 | `DeadlineExpired` | Ledger timestamp is past the caller-supplied `deadline`. |
+| 22 | `AlreadyInitialized` | The pool has already been initialized (one-shot initialization). |
+| 23 | `IdenticalTokens` | `token_a` and `token_b` must be distinct token addresses. |
 
 ## Example: Invariant Violation
 

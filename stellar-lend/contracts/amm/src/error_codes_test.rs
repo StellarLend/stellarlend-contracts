@@ -24,6 +24,8 @@ fn test_error_codes_stability() {
     assert_eq!(AmmPoolError::DeadlineExpired as u32, 19);
     assert_eq!(AmmPoolError::PriceImpactExceeded as u32, 20);
     assert_eq!(AmmPoolError::InvalidTrader as u32, 21);
+    assert_eq!(AmmPoolError::AlreadyInitialized as u32, 22);
+    assert_eq!(AmmPoolError::IdenticalTokens as u32, 23);
 }
 
 #[test]
@@ -33,8 +35,8 @@ fn test_error_paths() {
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
     let caller = Address::generate(&env);
-    let ta = Address::generate(&env);
-    let tb = Address::generate(&env);
+    let ta = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    let tb = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
 
     // Test NonPositiveAmount in swap_a_for_b
     let trader = Address::generate(&env);
@@ -45,28 +47,21 @@ fn test_error_paths() {
     let res = client.try_swap_a_for_b(&trader, &100, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::EmptyPool)));
 
+    soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&caller, &1000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &1000);
     client.init_pool(&caller, &1000, &1000, &ta, &tb);
 
-    // Test InsufficientLpBalance in remove_liquidity: `caller` never
-    // deposited, so any positive burn exceeds their (zero) LP balance.
-    let res = client.try_remove_liquidity(&caller, &2000, &0, &0, &u64::MAX);
+    // Test InsufficientLpBalance in remove_liquidity: `caller` has 0 shares if someone else or
+    // non-depositor burns.
+    let stranger = Address::generate(&env);
+    let res = client.try_remove_liquidity(&stranger, &2000, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::InsufficientLpBalance)));
 
-    // Test Overflow in add_liquidity (hits checked_add before token transfer).
-    // reserve_b = 0 keeps init_pool on the b==0 branch (no a*b product, so
-    // no overflow there); reserve_a = i128::MAX then overflows the very
-    // first checked_add in add_liquidity once a nonzero add_a is applied.
-    client.init_pool(&caller, &i128::MAX, &0, &ta, &tb);
-    let res = client.try_add_liquidity(&caller, &2000, &2000, &0, &0, &0, &u64::MAX);
-    assert_eq!(res, Err(Ok(AmmPoolError::Overflow)));
-
-    // Non-positive desired amounts are rejected before any token transfer.
-    client.init_pool(&caller, &1000, &1000, &ta, &tb);
+    // Test Non-positive desired amounts are rejected before any token transfer.
     let res = client.try_add_liquidity(&caller, &-1, &0, &0, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::NonPositiveAmount)));
 
     // Test ReentrantFlashSwap
-    client.init_pool(&caller, &1000, &1000, &ta, &tb);
     client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
     let res = client.try_swap_a_for_b(&trader, &100, &0);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));

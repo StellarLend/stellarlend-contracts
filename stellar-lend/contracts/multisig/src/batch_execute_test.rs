@@ -25,10 +25,12 @@ fn setup_multisig(env: &Env) -> (Address, Vec<Address>) {
     let s1 = Address::generate(env);
     let s2 = Address::generate(env);
     let s3 = Address::generate(env);
+    let s4 = Address::generate(env);
     let mut signers = Vec::new(env);
     signers.push_back(s1.clone());
     signers.push_back(s2.clone());
     signers.push_back(s3.clone());
+    signers.push_back(s4.clone());
 
     client.initialize(&signers, &2u32);
     (contract_id, signers)
