@@ -4,11 +4,11 @@
 //! across contract upgrades. See docs/EVENT_SCHEMA_VERSIONING.md for
 //! versioning policy and indexer integration guide.
 
-use soroban_sdk::{contracttype, Address, Env, String, Symbol};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Symbol};
 
 /// Current event schema version.
 /// Increment when making breaking changes to versioned event structs.
-pub const EVENT_SCHEMA_VERSION: u32 = 1;
+pub const EVENT_SCHEMA_VERSION: u32 = 2;
 
 // ─── Explicit protocol bounds ─────────────────────────────────────────────────
 
@@ -39,103 +39,100 @@ pub struct SchemaVersionEvent {
 }
 
 /// Emitted when a user deposits collateral.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DepositEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
     /// User depositing collateral.
+    #[topic]
     pub user: Address,
     /// Amount deposited.
     pub amount: i128,
     /// User's collateral balance after deposit.
     pub new_balance: i128,
-    /// Timestamp of the deposit (ledger timestamp).
-    pub timestamp: u64,
 }
 
 /// Emitted when a user withdraws collateral.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WithdrawEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
     /// User withdrawing collateral.
+    #[topic]
     pub user: Address,
     /// Amount withdrawn.
     pub amount: i128,
     /// User's collateral balance after withdrawal.
     pub new_balance: i128,
-    /// Timestamp of the withdrawal (ledger timestamp).
-    pub timestamp: u64,
 }
 
 /// Emitted when a user borrows against their collateral.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
     /// User borrowing funds.
+    #[topic]
     pub user: Address,
     /// Amount borrowed.
     pub amount: i128,
     /// User's debt principal after borrow (excluding accrued interest).
     pub new_debt: i128,
-    /// Timestamp of the borrow (ledger timestamp).
-    pub timestamp: u64,
 }
 
 /// Emitted when a user repays their debt.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepayEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
     /// User repaying debt.
+    #[topic]
     pub user: Address,
     /// Amount repaid.
     pub amount: i128,
     /// User's debt principal after repayment (excluding accrued interest).
     pub new_debt: i128,
-    /// Timestamp of the repayment (ledger timestamp).
-    pub timestamp: u64,
 }
 
 /// Emitted when a flash loan is initiated.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlashLoanEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
     /// Address that initiated the flash loan.
+    #[topic]
     pub initiator: Address,
     /// Address receiving the flash-loaned funds.
+    #[topic]
     pub receiver: Address,
     /// Asset being flash-loaned.
+    #[topic]
     pub asset: Address,
     /// Amount of the flash loan.
     pub amount: i128,
     /// Fee charged for the flash loan.
     pub fee: i128,
-    /// Timestamp of the flash loan (ledger timestamp).
-    pub timestamp: u64,
 }
 
 /// Emitted when a flash loan is repaid via `repay_flash_loan`.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlashLoanRepaidEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
     /// Address repaying the flash loan (the receiver contract).
+    #[topic]
     pub payer: Address,
     /// Asset being repaid.
+    #[topic]
     pub asset: Address,
     /// Amount repaid.
     pub amount: i128,
-    /// Timestamp of the repayment (ledger timestamp).
-    pub timestamp: u64,
 }
 
 /// Emit the schema version event during contract initialization.
@@ -155,10 +152,8 @@ pub fn emit_deposit(env: &Env, user: &Address, amount: i128, new_balance: i128) 
         user: user.clone(),
         amount,
         new_balance,
-        timestamp: env.ledger().timestamp(),
     };
-    env.events()
-        .publish((Symbol::new(env, "DepositEvent"),), event);
+    event.publish(env, (symbol_short!("Deposit"),));
 }
 
 /// Emit a withdraw event.
@@ -168,10 +163,8 @@ pub fn emit_withdraw(env: &Env, user: &Address, amount: i128, new_balance: i128)
         user: user.clone(),
         amount,
         new_balance,
-        timestamp: env.ledger().timestamp(),
     };
-    env.events()
-        .publish((Symbol::new(env, "WithdrawEvent"),), event);
+    event.publish(env, (symbol_short!("Withdraw"),));
 }
 
 /// Emit a borrow event.
@@ -181,10 +174,8 @@ pub fn emit_borrow(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         user: user.clone(),
         amount,
         new_debt,
-        timestamp: env.ledger().timestamp(),
     };
-    env.events()
-        .publish((Symbol::new(env, "BorrowEvent"),), event);
+    event.publish(env, (symbol_short!("Borrow"),));
 }
 
 /// Emit a repay event.
@@ -194,10 +185,8 @@ pub fn emit_repay(env: &Env, user: &Address, amount: i128, new_debt: i128) {
         user: user.clone(),
         amount,
         new_debt,
-        timestamp: env.ledger().timestamp(),
     };
-    env.events()
-        .publish((Symbol::new(env, "RepayEvent"),), event);
+    event.publish(env, (symbol_short!("Repay"),));
 }
 
 /// Emit a flash loan event.
@@ -216,10 +205,8 @@ pub fn emit_flash_loan(
         asset: asset.clone(),
         amount,
         fee,
-        timestamp: env.ledger().timestamp(),
     };
-    env.events()
-        .publish((Symbol::new(env, "FlashLoanEvent"),), event);
+    event.publish(env, (symbol_short!("FlashLoan"),));
 }
 
 /// Emit a flash loan repaid event.
@@ -229,10 +216,8 @@ pub fn emit_flash_loan_repaid(env: &Env, payer: &Address, asset: &Address, amoun
         payer: payer.clone(),
         asset: asset.clone(),
         amount,
-        timestamp: env.ledger().timestamp(),
     };
-    env.events()
-        .publish((Symbol::new(env, "FlashLoanRepaidEvent"),), event);
+    event.publish(env, (symbol_short!("FlashRepy"),));
 }
 
 /// Emitted when the admin updates the protocol-level debt ceiling.
@@ -567,4 +552,271 @@ pub fn emit_recovery_diagnostic(env: &Env, subsystem: String, retry_count: u32) 
         0,
         retry_count,
     );
+}
+
+// ─── Governance Events ────────────────────────────────────────────────────────
+
+/// Emitted when a new admin is proposed via `propose_admin`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdminProposedEvent {
+    pub schema_version: u32,
+    pub old_admin: Address,
+    pub proposed_admin: Address,
+}
+
+/// Emit an admin-proposed event.
+pub fn emit_admin_proposed(env: &Env, old_admin: &Address, proposed_admin: &Address) {
+    let event = AdminProposedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        old_admin: old_admin.clone(),
+        proposed_admin: proposed_admin.clone(),
+    };
+    event.publish(env, (symbol_short!("AdminProp"),));
+}
+
+/// Emitted when a proposed admin accepts via `accept_admin`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdminAcceptedEvent {
+    pub schema_version: u32,
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+
+/// Emit an admin-accepted event.
+pub fn emit_admin_accepted(env: &Env, old_admin: &Address, new_admin: &Address) {
+    let event = AdminAcceptedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+    };
+    event.publish(env, (symbol_short!("AdminAcct"),));
+}
+
+/// Emitted when asset isolation is configured via `set_asset_isolation`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetIsolationSetEvent {
+    pub schema_version: u32,
+    #[topic]
+    pub asset: Address,
+    pub isolated: bool,
+    pub isolation_debt_ceiling: i128,
+}
+
+/// Emit an asset-isolation-set event.
+pub fn emit_asset_isolation_set(
+    env: &Env,
+    asset: &Address,
+    isolated: bool,
+    isolation_debt_ceiling: i128,
+) {
+    let event = AssetIsolationSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        asset: asset.clone(),
+        isolated,
+        isolation_debt_ceiling,
+    };
+    event.publish(env, (symbol_short!("AssetIsoSet"),));
+}
+
+/// Emitted when deposit cap is updated via `set_deposit_cap`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DepositCapSetEvent {
+    pub schema_version: u32,
+    pub old_cap: i128,
+    pub new_cap: i128,
+}
+
+/// Emit a deposit-cap-set event.
+pub fn emit_deposit_cap_set(env: &Env, old_cap: i128, new_cap: i128) {
+    let event = DepositCapSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        old_cap,
+        new_cap,
+    };
+    event.publish(env, (symbol_short!("DepCapSet"),));
+}
+
+/// Emitted when rate parameters are updated via `set_rate_params`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateParamsSetEvent {
+    pub schema_version: u32,
+    pub base_rate_bps: i128,
+    pub slope1_bps: i128,
+    pub slope2_bps: i128,
+    pub optimal_util_bps: i128,
+}
+
+/// Emit a rate-params-set event.
+pub fn emit_rate_params_set(
+    env: &Env,
+    base_rate_bps: i128,
+    slope1_bps: i128,
+    slope2_bps: i128,
+    optimal_util_bps: i128,
+) {
+    let event = RateParamsSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        base_rate_bps,
+        slope1_bps,
+        slope2_bps,
+        optimal_util_bps,
+    };
+    event.publish(env, (symbol_short!("RateParam"),));
+}
+
+/// Emitted when liquidation threshold is updated via `set_liquidation_threshold_bps`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiquidationThresholdSetEvent {
+    pub schema_version: u32,
+    pub old_threshold_bps: i128,
+    pub new_threshold_bps: i128,
+}
+
+/// Emit a liquidation-threshold-set event.
+pub fn emit_liquidation_threshold_set(env: &Env, old_threshold_bps: i128, new_threshold_bps: i128) {
+    let event = LiquidationThresholdSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        old_threshold_bps,
+        new_threshold_bps,
+    };
+    event.publish(env, (symbol_short!("LiqThreshSet"),));
+}
+
+/// Emitted when insurance fund is funded via `fund_insurance`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InsuranceFundedEvent {
+    pub schema_version: u32,
+    pub amount: i128,
+    pub new_balance: i128,
+}
+
+/// Emit an insurance-funded event.
+pub fn emit_insurance_funded(env: &Env, amount: i128, new_balance: i128) {
+    let event = InsuranceFundedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        amount,
+        new_balance,
+    };
+    event.publish(env, (symbol_short!("InsFunded"),));
+}
+
+/// Emitted when insurance share is updated via `set_insurance_share`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InsuranceShareSetEvent {
+    pub schema_version: u32,
+    pub old_share_bps: i128,
+    pub new_share_bps: i128,
+}
+
+/// Emit an insurance-share-set event.
+pub fn emit_insurance_share_set(env: &Env, old_share_bps: i128, new_share_bps: i128) {
+    let event = InsuranceShareSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        old_share_bps,
+        new_share_bps,
+    };
+    event.publish(env, (symbol_short!("InsShareSet"),));
+}
+
+/// Emitted when liquidation grace period is updated via `set_liquidation_grace_period`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiquidationGracePeriodSetEvent {
+    pub schema_version: u32,
+    pub old_grace_secs: u64,
+    pub new_grace_secs: u64,
+}
+
+/// Emit a liquidation-grace-period-set event.
+pub fn emit_liquidation_grace_period_set(env: &Env, old_grace_secs: u64, new_grace_secs: u64) {
+    let event = LiquidationGracePeriodSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        old_grace_secs,
+        new_grace_secs,
+    };
+    event.publish(env, (symbol_short!("LiqGraceSet"),));
+}
+
+/// Emitted when a config key-value pair is set via `config_set`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigSetEvent {
+    pub schema_version: u32,
+    #[topic]
+    pub key: Symbol,
+}
+
+/// Emit a config-set event.
+pub fn emit_config_set(env: &Env, key: &Symbol) {
+    let event = ConfigSetEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        key: key.clone(),
+    };
+    event.publish(env, (symbol_short!("ConfigSet"),));
+}
+
+/// Emitted when a config backup is created via `config_backup`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigBackupEvent {
+    pub schema_version: u32,
+    #[topic]
+    pub name: Symbol,
+}
+
+/// Emit a config-backup event.
+pub fn emit_config_backup(env: &Env, name: &Symbol) {
+    let event = ConfigBackupEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        name: name.clone(),
+    };
+    event.publish(env, (symbol_short!("CfgBackup"),));
+}
+
+/// Emitted when a config backup is restored via `config_restore`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigRestoreEvent {
+    pub schema_version: u32,
+    #[topic]
+    pub name: Symbol,
+}
+
+/// Emit a config-restore event.
+pub fn emit_config_restore(env: &Env, name: &Symbol) {
+    let event = ConfigRestoreEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        name: name.clone(),
+    };
+    event.publish(env, (symbol_short!("CfgRestor"),));
+}
+
+/// Emitted when bad debt is increased during liquidation.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BadDebtIncreasedEvent {
+    pub schema_version: u32,
+    #[topic]
+    pub borrower: Address,
+    pub amount: i128,
+    pub new_total_bad_debt: i128,
+}
+
+/// Emit a bad-debt-increased event.
+pub fn emit_bad_debt_increased(env: &Env, borrower: &Address, amount: i128, new_total: i128) {
+    let event = BadDebtIncreasedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        borrower: borrower.clone(),
+        amount,
+        new_total_bad_debt: new_total,
+    };
+    event.publish(env, (symbol_short!("BadDebtInc"),));
 }

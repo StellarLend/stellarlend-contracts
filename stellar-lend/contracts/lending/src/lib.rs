@@ -184,8 +184,11 @@ use debt::{
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
 };
 use events::{
-    emit_borrow, emit_deposit, emit_flash_loan, emit_flash_loan_repaid, emit_repay,
-    emit_schema_version, emit_withdraw,
+    emit_admin_accepted, emit_admin_proposed, emit_asset_isolation_set, emit_bad_debt_increased,
+    emit_borrow, emit_config_backup, emit_config_restore, emit_config_set, emit_deposit,
+    emit_deposit_cap_set, emit_flash_loan, emit_flash_loan_repaid, emit_insurance_funded,
+    emit_insurance_share_set, emit_liquidation_grace_period_set, emit_liquidation_threshold_set,
+    emit_rate_params_set, emit_repay, emit_schema_version, emit_withdraw, EVENT_SCHEMA_VERSION,
 };
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
@@ -430,7 +433,9 @@ pub struct OraclePubKeySetEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidationEventV1 {
     pub schema_version: u32,
+    #[topic]
     pub liquidator: Address,
+    #[topic]
     pub borrower: Address,
     pub repaid: i128,
     pub seized: i128,
@@ -447,12 +452,16 @@ pub struct CrossLiquidationEvent {
     /// Schema version for forward-compatible decoding.
     pub schema_version: u32,
     /// Address that triggered the liquidation.
+    #[topic]
     pub liquidator: Address,
     /// Address whose position was liquidated.
+    #[topic]
     pub borrower: Address,
     /// Asset whose debt was repaid.
+    #[topic]
     pub debt_asset: Address,
     /// Asset whose collateral was seized.
+    #[topic]
     pub collateral_asset: Address,
     /// Debt amount repaid (in debt-asset raw units).
     pub repaid: i128,
@@ -461,37 +470,12 @@ pub struct CrossLiquidationEvent {
     /// Aggregate health factor of the position *before* this call.
     pub health_factor_before: i128,
     /// Shortfall that could not be covered by seized collateral (routed to
-    /// the insurance fund and/or `BadDebt`).
+    /// the insurance fund and/or `BadDect`).
     pub shortfall: i128,
 }
 
 /// Emitted by [`LendingContract::flash_loan`] when a flash loan is
 /// successfully disbursed. Carries the schema version, the borrowed amount,
-/// the fee charged, and the initiator/receiver addresses so off-chain
-/// indexers and monitoring can observe flash-loan activity.
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FlashLoanEvent {
-    pub schema_version: u32,
-    pub initiator: Address,
-    pub receiver: Address,
-    pub amount: i128,
-    pub fee: i128,
-}
-
-/// Emitted by [`LendingContract::repay_flash_loan`] when a flash loan is
-/// repaid (principal plus fee). Mirrors [`FlashLoanEvent`] so indexers can
-/// pair the disbursement and repayment legs.
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FlashLoanRepaidEvent {
-    pub schema_version: u32,
-    pub initiator: Address,
-    pub receiver: Address,
-    pub amount: i128,
-    pub fee: i128,
-}
-
 /// Emitted by [`LendingContract::write_off_bad_debt`] whenever a governed
 /// write-off completes.  Fields sum to `amount`:
 ///
@@ -729,7 +713,10 @@ pub struct AssetParamsSetEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossDepositEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -737,7 +724,10 @@ pub struct CrossDepositEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossBorrowEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -745,7 +735,10 @@ pub struct CrossBorrowEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossRepayEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -753,7 +746,10 @@ pub struct CrossRepayEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossWithdrawEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -1179,6 +1175,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
+        emit_admin_proposed(&env, &current_admin, &new_admin);
         Ok(())
     }
 
@@ -1189,6 +1186,7 @@ impl LendingContract {
     /// updated, and `PendingAdmin` is cleared.
     pub fn accept_admin(env: Env) -> Result<(), LendingError> {
         require_initialized(&env)?;
+        let old_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         let pending_admin: Address = env
             .storage()
             .instance()
@@ -1208,6 +1206,7 @@ impl LendingContract {
             None,
         );
 
+        emit_admin_accepted(&env, &old_admin, &pending_admin);
         Ok(())
     }
 
@@ -1424,7 +1423,7 @@ impl LendingContract {
         };
         env.storage()
             .persistent()
-            .set(&DataKey::AssetIsolation(asset), &config);
+            .set(&DataKey::AssetIsolation(asset.clone()), &config);
 
         // Record audit entry
         audit_log::record_audit_entry(
@@ -1434,6 +1433,7 @@ impl LendingContract {
             None,
         );
 
+        emit_asset_isolation_set(&env, &asset, isolated, isolation_debt_ceiling);
         Ok(())
     }
 
@@ -2415,11 +2415,7 @@ impl LendingContract {
                     env.storage()
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
-                    #[allow(deprecated)]
-                    env.events().publish(
-                        (Symbol::new(&env, "bad_debt"), borrower.clone()),
-                        residual,
-                    );
+                    emit_bad_debt_increased(&env, &borrower, residual, new_bad_debt);
                 }
                 final_seized = available_collateral;
             }
@@ -2617,9 +2613,11 @@ impl LendingContract {
         if !(0..=BPS_DENOM).contains(&threshold_bps) {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }
+        let old_threshold_bps = Self::liquidation_threshold_bps(&env);
         env.storage()
             .instance()
             .set(&DataKey::LiquidationThresholdBps, &threshold_bps);
+        emit_liquidation_threshold_set(&env, old_threshold_bps, threshold_bps);
         Ok(())
     }
 
@@ -2851,11 +2849,13 @@ impl LendingContract {
         if cap <= 0 {
             return Err(LendingError::InvalidDepositCap);
         }
+        let old_cap = Self::get_deposit_cap(env.clone());
         env.storage().persistent().set(&DataKey::DepositCap, &cap);
 
         // Record audit entry
         audit_log::record_audit_entry(&env, String::from_str(&env, "set_deposit_cap"), admin, None);
 
+        emit_deposit_cap_set(&env, old_cap, cap);
         Ok(())
     }
 
@@ -2896,6 +2896,13 @@ impl LendingContract {
         // Record audit entry
         audit_log::record_audit_entry(&env, String::from_str(&env, "set_rate_params"), admin, None);
 
+        emit_rate_params_set(
+            &env,
+            params.base_rate_bps,
+            params.multiplier_bps,
+            params.jump_multiplier_bps,
+            params.kink_utilization_bps,
+        );
         Ok(())
     }
 
@@ -3386,6 +3393,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::InsuranceFund, &new_balance);
+        emit_insurance_funded(&env, amount, new_balance);
         Ok(())
     }
 
@@ -3407,6 +3415,7 @@ impl LendingContract {
         if share_bps < 0 || share_bps > 10000 {
             return Err(LendingError::InvalidAmount);
         }
+        let old_share_bps = Self::get_insurance_share(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::InsuranceShareBps, &share_bps);
@@ -3419,6 +3428,7 @@ impl LendingContract {
             None,
         );
 
+        emit_insurance_share_set(&env, old_share_bps, share_bps);
         Ok(())
     }
 
@@ -3611,6 +3621,7 @@ impl LendingContract {
         if grace_secs > MAX_LIQUIDATION_GRACE_PERIOD_SECS {
             return Err(LendingError::InvalidLiquidationGracePeriod);
         }
+        let old_grace_secs = Self::get_liquidation_grace_period(env.clone());
         env.storage()
             .persistent()
             .set(&DataKey::LiquidationGracePeriodSecs, &grace_secs);
@@ -3623,6 +3634,7 @@ impl LendingContract {
             None,
         );
 
+        emit_liquidation_grace_period_set(&env, old_grace_secs, grace_secs);
         Ok(())
     }
 
@@ -3652,6 +3664,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::deposit_collateral_asset_internal(&env, &user, &asset, amount)?;
         CrossDepositEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user: user.clone(),
             asset,
             amount,
@@ -3673,6 +3686,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::borrow_asset_internal(&env, &user, &asset, amount)?;
         CrossBorrowEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user,
             asset,
             amount: result,
@@ -3693,6 +3707,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::repay_asset_internal(&env, &user, &asset, amount)?;
         CrossRepayEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user: user.clone(),
             asset,
             amount,
@@ -3715,6 +3730,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::withdraw_asset_internal(&env, &user, &asset, amount)?;
         CrossWithdrawEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user,
             asset,
             amount,
@@ -3927,11 +3943,15 @@ impl LendingContract {
             }
         }
         if !found {
-            entries.push_back(ConfigEntry { key, value });
+            entries.push_back(ConfigEntry {
+                key: key.clone(),
+                value,
+            });
         }
         env.storage()
             .instance()
             .set(&DataKey::ConfigEntries, &entries);
+        emit_config_set(&env, &key);
         Ok(())
     }
 
@@ -3960,14 +3980,15 @@ impl LendingContract {
             .unwrap_or_else(|| Vec::new(&env));
         env.storage()
             .instance()
-            .set(&DataKey::ConfigBackup(name), &entries);
+            .set(&DataKey::ConfigBackup(name.clone()), &entries);
+        emit_config_backup(&env, &name);
         Ok(())
     }
 
     pub fn config_restore(env: Env, name: Symbol) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
-        let backup_key = DataKey::ConfigBackup(name);
+        let backup_key = DataKey::ConfigBackup(name.clone());
         let entries: Vec<ConfigEntry> = env
             .storage()
             .instance()
@@ -3976,6 +3997,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::ConfigEntries, &entries);
+        emit_config_restore(&env, &name);
         Ok(())
     }
 }
