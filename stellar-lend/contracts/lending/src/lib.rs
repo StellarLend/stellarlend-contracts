@@ -1616,7 +1616,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
 
         let total_deposits: i128 = env
@@ -1664,7 +1664,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
         let key = DataKey::Collateral(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -1767,7 +1767,7 @@ impl LendingContract {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
@@ -1844,7 +1844,7 @@ impl LendingContract {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
@@ -1919,7 +1919,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
@@ -2036,7 +2036,7 @@ impl LendingContract {
 
             check_pause_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
-            require_no_active_flash_loan(&env);
+            require_no_active_flash_loan(&env)?;
             if uses_cross_asset_valuation(&env) {
                 let configured_debt_asset: Address = env
                     .storage()
@@ -2317,7 +2317,7 @@ impl LendingContract {
             }
 
             check_pause_status(&env, ProtocolAction::Liquidate);
-            require_no_active_flash_loan(&env);
+            require_no_active_flash_loan(&env)?;
 
             // ── 2. Validate both assets are configured ─────────────────────
             // (also implicitly validates they exist before any price lookup)
@@ -2678,7 +2678,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
@@ -2938,7 +2938,12 @@ impl LendingContract {
         Ok(())
     }
 
-    /// Repay function used by receiver during callback to return funds to the contract.
+    /// **DEPRECATED**: Repay function used by receiver during callback to return funds to the contract.
+    ///
+    /// **This function is deprecated.** New flash loan integrations should repay by
+    /// calling `token.transfer()` directly to send `amount + fee` to the contract.
+    /// The updated `flash_loan` verifies repayment via the contract's actual token balance.
+    ///
     /// Uses checked arithmetic to prevent overflow/underflow.
     ///
     /// Gated behind pause and emergency checks to prevent any flash-loan
@@ -2952,6 +2957,10 @@ impl LendingContract {
     ///   balance is less than `amount`.
     /// - [`LendingError::Overflow`] if the checked arithmetic on the payer
     ///   or treasury balance would overflow / underflow.
+    #[deprecated(
+        since = "2.0.0",
+        note = "Use token.transfer() to repay flash loans directly"
+    )]
     pub fn repay_flash_loan(
         env: Env,
         payer: Address,
@@ -2987,11 +2996,26 @@ impl LendingContract {
         Ok(())
     }
 
-    /// Issue a callback-based flash loan.
+    /// Issue a callback-based flash loan with real token transfers.
+    ///
+    /// The receiver gets `amount` tokens during the callback and must repay
+    /// `amount + fee` before this function returns. The fee is computed with
+    /// ceiling rounding so small loans always pay at least the minimum fee.
     ///
     /// Gated behind pause and emergency checks so that flash loans
     /// are blocked during granular pause, global pause, and emergency
     /// shutdown/recovery — just like deposit/borrow/repay/withdraw.
+    ///
+    /// # Errors
+    /// - [`LendingError::InsufficientLiquidity`] if the contract's token balance
+    ///   is less than `amount`.
+    /// - [`LendingError::FlashLoanUtilizationExceeded`] if `amount` exceeds
+    ///   the maximum flash-loan cap (`max_flash_bps` of available liquidity).
+    /// - [`LendingError::InsufficientRepayment`] if the contract's token balance
+    ///   after the callback is less than `balance_before + fee`.
+    /// - [`LendingError::FlashLoanReentrancy`] if a flash loan is already active.
+    /// - [`LendingError::InvalidAmount`] if `amount <= 0`.
+    /// - [`LendingError::Unauthorized`] if `receiver` equals the contract itself.
     pub fn flash_loan(
         env: Env,
         initiator: Address,
@@ -2999,56 +3023,77 @@ impl LendingContract {
         asset: Address,
         amount: i128,
         params: Bytes,
-    ) {
-        require_initialized(&env).expect("NotInitialized");
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::FlashLoan);
         check_emergency_status(&env, ProtocolAction::FlashLoan);
-        require_no_active_flash_loan(&env);
-
-        let tre_key = DataKey::Treasury(asset.clone());
-        let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-        if amount > tre_bal {
-            panic!("InsufficientLiquidity");
+        
+        // Check reentrancy guard
+        let active: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::FlashActive)
+            .unwrap_or(false);
+        if active {
+            return Err(LendingError::FlashLoanReentrancy);
         }
 
-        let max_flash_bps = Self::max_flash_bps_config(&env);
-        let max_flash_amount = tre_bal
-            .checked_mul(max_flash_bps)
-            .and_then(|value| value.checked_div(BPS_DENOM))
-            .expect("flash_loan: max-utilization calculation overflow");
-        if amount > max_flash_amount {
-            panic!("FlashLoanUtilizationExceeded");
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        // Prevent receiver from being the contract itself
+        if receiver == env.current_contract_address() {
+            return Err(LendingError::Unauthorized);
         }
 
         initiator.require_auth();
 
+        let token = TokenClient::new(&env, &asset);
+        let contract_address = env.current_contract_address();
+        
+        // Get current balance
+        let balance_before = token.balance(&contract_address);
+        
+        // Check liquidity - must have enough tokens minus amounts reserved for depositors
+        // For now, use simple balance check (coordinate with reserve invariant if needed)
+        if amount > balance_before {
+            return Err(LendingError::InsufficientLiquidity);
+        }
+
+        // Check utilization cap
+        let max_flash_bps = Self::max_flash_bps_config(&env);
+        let max_flash_amount = balance_before
+            .checked_mul(max_flash_bps)
+            .and_then(|value| value.checked_div(BPS_DENOM))
+            .ok_or(LendingError::Overflow)?;
+        if amount > max_flash_amount {
+            return Err(LendingError::FlashLoanUtilizationExceeded);
+        }
+
+        // Compute fee with ceiling rounding (so small loans pay at least 1)
         let fee_bps = Self::get_flash_fee_bps(&env);
         let fee = amount
             .checked_mul(fee_bps)
-            .map(|v| v / BPS_DENOM)
-            .expect("flash_loan: fee calculation overflow");
+            .ok_or(LendingError::Overflow)?;
+        // Ceiling division: (amount * fee_bps + BPS_DENOM - 1) / BPS_DENOM
+        let fee = fee
+            .checked_add(BPS_DENOM - 1)
+            .ok_or(LendingError::Overflow)?
+            / BPS_DENOM;
 
-        let new_tre_bal = tre_bal
-            .checked_sub(amount)
-            .expect("flash_loan: treasury underflow during transfer");
-        env.storage().persistent().set(&tre_key, &new_tre_bal);
+        // Transfer tokens to receiver
+        token.transfer(&contract_address, &receiver, &amount);
 
-        let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
-        let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
-        let new_rec_bal = rec_bal
-            .checked_add(amount)
-            .expect("flash_loan: receiver balance overflow");
-        env.storage().persistent().set(&rec_key, &new_rec_bal);
-
-        // Emit flash loan event before callback (rolled back atomically on panic).
-        // Placed here so FlashLoanEvent appears before FlashLoanRepaidEvent in logs.
+        // Emit flash loan event before callback (rolled back atomically on error).
         emit_flash_loan(&env, &initiator, &receiver, &asset, amount, fee);
 
+        // Set reentrancy guard
         env.storage().instance().set(&DataKey::FlashActive, &true);
 
+        // Invoke callback
         let method = Symbol::new(&env, "on_flash_loan");
-        // Call contract - if it panics, propagate
-        env.invoke_contract::<Val>(
+        let _result: Val = env.invoke_contract(
             &receiver,
             &method,
             soroban_sdk::vec![
@@ -3061,15 +3106,49 @@ impl LendingContract {
             ],
         );
 
+        // Clear reentrancy guard
         env.storage().instance().set(&DataKey::FlashActive, &false);
 
-        let final_tre: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-        let required_balance = tre_bal
+        // Verify repayment: balance must be >= balance_before + fee
+        let balance_after = token.balance(&contract_address);
+        let required_balance = balance_before
             .checked_add(fee)
-            .expect("flash_loan: fee addition overflow");
-        if final_tre < required_balance {
-            panic!("InsufficientRepayment");
+            .ok_or(LendingError::Overflow)?;
+        
+        if balance_after < required_balance {
+            return Err(LendingError::InsufficientRepayment);
         }
+
+        // Route the fee to the insurance fund or reserves based on InsuranceShareBps
+        let insurance_share_bps: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::InsuranceShareBps)
+            .unwrap_or(0);
+        
+        if insurance_share_bps > 0 && insurance_share_bps <= BPS_DENOM {
+            let insurance_portion = fee
+                .checked_mul(insurance_share_bps)
+                .and_then(|v| v.checked_div(BPS_DENOM))
+                .unwrap_or(0);
+            
+            if insurance_portion > 0 {
+                let current_insurance: i128 = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::InsuranceFund)
+                    .unwrap_or(0);
+                let new_insurance = current_insurance
+                    .checked_add(insurance_portion)
+                    .ok_or(LendingError::Overflow)?;
+                env.storage()
+                    .instance()
+                    .set(&DataKey::InsuranceFund, &new_insurance);
+            }
+        }
+        // The remainder stays in the contract balance as protocol reserves
+
+        Ok(())
     }
 
     pub fn get_position(env: Env, user: Address) -> PositionSummary {
@@ -4002,7 +4081,7 @@ impl LendingContract {
     }
 }
 
-/// Panics if a flash loan is currently in progress.
+/// Returns an error if a flash loan is currently in progress.
 ///
 /// All state-mutating user operations (`deposit`, `withdraw`, `borrow`,
 /// `borrow_against_collateral`, `repay`, `repay_against_collateral`,
@@ -4012,15 +4091,16 @@ impl LendingContract {
 /// The `FlashActive` flag is set by [`flash_loan`] before the external
 /// callback and cleared after it returns.  On revert, Soroban's atomic
 /// transaction rollback restores the flag to `false`.
-fn require_no_active_flash_loan(env: &Env) {
+fn require_no_active_flash_loan(env: &Env) -> Result<(), LendingError> {
     let active: bool = env
         .storage()
         .instance()
         .get(&DataKey::FlashActive)
         .unwrap_or(false);
     if active {
-        panic!("FlashLoanReentrancy");
+        return Err(LendingError::FlashLoanReentrancy);
     }
+    Ok(())
 }
 
 pub(crate) fn settle_and_accrue_insurance(
