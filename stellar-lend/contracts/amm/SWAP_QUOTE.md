@@ -106,9 +106,8 @@ and leaves reserves `(1 050 000, 1 905 034)` — identical to the quote.
 ## Edge-case notes
 
 ### Zero reserves
-The live swap paths panic on an empty pool.  `get_swap_quote` returns
-`Err(AmmPoolError::EmptyPool)` instead, allowing callers to handle the
-condition without catching a Soroban contract-abort signal.
+Both the live swap paths and `get_swap_quote` return
+`Err(AmmPoolError::EmptyPool)` on an empty pool.
 
 ### Large amounts near pool depletion
 The Uniswap-v2 constant-product formula guarantees
@@ -125,12 +124,17 @@ when the admin has called `set_fee_bps(0)`.
 `get_swap_quote` reads the current pool reserves from storage at the time
 of the call.  If another transaction changes the pool between the quote and
 the swap, the quoted `amount_out` will differ from the actual result.
-Callers should use the slippage guard (`amount_out_min`) on the live swap
-to protect against staleness.
+Callers should pass the quote (less their tolerance) as `min_amount_out` to
+the live swap: `swap_a_for_b(trader, amount_in, min_amount_out)` fails with
+`AmmPoolError::SlippageExceeded` and moves nothing when the output is lower.
+
+Quote and live swap share one math helper (`compute_swap_out`), so on an
+unchanged pool the quoted `amount_out` equals the realised output exactly.
 
 ### No price-impact guard
-The live `swap_a_for_b` path enforces the admin-configured `max_impact_bps`
-guard and reverts if the impact is exceeded.  `get_swap_quote` does **not**
+The live swap paths (both directions) enforce the admin-configured
+`max_impact_bps` guard and fail with `AmmPoolError::PriceImpactExceeded` if
+the impact is exceeded.  `get_swap_quote` does **not**
 apply this guard; it returns the raw constant-product projection regardless
 of configured impact limits.  This is intentional: the quote is a pure math
 projection, not an authorization check.

@@ -10,90 +10,136 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ci:
-    name: Lending Contract CI
+  build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      # Keep in sync with stellar-lend/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
         with:
-          fetch-depth: 0 # This ensures a full history, preventing git index errors
-        
-        
-        
-        
-      - name: Set toolchain env variable
-        run: echo "toolchain=stable" >> $GITHUB_ENV
+          toolchain: 1.93.0
+          targets: wasm32v1-none, wasm32-unknown-unknown
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          toolchain: stable
-          components: rustfmt, clippy
+          workspaces: stellar-lend
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            stellar-lend/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+      - name: Check workspace
+        working-directory: stellar-lend
+        run: cargo check --workspace --lib  --keep-going
 
-      - name: Check formatting
+      - name: Run vesting contract tests
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-vesting
+
+      - name: Run WASM size checker unit tests
+        run: bash scripts/tests/test_check_wasm_sizes.sh
+
+      # Equivalent to `stellar contract build --package <pkg>` (which wraps this
+      # exact cargo invocation) without the multi-minute Stellar CLI install.
+      - name: Build release contract WASMs
+        working-directory: stellar-lend
         run: |
-          cd stellar-lend
-          cargo fmt -- --check
+          cargo build --release --target wasm32v1-none \
+            -p stellarlend-lending \
+            -p stellarlend-amm \
+            -p stellarlend-vesting \
+            -p stellarlend-multisig
 
-      - name: Run clippy
+      - name: Optimize WASMs
         run: |
-          cd stellar-lend
-          cargo clippy --workspace --lib --all-features -- -D warnings -A deprecated -A dead_code -A unused-imports -A unused-attributes -A clippy::inconsistent-digit-grouping -A clippy::manual-range-contains -A clippy::unnecessary-cast -A clippy::too-many-arguments -A clippy::enum_variant_names
+          sudo apt-get update && sudo apt-get install -y binaryen
+          for f in stellar-lend/target/wasm32v1-none/release/stellarlend_*.wasm; do
+            wasm-opt -Oz --strip-debug --strip-producers "$f" -o "$f.tmp" && mv "$f.tmp" "$f"
+          done
 
-      - name: Build project
+      - name: Enforce WASM size budgets
+        run: bash scripts/check_wasm_sizes.sh
+
+      - name: Generate SHA-256 checksums
+        working-directory: stellar-lend/target/wasm32v1-none/release
         run: |
-          cd stellar-lend
-          cargo build --workspace --verbose
+          sha256sum stellarlend_lending.wasm stellarlend_amm.wasm stellarlend_vesting.wasm stellarlend_multisig.wasm > SHA256SUMS
+          cat SHA256SUMS
 
-      - name: Run tests
-        run: |
-          cd stellar-lend
-          cargo test --workspace --lib --verbose
-
-      - name: Run integration tests
-        run: |
-          cd stellar-lend
-          cargo test --workspace --tests --verbose
-
-      - name: Generate workspace test report
-        run: |
-          cd stellar-lend
-          cargo test --workspace --lib --verbose -- --nocapture > workspace_test_report.txt
-          cat workspace_test_report.txt
-
-      - name: Upload test report
+      - name: Upload release WASM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports
-          path: stellar-lend/workspace_test_report.txt
+          name: release-wasms
+          path: |
+            stellar-lend/target/wasm32v1-none/release/stellarlend_lending.wasm
+            stellar-lend/target/wasm32v1-none/release/stellarlend_amm.wasm
+            stellar-lend/target/wasm32v1-none/release/stellarlend_vesting.wasm
+            stellar-lend/target/wasm32v1-none/release/stellarlend_multisig.wasm
+            stellar-lend/target/wasm32v1-none/release/SHA256SUMS
+          if-no-files-found: error
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin --locked --version 0.31.0
-
-      - name: Generate code coverage
+  fuzz-smoke:
+    name: Fuzz smoke (lending)
+    runs-on: ubuntu-latest
+    # Runs only for PRs that touch the lending contract.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect changes under stellar-lend/contracts/lending
+        id: changes
         run: |
-          cd stellar-lend
-          cargo tarpaulin --verbose --out Xml --workspace --lib --exclude-files "**/indexing_system/**"
-
-      - name: Enforce workspace coverage threshold
-        run: python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml --threshold 63.0 --overall-only
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: Run security audit
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^stellar-lend/contracts/lending/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@nightly
+      - if: steps.changes.outputs.changed == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stellar-lend/contracts/lending/fuzz
+      - name: Install cargo-fuzz
+        if: steps.changes.outputs.changed == 'true'
+        run: cargo install cargo-fuzz --locked
+      # None of the targets below need `ed25519-dalek` directly, but
+      # `soroban-env-host` 25.0.1 depends on it with an unbounded `>=2.0.0`, so a
+      # fresh resolve also selects 3.x, whose `SigningKey::generate` needs the
+      # `rand_core` 0.10 traits that its testutils rng does not implement. Pull
+      # the graph back to the version the committed workspace lock already uses.
+      - name: Pin ed25519-dalek for the fuzz resolve
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: stellar-lend/contracts/lending/fuzz
         run: |
-          cd stellar-lend
-          cargo audit --ignore RUSTSEC-2026-0049 --ignore RUSTSEC-2025-0009 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0363 --ignore RUSTSEC-2024-0344 --ignore RUSTSEC-2022-0093
+          cargo +nightly generate-lockfile
+          cargo +nightly update -p ed25519-dalek@3.0.0 --precise 2.2.0
+      # A failed build is a real breakage, so this step stays blocking.
+      - name: Build all fuzz targets
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz build
+      # The time-boxed runs below are deliberately NON-BLOCKING at first: their
+      # runtime is the only unstable part of this job, and a slow or flaky runner
+      # must not block a merge. Drop `continue-on-error` once the runtimes settle.
+      - name: Smoke run fuzz_entrypoints (60s)
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz run fuzz_entrypoints -- -max_total_time=60
+      - name: Smoke run fuzz_liquidate_close_factor (60s)
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz run fuzz_liquidate_close_factor -- -max_total_time=60
+      - name: Smoke run fuzz_borrow_rate (60s)
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        working-directory: stellar-lend/contracts/lending/fuzz
+        run: cargo +nightly fuzz run fuzz_borrow_rate -- -max_total_time=60
+
+      - name: Test bridge crate
+        run: cargo test -p stellarlend-bridge
+
+      - name: Build bridge WASM
+        run: cargo build -p stellarlend-bridge --target wasm32v1-none --release

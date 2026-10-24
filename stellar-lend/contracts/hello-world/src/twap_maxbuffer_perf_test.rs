@@ -81,7 +81,7 @@ mod tests {
             "returned snapshot must be the last one at or before target_start"
         );
 
-        assert_eq!(get_twap(&env, &asset, short_window), PRICE_SCALE);
+        assert_eq!(get_twap(&env, &asset, short_window).unwrap(), PRICE_SCALE);
     }
 
     /// On a full ring, a long-window lookup near the head still stays within the same budget
@@ -108,7 +108,7 @@ mod tests {
         assert!(start_snap.timestamp <= target_start);
         assert_eq!(start_snap.timestamp, SNAPSHOT_INTERVAL_SECS);
 
-        assert_eq!(get_twap(&env, &asset, long_window), PRICE_SCALE);
+        assert_eq!(get_twap(&env, &asset, long_window).unwrap(), PRICE_SCALE);
     }
 
     /// Targets that fall between two snapshots resolve immediately to the lower bound and do not

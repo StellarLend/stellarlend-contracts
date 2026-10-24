@@ -2,13 +2,14 @@
 //!
 //! `repay` must guarantee:
 //!   1. Exact repayment → remaining debt is exactly 0.
-//!   2. Overpayment    → remaining debt is clamped to 0, never negative.
-//!   3. No prior debt  → calling repay returns 0 and does not create negative debt.
+//!   2. Overpayment    → `LendingError::RepayAmountTooHigh` is returned; debt unchanged.
+//!   3. No prior debt  → calling repay returns `LendingError::InvalidAmount`
+//!      (zero-principal settle falls through to InvalidAmount guard).
 //!   4. `get_position` and `get_debt_position` never expose a negative debt value.
 //!
-//! See `docs/ZERO_AMOUNT_SEMANTICS.md` for the canonical protocol semantics.
+//! See `docs/REPAY_SEMANTICS.md` for the canonical protocol semantics.
 
-use crate::{LendingContract, LendingContractClient};
+use crate::{LendingContract, LendingContractClient, LendingError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup() -> (Env, LendingContractClient<'static>, Address) {
@@ -69,69 +70,53 @@ fn repay_partial_leaves_positive_remainder() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Overpayment clamped to zero
+// 2. Overpayment → RepayAmountTooHigh
 // ---------------------------------------------------------------------------
 
-/// Paying more than the outstanding principal clamps debt to zero; the return
-/// value must be 0, never negative.
+/// Paying more than the outstanding principal returns `RepayAmountTooHigh`;
+/// the position is left unchanged.
 #[test]
-fn repay_overpay_clamps_to_zero_not_negative() {
+fn repay_overpay_returns_repay_amount_too_high() {
     let (_env, client, user) = setup();
     client.deposit(&user, &200);
     client.borrow(&user, &100);
 
-    // Repay 3× the outstanding principal
-    let remaining = client.repay(&user, &300);
+    // Repay 3× the outstanding principal — must error, not clamp.
+    let result = client.try_repay(&user, &300);
+    assert!(
+        matches!(result, Err(Ok(LendingError::RepayAmountTooHigh))),
+        "overpay must return RepayAmountTooHigh, got: {:?}",
+        result
+    );
 
-    assert_eq!(remaining, 0, "overpay must return 0, not a negative value");
+    // Position must be unchanged.
     assert_eq!(
         client.get_position(&user).debt,
-        0,
-        "get_position must report 0 after overpay"
+        100,
+        "debt must remain 100 after a rejected overpay"
     );
     assert_eq!(
         client.get_debt_position(&user).principal,
-        0,
-        "raw debt principal must be 0 after overpay clamp"
+        100,
+        "raw principal must remain 100 after a rejected overpay"
     );
 }
 
-/// Paying i128::MAX when debt is small must also clamp cleanly to zero.
+/// Paying i128::MAX when debt is small must also return RepayAmountTooHigh.
 #[test]
-fn repay_max_amount_when_small_debt_clamps_to_zero() {
+fn repay_max_amount_when_small_debt_returns_error() {
     let (_env, client, user) = setup();
     client.deposit(&user, &10);
     client.borrow(&user, &1);
 
-    let remaining = client.repay(&user, &i128::MAX);
-
-    assert_eq!(remaining, 0, "max overpay must return 0 remaining debt");
-    assert_eq!(client.get_position(&user).debt, 0);
-}
-
-// ---------------------------------------------------------------------------
-// 3. Repay with no prior debt
-// ---------------------------------------------------------------------------
-
-/// A user who has never borrowed still gets 0 back from repay — no credit
-/// balance (negative debt) must ever be created.
-#[test]
-fn repay_when_no_debt_exists_returns_zero() {
-    let (_env, client, user) = setup();
-
-    let remaining = client.repay(&user, &50);
-
-    assert_eq!(remaining, 0, "repay with no debt must return 0");
-    assert_eq!(
-        client.get_position(&user).debt,
-        0,
-        "get_position must report 0 for a user who never borrowed"
+    let result = client.try_repay(&user, &i128::MAX);
+    assert!(
+        matches!(result, Err(Ok(LendingError::RepayAmountTooHigh))),
+        "max overpay must return RepayAmountTooHigh, got: {:?}",
+        result
     );
-    assert_eq!(
-        client.get_debt_position(&user).principal,
-        0,
-        "principal must remain 0 when no debt was ever created"
-    );
+    // Debt must remain unchanged.
+    assert_eq!(client.get_position(&user).debt, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,28 +160,29 @@ fn get_debt_position_principal_is_never_negative() {
 
     client.deposit(&user, &200);
     client.borrow(&user, &100);
-    client.repay(&user, &999); // overpay
+    // Exact repay — should not go negative.
+    client.repay(&user, &100);
 
     assert!(
         client.get_debt_position(&user).principal >= 0,
-        "principal must be >= 0 after overpay"
+        "principal must be >= 0 after exact repay"
     );
 }
 
 /// The total-debt protocol counter must never go negative after a series of
-/// borrows and overpayments.
+/// borrows and exact repayments.
 #[test]
-fn total_debt_metric_never_negative_after_overpay() {
+fn total_debt_metric_never_negative_after_exact_repay() {
     let (_env, client, user) = setup();
     client.deposit(&user, &200);
     client.borrow(&user, &100);
 
-    // Overpay
-    client.repay(&user, &9999);
+    // Exact repay — safe.
+    client.repay(&user, &100);
 
     let metrics = client.get_protocol_metrics();
     assert!(
         metrics.total_borrow >= 0,
-        "total_borrow metric must not go negative after overpay"
+        "total_borrow metric must not go negative after repay"
     );
 }

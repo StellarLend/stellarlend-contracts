@@ -1,110 +1,143 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Bytes, BytesN, Env, Map, Vec};
+use stellar_lend_common::ttl;
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    Map, Vec,};
 
-// ---------------------------------------------------------------------------
-// Domain-separation constant for quorum-proof payloads (issue #1146).
-// Changing this value invalidates all existing guardian/quorum signatures.
-// ---------------------------------------------------------------------------
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
-const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
-const UNPAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_UNPAUSE:";
+pub const GUARDIAN_ACTION_DOMAIN: &[u8] = b"stellarlend::bridge::guardian_action::v1";
 
-/// Minimum and maximum number of unique validators allowed in a set.
+/// Domain separator for inbound message IDs (issue #1901).
+///
+/// Every inbound message is identified by hashing:
+///
+/// ```text
+/// SHA-256( INBOUND_MSG_DOMAIN
+///          || source_domain_hash (32 bytes)
+///          || nonce (8 bytes LE) )
+/// ```
+///
+/// This prevents replay across chains, networks, and contracts.
+pub const INBOUND_MSG_DOMAIN: &[u8] = b"stellarlend::bridge::inbound_msg::v1";
+
+/// Domain separator for source-domain hashing.
+pub const SOURCE_DOMAIN_SEPARATOR: &[u8] = b"stellarlend::bridge::source_domain::v1";
+
 const MIN_VALIDATORS: u32 = 1;
 const MAX_VALIDATORS: u32 = 64;
 
-// ---------------------------------------------------------------------------
-// Error codes
-// ---------------------------------------------------------------------------
+/// Maximum number of registered source domains.  This bounds storage
+/// growth and iteration cost for administrative queries.
+pub const MAX_SOURCE_DOMAINS: u32 = 256;
+
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BridgeError {
-    /// Nonce overflow: destination nonce has reached u64::MAX.
     NonceOverflow = 1,
-    /// The proposed validator set has fewer than MIN_VALIDATORS unique entries.
     ValidatorSetTooSmall = 2,
-    /// The proposed validator set has more than MAX_VALIDATORS unique entries.
     ValidatorSetTooLarge = 3,
-    /// The proposed validator set contains duplicate public-key bytes.
     DuplicateValidatorKey = 4,
-    /// The supplied epoch is not exactly current_epoch + 1.
     InvalidEpoch = 5,
-    /// The message was signed by a retired (rotated-out) validator set.
     RetiredEpoch = 6,
-    /// The quorum proof contains no entries.
     EmptyProofs = 7,
-    /// The quorum proof vector is larger than the current validator set.
     ProofVectorTooLarge = 8,
-    /// The quorum proof contains a duplicate signer entry.
     DuplicateProofSigner = 9,
-    /// A proof entry's public key is not in the current validator set.
     SignerNotInValidatorSet = 10,
-    /// Insufficient unique active signatures to meet the supermajority threshold.
     InsufficientQuorum = 11,
-    /// No guardian is configured.
     NoGuardianConfigured = 12,
-    /// The guardian signature did not verify.
     InvalidGuardianSignature = 13,
-    /// The target validator is not in the current set.
     UnknownValidator = 14,
-    /// The validator is already paused.
     AlreadyPaused = 15,
-    /// The validator is not currently paused.
     NotPaused = 16,
-    /// Pausing would leave the bridge with no achievable quorum.
     PauseWouldBreakQuorum = 17,
-    /// The per-window inbound cap has been reached.
     InboundCapExceeded = 18,
-    /// The per-window outbound cap has been reached.
     OutboundCapExceeded = 19,
-    /// window_size must be > 0.
     InvalidWindowSize = 20,
-    /// Arithmetic overflow in window total.
     WindowTotalOverflow = 21,
-    /// Churn limit exceeded.
     ChurnLimitExceeded = 22,
+    /// The source domain is not registered; rejected at admission.
+    UnregisteredSource = 23,
+    /// The inbound message has already been consumed (replay detected).
+    MessageAlreadyConsumed = 24,
+    /// The nonce does not match the expected next nonce for this source
+    /// (out-of-order or gap detected).  The message is rejected without
+    /// mutating balances or burning the message.
+    UnexpectedNonce = 25,
+    /// The admin has not been initialised or the caller is not the admin.
+    NotAdmin = 26,
+    /// Too many source domains registered (storage limit).
+    SourceDomainLimitReached = 27,
 }
 
-// ---------------------------------------------------------------------------
-// Storage key enum — every persisted field has a named variant.
-// ---------------------------------------------------------------------------
+/// Identifies the origin of an inbound bridge message.
+///
+/// Composed of three domain fields so that messages from different chains,
+/// network passphrases, or contracts cannot be confused:
+///
+/// - `chain_id`            – numeric identifier of the source chain.
+/// - `network_passphrase`  – network passphrase of the source deployment.
+/// - `contract_id`         – address of the source-side bridge contract.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceDomain {
+    pub chain_id: u32,
+    pub network_passphrase: Bytes,
+    pub contract_id: Bytes,
+}
+
+/// Maximum `signed_epoch` value an inbound message may carry, expressed as
+/// an offset above the bridge's current `epoch`.
+///
+/// With a value of `0` the bridge requires **strict equality**: only an
+/// inbound message bearing exactly [`Bridge::epoch`] is admitted.
+///
+/// Epochs are monotonically incremented discrete sequence numbers, not
+/// physical timestamps, so there is no realistic "clock skew" to absorb.
+/// A positive tolerance is a security regression because it would admit
+/// messages supposedly signed by a not-yet-rotated validator set — and
+/// once that future epoch arrives, those messages could be replayed.
+///
+/// This constant is `pub` so that tests, off-chain tooling, and audit
+/// reviewers can refer to the exact value the binary encodes; changing
+/// it is a security-sensitive decision and must be paired with a test
+/// update.
+pub const INBOUND_EPOCH_TOLERANCE: u64 = 0;
+
+/// Ledger storage key for the outbound nonce map.
 #[contracttype]
 pub enum BridgeDataKey {
-    /// Maps destination network ID (u32) to its next outbound nonce (u64).
     OutboundNonces,
-    /// Current validator set: Vec<BytesN<32>> (ed25519 public keys).
     Validators,
-    /// Set of paused validator public keys: Map<BytesN<32>, bool>.
     PausedValidators,
-    /// Current epoch (u64).
     Epoch,
-    /// Per-deployment bridge identifier: Bytes.
     BridgeId,
-    /// Optional guardian public key: stored as BytesN<32>, absent = no guardian.
     Guardian,
-    /// Optional max-churn limit per rotation (u32).
     MaxChurn,
-    /// Maximum inbound value per window (i128). 0 = fail-closed.
     MaxPerWindow,
-    /// Inbound window duration in ledger-time units (u64).
     WindowSize,
-    /// Start time of the current inbound window (u64).
     WindowStart,
-    /// Cumulative inbound total in the current window (i128).
     WindowInboundTotal,
-    /// Maximum outbound value per window (i128). 0 = fail-closed.
     MaxOutboundPerWindow,
-    /// Outbound window duration in ledger-time units (u64).
     OutboundWindowSize,
-    /// Start time of the current outbound window (u64).
     OutboundWindowStart,
-    /// Cumulative outbound total in the current window (i128).
     WindowOutboundTotal,
+    /// Admin address for privileged operations (source domain management).
+    Admin,
+    /// Whether a source domain is registered.  The key carries the
+    /// SHA-256 hash of the source domain fields.
+    SourceRegistered(BytesN<32>),
+    /// Per-source-domain inbound nonce.  Stores the next expected
+    /// nonce value for a given source domain.
+    InboundNonce(BytesN<32>),
+    /// Marker written after an inbound message has been consumed.
+    /// The key is the domain-separated message ID.
+    ConsumedInboundMessage(BytesN<32>),
+    /// `Vec<u32>` count of registered source domains (bounds iteration).
+    SourceDomainCount,
+    /// Monotonic nonce for guardian actions.
+    GuardianNonce,
 }
 
-// ---------------------------------------------------------------------------
-// Event type emitted on outbound messages
-// ---------------------------------------------------------------------------
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundMessageEvent {
@@ -112,16 +145,26 @@ pub struct OutboundMessageEvent {
     pub nonce: u64,
 }
 
-// ---------------------------------------------------------------------------
-// Contract definition
-// ---------------------------------------------------------------------------
-/// Bridge contract — all state lives in env.storage().
+/// Event emitted when an inbound message is successfully consumed.
+///
+/// Topics: `("inbound_msg", "consumed")`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InboundMessageConsumedEvent {
+    /// Domain-separated message ID that was consumed.
+    pub message_id: BytesN<32>,
+    /// The source domain that sent the message.
+    pub source: SourceDomain,
+    /// The nonce consumed from that source.
+    pub nonce: u64,
+}
+
 #[contract]
 pub struct Bridge;
 
-// ---------------------------------------------------------------------------
-// Private storage helpers
-// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod ttl_test;
+
 impl Bridge {
     fn load_nonces(env: &Env) -> Map<u32, u64> {
         env.storage()
@@ -129,171 +172,248 @@ impl Bridge {
             .get::<BridgeDataKey, Map<u32, u64>>(&BridgeDataKey::OutboundNonces)
             .unwrap_or_else(|| Map::new(env))
     }
-
     fn save_nonces(env: &Env, nonces: &Map<u32, u64>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::OutboundNonces, nonces);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundNonces, nonces);
     }
-
     fn load_validators(env: &Env) -> Vec<BytesN<32>> {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, Vec<BytesN<32>>>(&BridgeDataKey::Validators)
             .unwrap_or_else(|| Vec::new(env))
     }
-
     fn save_validators(env: &Env, validators: &Vec<BytesN<32>>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Validators, validators);
+        ttl::set_persistent(&env, &BridgeDataKey::Validators, validators);
     }
-
     fn load_paused(env: &Env) -> Map<BytesN<32>, bool> {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, Map<BytesN<32>, bool>>(&BridgeDataKey::PausedValidators)
             .unwrap_or_else(|| Map::new(env))
     }
-
     fn save_paused(env: &Env, paused: &Map<BytesN<32>, bool>) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::PausedValidators, paused);
+        ttl::set_persistent(&env, &BridgeDataKey::PausedValidators, paused);
     }
-
     fn load_epoch(env: &Env) -> u64 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, u64>(&BridgeDataKey::Epoch)
             .unwrap_or(0)
     }
-
-    fn save_epoch(env: &Env, epoch: u64) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::Epoch, &epoch);
+    pub(crate) fn save_epoch(env: &Env, epoch: u64) {
+        ttl::set_persistent(&env, &BridgeDataKey::Epoch, &epoch);
     }
-
     fn load_bridge_id(env: &Env) -> Bytes {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, Bytes>(&BridgeDataKey::BridgeId)
             .unwrap_or_else(|| Bytes::new(env))
     }
-
     fn save_bridge_id(env: &Env, id: &Bytes) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::BridgeId, id);
+        ttl::set_persistent(&env, &BridgeDataKey::BridgeId, id);
     }
-
     fn load_guardian(env: &Env) -> Option<BytesN<32>> {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, BytesN<32>>(&BridgeDataKey::Guardian)
     }
-
     fn save_guardian(env: &Env, pk: &BytesN<32>) {
+        ttl::set_persistent(&env, &BridgeDataKey::Guardian, pk);
+    }
+    fn load_guardian_nonce(env: &Env) -> u64 {
         env.storage()
             .persistent()
-            .set(&BridgeDataKey::Guardian, pk);
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::GuardianNonce)
+            .unwrap_or(0)
     }
-
+    fn save_guardian_nonce(env: &Env, nonce: u64) {
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::GuardianNonce, &nonce);
+    }
     fn load_max_churn(env: &Env) -> Option<u32> {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, u32>(&BridgeDataKey::MaxChurn)
     }
-
     fn save_max_churn(env: &Env, limit: u32) {
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::MaxChurn, &limit);
+        ttl::set_persistent(&env, &BridgeDataKey::MaxChurn, &limit);
     }
-
     fn remove_max_churn(env: &Env) {
-        env.storage()
-            .persistent()
-            .remove(&BridgeDataKey::MaxChurn);
+        env.storage().persistent().remove(&BridgeDataKey::MaxChurn);
     }
-
     fn load_max_per_window(env: &Env) -> i128 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, i128>(&BridgeDataKey::MaxPerWindow)
             .unwrap_or(0)
     }
-
     fn load_window_size(env: &Env) -> u64 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, u64>(&BridgeDataKey::WindowSize)
             .unwrap_or(0)
     }
-
     fn load_window_start(env: &Env) -> u64 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, u64>(&BridgeDataKey::WindowStart)
             .unwrap_or(0)
     }
-
     fn load_window_inbound_total(env: &Env) -> i128 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, i128>(&BridgeDataKey::WindowInboundTotal)
             .unwrap_or(0)
     }
-
     fn load_max_outbound_per_window(env: &Env) -> i128 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, i128>(&BridgeDataKey::MaxOutboundPerWindow)
             .unwrap_or(0)
     }
-
     fn load_outbound_window_size(env: &Env) -> u64 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowSize)
             .unwrap_or(0)
     }
-
     fn load_outbound_window_start(env: &Env) -> u64 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, u64>(&BridgeDataKey::OutboundWindowStart)
             .unwrap_or(0)
     }
-
     fn load_window_outbound_total(env: &Env) -> i128 {
         env.storage()
             .persistent()
             .get::<BridgeDataKey, i128>(&BridgeDataKey::WindowOutboundTotal)
             .unwrap_or(0)
     }
+
+    // -----------------------------------------------------------------------
+    // Admin helpers (issue #1901)
+    // -----------------------------------------------------------------------
+
+    fn load_admin(env: &Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, Address>(&BridgeDataKey::Admin)
+    }
+
+    fn save_admin(env: &Env, admin: &Address) {
+        ttl::set_persistent(&env, &BridgeDataKey::Admin, admin);
+    }
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<(), BridgeError> {
+        caller.require_auth();
+        let admin = Self::load_admin(env).ok_or(BridgeError::NotAdmin)?;
+        ttl::bump_persistent(env, &BridgeDataKey::Admin);
+        if *caller != admin {
+            return Err(BridgeError::NotAdmin);
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Source-domain hashing (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Compute a deterministic hash of a [`SourceDomain`].
+    ///
+    /// ```text
+    /// SHA-256( SOURCE_DOMAIN_SEPARATOR
+    ///          || chain_id (4 bytes LE)
+    ///          || network_passphrase_len (4 bytes LE)
+    ///          || network_passphrase
+    ///          || contract_id_len (4 bytes LE)
+    ///          || contract_id )
+    /// ```
+    fn source_domain_hash(env: &Env, domain: &SourceDomain) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.extend_from_slice(SOURCE_DOMAIN_SEPARATOR);
+        data.extend_from_slice(&domain.chain_id.to_le_bytes());
+        let np_len = domain.network_passphrase.len();
+        data.extend_from_slice(&np_len.to_le_bytes());
+        data.append(&domain.network_passphrase);
+        let cid_len = domain.contract_id.len();
+        data.extend_from_slice(&cid_len.to_le_bytes());
+        data.append(&domain.contract_id);
+        env.crypto().sha256(&data).into()
+    }
+
+    /// Compute the domain-separated inbound message ID.
+    ///
+    /// ```text
+    /// SHA-256( INBOUND_MSG_DOMAIN
+    ///          || source_domain_hash (32 bytes)
+    ///          || nonce (8 bytes LE) )
+    /// ```
+    fn inbound_message_id(env: &Env, source_hash: &BytesN<32>, nonce: u64) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.extend_from_slice(INBOUND_MSG_DOMAIN);
+        data.append(&source_hash.to_bytes());        data.extend_from_slice(&nonce.to_le_bytes());
+        env.crypto().sha256(&data).into()
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Public contract interface
-// ---------------------------------------------------------------------------
 #[contractimpl]
 impl Bridge {
-    // -----------------------------------------------------------------------
-    // Outbound nonce sequencing
-    // -----------------------------------------------------------------------
+    /// Refresh global bridge state without requiring an admin signature.
+    pub fn bump(env: Env) {
+        ttl::bump_instance(&env);
+        for key in [
+            BridgeDataKey::OutboundNonces,
+            BridgeDataKey::Validators,
+            BridgeDataKey::PausedValidators,
+            BridgeDataKey::Epoch,
+            BridgeDataKey::BridgeId,
+            BridgeDataKey::Guardian,
+            BridgeDataKey::MaxChurn,
+            BridgeDataKey::MaxPerWindow,
+            BridgeDataKey::WindowSize,
+            BridgeDataKey::WindowStart,
+            BridgeDataKey::WindowInboundTotal,
+            BridgeDataKey::MaxOutboundPerWindow,
+            BridgeDataKey::OutboundWindowSize,
+            BridgeDataKey::OutboundWindowStart,
+            BridgeDataKey::WindowOutboundTotal,
+            BridgeDataKey::Admin,
+            BridgeDataKey::SourceDomainCount,
+        ] {
+            ttl::bump_persistent(&env, &key);
+        }
+    }
+
+    /// Refresh a source's registration and nonce records.
+    pub fn bump_source_domain(env: Env, source: SourceDomain) {
+        ttl::bump_instance(&env);
+        let source_hash = Self::source_domain_hash(&env, &source);
+        ttl::bump_persistent(
+            &env,
+            &BridgeDataKey::SourceRegistered(source_hash.clone()),
+        );
+        ttl::bump_persistent(&env, &BridgeDataKey::InboundNonce(source_hash));
+    }
+
+    /// Refresh a consumed-message marker before its TTL expires.
+    pub fn bump_consumed_message(env: Env, source: SourceDomain, nonce: u64) {
+        ttl::bump_instance(&env);
+        let source_hash = Self::source_domain_hash(&env, &source);
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+        ttl::bump_persistent(&env, &BridgeDataKey::ConsumedInboundMessage(message_id));
+    }
 
     /// Return the next outbound nonce for `dest`, then increment it.
-    ///
-    /// The first call for a fresh destination returns `0`.
-    /// Panics with `BridgeError::NonceOverflow` if the nonce would exceed `u64::MAX`.
     pub fn next_outbound_nonce(env: Env, dest: u32) -> Result<u64, BridgeError> {
+        // Access control: only contract itself or authorized caller
+        env.current_contract_address().require_auth();
+
         let mut nonces = Self::load_nonces(&env);
         let current = nonces.get(dest).unwrap_or(0u64);
         let next = current.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
         nonces.set(dest, next);
         Self::save_nonces(&env, &nonces);
+
         env.events().publish(
             (soroban_sdk::symbol_short!("outbound"),),
             OutboundMessageEvent {
@@ -304,42 +424,302 @@ impl Bridge {
         Ok(current)
     }
 
-    /// Return the next nonce that will be assigned for `dest` without incrementing.
     pub fn peek_outbound_nonce(env: Env, dest: u32) -> u64 {
         let nonces = Self::load_nonces(&env);
         nonces.get(dest).unwrap_or(0u64)
     }
 
-    // -----------------------------------------------------------------------
-    // Initialisation helpers
-    // -----------------------------------------------------------------------
-
-    /// Store the initial validator set and optionally a bridge-id.
-    /// Must be called once before any rotation or pause operation.
     pub fn initialize(env: Env, validators: Vec<BytesN<32>>, bridge_id: Bytes) {
         Self::save_validators(&env, &validators);
         Self::save_bridge_id(&env, &bridge_id);
         Self::save_epoch(&env, 0);
     }
 
-    /// Configure the guardian public key (ed25519, 32 bytes).
     pub fn set_guardian(env: Env, guardian: BytesN<32>) {
         Self::save_guardian(&env, &guardian);
     }
 
-    /// Read the current guardian, or None if not configured.
     pub fn get_guardian(env: Env) -> Option<BytesN<32>> {
         Self::load_guardian(&env)
     }
 
-    /// Set or clear the maximum churn limit for rotations.
-    /// Pass 0 to disable the limit.
+    pub fn get_guardian_nonce(env: Env) -> u64 {
+        Self::load_guardian_nonce(&env)
+    }
+
+    pub fn guardian_action_payload(
+        env: Env,
+        action: u8,
+        validator: BytesN<32>,
+        expires_at: u64,
+    ) -> BytesN<32> {
+        let bridge_id = Self::load_bridge_id(&env);
+        let nonce = Self::load_guardian_nonce(&env);
+        let epoch = Self::load_epoch(&env);
+        Self::build_guardian_payload(
+            &env,
+            &bridge_id,
+            action,
+            &validator,
+            nonce,
+            epoch,
+            expires_at,
+        )
+    }
+
+    fn build_guardian_payload(
+        env: &Env,
+        bridge_id: &Bytes,
+        action: u8,
+        validator: &BytesN<32>,
+        nonce: u64,
+        epoch: u64,
+        expires_at: u64,
+    ) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.extend_from_slice(GUARDIAN_ACTION_DOMAIN);
+        let contract_id = env.current_contract_address();
+        let contract_id_xdr = contract_id.to_xdr(env);
+        let cid_len = contract_id_xdr.len();
+        data.extend_from_slice(&cid_len.to_le_bytes());
+        data.append(&contract_id_xdr);
+
+        let id_len = bridge_id.len();
+        data.extend_from_slice(&id_len.to_le_bytes());
+        data.append(bridge_id);
+
+        data.extend_from_slice(&[action]);
+
+        let validator_bytes: [u8; 32] = validator.into();
+        data.extend_from_slice(&validator_bytes);
+
+        data.extend_from_slice(&nonce.to_be_bytes());
+        data.extend_from_slice(&epoch.to_be_bytes());
+        data.extend_from_slice(&expires_at.to_be_bytes());
+
+        env.crypto().sha256(&data).into()
+    }
+
     pub fn set_max_churn(env: Env, max_churn: u32) {
+        ttl::bump_instance(&env);
         if max_churn == 0 {
             Self::remove_max_churn(&env);
         } else {
             Self::save_max_churn(&env, max_churn);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin management (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Set the admin address for privileged operations.
+    ///
+    /// The admin is authorised to register and unregister source domains.
+    /// Can only be called once; subsequent calls are rejected to prevent
+    /// unauthorised admin rotation.
+    pub fn set_admin(env: Env, admin: Address) -> Result<(), BridgeError> {
+        if Self::load_admin(&env).is_some() {
+            return Err(BridgeError::NotAdmin);
+        }
+        Self::save_admin(&env, &admin);
+        Ok(())
+    }
+
+    /// Return the current admin address, if set.
+    pub fn get_admin(env: Env) -> Option<Address> {
+        Self::load_admin(&env)
+    }
+
+    // -----------------------------------------------------------------------
+    // Source-domain registration (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Register a source domain for inbound message validation.
+    ///
+    /// Only the admin may call this function.  A source domain identifies
+    /// the chain, network passphrase, and contract address that are
+    /// authorised to send inbound bridge messages.
+    ///
+    /// # Errors
+    /// - [`BridgeError::NotAdmin`] if the caller is not the admin.
+    /// - [`BridgeError::SourceDomainLimitReached`] if the storage limit
+    ///   has been reached.
+    pub fn register_source_domain(
+        env: Env,
+        caller: Address,
+        source: SourceDomain,
+    ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
+        let hash = Self::source_domain_hash(&env, &source);
+        let registered = BridgeDataKey::SourceRegistered(hash);
+        ttl::bump_persistent(&env, &registered);
+        if env.storage().persistent().has(&registered) {
+            // Already registered — idempotent, return Ok.
+            return Ok(());
+        }
+        // Enforce storage limit.
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, u32>(&BridgeDataKey::SourceDomainCount)
+            .unwrap_or(0);
+        if count >= MAX_SOURCE_DOMAINS {
+            return Err(BridgeError::SourceDomainLimitReached);
+        }
+        ttl::set_persistent(&env, &registered, &true);
+        ttl::set_persistent(&env, &BridgeDataKey::SourceDomainCount, &(count + 1));
+        Ok(())
+    }
+
+    /// Unregister a previously registered source domain.
+    ///
+    /// Only the admin may call this function.  After unregistration,
+    /// inbound messages from this source will be rejected.
+    pub fn unregister_source_domain(
+        env: Env,
+        caller: Address,
+        source: SourceDomain,
+    ) -> Result<(), BridgeError> {
+        ttl::bump_instance(&env);
+        Self::require_admin(&env, &caller)?;
+        let hash = Self::source_domain_hash(&env, &source);
+        let registered = BridgeDataKey::SourceRegistered(hash);
+        ttl::bump_persistent(&env, &registered);
+        if !env.storage().persistent().has(&registered) {
+            // Not registered — idempotent, return Ok.
+            return Ok(());
+        }
+        env.storage().persistent().remove(&registered);
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, u32>(&BridgeDataKey::SourceDomainCount)
+            .unwrap_or(0);
+        if count > 0 {
+            ttl::set_persistent(&env, &BridgeDataKey::SourceDomainCount, &(count - 1));
+        }
+        Ok(())
+    }
+
+    /// Check whether a source domain is currently registered.
+    pub fn is_source_registered(env: Env, source: SourceDomain) -> bool {
+        let hash = Self::source_domain_hash(&env, &source);
+        env.storage()
+            .persistent()
+            .has(&BridgeDataKey::SourceRegistered(hash))
+    }
+
+    // -----------------------------------------------------------------------
+    // Inbound message consumption (issue #1901)
+    // -----------------------------------------------------------------------
+
+    /// Consume an inbound bridge message, enforcing domain separation,
+    /// source validation, nonce ordering, and replay protection.
+    ///
+    /// The function:
+    /// 1. Validates `source` is registered.
+    /// 2. Computes the domain-separated message ID.
+    /// 3. Checks the message has not already been consumed.
+    /// 4. Checks `nonce` equals the next expected nonce for that source.
+    /// 5. Marks the message as consumed and increments the per-source nonce.
+    /// 6. Emits an [`InboundMessageConsumedEvent`].
+    ///
+    /// Failed validation does **not** burn the message or mutate balances.
+    ///
+    /// # Arguments
+    /// * `source` – The [`SourceDomain`] identifying the sender.
+    /// * `nonce`  – The message nonce from the source (must equal next expected).
+    ///
+    /// # Returns
+    /// The domain-separated message ID on success.
+    ///
+    /// # Errors
+    /// - [`BridgeError::UnregisteredSource`] if the source domain is not registered.
+    /// - [`BridgeError::MessageAlreadyConsumed`] if the message was already consumed.
+    /// - [`BridgeError::UnexpectedNonce`] if the nonce does not match.
+    pub fn consume_inbound_message(
+        env: Env,
+        source: SourceDomain,
+        nonce: u64,
+    ) -> Result<BytesN<32>, BridgeError> {
+        // 1. Validate source is registered.
+        let source_hash = Self::source_domain_hash(&env, &source);
+        let registered = BridgeDataKey::SourceRegistered(source_hash.clone());
+        ttl::bump_persistent(&env, &registered);
+        if !env.storage().persistent().has(&registered) {
+            return Err(BridgeError::UnregisteredSource);
+        }
+
+        // 2. Compute domain-separated message ID and check it has not
+        // already been consumed. The replay check must run before the
+        // nonce-ordering check: once a message is consumed the nonce
+        // counter has advanced past it, so a duplicate delivery would
+        // otherwise be masked as UnexpectedNonce instead of being
+        // reported as the replay it is.
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+        let consumed = BridgeDataKey::ConsumedInboundMessage(message_id.clone());
+        ttl::bump_persistent(&env, &consumed);
+        ttl::bump_persistent(&env, &consumed);
+        if env.storage().persistent().has(&consumed) {
+            return Err(BridgeError::MessageAlreadyConsumed);
+        }
+
+        // 3. Check nonce ordering.
+        let expected_nonce: u64 = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash.clone()))
+            .unwrap_or(0);
+        if nonce != expected_nonce {
+            return Err(BridgeError::UnexpectedNonce);
+        }
+
+        // 4. Mark consumed and advance nonce.
+        ttl::set_persistent(&env, &consumed, &true);
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        ttl::set_persistent(&env, &BridgeDataKey::InboundNonce(source_hash), &next_nonce);
+
+        // 5. Emit event.
+        env.events().publish(
+            (symbol_short!("in_msg"), symbol_short!("consumed")),            InboundMessageConsumedEvent {
+                message_id: message_id.clone(),
+                source,
+                nonce,
+            },
+        );
+
+        Ok(message_id)
+    }
+
+    /// Check whether an inbound message has already been consumed.
+    ///
+    /// Computes the domain-separated message ID from `source` and `nonce`
+    /// and checks the storage marker.
+    pub fn is_message_consumed(env: Env, source: SourceDomain, nonce: u64) -> bool {
+        let source_hash = Self::source_domain_hash(&env, &source);
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+        env.storage()
+            .persistent()
+            .has(&BridgeDataKey::ConsumedInboundMessage(message_id))
+    }
+
+    /// Return the next expected nonce for a given source domain.
+    ///
+    /// Returns 0 if no messages have been consumed from this source yet.
+    pub fn next_inbound_nonce(env: Env, source: SourceDomain) -> u64 {
+        let source_hash = Self::source_domain_hash(&env, &source);
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash))
+            .unwrap_or(0)
+    }
+
+    /// Compute the domain-separated message ID for a given source and nonce
+    /// without consuming it.  Useful for off-chain verification.
+    pub fn compute_message_id(env: Env, source: SourceDomain, nonce: u64) -> BytesN<32> {
+        let source_hash = Self::source_domain_hash(&env, &source);
+        Self::inbound_message_id(&env, &source_hash, nonce)
     }
 
     // -----------------------------------------------------------------------
@@ -400,7 +780,11 @@ impl Bridge {
     ///             || epoch(8 LE) )`
     ///
     /// All current active validators must sign the 32-byte hash returned here.
-    pub fn quorum_proof_payload(env: Env, new_validators: Vec<BytesN<32>>, epoch: u64) -> BytesN<32> {
+    pub fn quorum_proof_payload(
+        env: Env,
+        new_validators: Vec<BytesN<32>>,
+        epoch: u64,
+    ) -> BytesN<32> {
         let bridge_id = Self::load_bridge_id(&env);
         Self::build_quorum_payload(&env, &bridge_id, &new_validators, epoch)
     }
@@ -420,20 +804,13 @@ impl Bridge {
 
         // 2. bridge_id length (4 bytes LE) + bridge_id bytes
         let id_len = bridge_id.len();
-        data.extend_from_slice(&(id_len as u32).to_le_bytes());
-        // Copy bridge_id in 32-byte chunks to avoid heap allocation.
-        let mut offset: u32 = 0;
-        while offset < id_len {
-            let mut chunk = [0u8; 32];
-            let end = (offset + 32).min(id_len);
-            let slice_len = (end - offset) as usize;
-            bridge_id.copy_into_slice_with_offset(offset, &mut chunk[..slice_len]);
-            data.extend_from_slice(&chunk[..slice_len]);
-            offset = end;
-        }
+        data.extend_from_slice(&id_len.to_le_bytes());
+        // Append via SDK `Bytes::append` / `slice` — soroban-sdk 25 has no
+        // `copy_into_slice_with_offset` (only full-length `copy_into_slice`).
+        data.append(bridge_id);
 
         // 3. validator count (4 bytes LE) + each 32-byte key
-        let val_count = new_validators.len() as u32;
+        let val_count = new_validators.len();
         data.extend_from_slice(&val_count.to_le_bytes());
         for pk in new_validators.iter() {
             let arr: [u8; 32] = pk.into();
@@ -443,8 +820,8 @@ impl Bridge {
         // 4. epoch (8 bytes LE)
         data.extend_from_slice(&epoch.to_le_bytes());
 
-        // SHA-256 over the assembled bytes
-        env.crypto().sha256(&data)
+        // SHA-256 over the assembled bytes (`Hash<32>` → `BytesN<32>`)
+        env.crypto().sha256(&data).into()
     }
 
     // -----------------------------------------------------------------------
@@ -512,7 +889,9 @@ impl Bridge {
                 removed += 1;
             }
         }
-        let churn = added.checked_add(removed).ok_or(BridgeError::WindowTotalOverflow)?;
+        let churn = added
+            .checked_add(removed)
+            .ok_or(BridgeError::WindowTotalOverflow)?;
 
         if let Some(limit) = Self::load_max_churn(&env) {
             if churn > limit {
@@ -521,7 +900,13 @@ impl Bridge {
         }
 
         // -- Verify quorum proof --
-        Self::verify_quorum_proof_internal(&env, &current_validators, &new_validators, epoch, &proofs)?;
+        Self::verify_quorum_proof_internal(
+            &env,
+            &current_validators,
+            &new_validators,
+            epoch,
+            &proofs,
+        )?;
 
         // -- Commit atomically --
         Self::save_validators(&env, &new_validators);
@@ -578,7 +963,10 @@ impl Bridge {
                 continue;
             }
             // Verify ed25519 signature over the payload hash.
-            env.crypto().ed25519_verify(&pk, &payload.into(), &sig);
+            // Clone: `Into<Bytes>` consumes `BytesN` and this loop may iterate many times.
+            // `ed25519_verify` traps on bad sig (returns `()`), so no Result mapping.
+            env.crypto()
+                .ed25519_verify(&pk, &payload.clone().into(), &sig);
             unique_active += 1;
         }
 
@@ -605,11 +993,16 @@ impl Bridge {
     // Inbound epoch validation
     // -----------------------------------------------------------------------
 
-    /// Reject a `signed_epoch` that belongs to a retired validator set.
-    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
+    // Reject a signed_epoch ... retired validator set.
+    pub fn validate_inbound_epoch(...) {
+    /// Reject a `signed_epoch` that belongs to a retired validator set.    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
         let current = Self::load_epoch(&env);
         if signed_epoch < current {
             return Err(BridgeError::RetiredEpoch);
+        }
+        let max_accepted_epoch = current.saturating_add(INBOUND_EPOCH_TOLERANCE);
+        if signed_epoch > max_accepted_epoch {
+            return Err(BridgeError::InvalidEpoch);
         }
         Ok(())
     }
@@ -625,7 +1018,11 @@ impl Bridge {
         env: Env,
         validator: BytesN<32>,
         signature: BytesN<64>,
+        expires_at: u64,
     ) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::Guardian);
+        ttl::bump_persistent(&env, &BridgeDataKey::Validators);
+        ttl::bump_persistent(&env, &BridgeDataKey::PausedValidators);
         let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
 
         let validators = Self::load_validators(&env);
@@ -651,16 +1048,32 @@ impl Bridge {
             return Err(BridgeError::PauseWouldBreakQuorum);
         }
 
-        // Verify guardian signature over action-bound payload.
-        let payload = Self::build_tagged_payload(&env, PAUSE_PAYLOAD_TAG, &validator);
-        let payload_hash = env.crypto().sha256(&payload);
-        env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature)
-            .then_some(())
-            .ok_or(BridgeError::InvalidGuardianSignature)?;
+        let nonce = Self::load_guardian_nonce(&env);
+        let bridge_id = Self::load_bridge_id(&env);
+        let epoch = Self::load_epoch(&env);
+        let payload_hash = Self::build_guardian_payload(
+            &env,
+            &bridge_id,
+            1,
+            &validator,
+            nonce,
+            epoch,
+            expires_at,
+        );
 
-        paused.set(validator, true);
+        env.crypto()
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
+
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        Self::save_guardian_nonce(&env, next_nonce);
+
+        paused.set(validator.clone(), true);
         Self::save_paused(&env, &paused);
+
+        env.events().publish(
+            (symbol_short!("validator"), symbol_short!("paused")),
+            (validator, nonce),
+        );
         Ok(())
     }
 
@@ -671,7 +1084,11 @@ impl Bridge {
         env: Env,
         validator: BytesN<32>,
         signature: BytesN<64>,
+        expires_at: u64,
     ) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::Guardian);
+        ttl::bump_persistent(&env, &BridgeDataKey::Validators);
+        ttl::bump_persistent(&env, &BridgeDataKey::PausedValidators);
         let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
 
         let validators = Self::load_validators(&env);
@@ -684,27 +1101,34 @@ impl Bridge {
             return Err(BridgeError::NotPaused);
         }
 
-        let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
-        let payload_hash = env.crypto().sha256(&payload);
-        env.crypto()
-            .ed25519_verify(&guardian, &payload_hash.into(), &signature)
-            .then_some(())
-            .ok_or(BridgeError::InvalidGuardianSignature)?;
+        let nonce = Self::load_guardian_nonce(&env);
+        let bridge_id = Self::load_bridge_id(&env);
+        let epoch = Self::load_epoch(&env);
+        let payload_hash = Self::build_guardian_payload(
+            &env,
+            &bridge_id,
+            2,
+            &validator,
+            nonce,
+            epoch,
+            expires_at,
+        );
 
-        paused.remove(validator);
+        env.crypto()
+            .ed25519_verify(&guardian, &payload_hash.into(), &signature);
+
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        Self::save_guardian_nonce(&env, next_nonce);
+
+        paused.remove(validator.clone());
         Self::save_paused(&env, &paused);
+
+        env.events().publish(
+            (symbol_short!("validator"), symbol_short!("unpaused")),
+            (validator, nonce),
+        );
         Ok(())
     }
-
-    /// Build a tagged payload: `tag_bytes || pk_bytes` as a `Bytes`.
-    fn build_tagged_payload(env: &Env, tag: &[u8], pk: &BytesN<32>) -> Bytes {
-        let mut out = Bytes::new(env);
-        out.extend_from_slice(tag);
-        let arr: [u8; 32] = pk.into();
-        out.extend_from_slice(&arr);
-        out
-    }
-
     // -----------------------------------------------------------------------
     // Inbound value-cap
     // -----------------------------------------------------------------------
@@ -725,15 +1149,19 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage().persistent().set(&BridgeDataKey::MaxPerWindow, &max_per_window);
-        env.storage().persistent().set(&BridgeDataKey::WindowSize, &window_size);
-        env.storage().persistent().set(&BridgeDataKey::WindowStart, &current_time);
-        env.storage().persistent().set(&BridgeDataKey::WindowInboundTotal, &0i128);
+        ttl::set_persistent(&env, &BridgeDataKey::MaxPerWindow, &max_per_window);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowSize, &window_size);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowStart, &current_time);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowInboundTotal, &0i128);
         Ok(())
     }
 
     /// Admit an inbound transfer of `amount` against the per-window cap.
     pub fn admit_inbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::MaxPerWindow);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowSize);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowStart);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowInboundTotal);
         if amount < 0 {
             return Err(BridgeError::InboundCapExceeded);
         }
@@ -759,8 +1187,8 @@ impl Bridge {
             return Err(BridgeError::InboundCapExceeded);
         }
 
-        env.storage().persistent().set(&BridgeDataKey::WindowStart, &rolled_start);
-        env.storage().persistent().set(&BridgeDataKey::WindowInboundTotal, &new_total);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowStart, &rolled_start);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowInboundTotal, &new_total);
         Ok(())
     }
 
@@ -781,15 +1209,19 @@ impl Bridge {
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
-        env.storage().persistent().set(&BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowSize, &window_size);
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowStart, &current_time);
-        env.storage().persistent().set(&BridgeDataKey::WindowOutboundTotal, &0i128);
+        ttl::set_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowSize, &window_size);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowStart, &current_time);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowOutboundTotal, &0i128);
         Ok(())
     }
 
     /// Admit an outbound transfer of `amount` against the per-window cap.
     pub fn admit_outbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+        ttl::bump_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow);
+        ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowSize);
+        ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowStart);
+        ttl::bump_persistent(&env, &BridgeDataKey::WindowOutboundTotal);
         if amount < 0 {
             return Err(BridgeError::OutboundCapExceeded);
         }
@@ -814,8 +1246,8 @@ impl Bridge {
             return Err(BridgeError::OutboundCapExceeded);
         }
 
-        env.storage().persistent().set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
-        env.storage().persistent().set(&BridgeDataKey::WindowOutboundTotal, &new_total);
+        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowStart, &rolled_start);
+        ttl::set_persistent(&env, &BridgeDataKey::WindowOutboundTotal, &new_total);
         Ok(())
     }
 
@@ -842,34 +1274,127 @@ impl Bridge {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// Test-only epoch-advance entry point.
+//
+// Production rotation goes through `rotate_validators` (quorum-proof gated).
+// The epoch-epoch guard tests (`inbound_epoch_test.rs`) only need to move the
+// stored epoch forward, so they use this `#[cfg(test)]`-gated entry point,
+// which is compiled out of the wasm build and never exported on-chain.
+// -----------------------------------------------------------------------
+#[cfg(test)]
+#[contractimpl]
+impl Bridge {
+    /// Test-only: advance the stored epoch by one (forward-only, mirroring
+    /// what a successful quorum-proof rotation does to the stored epoch).
+    pub fn advance_epoch(env: Env) -> u64 {
+        let next = Self::load_epoch(&env)
+            .checked_add(1)
+            .expect("epoch overflow");
+        Self::save_epoch(&env, next);
+        next
+    }
+}
+
+#[cfg(test)]
+mod rotation_test;
+
+#[cfg(test)]
+mod rotation_doc_test;
+
+#[cfg(test)]
+mod domain_separation_test;
+
+#[cfg(test)]
+mod quorum_proof_bound_test;
+
+#[cfg(test)]
+mod inbound_cap_test;
+
+#[cfg(test)]
+mod inbound_epoch_test;
+
+#[cfg(test)]
+mod window_rollover_test;
+
+#[cfg(test)]
+mod validator_bounds_test;
+
+#[cfg(test)]
+mod epoch_monotonicity_proptest;
+
+#[cfg(test)]
+mod window_guard_test;
+
+#[cfg(test)]
+mod window_tuning_doc_test;
+
+#[cfg(test)]
+mod outbound_cap_test;
+
+#[cfg(test)]
+mod validatorset_proptest;
+
+#[cfg(test)]
+mod validator_pause_test;
+
+#[cfg(test)]
+mod rotation_churn_test;
+
+#[cfg(test)]
+mod outbound_nonce_test;
+
+#[cfg(test)]
+mod inbound_window_integration_test;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Ledger, Env};
+    use soroban_sdk::Env;
 
     fn fresh_env() -> Env {
         Env::default()
     }
 
     #[test]
-    fn test_outbound_nonce_increments() {
+    fn test_epoch_guard_after_rotation() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        env.mock_all_auths();
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        assert_eq!(client.next_outbound_nonce(&1u32).unwrap(), 0u64);
-        assert_eq!(client.next_outbound_nonce(&1u32).unwrap(), 1u64);
-        assert_eq!(client.peek_outbound_nonce(&1u32), 2u64);
-        assert_eq!(client.next_outbound_nonce(&2u32).unwrap(), 0u64);
+        // Initialize with an empty validator set. Quorum-proof signature
+        // verification requires real ed25519 key material and is exercised
+        // separately; here the epoch is advanced through the test-only
+        // entry point (which mirrors a successful rotation commit).
+        let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
+        client.initialize(&validators, &Bytes::new(&env));
+        assert_eq!(client.get_epoch(), 0);
+        assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
+
+        client.advance_epoch();
+        assert_eq!(client.get_epoch(), 1);
+
+        // Messages signed with epoch 0 are rejected (retired validator set).
+        assert!(matches!(
+            client.try_validate_inbound_epoch(&0u64),
+            Err(Ok(BridgeError::RetiredEpoch))
+        ));
+        // Messages signed with the current epoch 1 are accepted.
+        assert!(client.try_validate_inbound_epoch(&1u64).is_ok());
+        // Messages signed with a far-future epoch 2 are rejected (not yet
+        // actively rotated into by the validator set — see #1147 /
+        // INBOUND_EPOCH_TOLERANCE).
+        assert!(matches!(
+            client.try_validate_inbound_epoch(&2u64),
+            Err(Ok(BridgeError::InvalidEpoch))
+        ));
     }
 
     #[test]
     fn test_validate_inbound_epoch_rejects_old() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
@@ -877,6 +1402,10 @@ mod tests {
 
         // epoch 0 is current — any lower would panic but there is no lower; future ok
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
+        assert_eq!(
+            client.try_validate_inbound_epoch(&1u64),
+            Err(Ok(BridgeError::InvalidEpoch))
+        );
         // nothing to rotate to test stale epoch without ed25519 key material here;
         // the RetiredEpoch path is covered structurally by the error code existing.
     }
@@ -884,12 +1413,13 @@ mod tests {
     #[test]
     fn test_set_inbound_cap_and_admit() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64).unwrap();
-        client.admit_inbound(&500i128, &1000u64).unwrap();
-        client.admit_inbound(&500i128, &2000u64).unwrap();
+        // Result<(), _> client methods return unit on success (use try_* for Result).
+        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.admit_inbound(&500i128, &1000u64);
+        client.admit_inbound(&500i128, &2000u64);
         // Now at cap — next should fail
         assert!(client.try_admit_inbound(&1i128, &3000u64).is_err());
     }
@@ -897,33 +1427,33 @@ mod tests {
     #[test]
     fn test_inbound_window_rolls_over() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64).unwrap();
-        client.admit_inbound(&1000i128, &100u64).unwrap();
+        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.admit_inbound(&1000i128, &100u64);
         // Still in same window — should fail
         assert!(client.try_admit_inbound(&1i128, &200u64).is_err());
         // After window duration — should succeed
-        client.admit_inbound(&1000i128, &86400u64).unwrap();
+        client.admit_inbound(&1000i128, &86400u64);
     }
 
     #[test]
     fn test_set_outbound_cap_and_admit() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_outbound_cap(&500i128, &86400u64, &0u64).unwrap();
-        client.admit_outbound(&499i128, &1000u64).unwrap();
-        client.admit_outbound(&1i128, &2000u64).unwrap();
+        client.set_outbound_cap(&500i128, &86400u64, &0u64);
+        client.admit_outbound(&499i128, &1000u64);
+        client.admit_outbound(&1i128, &2000u64);
         assert!(client.try_admit_outbound(&1i128, &3000u64).is_err());
     }
 
     #[test]
     fn test_fail_closed_inbound_before_cap_set() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
@@ -932,10 +1462,383 @@ mod tests {
     #[test]
     fn test_invalid_window_size_rejected() {
         let env = fresh_env();
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
-        assert!(client.try_set_outbound_cap(&1000i128, &0u64, &0u64).is_err());
+        assert!(client
+            .try_set_outbound_cap(&1000i128, &0u64, &0u64)
+            .is_err());
+    }
+}
+
+// -----------------------------------------------------------------------
+// Inbound message replay protection & domain confusion tests (issue #1901)
+// -----------------------------------------------------------------------
+
+#[cfg(test)]
+mod replay_protection_test {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    /// Helper: spin up a fresh bridge, set an admin, and return the client.
+    fn setup_bridge() -> (Env, BridgeClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(Bridge, ());
+        let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.set_admin(&admin);
+        (env, client, admin)
+    }
+
+    /// Helper: build a source domain with the given chain_id.
+    fn source(env: &Env, chain_id: u32) -> SourceDomain {
+        SourceDomain {
+            chain_id,
+            network_passphrase: Bytes::from_slice(env, b"testnet"),
+            contract_id: Bytes::from_slice(env, b"bridge_contract_v1"),
+        }
+    }
+
+    /// Helper: build a source domain with a different contract_id.
+    fn source_different_contract(env: &Env, chain_id: u32) -> SourceDomain {
+        SourceDomain {
+            chain_id,
+            network_passphrase: Bytes::from_slice(env, b"testnet"),
+            contract_id: Bytes::from_slice(env, b"other_contract_v2"),
+        }
+    }
+
+    /// Helper: build a source domain with a different network passphrase.
+    fn source_different_network(env: &Env, chain_id: u32) -> SourceDomain {
+        SourceDomain {
+            chain_id,
+            network_passphrase: Bytes::from_slice(env, b"mainnet"),
+            contract_id: Bytes::from_slice(env, b"bridge_contract_v1"),
+        }
+    }
+
+    // ---- AC: A message is consumed at most once ----
+
+    #[test]
+    fn duplicate_delivery_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // First consumption succeeds.
+        let _id = client.consume_inbound_message(&src, &0u64);
+        assert!(client.is_message_consumed(&src, &0u64));
+
+        // Second consumption of the same nonce is rejected.
+        let err = client.try_consume_inbound_message(&src, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::MessageAlreadyConsumed))),
+            "expected MessageAlreadyConsumed on duplicate, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn sequential_nonces_accepted() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Consume nonces 0..4 in order.
+        for i in 0..5u64 {
+            let id = client.consume_inbound_message(&src, &i);
+            assert!(!id.is_empty());
+            assert!(client.is_message_consumed(&src, &i));
+        }
+        // Next expected nonce is 5.
+        assert_eq!(client.next_inbound_nonce(&src), 5u64);
+    }
+
+    // ---- AC: A message for another network or contract is rejected ----
+
+    #[test]
+    fn wrong_domain_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // A source with a different contract_id is unregistered.
+        let other = source_different_contract(&env, 1);
+        let err = client.try_consume_inbound_message(&other, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
+            "expected UnregisteredSource for different contract, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn wrong_network_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // A source with a different network passphrase is unregistered.
+        let other = source_different_network(&env, 1);
+        let err = client.try_consume_inbound_message(&other, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
+            "expected UnregisteredSource for different network, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn different_chain_id_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        let other = source(&env, 999);
+        let err = client.try_consume_inbound_message(&other, &0u64);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
+            "expected UnregisteredSource for different chain_id, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn cross_domain_message_ids_differ() {
+        let env = Env::default();
+        let src_a = source(&env, 1);
+        let src_b = source_different_contract(&env, 1);
+        let id_a = Bridge::compute_message_id(env.clone(), src_a, 0);
+        let id_b = Bridge::compute_message_id(env, src_b, 0);
+        assert_ne!(id_a, id_b, "domain-separated IDs must differ");
+    }
+
+    // ---- AC: Failed validation does not burn the message or mutate balances ----
+
+    #[test]
+    fn failed_validation_no_state_change() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Wrong nonce: nonce 1 when expected is 0.
+        let err = client.try_consume_inbound_message(&src, &1u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnexpectedNonce))));
+
+        // Nonce 0 is still available for consumption.
+        let _id = client.consume_inbound_message(&src, &0u64);
+        assert!(client.is_message_consumed(&src, &0u64));
+        assert_eq!(client.next_inbound_nonce(&src), 1u64);
+    }
+
+    #[test]
+    fn unregistered_source_no_state_change() {
+        let (env, client, _admin) = setup_bridge();
+        let src = source(&env, 1);
+        // Do NOT register src.
+
+        let err = client.try_consume_inbound_message(&src, &0u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnregisteredSource))));
+
+        // Nonce is still 0 (no mutation).
+        assert_eq!(client.next_inbound_nonce(&src), 0u64);
+        assert!(!client.is_message_consumed(&src, &0u64));
+    }
+
+    // ---- AC: Out-of-order messages ----
+
+    #[test]
+    fn out_of_order_nonce_rejected() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Consume nonce 0.
+        client.consume_inbound_message(&src, &0u64);
+
+        // Skip nonce 1, try nonce 2.
+        let err = client.try_consume_inbound_message(&src, &2u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnexpectedNonce))));
+
+        // Nonce 1 is still consumable.
+        client.consume_inbound_message(&src, &1u64);
+        assert_eq!(client.next_inbound_nonce(&src), 2u64);
+    }
+
+    // ---- AC: Storage limits ----
+
+    #[test]
+    fn source_domain_limit_enforced() {
+        let (env, client, admin) = setup_bridge();
+
+        // Register up to the limit.
+        for i in 0..MAX_SOURCE_DOMAINS {
+            let src = SourceDomain {
+                chain_id: i,
+                network_passphrase: Bytes::from_slice(&env, b"net"),
+                contract_id: Bytes::from_slice(&env, b"ctr"),
+            };
+            client.register_source_domain(&admin, &src);
+        }
+
+        // One more should fail.
+        let over_limit = SourceDomain {
+            chain_id: MAX_SOURCE_DOMAINS,
+            network_passphrase: Bytes::from_slice(&env, b"net"),
+            contract_id: Bytes::from_slice(&env, b"ctr"),
+        };
+        let err = client.try_register_source_domain(&admin, &over_limit);
+        assert!(
+            matches!(err, Err(Ok(BridgeError::SourceDomainLimitReached))),
+            "expected SourceDomainLimitReached, got {:?}",
+            err
+        );
+    }
+
+    // ---- Admin gating ----
+
+    #[test]
+    fn non_admin_cannot_register_source() {
+        let (env, _client, _admin) = setup_bridge();
+        let contract_id = env.register(Bridge, ());
+        let client = BridgeClient::new(&env, &contract_id);
+        let non_admin = Address::generate(&env);
+        let src = source(&env, 1);
+        let err = client.try_register_source_domain(&non_admin, &src);
+        assert!(matches!(err, Err(Ok(BridgeError::NotAdmin))));
+    }
+
+    #[test]
+    fn admin_setup_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(Bridge, ());
+        let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        // First call succeeds.
+        client.set_admin(&admin);
+        assert_eq!(client.get_admin(), Some(admin.clone()));
+
+        // Second call fails (admin already set).
+        let other = Address::generate(&env);
+        let err = client.try_set_admin(&other);
+        assert!(matches!(err, Err(Ok(BridgeError::NotAdmin))));
+
+        // Original admin is unchanged.
+        assert_eq!(client.get_admin(), Some(admin));
+    }
+
+    // ---- Idempotent registration/unregistration ----
+
+    #[test]
+    fn register_source_is_idempotent() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+
+        client.register_source_domain(&admin, &src);
+        // Second registration is a no-op.
+        client.register_source_domain(&admin, &src);
+        assert!(client.is_source_registered(&src));
+    }
+
+    #[test]
+    fn unregister_source_is_idempotent() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+
+        client.register_source_domain(&admin, &src);
+        client.unregister_source_domain(&admin, &src);
+        assert!(!client.is_source_registered(&src));
+
+        // Second unregister is a no-op.
+        client.unregister_source_domain(&admin, &src);
+        assert!(!client.is_source_registered(&src));
+    }
+
+    #[test]
+    fn unregistered_source_cannot_consume() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+
+        client.register_source_domain(&admin, &src);
+        client.unregister_source_domain(&admin, &src);
+
+        let err = client.try_consume_inbound_message(&src, &0u64);
+        assert!(matches!(err, Err(Ok(BridgeError::UnregisteredSource))));
+    }
+
+    // ---- Multiple independent sources ----
+
+    #[test]
+    fn independent_sources_have_independent_nonces() {
+        let (env, client, admin) = setup_bridge();
+        let src_a = source(&env, 1);
+        let src_b = source(&env, 2);
+        client.register_source_domain(&admin, &src_a);
+        client.register_source_domain(&admin, &src_b);
+
+        // Consume nonce 0 from source A.
+        client.consume_inbound_message(&src_a, &0u64);
+
+        // Source B still starts at nonce 0.
+        assert_eq!(client.next_inbound_nonce(&src_b), 0u64);
+        client.consume_inbound_message(&src_b, &0u64);
+
+        // Source A nonce 0 is consumed; source B nonce 0 is also consumed.
+        assert!(client.is_message_consumed(&src_a, &0u64));
+        assert!(client.is_message_consumed(&src_b, &0u64));
+
+        // Source A nonce 1 is next; source B nonce 1 is next.
+        assert_eq!(client.next_inbound_nonce(&src_a), 1u64);
+        assert_eq!(client.next_inbound_nonce(&src_b), 1u64);
+    }
+
+    // ---- Message ID computation ----
+
+    #[test]
+    fn compute_message_id_matches_consume() {
+        let (env, client, admin) = setup_bridge();
+        let src = source(&env, 1);
+        client.register_source_domain(&admin, &src);
+
+        // Pre-compute the message ID.
+        let precomputed = client.compute_message_id(&src, &0u64);
+
+        // Consume the message.
+        let consumed = client.consume_inbound_message(&src, &0u64);
+
+        assert_eq!(precomputed, consumed);
+    }
+
+    #[test]
+    fn different_nonces_produce_different_ids() {
+        let env = Env::default();
+        let src = source(&env, 1);
+        let id_0 = Bridge::compute_message_id(env.clone(), src.clone(), 0);
+        let id_1 = Bridge::compute_message_id(env.clone(), src.clone(), 1);
+        let id_max = Bridge::compute_message_id(env, src, u64::MAX);
+        assert_ne!(id_0, id_1, "different nonces must differ");
+        assert_ne!(id_0, id_max, "different nonces must differ");
+        assert_ne!(id_1, id_max, "different nonces must differ");
+    }
+
+    // ---- Domain separator constant pinning ----
+
+    #[test]
+    fn inbound_msg_domain_separator_is_pinned() {
+        // Pin the domain tag so a silent rename would break this test
+        // and force a deliberate version bump.
+        assert_eq!(INBOUND_MSG_DOMAIN, b"stellarlend::bridge::inbound_msg::v1");
+    }
+
+    #[test]
+    fn source_domain_separator_is_pinned() {
+        assert_eq!(
+            SOURCE_DOMAIN_SEPARATOR,
+            b"stellarlend::bridge::source_domain::v1"
+        );
     }
 }

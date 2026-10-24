@@ -142,7 +142,7 @@ fn test_seizure_clamp_prevents_collateral_underflow() {
             &user,
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -188,7 +188,7 @@ fn test_debt_exactly_repaid_gives_zero_new_debt() {
             &user,
             &DebtPosition {
                 principal: 20,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );

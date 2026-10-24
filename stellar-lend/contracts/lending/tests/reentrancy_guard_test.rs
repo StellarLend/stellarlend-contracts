@@ -14,12 +14,10 @@ use soroban_sdk::{
     contractimpl,
     testutils::Address as _,
     xdr::FromXdr,
-    xdr::ToXdr,
     Address,
     Bytes,
     Env,
     IntoVal,
-    Symbol,
     Val,
 };
 
@@ -83,7 +81,7 @@ impl DepositReentrant {
     ) -> Val {
         // `params` encodes the lending contract address to call back into.
         // We use LendingContractClient to call deposit.
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.deposit(&user, &100_i128);
@@ -109,7 +107,7 @@ impl WithdrawReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.withdraw(&user, &100_i128);
@@ -135,7 +133,7 @@ impl BorrowReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.borrow(&user, &100_i128);
@@ -161,7 +159,7 @@ impl RepayReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let user = Address::generate(&env);
         lending_client.repay(&user, &100_i128);
@@ -187,7 +185,7 @@ impl LiquidateReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let liquidator = Address::generate(&env);
         let borrower = Address::generate(&env);
@@ -222,7 +220,7 @@ impl NestedFlashReentrant {
         _fee: i128,
         params: Bytes,
     ) -> Val {
-        let lending_id = Address::from_xdr(&env, &params);
+        let lending_id = Address::from_xdr(&env, &params).expect("valid lending address");
         let lending_client = LendingContractClient::new(&env, &lending_id);
         let receiver2 = Address::generate(&env);
         lending_client.flash_loan(&initiator, &receiver2, &asset, &100_i128, &Bytes::new(&env));
@@ -243,7 +241,9 @@ fn test_deposit_blocked_during_flash_loan() {
     let (client, contract_id, asset) = setup(&env, 10_000);
     let receiver = env.register(DepositReentrant, ());
     let initiator = Address::generate(&env);
-    let params = contract_id.clone().to_xdr(&env);
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "deposit during flash loan must fail");
@@ -261,7 +261,9 @@ fn test_withdraw_blocked_during_flash_loan() {
     let receiver = env.register(WithdrawReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = contract_id.clone().to_xdr(&env);
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "withdraw during flash loan must fail");
@@ -280,7 +282,9 @@ fn test_borrow_blocked_during_flash_loan() {
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = contract_id.clone().to_xdr(&env);
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "borrow during flash loan must fail");
@@ -298,7 +302,9 @@ fn test_repay_blocked_during_flash_loan() {
     let receiver = env.register(RepayReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = contract_id.clone().to_xdr(&env);
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "repay during flash loan must fail");
@@ -316,7 +322,9 @@ fn test_liquidate_blocked_during_flash_loan() {
     let receiver = env.register(LiquidateReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = contract_id.clone().to_xdr(&env);
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "liquidate during flash loan must fail");
@@ -334,7 +342,9 @@ fn test_nested_flash_loan_blocked() {
     let receiver = env.register(NestedFlashReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = contract_id.clone().to_xdr(&env);
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);
     assert!(result.is_err(), "nested flash loan must fail");
@@ -352,7 +362,9 @@ fn test_operations_resume_after_blocked_reentry() {
     let receiver = env.register(BorrowReentrant, ());
     let initiator = Address::generate(&env);
 
-    let params = contract_id.clone().to_xdr(&env);
+    // `String::to_bytes()` already returns `Bytes` in this SDK version (it
+    // used to return `&[u8]`, which needed wrapping via `Bytes::from_slice`).
+    let params = contract_id.to_string().to_bytes();
 
     // Attempt reentrant borrow — fails.
     let result = client.try_flash_loan(&initiator, &receiver, &asset, &1_000_i128, &params);

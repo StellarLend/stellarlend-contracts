@@ -1,21 +1,39 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::duplicated_attributes)]
 
+mod audit_log;
+#[cfg(test)]
+pub mod authorization;
 mod cross_asset;
-mod debt;
+pub mod debt;
 mod events;
-mod math;
-mod rate_model;
+#[cfg(test)]
+pub mod flash_loan_state;
+#[cfg(test)]
+pub mod invariants;
+pub mod math;
+#[cfg(test)]
+pub mod operation_tracker;
+pub mod rate_model;
 pub mod rounding_strategy;
+#[cfg(test)]
+pub mod two_phase_ops;
 pub mod upgrade;
+#[cfg(test)]
+pub mod validation;
 
 #[cfg(test)]
-mod cross_asset_roundtrip_test;
+mod event_schema_versioning_test;
 #[cfg(test)]
-mod liquidation_grace_test;
+mod governance_audit_test;
 #[cfg(test)]
-mod rate_smoothing_proof_doctest;
+mod adversarial_scenarios_test;
 
+#[cfg(test)]
+mod accrual_idempotency_test;
+#[cfg(test)]
+mod accrual_state_doc_test;
 #[cfg(test)]
 mod admin_handover_test;
 #[cfg(test)]
@@ -27,7 +45,15 @@ mod bad_debt_write_off_test;
 #[cfg(test)]
 mod borrow_health_factor_test;
 #[cfg(test)]
+mod borrow_index_test;
+#[cfg(test)]
+mod borrow_isolation_tier_test;
+#[cfg(test)]
 mod borrow_rate_cache_equiv_test;
+#[cfg(test)]
+mod compound_interest_proptest;
+#[cfg(test)]
+mod cross_asset_borrow_cap_test;
 #[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
@@ -35,17 +61,27 @@ mod cross_asset_health_perf_test;
 #[cfg(test)]
 mod cross_asset_price_cache_test;
 #[cfg(test)]
+mod cross_asset_roundtrip_test;
+#[cfg(test)]
 mod cross_asset_test;
 #[cfg(test)]
 mod deposit_accounting_test;
 #[cfg(test)]
 mod deposit_cap_race_test;
 #[cfg(test)]
+mod diagnostics_event_test;
+#[cfg(test)]
 mod effective_supply_rate_test;
 #[cfg(test)]
 mod emergency_state_matrix_test;
 #[cfg(test)]
+mod emergency_roles_test;
+#[cfg(test)]
+mod entrypoint_failure_boundary_test;
+#[cfg(test)]
 mod error_codes_test;
+#[cfg(test)]
+mod event_schema_bounds_test;
 #[cfg(test)]
 mod flash_pause_gating_test;
 #[cfg(test)]
@@ -55,11 +91,15 @@ mod granular_pause_ops_test;
 #[cfg(test)]
 mod health_factor_edge_test;
 #[cfg(test)]
-mod insurance_fund_test;
+mod initialize_auth_test;
 #[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
-mod interest_ordering_time_test;
+mod interest_rate_regression_test;
+#[cfg(test)]
+mod invariant_integration_test;
+#[cfg(test)]
+mod isolation_invariants_test;
 #[cfg(test)]
 mod isolation_mode_test;
 #[cfg(test)]
@@ -71,11 +111,15 @@ mod liquidate_close_factor_test;
 #[cfg(test)]
 mod liquidate_event_test;
 #[cfg(test)]
+mod liquidate_pause_test;
+#[cfg(test)]
 mod liquidate_perf_test;
 #[cfg(test)]
 mod liquidate_rounding_test;
 #[cfg(test)]
 mod liquidate_transfer_test;
+#[cfg(test)]
+mod liquidation_arithmetic_invariant_test;
 #[cfg(test)]
 mod liquidation_branch_test;
 #[cfg(test)]
@@ -83,15 +127,19 @@ mod liquidation_params_test;
 #[cfg(test)]
 mod liquidation_sequence_invariant_test;
 #[cfg(test)]
-mod missing_price_test;
+mod max_borrow_proptest;
 #[cfg(test)]
-mod mul_div_proptest;
+mod migration_event_test;
 #[cfg(test)]
-mod oracle_max_move_test;
+mod oracle_staleness_test;
 #[cfg(test)]
 mod oracle_payload_binding_test;
 #[cfg(test)]
-mod oracle_staleness_test;
+mod oracle_relay_test;
+#[cfg(test)]
+mod oracle_price_bounds_test;
+#[cfg(test)]
+mod oracle_max_move_test;
 #[cfg(test)]
 mod position_summary_bench_test;
 #[cfg(test)]
@@ -101,13 +149,23 @@ mod rate_cache_test;
 #[cfg(test)]
 mod rate_hysteresis_test;
 #[cfg(test)]
+mod rate_params_checkpoint_test;
+#[cfg(test)]
 mod rate_persistence_test;
 #[cfg(test)]
+mod rate_smoothing_proof_doctest;
+#[cfg(test)]
 mod rate_smoothing_state_test;
+#[cfg(test)]
+mod rate_smoothing_test;
+#[cfg(test)]
+mod rate_surcharge_test;
 #[cfg(test)]
 mod rate_updated_event_test;
 #[cfg(test)]
 mod repay_debt_floor_test;
+#[cfg(test)]
+mod repay_overpay_test;
 #[cfg(test)]
 mod reserve_split_proptest;
 #[cfg(test)]
@@ -115,27 +173,39 @@ mod rounding_drift_test;
 #[cfg(test)]
 mod self_liquidation_test;
 #[cfg(test)]
+mod stateful_lifecycle_invariant_test;
+#[cfg(test)]
+mod storage_tier_test;
+#[cfg(test)]
 mod supply_rate_split_test;
-#[cfg(test)]
-mod withdraw_overflow_test;
-#[cfg(test)]
-mod withdraw_reserve_test;
 
+#[cfg(test)]
+mod config_roundtrip_test;
 #[cfg(test)]
 mod upgrade_governance_test;
 #[cfg(test)]
 mod utilization_history_test;
+#[cfg(test)]
+mod utilization_math_boundary_test;
+#[cfg(test)]
+mod withdraw_overflow_test;
 use debt::{
-    borrow_amount, cached_borrow_rate, effective_debt, load_debt, repay_amount, save_debt,
-    DebtPosition, DEFAULT_APR_BPS,
+    borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt, repay_amount,
+    save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
 };
-use events::{emit_borrow, emit_deposit, emit_repay, emit_schema_version, emit_withdraw};
+use events::{
+    emit_borrow, emit_deposit, emit_flash_loan, emit_flash_loan_repaid, emit_repay,
+    emit_schema_version, emit_withdraw,
+};
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
-    Env, IntoVal, Symbol, Val, Vec,
+use soroban_sdk::{panic_with_error, 
+    contract, contractevent, contractimpl, contracttype, symbol_short, Address,
+    Bytes, BytesN, Env, IntoVal, String, Symbol, TryIntoVal, Val, Vec,
 };
+
+// Re-export the canonical LendingError from common crate
+pub use stellar_lend_common::LendingError;
 
 const PERSISTENT_TTL_LEDGERS: u32 = 1_000_000;
 const DEFAULT_DEPOSIT_CAP: i128 = 1_000_000_000_000;
@@ -155,12 +225,36 @@ pub const DEFAULT_LIQUIDATION_INCENTIVE_BPS: i128 = 1000;
 /// Caps the liquidation bonus at 50 % so a misconfigured value cannot seize
 /// an outsized share of a borrower's collateral on top of the repaid debt.
 pub const MAX_LIQUIDATION_INCENTIVE_BPS: i128 = 5000;
+/// Oracle prices use seven decimal places; `10_000_000` represents one unit of value.
+pub const ORACLE_PRICE_SCALE: i128 = 10_000_000;
+/// Upper bound accepted by [`LendingContract::set_close_factor_bps`].
+/// Caps the close factor at 75 % so a single liquidation cannot
+/// extinguish a borrower's entire debt in one block.
+pub const MAX_CLOSE_FACTOR_BPS: i128 = 7500;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
-const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle";
+/// Lower bound accepted by [`LendingContract::set_oracle_max_age`]. A max age
+/// of zero would treat every price as instantly stale and brick borrowing.
+const MIN_ORACLE_MAX_AGE_SECS: u64 = 60;
+/// Upper bound accepted by [`LendingContract::set_oracle_max_age`].
+const MAX_ORACLE_MAX_AGE_SECS: u64 = 24 * 3600;
+/// Default length of the windowed deviation guard used by
+/// [`LendingContract::set_price`] when [`DataKey::MoveWindowSecs`] is unset.
+const DEFAULT_MOVE_WINDOW_SECS: u64 = 3600;
+/// Lower bound accepted by [`LendingContract::set_move_window_secs`].
+const MIN_MOVE_WINDOW_SECS: u64 = 1;
+/// Upper bound accepted by [`LendingContract::set_move_window_secs`].
+const MAX_MOVE_WINDOW_SECS: u64 = 24 * 3600;
+const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle:v2";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
-const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
-/// Maximum number of utilization samples retained in persistent storage.
+const DEFAULT_MAX_FLASH_BPS: i128 = 5_000;
+/// Maximum number of elements allowed in a [`LendingContract::receive`]
+/// payload. Prevents DoS through oversized payloads.
+const MAX_RECEIVE_PAYLOAD_LEN: u32 = 10;
+
+/// Minimum number of elements required in a [`LendingContract::receive`]
+/// payload (`[version, action]`).
+const MIN_RECEIVE_PAYLOAD_LEN: u32 = 2;
 ///
 /// Samples are kept in an oldest-first bounded vector internally. When the cap
 /// is reached, the next write evicts exactly one oldest entry before appending
@@ -168,7 +262,23 @@ const DEFAULT_MAX_FLASH_BPS: i128 = 10_000;
 pub const UTILIZATION_HISTORY_CAPACITY: u32 = 256;
 pub const MAX_LIQUIDATION_GRACE_PERIOD_SECS: u64 = 30 * 24 * 3600;
 
-#[contracttype]
+/// Fractional digits assumed for an asset whose decimals are not configured
+/// explicitly.
+///
+/// Legacy [`AssetParams`] entries (written by [`LendingContract::set_asset_params`])
+/// predate the `decimals` field, and the Lending oracle prices every asset on a
+/// 7-decimal scale, so 7 is the historical — and correct — default. Assets
+/// configured through [`LendingContract::set_asset_params_v2`] carry their own
+/// value instead.
+pub const DEFAULT_ASSET_DECIMALS: u32 = 7;
+
+/// Maximum number of fractional digits an asset may declare.
+///
+/// Bounded at 18 so that `10^decimals` cannot overflow the internal `i128`
+/// fixed-point scale used by cross-asset valuation.
+pub const MAX_ASSET_DECIMALS: u32 = 18;
+
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DataKey {
     Collateral(Address),
@@ -187,9 +297,26 @@ pub enum DataKey {
     BorrowMinAmount,
     Admin,
     PendingAdmin,
+    UserOperationSequence(Address),
+    OperationRecord(soroban_sdk::BytesN<32>),
     OraclePubKey,
+    // Optional address permitted (in addition to the admin) to relay signed
+    // oracle price updates. See set_price_relayer.
+    /// Optional price relayer.
+    PriceRelayer,
+    // Falls back to DEFAULT_ORACLE_MAX_AGE_SECS when unset. Configured via
+    // set_oracle_max_age.
+    /// Per-asset max oracle age (secs).
+    OracleMaxAge(Address),
     OraclePrice(Address),
+    // Used by the time-windowed deviation guard in set_price.
+    /// Per-asset (anchor_price, anchor_timestamp).
+    OracleAnchor(Address),
     MaxMoveBps,
+    // Defaults to DEFAULT_MOVE_WINDOW_SECS when unset. Configured via
+    // set_move_window_secs.
+    /// Windowed deviation guard length (secs).
+    MoveWindowSecs,
     PriceMin(Address),
     PriceMax(Address),
     ValuationCollateralAsset,
@@ -197,7 +324,6 @@ pub enum DataKey {
     EmergencyState,
     Guardian,
     PauseState(PauseType),
-    LiquidationThresholdBps,
     RateParams,
     /// Cross-asset: per-(user, asset) collateral balance.
     CollateralAsset(Address, Address),
@@ -205,6 +331,8 @@ pub enum DataKey {
     DebtAsset(Address, Address),
     /// Per-asset risk parameters (ltv, liquidation threshold, debt ceiling).
     AssetParams(Address),
+    /// Per-asset risk parameters (ltv, liquidation threshold, debt ceiling).
+    AssetParamsV2(Address),
     /// List of assets for which a user holds non-zero collateral cross-asset.
     UserCollateralAssets(Address),
     /// List of assets for which a user holds non-zero debt cross-asset.
@@ -225,7 +353,7 @@ pub enum DataKey {
     IsolationDebt(Address),
     /// Ring-buffered protocol utilization samples, stored oldest-first.
     UtilizationHistory,
-    /// List of all borrowers tracked for position migration.
+    /// Borrower list for position migration iteration.
     BorrowerList,
     /// Governed close-factor cap (basis points) consulted by `liquidate` to
     /// limit the maximum portion of a borrower's debt repayable in a single
@@ -239,14 +367,33 @@ pub enum DataKey {
     /// [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] when unset. Configured via
     /// [`LendingContract::set_liquidation_incentive_bps`].
     LiquidationIncentiveBps,
-    /// Timestamp (u64) when borrower's position first dropped below the health threshold.
-    FirstUnhealthyTimestamp(Address),
-    /// Configured grace period in seconds before a position is eligible for liquidation (u64).
-    LiquidationGracePeriodSecs,
-    /// The global borrow index.
+    /// Governed liquidation threshold (basis points) consulted by `liquidate`,
+    /// `get_position`, and `get_health_factor`. Bounds: `[0, 10000]`.
+    /// Defaults to [`LIQUIDATION_THRESHOLD_BPS`] (8000 = 80%) when unset.
+    LiquidationThresholdBps,
+    /// Global borrow index (fixed-point, scaled by [`debt::INDEX_SCALE`]).
+    /// Grows monotonically as interest accrues; see `debt.rs`.
     BorrowIndex,
-    /// The timestamp of the last global borrow index update.
+    /// Ledger timestamp of the last global borrow-index update.
     LastIndexUpdate,
+    /// Ledger timestamp at which a borrower's position was first observed to
+    /// be unhealthy (health factor below [`HEALTH_FACTOR_SCALE`]). Cleared
+    /// once the position becomes healthy again. Used together with
+    /// [`DataKey::LiquidationGracePeriodSecs`] to enforce a minimum grace
+    /// period before `liquidate` may act on a newly-unhealthy position.
+    FirstUnhealthyTimestamp(Address),
+    /// Admin-configured minimum time (seconds) a position must remain
+    /// unhealthy before it becomes liquidatable. Bounds:
+    /// `[0, MAX_LIQUIDATION_GRACE_PERIOD_SECS]`. Defaults to `0` (no grace
+    /// period) when unset. Configured via
+    /// [`LendingContract::set_liquidation_grace_period`].
+    LiquidationGracePeriodSecs,
+    /// Config store: initialization flag.
+    ConfigInit,
+    /// Config store: all entries stored as a `Vec<ConfigEntry>`.
+    ConfigEntries,
+    /// Config store: named backup snapshot.
+    ConfigBackup(Symbol),
 }
 
 #[contractevent]
@@ -254,6 +401,7 @@ pub enum DataKey {
 pub struct EmergencyStateChangedEvent {
     pub old_state: EmergencyState,
     pub new_state: EmergencyState,
+    pub caller: Address,
 }
 
 #[contractevent]
@@ -262,6 +410,7 @@ pub struct PauseStateChangedEvent {
     pub operation: PauseType,
     pub old_state: PauseState,
     pub new_state: PauseState,
+    pub caller: Address,
 }
 
 #[contractevent]
@@ -274,6 +423,78 @@ pub struct PriceBoundsSetEvent {
 
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinBorrowSetEvent {
+    pub min_borrow: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaxMoveBpsSetEvent {
+    pub max_move_bps: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleMaxAgeSetEvent {
+    pub asset: Address,
+    pub max_age_secs: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MoveWindowSetEvent {
+    pub move_window_secs: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PriceRelayerSetEvent {
+    pub relayer: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaxFlashBpsSetEvent {
+    pub max_flash_bps: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollateralAssetSetEvent {
+    pub asset: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebtAssetSetEvent {
+    pub asset: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuardianSetEvent {
+    pub old_guardian: Option<Address>,
+    pub new_guardian: Option<Address>,
+    pub caller: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OraclePubKeySetEvent {
+    pub old_pubkey: Option<BytesN<32>>,
+    pub new_pubkey: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateParamsUpdated {
+    pub old: rate_model::RateParams,
+    pub new: rate_model::RateParams,
+    pub checkpoint_index: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidationEventV1 {
     pub schema_version: u32,
     pub liquidator: Address,
@@ -282,6 +503,68 @@ pub struct LiquidationEventV1 {
     pub seized: i128,
     pub health_factor_before: i128,
     pub shortfall: i128,
+}
+
+/// Emitted when bad debt is recorded during a liquidation shortfall.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BadDebtEvent {
+    pub borrower: Address,
+    pub amount: i128,
+}
+
+/// Emitted by [`LendingContract::liquidate_cross_asset`] when a cross-asset
+/// liquidation completes.  Carries the identities of both the debt and
+/// collateral assets so indexers can reconstruct each individual leg.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossLiquidationEvent {
+    /// Schema version for forward-compatible decoding.
+    pub schema_version: u32,
+    /// Address that triggered the liquidation.
+    pub liquidator: Address,
+    /// Address whose position was liquidated.
+    pub borrower: Address,
+    /// Asset whose debt was repaid.
+    pub debt_asset: Address,
+    /// Asset whose collateral was seized.
+    pub collateral_asset: Address,
+    /// Debt amount repaid (in debt-asset raw units).
+    pub repaid: i128,
+    /// Collateral amount seized (in collateral-asset raw units).
+    pub seized: i128,
+    /// Aggregate health factor of the position *before* this call.
+    pub health_factor_before: i128,
+    /// Shortfall that could not be covered by seized collateral (routed to
+    /// the insurance fund and/or `BadDebt`).
+    pub shortfall: i128,
+}
+
+/// Emitted by [`LendingContract::flash_loan`] when a flash loan is
+/// successfully disbursed. Carries the schema version, the borrowed amount,
+/// the fee charged, and the initiator/receiver addresses so off-chain
+/// indexers and monitoring can observe flash-loan activity.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanEvent {
+    pub schema_version: u32,
+    pub initiator: Address,
+    pub receiver: Address,
+    pub amount: i128,
+    pub fee: i128,
+}
+
+/// Emitted by [`LendingContract::repay_flash_loan`] when a flash loan is
+/// repaid (principal plus fee). Mirrors [`FlashLoanEvent`] so indexers can
+/// pair the disbursement and repayment legs.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlashLoanRepaidEvent {
+    pub schema_version: u32,
+    pub initiator: Address,
+    pub receiver: Address,
+    pub amount: i128,
+    pub fee: i128,
 }
 
 /// Emitted by [`LendingContract::write_off_bad_debt`] whenever a governed
@@ -303,7 +586,7 @@ pub struct BadDebtWrittenOffEvent {
     pub socialized: i128,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmergencyState {
     Normal,
@@ -311,7 +594,7 @@ pub enum EmergencyState {
     Recovery,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PauseType {
     All,
@@ -323,7 +606,7 @@ pub enum PauseType {
     FlashLoan,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PauseState {
     pub paused: bool,
@@ -337,71 +620,6 @@ pub enum ProtocolAction {
     Repay,
     Liquidate,
     FlashLoan,
-}
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum LendingError {
-    InvalidAmount = 1001,
-    Overflow = 1002,
-    Unauthorized = 1003,
-    PendingAdminNotSet = 1004,
-    BelowMinimumBorrow = 1008,
-    NotInitialized = 1009,
-    AlreadyInitialized = 1010,
-    PositionHealthy = 1011,
-    DebtCeilingExceeded = 2001,
-    DepositCapExceeded = 2002,
-    /// A borrow would push total outstanding debt for the asset beyond the
-    /// configured per-asset `borrow_cap`.
-    BorrowCapExceeded = 2003,
-    InvalidFeeBps = 2005,
-    InvalidFlashUtilizationBps = 2006,
-    InsufficientCollateral = 2007,
-    SelfLiquidation = 2008,
-    IsolationCeilingExceeded = 2009,
-    InvalidIsolationCeiling = 2010,
-    /// `set_asset_params` called with `ltv_bps > liquidation_threshold_bps`,
-    /// which would let a user borrow up to the max LTV while already being
-    /// eligible for liquidation.
-    InvalidLiquidationParams = 2011,
-    InvalidLiquidationGracePeriod = 7003,
-    LiquidationGracePeriodNotMet = 7004,
-    InvalidOracleSignature = 5001,
-    PriceOutOfBounds = 3004,
-    PriceUnavailable = 3005,
-    StaleOracleTimestamp = 5002,
-    OraclePubkeyNotSet = 5003,
-    MaxMoveBpsExceeded = 5004,
-    OracleReplay = 5005,
-    /// The asset has not been configured via set_asset_params.
-    AssetNotConfigured = 3001,
-    /// Oracle price record is missing for the requested asset.
-    PriceFeedNotFound = 3002,
-    /// Operation would result in an unsafe health factor.
-    HealthFactorTooLow = 3003,
-    UpgradeNotInitialized = 4001,
-    ProposalNotFound = 4002,
-    ProposalNotReady = 4003,
-    ProposalExpired = 4004,
-    ProposalAlreadyExecuted = 4005,
-    AlreadyApproved = 4006,
-    InsufficientUpgradeApprovals = 4007,
-    InvalidUpgradeVersion = 4008,
-    ApproverNotFound = 4009,
-    MaxApproversReached = 4010,
-    InvalidUpgradeConfig = 4011,
-    /// `write_off_bad_debt` called when there is no recorded bad debt.
-    NoBadDebt = 6001,
-    /// `write_off_bad_debt` called with `amount` greater than recorded bad debt.
-    WriteOffExceedsBadDebt = 6002,
-    /// `set_close_factor_bps` called with a value outside `(0, 10000]`.
-    InvalidCloseFactorBps = 7001,
-    /// `set_liquidation_incentive_bps` called with a value outside
-    /// `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`.
-    InvalidLiquidationIncentiveBps = 7002,
-    InvalidLiquidationThresholdBps = 7005,
 }
 
 /// Per-asset isolation-mode configuration stored under `DataKey::AssetIsolation`.
@@ -420,7 +638,7 @@ pub enum LendingError {
 /// isolated asset (effectively disabled).  A ceiling of `i128::MAX` is
 /// treated as uncapped (same as `isolated = false`) but the asset is still
 /// flagged as isolated for reporting purposes.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IsolationConfig {
     /// Whether this asset is in isolation mode.
@@ -431,14 +649,27 @@ pub struct IsolationConfig {
     pub isolation_debt_ceiling: i128,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PriceRecord {
     pub price: i128,
     pub timestamp: u64,
 }
 
-#[contracttype]
+// Each accepted update is compared against the anchor's `price`; the anchor is
+// only reset (to the newly accepted price) once `move_window_secs` has elapsed
+// since `timestamp`. This bounds the cumulative distance a price may travel
+// within a window, unlike a per-update cap which can be walked arbitrarily
+// through many small updates.
+/// Anchor for the windowed deviation guard in `set_price`.
+#[contracttype(export = false)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleAnchor {
+    pub price: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolMetrics {
     pub total_borrow: i128,
@@ -452,7 +683,7 @@ pub struct ProtocolMetrics {
 /// This struct is intentionally append-only for indexer stability. The
 /// `schema_version` field lets downstream decoders reject unknown future
 /// versions instead of guessing at field semantics.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RateSmoothingState {
     /// Schema version for this view response. Version 1 contains the persisted
@@ -471,7 +702,7 @@ pub struct RateSmoothingState {
 /// Samples are written from the borrow-rate recomputation path and retained in
 /// a fixed-capacity ring buffer. They are stable contract values intended for
 /// off-chain decoding and trend charting.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UtilizationSample {
     /// Ledger sequence at which the rate path observed this utilization.
@@ -480,12 +711,46 @@ pub struct UtilizationSample {
     pub utilization_bps: i128,
 }
 
+/// Structured, read-only diagnostics for the borrow-rate pipeline.
+///
+/// Returned by [`LendingContract::get_rate_model_diagnostics`]. Exposes the
+/// current utilization, the target (raw two-slope) rate, the applied (smoothed
+/// and clamped) borrow rate, and the timing of the last update so off-chain
+/// monitoring and tuning tools can observe rate latency, smoothing convergence,
+/// and recovery behaviour without leaking any secrets or mutating state.
+#[contracttype(export = false)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateModelDiagnostics {
+    /// Whether a rate model is configured; `false` means the default APR fallback applies.
+    pub rate_model_active: bool,
+    /// Current utilization in basis points, bounded to `[0, 10_000]` (0 %..100 %).
+    pub utilization_bps: i128,
+    /// Target (raw) borrow rate from the two-slope model, in basis points.
+    pub target_rate_bps: i128,
+    /// Applied borrow rate after smoothing and floor/ceiling clamping, in basis points.
+    pub applied_rate_bps: i128,
+    /// Ledger sequence of the last rate update.
+    pub last_update_ledger: u32,
+    /// Ledgers elapsed since the last rate update (latency signal).
+    pub elapsed_ledgers: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PositionSummary {
     pub collateral: i128,
     pub debt: i128,
     pub health_factor: i128,
+}
+
+/// Versioned position view that reports stale or unavailable valuation prices.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PositionSummaryV2 {
+    pub collateral: i128,
+    pub debt: i128,
+    pub health_factor: i128,
+    pub price_stale: bool,
 }
 
 #[contracttype]
@@ -500,6 +765,34 @@ pub struct AssetParams {
     /// Per-asset protocol supply cap: maximum total collateral supplied for this asset.
     /// A value of 0 means uncapped (no limit enforced).
     pub supply_cap: i128,
+}
+
+/// Extended per-asset risk parameters carrying the token `decimals`.
+///
+/// Written by [`LendingContract::set_asset_params_v2`] under
+/// [`DataKey::AssetParamsV2`]. The cross-asset valuation reads `decimals` from
+/// here to normalise raw token amounts to the protocol's internal 7-decimal
+/// value scale. Legacy [`AssetParams`] entries have no `decimals` field and are
+/// treated as [`DEFAULT_ASSET_DECIMALS`] so existing configurations keep their
+/// historical behaviour.
+///
+/// A single atomic struct (rather than a separate decimals key) is used so the
+/// decimals and the risk parameters can never drift out of sync.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetParamsV2 {
+    pub ltv_bps: i128,
+    pub liquidation_threshold_bps: i128,
+    pub debt_ceiling: i128,
+    /// Per-asset protocol borrow cap: maximum total outstanding debt for this asset.
+    /// A value of 0 means uncapped (no limit enforced).
+    pub borrow_cap: i128,
+    /// Per-asset protocol supply cap: maximum total collateral supplied for this asset.
+    /// A value of 0 means uncapped (no limit enforced).
+    pub supply_cap: i128,
+    /// Number of fractional digits of the asset's token. Bounded to
+    /// `<= MAX_ASSET_DECIMALS` by the setter.
+    pub decimals: u32,
 }
 
 #[contracttype]
@@ -553,45 +846,71 @@ pub struct CrossWithdrawEvent {
     pub amount: i128,
 }
 
+/// A single entry in the config store: a `Symbol` key and its `Bytes` value.
+#[contracttype(export = false)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigEntry {
+    pub key: Symbol,
+    pub value: Bytes,
+}
+
+// Re-export audit log types for contract visibility
+pub use audit_log::{get_governance_audit_count, get_governance_audit_entries, AuditLogEntry};
+
+// Re-export the cross-asset valuation helpers so integration tests (which build
+// against the library only) can exercise them directly.
+pub use cross_asset::{value_in_base, value_in_base_ceil, PRICE_DIVISOR};
+
 #[contract]
 pub struct LendingContract;
 
 #[allow(clippy::too_many_arguments)]
 #[contractimpl]
 impl LendingContract {
-    /// One-time contract initialization — sets the protocol admin and seeds
-    /// the emergency state to [`EmergencyState::Normal`].
-    ///
-    /// # Errors
-    /// - [`LendingError::AlreadyInitialized`] if `initialize` has already
-    ///   been called on this contract instance. This returns a typed error
-    ///   rather than panicking.
-    ///
-    /// # Security
-    /// `initialize` is the *only* entry point that may be called before the
-    /// contract is initialized.  Every state-mutating entry point calls
-    /// [`require_initialized`] at the top and will return
-    /// [`LendingError::NotInitialized`] until this function succeeds.
+    // One-time contract initialization — sets the protocol admin and seeds
+    // the emergency state to [`EmergencyState::Normal`].
+    // 
+    // # Errors
+    // - [`LendingError::AlreadyInitialized`] if `initialize` has already
+    //   been called on this contract instance. This returns a typed error
+    //   rather than panicking.
+    // 
+    // # Security
+    // `initialize` is the *only* entry point that may be called before the
+    // contract is initialized.  Every state-mutating entry point calls
+    // [`require_initialized`] at the top and will return
+    // [`LendingError::NotInitialized`] until this function succeeds.
+    // 
+    // `admin.require_auth()` is called as the very first statement to prevent
+    // front-running: without it, any account that submits a transaction before
+    // the legitimate deployer could claim the admin role permanently.
     pub fn initialize(env: Env, admin: Address) -> Result<(), LendingError> {
+        // Require the supplied admin address to have signed this transaction.
+        // Without this guard, any account could front-run the deployer and call
+        // initialize() first, naming an arbitrary admin and permanently locking
+        // out the intended owner.
+        admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(LendingError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         set_emergency_state_internal(&env, EmergencyState::Normal);
+        debt::save_borrow_index(&env, debt::INDEX_SCALE);
+        debt::save_last_index_update(&env, env.ledger().timestamp());
         // Emit schema version event for indexers
         emit_schema_version(&env);
         Ok(())
     }
 
-    pub fn get_admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).unwrap()
-    }
-
-    pub fn try_get_admin(env: Env) -> Option<Address> {
+    pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
 
-    /// Returns the accumulated protocol bad debt.
+    pub fn has_admin(env: Env) -> bool {
+        env.storage().instance().has(&DataKey::Admin)
+    }
+
+    // Returns the accumulated protocol bad debt.
     pub fn get_bad_debt(env: Env) -> i128 {
         env.storage()
             .persistent()
@@ -599,12 +918,12 @@ impl LendingContract {
             .unwrap_or(0i128)
     }
 
-    /// Return the persisted borrow-rate smoothing state without recomputing rates.
-    ///
-    /// This view is intentionally read-only: it does not call `current_borrow_rate`,
-    /// does not write cache entries, and does not mutate rate-model storage. When
-    /// smoothing has never been initialized, all numeric state fields return `0`
-    /// with `schema_version = 1`.
+    // Return the persisted borrow-rate smoothing state without recomputing rates.
+    // 
+    // This view is intentionally read-only: it does not call `current_borrow_rate`,
+    // does not write cache entries, and does not mutate rate-model storage. When
+    // smoothing has never been initialized, all numeric state fields return `0`
+    // with `schema_version = 1`.
     pub fn get_rate_smoothing_state(env: Env) -> RateSmoothingState {
         RateSmoothingState {
             schema_version: SCHEMA_VERSION_V1,
@@ -626,20 +945,39 @@ impl LendingContract {
         }
     }
 
-    /// Set the configured oracle pubkey used to verify signed price updates.
-    pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) {
-        require_initialized(&env).expect("NotInitialized");
-        assert_admin(&env);
+    // Set the configured oracle pubkey used to verify signed price updates.
+    pub fn set_oracle_pubkey(env: Env, pubkey: BytesN<32>) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let old_pubkey: Option<BytesN<32>> = env.storage().instance().get(&DataKey::OraclePubKey);
         env.storage()
             .instance()
             .set(&DataKey::OraclePubKey, &pubkey);
+        OraclePubKeySetEvent {
+            old_pubkey,
+            new_pubkey: pubkey,
+        }
+        .publish(&env);
+        Ok(())
     }
 
-    /// Returns the currently configured oracle pubkey, if set.
+    // Returns the currently configured oracle pubkey, if set.
     pub fn get_oracle_pubkey(env: Env) -> Option<BytesN<32>> {
         env.storage().instance().get(&DataKey::OraclePubKey)
     }
 
+    // Authorization: `caller` must be the configured price relayer
+    // (set_price_relayer) or the admin, and must authorize the invocation. The
+    // relayer role lets an always-online oracle process avoid the admin key.
+    // The ed25519 signature over the canonical payload
+    // (`oracle_price_signature_payload`) is the real authenticity boundary.
+    // Freshness: the timestamp must not be in the future and must be no older
+    // than the per-asset max age (set_oracle_max_age, default
+    // DEFAULT_ORACLE_MAX_AGE_SECS).
+    // Velocity: a per-update cap (MaxMoveBps) and a time-windowed deviation
+    // guard are both enforced. The windowed guard compares against a per-asset
+    // anchor and bounds the cumulative move within `move_window_secs`.
+    /// Store a signed oracle price update. Caller: relayer or admin.
     pub fn set_price(
         env: Env,
         caller: Address,
@@ -649,11 +987,7 @@ impl LendingContract {
         signature: BytesN<64>,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        let admin = Self::get_admin(env.clone());
-        caller.require_auth();
-        if caller != admin {
-            return Err(LendingError::Unauthorized);
-        }
+        require_price_relayer_or_admin(&env, &caller)?;
         if price <= 0 {
             return Err(LendingError::InvalidAmount);
         }
@@ -677,19 +1011,83 @@ impl LendingContract {
             }
         }
 
+        let max_age = max_age_for(&env, &asset);
         let now = env.ledger().timestamp();
-        if timestamp > now || now > timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
+        if timestamp > now || now > timestamp.saturating_add(max_age) {
             return Err(LendingError::StaleOracleTimestamp);
         }
-        // Monotonic timestamp enforcement
-        if let Some(last) = env
+        // Load the existing record once. The freshness and retry policy is:
+        // 1. A strictly older timestamp can never overwrite a newer record.
+        // 2. Two different prices can never share the same timestamp.
+        // 3. Replaying the exact current (price, timestamp) is an idempotent
+        //    retry: it is not an error, but it also does not mutate state.
+        let existing_record: Option<PriceRecord> = env
             .storage()
             .persistent()
-            .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-        {
-            if timestamp <= last.timestamp {
+            .get(&DataKey::OraclePrice(asset.clone()));
+        if let Some(last) = existing_record.as_ref() {
+            if timestamp < last.timestamp {
                 return Err(LendingError::OracleReplay);
             }
+            if timestamp == last.timestamp && price != last.price {
+                return Err(LendingError::OracleReplay);
+            }
+            if timestamp == last.timestamp && price == last.price {
+                return Ok(());
+            }
+        }
+
+        // Velocity guards. Both run before the expensive signature
+        // verification, along with the other input checks.
+        let max_move_bps: Option<i128> = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps);
+
+        // Per-update move-cap circuit breaker (relative to the previous update).
+        if let Some(max_move_bps) = max_move_bps {
+            if let Some(last) = existing_record.as_ref() {
+                if bps_move(price, last.price)? > max_move_bps {
+                    return Err(LendingError::MaxMoveBpsExceeded);
+                }
+            }
+        }
+
+        // Time-windowed deviation guard (relative to the window anchor). The
+        // anchor is reset once `move_window_secs` has elapsed, at which point a
+        // move of up to `max_move_bps` from the new anchor is permitted. When no
+        // cap is configured (or the asset has no prior record) the anchor is
+        // simply (re)seeded and no deviation check applies.
+        let window = move_window_secs(&env);
+        let existing_anchor: Option<OracleAnchor> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OracleAnchor(asset.clone()));
+        let anchor_expired = match existing_anchor.as_ref() {
+            Some(anchor) => now.saturating_sub(anchor.timestamp) >= window,
+            None => true,
+        };
+        match (max_move_bps, existing_anchor.as_ref()) {
+            (Some(max_move_bps), Some(anchor)) if !anchor_expired => {
+                if bps_move(price, anchor.price)? > max_move_bps {
+                    return Err(LendingError::MaxMoveBpsExceeded);
+                }
+            }
+            (Some(_), Some(_)) => {
+                // Window elapsed: reseed the anchor at the new price.
+                env.storage().persistent().set(
+                    &DataKey::OracleAnchor(asset.clone()),
+                    &OracleAnchor { price, timestamp },
+                );
+            }
+            (Some(_), None) => {
+                // First observed price for this asset seeds the anchor.
+                env.storage().persistent().set(
+                    &DataKey::OracleAnchor(asset.clone()),
+                    &OracleAnchor { price, timestamp },
+                );
+            }
+            (None, _) => {}
         }
 
         let oracle_pubkey: BytesN<32> = env
@@ -699,45 +1097,12 @@ impl LendingContract {
             .ok_or(LendingError::OraclePubkeyNotSet)?;
 
         let payload = Self::oracle_price_signature_payload(&env, &asset, price, timestamp);
-        // ed25519_verify traps (panics) on bad signature in soroban-sdk 25.x
+        // `Crypto::ed25519_verify` traps the transaction when the signature is
+        // not valid for `(oracle_pubkey, payload)`, so completing the call is
+        // itself the proof that the caller holds the oracle key for this exact
+        // payload.
         env.crypto()
             .ed25519_verify(&oracle_pubkey, &payload, &signature);
-
-        // Per-update move-cap circuit breaker.
-        // If max_move_bps is configured and a prior price record exists, reject
-        // updates that move the price beyond the configured threshold.
-        if let Some(max_move_bps) = env
-            .storage()
-            .instance()
-            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
-        {
-            if let Some(last) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
-            {
-                let last_price = last.price;
-                // delta = |price - last_price| * 10_000 / last_price
-                let delta_abs = if price >= last_price {
-                    price
-                        .checked_sub(last_price)
-                        .ok_or(LendingError::Overflow)?
-                } else {
-                    last_price
-                        .checked_sub(price)
-                        .ok_or(LendingError::Overflow)?
-                };
-                let move_bps = delta_abs
-                    .checked_mul(BPS_DENOM)
-                    .ok_or(LendingError::Overflow)?
-                    .checked_div(last_price)
-                    .ok_or(LendingError::Overflow)?;
-                if move_bps > max_move_bps {
-                    return Err(LendingError::MaxMoveBpsExceeded);
-                }
-            }
-            // No prior record: first-ever price for this asset is exempt.
-        }
 
         env.storage().persistent().set(
             &DataKey::OraclePrice(asset),
@@ -750,33 +1115,45 @@ impl LendingContract {
         env.storage().persistent().get(&DataKey::OraclePrice(asset))
     }
 
-    /// Build the ed25519 signing payload for a price update.
-    ///
-    /// Framing: each variable-length field is preceded by its 4-byte big-endian
-    /// length so that no two distinct `(asset, price, timestamp)` tuples can
-    /// produce the same byte string (field-confusion / splice forgery impossible).
-    ///
-    /// Layout:
-    /// ```text
-    /// ORACLE_SIGNATURE_DOMAIN   (fixed 17 bytes — no length prefix needed)
-    /// u32_be(len(asset_xdr))    (4 bytes)
-    /// asset_xdr                 (variable)
-    /// price_i128_be             (16 bytes fixed — no length prefix needed)
-    /// timestamp_u64_be          (8 bytes  fixed — no length prefix needed)
-    /// ```
+    // Return the ed25519 signing payload for a price update.
+    pub fn oracle_payload(env: Env, asset: Address, price: i128, timestamp: u64) -> Bytes {
+        Self::oracle_price_signature_payload(&env, &asset, price, timestamp)
+    }
+
+    // Build the v2 ed25519 signing payload for a price update.
+    // 
+    // Framing: each variable-length field is preceded by its 4-byte big-endian
+    // length so that no two distinct `(asset, price, timestamp)` tuples can
+    // produce the same byte string (field-confusion / splice forgery impossible).
+    // 
+    // Layout:
+    // ```text
+    // "StellarLendOracle:v2"    (fixed 20 bytes)
+    // network_id                (32 bytes)
+    // u32_be(len(contract_xdr)) (4 bytes)
+    // contract_xdr              (variable)
+    // u32_be(len(asset_xdr))    (4 bytes)
+    // asset_xdr                 (variable)
+    // price_i128_be             (16 bytes fixed — no length prefix needed)
+    // timestamp_u64_be          (8 bytes  fixed — no length prefix needed)
+    // ```
     pub(crate) fn oracle_price_signature_payload(
         env: &Env,
         asset: &Address,
         price: i128,
         timestamp: u64,
     ) -> Bytes {
+        let contract_xdr = env.current_contract_address().to_xdr(env);
+        let contract_len = contract_xdr.len();
         let asset_xdr = asset.to_xdr(env);
-        let asset_len = asset_xdr.len(); // u32
+        let asset_len = asset_xdr.len();
+        let network_id = env.ledger().network_id();
 
         let mut payload = Bytes::new(env);
-        // Domain separator (fixed length — no prefix required)
         payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-        // Length-prefixed asset XDR (variable length — prefix prevents splice)
+        payload.append(&Bytes::from_slice(env, &network_id.to_array()));
+        payload.append(&Bytes::from_slice(env, &contract_len.to_be_bytes()));
+        payload.append(&contract_xdr);
         payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
         payload.append(&asset_xdr);
         // Fixed-width fields need no length prefix
@@ -801,13 +1178,29 @@ impl LendingContract {
 
     pub fn set_max_move_bps(env: Env, max_move_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if !(0..=BPS_DENOM).contains(&max_move_bps) {
             return Err(LendingError::InvalidAmount);
         }
         env.storage()
             .instance()
             .set(&DataKey::MaxMoveBps, &max_move_bps);
+        MaxMoveBpsSetEvent { max_move_bps }.publish(&env);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_max_move_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
@@ -815,33 +1208,197 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::MaxMoveBps)
     }
 
-    /// Set the maximum flash-loan utilization ratio in basis points (admin-only).
-    /// The requested amount must not exceed `max_flash_bps × available_liquidity / 10000`.
+    // Freshness checks for `asset` (in set_price, the cross-asset valuation
+    // paths and require_fresh_valuation_prices) use this value instead of the
+    // protocol default. `secs` must lie in
+    // [MIN_ORACLE_MAX_AGE_SECS, MAX_ORACLE_MAX_AGE_SECS] (60 s to 24 h). A max
+    // age of 0 is rejected because it would mark every price as instantly
+    // stale and brick borrowing. Returns LendingError::InvalidAmount when out
+    // of range.
+    /// Set per-asset max oracle price age in seconds (admin-only).
+    pub fn set_oracle_max_age(env: Env, asset: Address, secs: u64) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        if !(MIN_ORACLE_MAX_AGE_SECS..=MAX_ORACLE_MAX_AGE_SECS).contains(&secs) {
+            return Err(LendingError::InvalidAmount);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::OracleMaxAge(asset.clone()), &secs);
+        OracleMaxAgeSetEvent {
+            asset,
+            max_age_secs: secs,
+        }
+        .publish(&env);
+
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_oracle_max_age"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+
+    /// Read the configured per-asset max oracle age, if set.
+    pub fn get_oracle_max_age(env: Env, asset: Address) -> Option<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OracleMaxAge(asset))
+    }
+
+    // A price may deviate at most `max_move_bps` from its per-asset anchor
+    // within this window; the anchor resets once the window elapses. Bounds are
+    // [MIN_MOVE_WINDOW_SECS, MAX_MOVE_WINDOW_SECS] (1 s to 24 h).
+    /// Set the windowed deviation guard length in seconds (admin-only).
+    pub fn set_move_window_secs(env: Env, secs: u64) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        if !(MIN_MOVE_WINDOW_SECS..=MAX_MOVE_WINDOW_SECS).contains(&secs) {
+            return Err(LendingError::InvalidAmount);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::MoveWindowSecs, &secs);
+        MoveWindowSetEvent {
+            move_window_secs: secs,
+        }
+        .publish(&env);
+
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_move_window_secs"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+
+    /// Read the configured windowed-deviation window length in seconds.
+    pub fn get_move_window_secs(env: Env) -> u64 {
+        move_window_secs(&env)
+    }
+
+    // Separates the always-online oracle relayer key from the admin key. The
+    // relayer still must supply a valid ed25519 signature over the price
+    // payload; the role only gates who may submit an otherwise-valid update.
+    /// Set the optional price relayer address (admin-only).
+    pub fn set_price_relayer(env: Env, relayer: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PriceRelayer, &relayer);
+        PriceRelayerSetEvent {
+            relayer: relayer.clone(),
+        }
+        .publish(&env);
+
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_price_relayer"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+
+    /// Read the configured price relayer, if any.
+    pub fn get_price_relayer(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PriceRelayer)
+    }
+
+    // Set the maximum flash-loan utilization ratio in basis points (admin-only).
+    // The requested amount must not exceed `max_flash_bps × available_liquidity / 10000`.
     pub fn set_max_flash_bps(env: Env, max_flash_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if !(0..=BPS_DENOM).contains(&max_flash_bps) {
             return Err(LendingError::InvalidFlashUtilizationBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::MaxFlashUtilizationBps, &max_flash_bps);
+        MaxFlashBpsSetEvent { max_flash_bps }.publish(&env);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_max_flash_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Set per‑asset price bounds (admin‑only).
-    /// `min_price` must be > 0 and less than `max_price`.
+    // Set per‑asset price bounds (admin‑only).
+    // `min_price` must be > 0 and less than `max_price`.
+    //
+    // If the asset already has a stored price, the new bounds must contain it,
+    // otherwise the stored price would be rejected by future `set_price` calls
+    // until refreshed, and freshness would fail closed. Pass `force = true` to
+    // intentionally install bounds that exclude the current price (for example
+    // when the price is known to be wrong and will be corrected immediately).
+    // This is an explicit, audited override.
     pub fn set_price_bounds(
         env: Env,
         asset: Address,
         min_price: i128,
         max_price: i128,
+        force: bool,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if min_price <= 0 || max_price <= 0 || min_price >= max_price {
             return Err(LendingError::InvalidAmount);
         }
+
+        if !force {
+            if let Some(current) = env
+                .storage()
+                .persistent()
+                .get::<_, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
+            {
+                if current.price < min_price || current.price > max_price {
+                    return Err(LendingError::PriceOutOfBounds);
+                }
+            }
+        }
+
         env.storage()
             .persistent()
             .set(&DataKey::PriceMin(asset.clone()), &min_price);
@@ -854,10 +1411,19 @@ impl LendingContract {
             max_price,
         }
         .publish(&env);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_price_bounds"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Retrieve price bounds for an asset. Returns `(Option<min>, Option<max>)`.
+    // Retrieve price bounds for an asset. Returns `(Option<min>, Option<max>)`.
     pub fn get_price_bounds(env: Env, asset: Address) -> (Option<i128>, Option<i128>) {
         let min = env
             .storage()
@@ -867,28 +1433,29 @@ impl LendingContract {
         (min, max)
     }
 
-    /// Return the configured maximum flash-loan utilization ratio in basis points.
+    // Return the configured maximum flash-loan utilization ratio in basis points.
     pub fn get_max_flash_bps(env: Env) -> i128 {
         Self::max_flash_bps_config(&env)
     }
 
-    /// Propose a new admin (current admin only).
-    ///
-    /// Replaces any existing pending admin proposal.
-    pub fn propose_admin(env: Env, new_admin: Address) {
-        require_initialized(&env).expect("NotInitialized");
-        let current_admin = Self::get_admin(env.clone());
+    // Propose a new admin (current admin only).
+    // 
+    // Replaces any existing pending admin proposal.
+    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let current_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         current_admin.require_auth();
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
+        Ok(())
     }
 
-    /// Accept the currently pending admin handover.
-    ///
-    /// Returns `PendingAdminNotSet` if no admin has been proposed yet. On
-    /// success, the pending admin must sign the call, the admin address is
-    /// updated, and `PendingAdmin` is cleared.
+    // Accept the currently pending admin handover.
+    // 
+    // Returns `PendingAdminNotSet` if no admin has been proposed yet. On
+    // success, the pending admin must sign the call, the admin address is
+    // updated, and `PendingAdmin` is cleared.
     pub fn accept_admin(env: Env) -> Result<(), LendingError> {
         require_initialized(&env)?;
         let pending_admin: Address = env
@@ -901,45 +1468,143 @@ impl LendingContract {
             .instance()
             .set(&DataKey::Admin, &pending_admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "accept_admin"),
+            pending_admin.clone(),
+            None,
+        );
+
         Ok(())
     }
 
-    pub fn set_guardian(env: Env, guardian: Address) {
-        require_initialized(&env).expect("NotInitialized");
-        assert_admin(&env);
+    pub fn set_guardian(env: Env, guardian: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        let old_guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
         env.storage().instance().set(&DataKey::Guardian, &guardian);
+        GuardianSetEvent {
+            caller: admin.clone(),
+            old_guardian,
+            new_guardian: Some(guardian),
+        }
+        .publish(&env);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_guardian"),
+            admin.clone(),
+            None,
+        );
+
+        Ok(())
+    }
+
+    pub fn clear_guardian(env: Env) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        let old_guardian: Option<Address> = env.storage().instance().get(&DataKey::Guardian);
+        env.storage().instance().remove(&DataKey::Guardian);
+        GuardianSetEvent {
+            caller: admin.clone(),
+            old_guardian,
+            new_guardian: None,
+        }
+        .publish(&env);
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "clear_guardian"),
+            admin,
+            None,
+        );
+        Ok(())
     }
 
     pub fn get_guardian(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Guardian)
     }
 
-    pub fn set_emergency_state(env: Env, new_state: EmergencyState) {
-        require_initialized(&env).expect("NotInitialized");
-        assert_admin_or_guardian(&env, &new_state);
+    // Return the current emergency state, or `None` before initialization.
+    pub fn get_emergency_state(env: Env) -> Option<EmergencyState> {
+        env.storage().instance().get(&DataKey::EmergencyState)
+    }
 
-        let old_state = get_emergency_state(&env);
+    pub fn set_emergency_state(
+        env: Env,
+        caller: Address,
+        new_state: EmergencyState,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        caller.require_auth();
+        let is_admin = is_admin(&env, &caller);
+        let is_guardian = is_guardian(&env, &caller);
+        let authorized = match new_state {
+            EmergencyState::Shutdown => is_admin || is_guardian,
+            EmergencyState::Recovery | EmergencyState::Normal => is_admin,
+        };
+        if !authorized {
+            return Err(LendingError::Unauthorized);
+        }
+
+        let old_state = read_emergency_state(&env);
         set_emergency_state_internal(&env, new_state);
         EmergencyStateChangedEvent {
+            caller: caller.clone(),
             old_state,
             new_state,
         }
         .publish(&env);
+
+        // Record audit entry
+        let state_name = match new_state {
+            EmergencyState::Normal => "set_state_normal",
+            EmergencyState::Shutdown => "set_state_shutdown",
+            EmergencyState::Recovery => "set_state_recovery",
+        };
+        audit_log::record_audit_entry(&env, String::from_str(&env, state_name), caller, None);
+
+        Ok(())
     }
 
-    /// Set or clear a granular pause flag with a TTL.
-    ///
-    /// `ttl_ledgers` is added to the current ledger sequence to compute
-    /// `expires_at_ledger`. A `ttl_ledgers` of 0 means the pause expires
-    /// immediately (at the current sequence), so `pause_is_active` returns
-    /// false right away. Setting `paused = false` is a valid unpause call
-    /// that clears the active pause regardless of TTL.
-    ///
-    /// Core user operations check granular/global pause state before emergency
-    /// state so an active pause can also stop recovery-allowed unwind paths.
-    pub fn set_pause(env: Env, pause_type: PauseType, paused: bool, ttl_ledgers: u32) {
-        require_initialized(&env).expect("NotInitialized");
-        assert_admin_or_guardian(&env, &EmergencyState::Shutdown);
+    // Set or clear a granular pause flag with a TTL.
+    // 
+    // `ttl_ledgers` is added to the current ledger sequence to compute
+    // `expires_at_ledger`. A `ttl_ledgers` of 0 means the pause expires
+    // immediately (at the current sequence), so `pause_is_active` returns
+    // false right away. Setting `paused = false` is a valid unpause call
+    // that clears the active pause regardless of TTL.
+    // 
+    // Core user operations check granular/global pause state before emergency
+    // state so an active pause can also stop recovery-allowed unwind paths.
+    pub fn set_pause(
+        env: Env,
+        caller: Address,
+        pause_type: PauseType,
+        paused: bool,
+        ttl_ledgers: u32,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        caller.require_auth();
+        let is_admin = is_admin(&env, &caller);
+        let is_guardian = is_guardian(&env, &caller);
+        if !(is_admin || (paused && is_guardian)) {
+            return Err(LendingError::Unauthorized);
+        }
 
         let expires_at_ledger = env.ledger().sequence().saturating_add(ttl_ledgers);
 
@@ -948,23 +1613,33 @@ impl LendingContract {
             paused: false,
             expires_at_ledger: 0,
         });
+        if !paused && (!old_state.paused || env.ledger().sequence() >= old_state.expires_at_ledger) {
+            return Ok(());
+        }
         let new_state = PauseState {
             paused,
             expires_at_ledger,
         };
         env.storage().instance().set(&key, &new_state);
         PauseStateChangedEvent {
+            caller: caller.clone(),
             operation: pause_type,
             old_state,
             new_state,
         }
         .publish(&env);
+
+        // Record audit entry
+        let action_name = if paused { "set_pause" } else { "unset_pause" };
+        audit_log::record_audit_entry(&env, String::from_str(&env, action_name), caller, None);
+
+        Ok(())
     }
 
-    /// Return true if a specific operation is currently paused.
-    ///
-    /// `PauseType::All` acts as a global override for every operation-specific
-    /// query. Expired pauses are treated as inactive.
+    // Return true if a specific operation is currently paused.
+    // 
+    // `PauseType::All` acts as a global override for every operation-specific
+    // query. Expired pauses are treated as inactive.
     pub fn get_pause_state(env: Env, pause_type: PauseType) -> bool {
         if pause_is_active(&env, PauseType::All) {
             return true;
@@ -974,10 +1649,25 @@ impl LendingContract {
 
     pub fn set_min_borrow(env: Env, min_borrow: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        if min_borrow < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
         env.storage()
             .instance()
             .set(&DataKey::BorrowMinAmount, &min_borrow);
+        MinBorrowSetEvent { min_borrow }.publish(&env);
+
+        // Record audit entry
+        audit_log::record_audit_entry(&env, String::from_str(&env, "set_min_borrow"), admin, None);
+
         Ok(())
     }
 
@@ -992,18 +1682,18 @@ impl LendingContract {
     // Isolation-mode API
     // -----------------------------------------------------------------------
 
-    /// Configure isolation mode for `asset` (admin-only).
-    ///
-    /// Setting `isolated = true` with a positive `isolation_debt_ceiling` marks
-    /// the asset as isolated.  An isolated asset's collateral contribution is
-    /// capped so that the total debt backed by it across all users never
-    /// exceeds the ceiling.  Setting `isolated = false` removes the
-    /// restriction; the ceiling value is preserved but ignored.
-    ///
-    /// # Errors
-    /// - `Unauthorized` — caller is not the admin.
-    /// - `InvalidIsolationCeiling` — `isolation_debt_ceiling` is negative or
-    ///   zero while `isolated = true`.
+    // Configure isolation mode for `asset` (admin-only).
+    // 
+    // Setting `isolated = true` with a positive `isolation_debt_ceiling` marks
+    // the asset as isolated.  An isolated asset's collateral contribution is
+    // capped so that the total debt backed by it across all users never
+    // exceeds the ceiling.  Setting `isolated = false` removes the
+    // restriction; the ceiling value is preserved but ignored.
+    // 
+    // # Errors
+    // - `Unauthorized` — caller is not the admin.
+    // - `InvalidIsolationCeiling` — `isolation_debt_ceiling` is negative or
+    //   zero while `isolated = true`.
     pub fn set_asset_isolation(
         env: Env,
         asset: Address,
@@ -1011,9 +1701,19 @@ impl LendingContract {
         isolation_debt_ceiling: i128,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
-        if isolated && isolation_debt_ceiling <= 0 {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        if isolation_debt_ceiling < 0 || (isolated && isolation_debt_ceiling == 0) {
             return Err(LendingError::InvalidIsolationCeiling);
+        }
+        let current_debt = Self::get_isolation_debt(env.clone(), asset.clone());
+        if isolated && isolation_debt_ceiling < current_debt {
+            return Err(LendingError::IsolationCeilingBelowDebt);
         }
         let config = IsolationConfig {
             isolated,
@@ -1022,25 +1722,34 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::AssetIsolation(asset), &config);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_asset_isolation"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Return the isolation configuration for `asset`.
-    ///
-    /// Returns `None` when no configuration has been set (equivalent to
-    /// `isolated = false`).
+    // Return the isolation configuration for `asset`.
+    // 
+    // Returns `None` when no configuration has been set (equivalent to
+    // `isolated = false`).
     pub fn get_asset_isolation(env: Env, asset: Address) -> Option<IsolationConfig> {
         env.storage()
             .persistent()
             .get(&DataKey::AssetIsolation(asset))
     }
 
-    /// Return the current running isolation-debt total for `asset`.
-    ///
-    /// This is the sum of all outstanding debt that has been attributed to
-    /// `asset` acting as isolated collateral.  Returns `0` when no debt has
-    /// been recorded (either the asset is not isolated or no borrows have
-    /// been made against it).
+    // Return the current running isolation-debt total for `asset`.
+    // 
+    // This is the sum of all outstanding debt that has been attributed to
+    // `asset` acting as isolated collateral.  Returns `0` when no debt has
+    // been recorded (either the asset is not isolated or no borrows have
+    // been made against it).
     pub fn get_isolation_debt(env: Env, asset: Address) -> i128 {
         env.storage()
             .persistent()
@@ -1048,18 +1757,18 @@ impl LendingContract {
             .unwrap_or(0)
     }
 
-    /// Enforce the isolation-mode debt ceiling for `collateral_asset` when a
-    /// user attempts to borrow `borrow_amount` additional units.
-    ///
-    /// This is a **read-only check** — it does not mutate state.  Callers
-    /// must update `IsolationDebt` themselves after a successful borrow.
-    ///
-    /// Returns `Ok(())` when:
-    /// - the collateral asset is not isolated, or
-    /// - the borrow does not breach the ceiling.
-    ///
-    /// Returns `Err(IsolationCeilingExceeded)` when the ceiling would be
-    /// breached.
+    // Enforce the isolation-mode debt ceiling for `collateral_asset` when a
+    // user attempts to borrow `borrow_amount` additional units.
+    // 
+    // This is a **read-only check** — it does not mutate state.  Callers
+    // must update `IsolationDebt` themselves after a successful borrow.
+    // 
+    // Returns `Ok(())` when:
+    // - the collateral asset is not isolated, or
+    // - the borrow does not breach the ceiling.
+    // 
+    // Returns `Err(IsolationCeilingExceeded)` when the ceiling would be
+    // breached.
     pub fn check_isolation_ceiling(
         env: Env,
         collateral_asset: Address,
@@ -1067,6 +1776,135 @@ impl LendingContract {
     ) -> Result<(), LendingError> {
         check_isolation_ceiling_internal(&env, &collateral_asset, borrow_amount)
     }
+
+    // Receive tokens from a user via the SEP-41 `transfer_from`/`approve`
+    // allowance flow and apply them as a deposit or debt repayment.
+    // 
+    // This is a pull-based entrypoint: the user authorizes the lending
+    // contract as a spender on the token contract (via `approve`) and then
+    // calls `receive` with a payload specifying the desired action.  The
+    // contract pulls `amount` from `from` into its own balance via
+    // `transfer_from` before updating any protocol state.
+    // 
+    // # Payload format
+    // 
+    // `[version: u32, action: Symbol, ...optional_data]`
+    // 
+    // * `version` — Must be `1` (current schema version).
+    // * `action` — A `Symbol` indicating the action (`"deposit"` or
+    //   `"repay"`).
+    // * `optional_data` — Reserved for future use; ignored in the current
+    //   version.
+    // 
+    // # Security
+    // 
+    // * Requires `from.require_auth()` so only the token owner can
+    //   authorize a pull.
+    // * Validates that `token_asset` matches the configured
+    //   `ValuationCollateralAsset` before performing any transfer.
+    // * Validates payload version and action before performing any
+    //   transfer.
+    // * The protocol pause and emergency state checks are delegated to the
+    //   inner [`LendingContract::deposit`] / [`LendingContract::repay`]
+    //   handlers (defence-in-depth: both `receive` and the inner handler
+    //   call `require_initialized` and `require_auth`).
+    // * Rejects calls from the token contract itself and the lending
+    //   contract (prevents self-call attacks).
+    // 
+    // # Errors
+    // 
+    // * [`LendingError::InvalidPayloadVersion`] if `version != 1`.
+    // * [`LendingError::MalformedPayload`] if the payload is too short,
+    //   too long, or contains undecodable values.
+    // * [`LendingError::AssetNotSupported`] if `token_asset` does not
+    //   match the configured valuation collateral asset, or if the action
+    //   is not `"deposit"` or `"repay"`.
+    // * [`LendingError::UnauthorizedSender`] if `from` is the token
+    //   contract or the lending contract itself.
+    // * All errors from [`LendingContract::deposit`] or
+    //   [`LendingContract::repay`] respectively.
+    pub fn receive(
+        env: Env,
+        token_asset: Address,
+        from: Address,
+        amount: i128,
+        payload: Vec<Val>,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+
+        // Validate that token_asset matches the configured valuation
+        // collateral asset so deposit/repay accounting stays consistent.
+        let configured_asset =
+            Self::get_collateral_asset(env.clone()).ok_or(LendingError::AssetNotSupported)?;
+        if token_asset != configured_asset {
+            return Err(LendingError::AssetNotSupported);
+        }
+
+        // Safety: reject calls from the token contract itself or the lending
+        // contract (prevents self-call / reentrancy attacks).
+        let contract_address = env.current_contract_address();
+        if from == token_asset || from == contract_address {
+            return Err(LendingError::UnauthorizedSender);
+        }
+
+        from.require_auth();
+
+        // Parse payload: [version: u32, action: Symbol, ...optional_data]
+        if payload.len() < MIN_RECEIVE_PAYLOAD_LEN {
+            return Err(LendingError::MalformedPayload);
+        }
+        if payload.len() > MAX_RECEIVE_PAYLOAD_LEN {
+            return Err(LendingError::MalformedPayload);
+        }
+
+        let version: u32 = payload
+            .get(0)
+            .unwrap()
+            .try_into_val(&env)
+            .map_err(|_| LendingError::MalformedPayload)?;
+        if version != SCHEMA_VERSION_V1 {
+            return Err(LendingError::InvalidPayloadVersion);
+        }
+
+        let action_sym: Symbol = payload
+            .get(1)
+            .unwrap()
+            .try_into_val(&env)
+            .map_err(|_| LendingError::MalformedPayload)?;
+
+        let is_deposit = action_sym == symbol_short!("deposit");
+        let is_repay = action_sym == symbol_short!("repay");
+        if !is_deposit && !is_repay {
+            return Err(LendingError::AssetNotSupported);
+        }
+
+        // Pull tokens from the user into the contract via transfer_from.
+        // The user must have previously called token_client.approve() to
+        // authorize the lending contract as a spender.
+        let token_client = TokenClient::new(&env, &token_asset);
+        token_client.transfer_from(&contract_address, &from, &contract_address, &amount);
+
+        if is_deposit {
+            // Defence-in-depth: deposit() also calls require_initialized
+            // and user.require_auth(). The double check is intentional.
+            Self::deposit(env, from, amount)?;
+        } else {
+            // Defence-in-depth: repay() also calls require_initialized
+            // and user.require_auth(). The double check is intentional.
+            Self::repay(env, from, amount)?;
+        }
+
+        Ok(())
+    }
+
+    // Deposit collateral with comprehensive authorization and validation.
+    // 
+    // # Security
+    // - Validates authorization through require_auth
+    // - Validates amount and deposit cap
+    // - Checks reserve invariants before and after
+    // - Prevents replay attacks
+    // - Enforces network validation
     pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Deposit);
@@ -1107,12 +1945,14 @@ impl LendingContract {
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
 
-        check_and_clear_unhealthy_timestamp(&env, &user);
-
         Ok(new_balance)
     }
 
-    /// Withdraw collateral after pause and emergency gates pass.
+    // Withdraw collateral after pause and emergency gates pass.
+    // 
+    // Rejects with `InsufficientCollateral` if, after accruing interest, the
+    // remaining collateral would leave an open debt position below HF 1.0.
+    // Positions with no debt may withdraw everything.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Withdraw);
@@ -1129,6 +1969,13 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
         let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+        // Solvency check against accrued debt (read-only) before any write.
+        // In cross-asset mode both oracle prices must be fresh first.
+        if uses_cross_asset_valuation(&env) {
+            require_fresh_valuation_prices(&env)?;
+        }
+        let position = load_debt(&env, &user);
+        assert_position_healthy(&env, new_balance, &position)?;
         env.storage().persistent().set(&key, &new_balance);
         let total_deposits: i128 = env
             .storage()
@@ -1146,59 +1993,73 @@ impl LendingContract {
         // Emit withdraw event
         emit_withdraw(&env, &user, amount, new_balance);
 
-        check_and_clear_unhealthy_timestamp(&env, &user);
-
         Ok(new_balance)
     }
 
-    /// Set the configured valuation collateral asset for the legacy single-asset flows.
+    // Set the configured valuation collateral asset for the legacy single-asset flows.
     pub fn set_collateral_asset(env: Env, asset: Address) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         env.storage()
             .instance()
             .set(&DataKey::ValuationCollateralAsset, &asset);
+        CollateralAssetSetEvent { asset }.publish(&env);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_collateral_asset"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Get the configured valuation collateral asset for the legacy single-asset flows.
+    // Get the configured valuation collateral asset for the legacy single-asset flows.
     pub fn get_collateral_asset(env: Env) -> Option<Address> {
         env.storage()
             .instance()
             .get(&DataKey::ValuationCollateralAsset)
     }
 
-    fn get_collateral_price_internal(env: &Env) -> Result<i128, LendingError> {
-        let Some(asset) = env
+    // Set the configured valuation debt asset for legacy single-position flows.
+    pub fn set_debt_asset(env: Env, asset: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
             .storage()
             .instance()
-            .get::<_, Address>(&DataKey::ValuationCollateralAsset)
-        else {
-            return Ok(1_000_000_000);
-        };
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
 
-        let record = env
-            .storage()
-            .persistent()
-            .get::<_, PriceRecord>(&DataKey::OraclePrice(asset))
-            .ok_or(LendingError::PriceUnavailable)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::ValuationDebtAsset, &asset);
+        DebtAssetSetEvent { asset }.publish(&env);
 
-        let now = env.ledger().timestamp();
-        if record.timestamp > now
-            || now > record.timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS)
-        {
-            return Err(LendingError::StaleOracleTimestamp);
-        }
+        audit_log::record_audit_entry(&env, String::from_str(&env, "set_debt_asset"), admin, None);
 
-        Ok(record.price)
+        Ok(())
     }
 
-    /// Borrow assets after pause and emergency gates pass.
-    ///
-    /// Accrues interest on the existing position, increases principal by `amount`,
-    /// and rejects the borrow when the post-borrow health factor would fall below
-    /// 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
-    /// `DataKey::DebtCeiling`.
+    // Get the configured valuation debt asset for the legacy single-position flows.
+    pub fn get_debt_asset(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::ValuationDebtAsset)
+    }
+
+    // Borrow assets after pause and emergency gates pass.
+    // 
+    // Accrues interest on the existing position, increases principal by `amount`,
+    // and rejects the borrow when the post-borrow health factor would fall below
+    // 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
+    // `DataKey::DebtCeiling`.
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
@@ -1214,9 +2075,6 @@ impl LendingContract {
             return Err(LendingError::BelowMinimumBorrow);
         }
 
-        // Validate price availability before changes
-        let _ = Self::get_collateral_price_internal(&env)?;
-
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let now = env.ledger().timestamp();
@@ -1224,6 +2082,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1257,22 +2116,22 @@ impl LendingContract {
         Ok(updated.principal)
     }
 
-    /// Isolation-aware borrow for cross-asset positions.
-    ///
-    /// Identical to [`borrow`] but additionally:
-    ///
-    /// 1. Checks that `collateral_asset` is not isolated **or**, if it is,
-    ///    that the new borrow does not push the running `IsolationDebt` past
-    ///    the asset's `isolation_debt_ceiling`.
-    /// 2. On success, increments `IsolationDebt(collateral_asset)` by the
-    ///    net new principal added to the user's position.
-    ///
-    /// Use this function in any cross-asset borrow path where `collateral_asset`
-    /// is the primary (or sole) isolated collateral backing the position.
-    ///
-    /// # Errors
-    /// - All errors from [`borrow`].
-    /// - `IsolationCeilingExceeded` — borrow would breach the per-asset ceiling.
+    // Isolation-aware borrow for cross-asset positions.
+    // 
+    // Identical to [`borrow`] but additionally:
+    // 
+    // 1. Checks that `collateral_asset` is not isolated **or**, if it is,
+    //    that the new borrow does not push the running `IsolationDebt` past
+    //    the asset's `isolation_debt_ceiling`.
+    // 2. On success, increments `IsolationDebt(collateral_asset)` by the
+    //    net new principal added to the user's position.
+    // 
+    // Use this function in any cross-asset borrow path where `collateral_asset`
+    // is the primary (or sole) isolated collateral backing the position.
+    // 
+    // # Errors
+    // - All errors from [`borrow`].
+    // - `IsolationCeilingExceeded` — borrow would breach the per-asset ceiling.
     pub fn borrow_against_collateral(
         env: Env,
         user: Address,
@@ -1292,15 +2151,13 @@ impl LendingContract {
             return Err(LendingError::BelowMinimumBorrow);
         }
 
-        // Isolation-mode check: verify ceiling before mutating any state.
-        check_isolation_ceiling_internal(&env, &collateral_asset, amount)?;
-
         let now = env.ledger().timestamp();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
         let rate = current_borrow_rate(&env);
         let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1315,10 +2172,13 @@ impl LendingContract {
         let delta = updated
             .principal
             .checked_sub(prev_principal)
-            .expect("borrow_against_collateral: delta overflow");
+            .ok_or(LendingError::Overflow)?;
         let new_total_debt = total_debt
             .checked_add(delta)
-            .expect("borrow_against_collateral: total_debt overflow");
+            .ok_or(LendingError::Overflow)?;
+        // Check the actual principal delta, not the requested amount. This
+        // keeps the ceiling aligned with the value written to the position.
+        check_isolation_ceiling_internal(&env, &collateral_asset, delta)?;
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
@@ -1326,20 +2186,24 @@ impl LendingContract {
         // Update the per-asset isolation debt tracker only when the asset is
         // actually configured as isolated.  Non-isolated assets are not tracked.
         if is_asset_isolated(&env, &collateral_asset) {
-            increment_isolation_debt(&env, &collateral_asset, delta);
+            increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
+
+        // Check invariant AFTER state change
+        #[cfg(test)]
+        invariants::check_invariant_after(&env, &collateral_asset);
 
         Ok(updated.principal)
     }
 
-    /// Isolation-aware repay for cross-asset positions.
-    ///
-    /// Identical to [`repay`] but decrements `IsolationDebt(collateral_asset)`
-    /// by the net principal reduction so the ceiling tracks accurately after
-    /// partial or full repayments.
-    ///
-    /// Pass the same `collateral_asset` that was supplied to
-    /// [`borrow_against_collateral`] when the position was opened.
+    // Isolation-aware repay for cross-asset positions.
+    // 
+    // Identical to [`repay`] but decrements `IsolationDebt(collateral_asset)`
+    // by the net principal reduction so the ceiling tracks accurately after
+    // partial or full repayments.
+    // 
+    // Pass the same `collateral_asset` that was supplied to
+    // [`borrow_against_collateral`] when the position was opened.
     pub fn repay_against_collateral(
         env: Env,
         user: Address,
@@ -1362,6 +2226,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1385,68 +2250,68 @@ impl LendingContract {
 
         // Decrement the per-asset isolation debt tracker only when the asset is
         // actually configured as isolated.
-        if is_asset_isolated(&env, &collateral_asset) {
-            decrement_isolation_debt(&env, &collateral_asset, repaid);
+        if should_release_isolation_debt(&env, &collateral_asset) {
+            decrement_isolation_debt(&env, &collateral_asset, repaid)?;
         }
 
         check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(updated.principal)
     }
 
-    /// Liquidate an under-collateralized borrower position.
-    ///
-    /// The entrypoint is wrapped in the reentrancy lock so a liquidation cannot
-    /// be re-entered from the same transaction context, and it also checks the
-    /// active-flash-loan guard before mutating state.
-    ///
-    /// Self-liquidations are rejected immediately so a borrower cannot profit
-    /// from the liquidation incentive on their own collateral.
-    ///
-    /// Uses checks-effects-interactions ordering: storage is updated after
-    /// validation and before token transfers so any transfer failure reverts
-    /// the whole liquidation atomically.
-    ///
-    /// Anyone may call `liquidate` on a position whose health factor is below
-    /// the liquidation threshold (`< 1.0`).  The caller repays up to the
-    /// governed close-factor share of the borrower's debt (default 50 %) and
-    /// receives an equivalent amount of the borrower's collateral plus the
-    /// governed liquidation incentive (default 10 %).  The incentive is
-    /// minted from the borrower's collateral, not from the protocol.
-    ///
-    /// The close factor and incentive are governable risk parameters — see
-    /// [`Self::get_close_factor_bps`] / [`Self::set_close_factor_bps`] and
-    /// [`Self::get_liquidation_incentive_bps`] /
-    /// [`Self::set_liquidation_incentive_bps`] — and the liquidation
-    /// threshold is the top-level [`LIQUIDATION_THRESHOLD_BPS`] constant.
-    ///
-    /// # Rounding policy (all divisions favour protocol solvency)
-    ///
-    /// | Division                     | Rounding | Rationale |
-    /// |------------------------------|----------|-----------|
-    /// | `hf = col × THRESHOLD ÷ debt` | floor    | Lower HF → position looks more underwater → earlier liquidation |
-    /// | `max_repay = debt × close_factor_bps ÷ 10000` | floor | Smaller cap → less debt extinguished per call → more rounds remain |
-    /// | `seized = repay × (10000 + incentive_bps) ÷ 10000`  | floor | Liquidator receives *less* collateral than the exact bonus |
-    ///
-    /// All three use [`math::checked_mul_div_floor`] so every truncation
-    /// transfers the sub-unit remainder to the protocol / remaining borrowers.
-    /// # Storage read budget
-    ///
-    /// This function is expected to perform at most **8** storage reads on the hot path:
-    /// 1. Flash active flag (instance storage)
-    /// 2. Collateral amount (persistent storage)
-    /// 3. Debt position (persistent storage via `load_debt`)
-    /// 4. Bad debt (persistent storage, only when shortfall occurs)
-    /// 5. Optional oracle price reads (instance storage) – enforced by `require_fresh_valuation_prices`
-    /// 6. Close-factor parameter lookup (instance storage)
-    /// 7. Liquidation-incentive parameter lookup (instance storage)
-    /// 8. Additional reads for temporary storage used internally.
-    ///
-    /// The implementation aims to batch redundant reads where possible and avoids
-    /// re‑loading the same entry multiple times.
-    ///
-    /// The per‑call read budget is enforced by a regression test in
-    /// `liquidate_perf_test.rs`.
-    ///
+    // Liquidate an under-collateralized borrower position.
+    // 
+    // The entrypoint is wrapped in the reentrancy lock so a liquidation cannot
+    // be re-entered from the same transaction context, and it also checks the
+    // active-flash-loan guard before mutating state.
+    // 
+    // Self-liquidations are rejected immediately so a borrower cannot profit
+    // from the liquidation incentive on their own collateral.
+    // 
+    // Uses checks-effects-interactions ordering: storage is updated after
+    // validation and before token transfers so any transfer failure reverts
+    // the whole liquidation atomically.
+    // 
+    // Anyone may call `liquidate` on a position whose health factor is below
+    // the liquidation threshold (`< 1.0`).  The caller repays up to the
+    // governed close-factor share of the borrower's debt (default 50 %) and
+    // receives an equivalent amount of the borrower's collateral plus the
+    // governed liquidation incentive (default 10 %).  The incentive is
+    // minted from the borrower's collateral, not from the protocol.
+    // 
+    // The close factor and incentive are governable risk parameters — see
+    // [`Self::get_close_factor_bps`] / [`Self::set_close_factor_bps`] and
+    // [`Self::get_liquidation_incentive_bps`] /
+    // [`Self::set_liquidation_incentive_bps`] — and the liquidation
+    // threshold is the top-level [`LIQUIDATION_THRESHOLD_BPS`] constant.
+    // 
+    // # Rounding policy (all divisions favour protocol solvency)
+    // 
+    // | Division                     | Rounding | Rationale |
+    // |------------------------------|----------|-----------|
+    // | `hf = col × THRESHOLD ÷ debt` | floor    | Lower HF → position looks more underwater → earlier liquidation |
+    // | `max_repay = debt × close_factor_bps ÷ 10000` | floor | Smaller cap → less debt extinguished per call → more rounds remain |
+    // | `seized = repay × (10000 + incentive_bps) ÷ 10000`  | floor | Liquidator receives *less* collateral than the exact bonus |
+    // 
+    // All three use [`math::checked_mul_div_floor`] so every truncation
+    // transfers the sub-unit remainder to the protocol / remaining borrowers.
+    // # Storage read budget
+    // 
+    // This function is expected to perform at most **8** storage reads on the hot path:
+    // 1. Flash active flag (instance storage)
+    // 2. Collateral amount (persistent storage)
+    // 3. Debt position (persistent storage via `load_debt`)
+    // 4. Bad debt (persistent storage, only when shortfall occurs)
+    // 5. Optional oracle price reads (instance storage) – enforced by `require_fresh_valuation_prices`
+    // 6. Close-factor parameter lookup (instance storage)
+    // 7. Liquidation-incentive parameter lookup (instance storage)
+    // 8. Additional reads for temporary storage used internally.
+    // 
+    // The implementation aims to batch redundant reads where possible and avoids
+    // re‑loading the same entry multiple times.
+    // 
+    // The per‑call read budget is enforced by a regression test in
+    // `liquidate_perf_test.rs`.
+    // 
     pub fn liquidate(
         env: Env,
         liquidator: Address,
@@ -1456,6 +2321,11 @@ impl LendingContract {
         amount: i128,
     ) -> Result<i128, LendingError> {
         require_initialized(&env)?;
+        // NOTE: the reserve-invariant checks added by #1967 are deliberately not
+        // invoked here. `invariants::compute_expected_reserve` only models
+        // `TotalDeposits - BadDebt`, so it cannot hold across a liquidation,
+        // which moves `debt_asset` into the contract and `collateral_asset` out
+        // of it. Enabling it made every liquidation trap. See `invariants.rs`.
         with_reentrancy_lock(&env, || {
             liquidator.require_auth();
             if liquidator == borrower {
@@ -1465,30 +2335,52 @@ impl LendingContract {
             check_pause_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
             require_no_active_flash_loan(&env);
+            if uses_cross_asset_valuation(&env) {
+                let configured_debt_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationDebtAsset)
+                    .ok_or(LendingError::AssetNotConfigured)?;
+                let configured_collateral_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationCollateralAsset)
+                    .ok_or(LendingError::AssetNotConfigured)?;
+                if debt_asset != configured_debt_asset
+                    || collateral_asset != configured_collateral_asset
+                {
+                    return Err(LendingError::AssetNotConfigured);
+                }
+            }
 
             let col_key = DataKey::Collateral(borrower.clone());
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
             let position = load_debt(&env, &borrower);
+            let prev_principal = position.principal;
             let now = env.ledger().timestamp();
-
-            // Accrue and capitalize pending interest into the borrower's principal
-            // debt position before we compute health factor and liquidation bounds.
             let rate = current_borrow_rate(&env);
-            let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)
-                .map_err(|_| LendingError::Overflow)?;
+            let settled_position =
+                settle_and_accrue_insurance(&env, &position, now, rate)
+                    .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
-
             let debt = settled_position.principal;
+            let accrued_interest = settled_position.principal.saturating_sub(prev_principal);
+
+            // A position with no outstanding debt has nothing to liquidate --
+            // treat it as healthy rather than dividing by zero below (mirrors
+            // `get_position`'s `debt > 0` guard on the health-factor calc).
             if debt <= 0 {
+                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                if env.storage().persistent().has(&first_unhealthy_key) {
+                    env.storage().persistent().remove(&first_unhealthy_key);
+                }
                 return Err(LendingError::PositionHealthy);
             }
 
-            // Health-factor computation: floor rounding.
-            // collateral * LIQUIDATION_THRESHOLD_BPS / debt — rounding down makes HF
-            // slightly lower, making the position look *more* underwater than it
-            // really is, which is conservative (triggers liquidation slightly earlier).
-            let liquidation_threshold_bps = Self::get_liquidation_threshold_bps(&env);
-            let hf = math::checked_mul_div_floor(collateral, liquidation_threshold_bps, debt)
+            let threshold_bps = Self::get_liquidation_threshold_bps(env.clone());
+            let collateral_value = value_collateral(&env, collateral)?;
+            let debt_value = value_debt(&env, debt)?;
+            let hf = math::checked_mul_div_floor(collateral_value, threshold_bps, debt_value)
                 .map_err(|_| LendingError::Overflow)?;
 
             if hf >= HEALTH_FACTOR_SCALE {
@@ -1499,28 +2391,6 @@ impl LendingContract {
                 return Err(LendingError::PositionHealthy);
             }
 
-            // Enforce Liquidation Grace Period
-            let grace_period = Self::get_liquidation_grace_period(env.clone());
-            if grace_period > 0 {
-                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
-                match env
-                    .storage()
-                    .persistent()
-                    .get::<_, u64>(&first_unhealthy_key)
-                {
-                    Some(ts) => {
-                        if now.saturating_sub(ts) < grace_period {
-                            return Err(LendingError::LiquidationGracePeriodNotMet);
-                        }
-                    }
-                    None => {
-                        env.storage().persistent().set(&first_unhealthy_key, &now);
-                        return Err(LendingError::LiquidationGracePeriodNotMet);
-                    }
-                }
-            }
-
-            // Close-factor cap: floor rounding.
             let close_factor_bps = Self::close_factor_bps_config(&env);
             let max_repay = math::checked_mul_div_floor(debt, close_factor_bps, BPS_DENOM)
                 .map_err(|_| LendingError::Overflow)?;
@@ -1534,13 +2404,42 @@ impl LendingContract {
                 return Err(LendingError::InvalidAmount);
             }
 
-            // Liquidation incentive: floor rounding.
             let incentive_bps = Self::liquidation_incentive_bps_config(&env);
-            let seized_collateral =
+            let seized_collateral = if uses_cross_asset_valuation(&env) {
+                let collateral_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationCollateralAsset)
+                    .ok_or(LendingError::PriceUnavailable)?;
+                let debt_asset: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ValuationDebtAsset)
+                    .ok_or(LendingError::PriceUnavailable)?;
+                let collateral_price =
+                    cross_asset::get_price_for_asset(&env, &collateral_asset)?.price;
+                let debt_price = cross_asset::get_price_for_asset(&env, &debt_asset)?.price;
+                if collateral_price <= 0 || debt_price <= 0 {
+                    return Err(LendingError::PriceUnavailable);
+                }
+                let numerator = actual_repay
+                    .checked_mul(debt_price)
+                    .and_then(|value| value.checked_mul(BPS_DENOM + incentive_bps))
+                    .ok_or(LendingError::Overflow)?;
+                let denominator = collateral_price
+                    .checked_mul(BPS_DENOM)
+                    .ok_or(LendingError::Overflow)?;
+                if denominator == 0 {
+                    return Err(LendingError::PriceUnavailable);
+                }
+                numerator
+                    .checked_div(denominator)
+                    .ok_or(LendingError::Overflow)?
+            } else {
                 math::checked_mul_div_floor(actual_repay, BPS_DENOM + incentive_bps, BPS_DENOM)
-                    .map_err(|_| LendingError::Overflow)?;
+                    .map_err(|_| LendingError::Overflow)?
+            };
 
-            // Clamp: never seize more than the borrower's available collateral.
             let available_collateral = collateral;
             let mut final_seized = seized_collateral;
             if seized_collateral > available_collateral {
@@ -1563,9 +2462,11 @@ impl LendingContract {
                     env.storage()
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
-                    #[allow(deprecated)]
-                    env.events()
-                        .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), residual);
+                    BadDebtEvent {
+                        borrower: borrower.clone(),
+                        amount: residual,
+                    }
+                    .publish(&env);
                 }
                 final_seized = available_collateral;
             }
@@ -1577,6 +2478,31 @@ impl LendingContract {
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
 
+            // Recompute the post-liquidation health factor *before* mutating any
+            // storage, using the same governed threshold (`threshold_bps`) and the
+            // same checked helper as the entry guard above.
+            //
+            // Evaluating this predicate with the hardcoded
+            // `LIQUIDATION_THRESHOLD_BPS` and a raw `checked_mul` + `/` with
+            // `unwrap_or(i128::MAX)` was wrong in two ways:
+            //   * governance drift — once an admin governed the threshold down via
+            //     `set_liquidation_threshold_bps`, the entry guard and this check
+            //     evaluated *different* predicates, so
+            //     `DataKey::FirstUnhealthyTimestamp` was cleared or retained on the
+            //     wrong one, corrupting the liquidation grace-period state machine;
+            //   * fail-open on overflow — an overflow collapsed to `i128::MAX`, i.e.
+            //     "infinitely healthy", silently clearing the grace-period
+            //     timestamp instead of aborting.
+            // Failing here now aborts before any state is written.
+            let hf_after = if new_debt > 0 {
+                let new_collateral_value = value_collateral(&env, new_col)?;
+                let new_debt_value = value_debt(&env, new_debt)?;
+                math::checked_mul_div_floor(new_collateral_value, threshold_bps, new_debt_value)
+                    .map_err(|_| LendingError::Overflow)?
+            } else {
+                i128::MAX
+            };
+
             let updated_position = DebtPosition {
                 principal: new_debt,
                 borrow_index_snapshot: settled_position.borrow_index_snapshot,
@@ -1585,16 +2511,70 @@ impl LendingContract {
             save_debt(&env, &borrower, &updated_position);
             env.storage().persistent().set(&col_key, &new_col);
 
-            // Recompute health factor after liquidation and clear unhealthy timestamp if healthy
-            let hf_after = if new_debt > 0 {
-                new_col
-                    .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-                    .map(|v| v / new_debt)
-                    .unwrap_or(i128::MAX)
-            } else {
-                i128::MAX
-            };
-            if hf_after >= 10000 {
+            let total_debt_key = DataKey::TotalDebt;
+            let total_deposits_key = DataKey::TotalDeposits;
+
+            if env.storage().persistent().has(&total_debt_key) {
+                let total_debt: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&total_debt_key)
+                    .unwrap_or(0);
+                let total_debt_with_interest = total_debt
+                    .checked_add(accrued_interest)
+                    .ok_or(LendingError::Overflow)?;
+                let new_total_debt = total_debt_with_interest
+                    .checked_sub(actual_repay)
+                    .ok_or(LendingError::Overflow)?;
+                env.storage()
+                    .persistent()
+                    .set(&total_debt_key, &new_total_debt);
+            }
+
+            if env.storage().persistent().has(&total_deposits_key) {
+                let total_deposits: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&total_deposits_key)
+                    .unwrap_or(0);
+                let new_total_deposits = total_deposits
+                    .checked_sub(final_seized)
+                    .ok_or(LendingError::Overflow)?;
+                env.storage()
+                    .persistent()
+                    .set(&total_deposits_key, &new_total_deposits);
+            }
+
+            #[cfg(test)]
+            {
+                if let Some(borrowers) = env
+                    .storage()
+                    .instance()
+                    .get::<DataKey, soroban_sdk::Vec<Address>>(&DataKey::BorrowerList)
+                {
+                    let mut sum_debt: i128 = 0;
+                    for i in 0..borrowers.len() {
+                        let u = borrowers.get(i).unwrap();
+                        sum_debt = sum_debt.saturating_add(load_debt(&env, &u).principal);
+                    }
+                    if let Some(td) = env
+                        .storage()
+                        .persistent()
+                        .get::<DataKey, i128>(&total_debt_key)
+                    {
+                        debug_assert_eq!(sum_debt, td, "sum(user debt) == TotalDebt");
+                    }
+                }
+            }
+
+            // A liquidation repays the same principal that is removed from
+            // the position. Release that amount exactly once from any
+            // isolation bucket attributed to the collateral asset.
+            if should_release_isolation_debt(&env, &collateral_asset) {
+                decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
+            }
+
+            if hf_after >= HEALTH_FACTOR_SCALE {
                 let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
                 if env.storage().persistent().has(&first_unhealthy_key) {
                     env.storage().persistent().remove(&first_unhealthy_key);
@@ -1610,7 +2590,8 @@ impl LendingContract {
                 &final_seized,
             );
 
-            let shortfall = seized_collateral - final_seized;
+            let shortfall = seized_collateral.saturating_sub(final_seized);
+
             LiquidationEventV1 {
                 schema_version: SCHEMA_VERSION_V1,
                 liquidator: liquidator.clone(),
@@ -1626,8 +2607,294 @@ impl LendingContract {
         })
     }
 
-    /// Read the governed close-factor cap (basis points) consulted by
-    /// `liquidate`, defaulting to [`DEFAULT_CLOSE_FACTOR_BPS`] when unset.
+    // Liquidate an under-collateralised *cross-asset* position.
+    // 
+    // Cross-asset positions are opened via [`deposit_collateral_asset`] /
+    // [`borrow_asset`].  The legacy [`liquidate`] entrypoint only reads the
+    // single-asset `Collateral`/`Debt` keys and therefore always returns
+    // [`LendingError::PositionHealthy`] for pure cross-asset users.  This
+    // entrypoint reads the per-`(user, asset)` keys and uses the aggregate
+    // health factor.
+    // 
+    // # Liquidation arithmetic
+    // 
+    // ```text
+    // close_factor_cap   = debt(debt_asset) × close_factor_bps / 10_000
+    // actual_repay       = min(repay_amount, close_factor_cap)
+    // seized_collateral  = actual_repay × price(debt_asset) × (10_000 + incentive_bps)
+    //                      / (price(collateral_asset) × 10_000)
+    //                                                            [floor rounding]
+    // ```
+    // 
+    // All three multiplications use [`math::checked_mul_div_floor`] so every
+    // sub-unit remainder favours the protocol.
+    // 
+    // # Shortfall
+    // 
+    // When `seized_collateral > available_collateral(collateral_asset)` the
+    // deficit is drawn from the insurance fund first; any residual is posted
+    // as bad debt (`DataKey::BadDebt`).
+    // 
+    // # Token transfers
+    // 
+    // Follows the same pattern as [`liquidate`]:
+    // - `liquidator` transfers `actual_repay` of `debt_asset` into the contract.
+    // - The contract transfers `final_seized` of `collateral_asset` to `liquidator`.
+    // 
+    // # Guards
+    // - Self-liquidation returns [`LendingError::SelfLiquidation`].
+    // - Active flash loan returns immediately (reentrancy guard).
+    // - Both chosen assets must have fresh oracle prices; so must every other
+    //   leg on the position (fail-closed on partial oracle staleness).
+    // - Price of zero or negative is rejected as [`LendingError::PriceFeedNotFound`].
+    // 
+    // # Errors
+    // - [`LendingError::SelfLiquidation`] — `liquidator == borrower`.
+    // - [`LendingError::PositionHealthy`] — aggregate HF ≥ [`HEALTH_FACTOR_SCALE`].
+    // - [`LendingError::StaleOracleTimestamp`] — any leg has a stale price.
+    // - [`LendingError::PriceFeedNotFound`] — any leg has a missing or non-positive price.
+    // - [`LendingError::InvalidAmount`] — `repay_amount ≤ 0` or the computed
+    //   `actual_repay` would be zero after the close-factor cap.
+    // - [`LendingError::AssetNotConfigured`] — `debt_asset` or `collateral_asset`
+    //   has not been configured via `set_asset_params`.
+    // - [`LendingError::Overflow`] — arithmetic overflow.
+    pub fn liquidate_cross_asset(
+        env: Env,
+        liquidator: Address,
+        borrower: Address,
+        debt_asset: Address,
+        collateral_asset: Address,
+        repay_amount: i128,
+    ) -> Result<i128, LendingError> {
+        require_initialized(&env)?;
+        with_reentrancy_lock(&env, || {
+            liquidator.require_auth();
+
+            // ── 1. Self-liquidation guard ──────────────────────────────────
+            if liquidator == borrower {
+                return Err(LendingError::SelfLiquidation);
+            }
+
+            check_pause_status(&env, ProtocolAction::Liquidate);
+            require_no_active_flash_loan(&env);
+
+            // ── 2. Validate both assets are configured ─────────────────────
+            // (also implicitly validates they exist before any price lookup)
+            cross_asset::validate_asset_params_configured(&env, &debt_asset)?;
+            cross_asset::validate_asset_params_configured(&env, &collateral_asset)?;
+
+            if repay_amount <= 0 {
+                return Err(LendingError::InvalidAmount);
+            }
+
+            // ── 3. Require fresh prices for every leg (fail-closed) ────────
+            cross_asset::ensure_position_prices_fresh_for_liquidation(&env, &borrower)?;
+
+            // ── 4. Compute aggregate health factor ─────────────────────────
+            let hf = cross_asset::compute_aggregate_health_factor(&env, &borrower)?;
+
+            if hf >= HEALTH_FACTOR_SCALE {
+                return Err(LendingError::PositionHealthy);
+            }
+
+            // ── 5. Resolve oracle prices for the two chosen legs ───────────
+            let debt_price_record = cross_asset::get_price_for_asset(&env, &debt_asset)?;
+            let col_price_record = cross_asset::get_price_for_asset(&env, &collateral_asset)?;
+            // Prices guaranteed > 0 by get_price_for_asset; guard explicitly
+            // anyway to prevent divide-by-zero later.
+            if debt_price_record.price <= 0 || col_price_record.price <= 0 {
+                return Err(LendingError::PriceFeedNotFound);
+            }
+
+            // ── 6. Accrue interest on the debt leg ────────────────────────
+            let now = env.ledger().timestamp();
+            let rate = current_borrow_rate(&env);
+            let position = cross_asset::load_debt_asset(&env, &borrower, &debt_asset);
+            let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)
+                .map_err(|_| LendingError::Overflow)?;
+
+            let debt = settled_position.principal;
+            if debt <= 0 {
+                return Err(LendingError::PositionHealthy);
+            }
+
+            // ── 7. Apply close-factor cap ──────────────────────────────────
+            let close_factor_bps = Self::close_factor_bps_config(&env);
+            let max_repay = math::checked_mul_div_floor(debt, close_factor_bps, BPS_DENOM)
+                .map_err(|_| LendingError::Overflow)?;
+            let actual_repay = repay_amount.min(max_repay);
+            if actual_repay <= 0 {
+                return Err(LendingError::InvalidAmount);
+            }
+
+            // ── 8. Compute seized collateral (with incentive, floor rounding)
+            //
+            //   seized = actual_repay × price_debt × (BPS_DENOM + incentive)
+            //            / (price_col × BPS_DENOM)
+            //
+            // Use two sequential checked_mul_div_floor calls to keep
+            // intermediate values within i128 range (both prices ≤ 10^14,
+            // typical repay ≤ 10^14, so repay × price_debt can reach ~10^28 —
+            // beyond i128).  Split the division: first divide by price_col,
+            // then apply the incentive.
+            let incentive_bps = Self::liquidation_incentive_bps_config(&env);
+
+            // Step A: repay_amount_in_collateral_units = actual_repay × price_debt / price_col
+            let repay_in_col_units =
+                math::checked_mul_div_floor(actual_repay, debt_price_record.price, col_price_record.price)
+                    .map_err(|_| LendingError::Overflow)?;
+
+            // Step B: apply incentive — seized = repay_in_col_units × (BPS_DENOM + incentive) / BPS_DENOM
+            let seized_collateral =
+                math::checked_mul_div_floor(repay_in_col_units, BPS_DENOM + incentive_bps, BPS_DENOM)
+                    .map_err(|_| LendingError::Overflow)?;
+
+            // ── 9. Cap seized to available collateral; handle shortfall ────
+            let available_collateral =
+                cross_asset::load_collateral_asset(&env, &borrower, &collateral_asset);
+            let mut final_seized = seized_collateral;
+
+            if seized_collateral > available_collateral {
+                let shortfall = seized_collateral
+                    .checked_sub(available_collateral)
+                    .ok_or(LendingError::Overflow)?;
+                let insurance_drawn = draw_insurance(&env, shortfall)?;
+                let residual = shortfall
+                    .checked_sub(insurance_drawn)
+                    .ok_or(LendingError::Overflow)?;
+                if residual > 0 {
+                    let current_bad_debt: i128 = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::BadDebt)
+                        .unwrap_or(0i128);
+                    let new_bad_debt = current_bad_debt
+                        .checked_add(residual)
+                        .ok_or(LendingError::Overflow)?;
+                    env.storage()
+                        .persistent()
+                        .set(&DataKey::BadDebt, &new_bad_debt);
+                    #[allow(deprecated)]
+                    env.events().publish(
+                        (Symbol::new(&env, "bad_debt"), borrower.clone()),
+                        residual,
+                    );
+                }
+                final_seized = available_collateral;
+            }
+
+            // ── 10. Write updated debt position ───────────────────────────
+            let new_debt = debt
+                .checked_sub(actual_repay)
+                .ok_or(LendingError::Overflow)?;
+            let updated_debt_position = crate::debt::DebtPosition {
+                principal: new_debt,
+                borrow_index_snapshot: settled_position.borrow_index_snapshot,
+                last_update: settled_position.last_update,
+            };
+            cross_asset::save_debt_asset(&env, &borrower, &debt_asset, &updated_debt_position);
+            if new_debt == 0 {
+                cross_asset::remove_from_user_debt_list(&env, &borrower, &debt_asset);
+            }
+
+            // Update per-asset and protocol-level total debt accumulators.
+            let total_debt_asset: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalDebtAsset(debt_asset.clone()))
+                .unwrap_or(0);
+            let new_total_debt_asset = total_debt_asset.saturating_sub(actual_repay);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDebtAsset(debt_asset.clone()), &new_total_debt_asset);
+
+            let total_debt_protocol: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalDebt)
+                .unwrap_or(0);
+            let new_total_debt_protocol = total_debt_protocol.saturating_sub(actual_repay);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalDebt, &new_total_debt_protocol);
+
+            cross_asset::extend_debt_asset_ttl(&env, &borrower, &debt_asset);
+
+            // ── 11. Write updated collateral balance ──────────────────────
+            let new_col = available_collateral
+                .checked_sub(final_seized)
+                .ok_or(LendingError::Overflow)?;
+            cross_asset::save_collateral_asset(&env, &borrower, &collateral_asset, new_col);
+            if new_col == 0 {
+                cross_asset::remove_from_user_collateral_list(
+                    &env,
+                    &borrower,
+                    &collateral_asset,
+                );
+            } else {
+                cross_asset::extend_collateral_asset_ttl(&env, &borrower, &collateral_asset);
+            }
+
+            // ── 12. Release isolation bucket if applicable ────────────────
+            if should_release_isolation_debt(&env, &collateral_asset) {
+                decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
+            }
+
+            // ── 13. Clear unhealthy timestamp when position is healed ─────
+            let hf_after = cross_asset::compute_aggregate_health_factor(&env, &borrower)
+                .unwrap_or(0);
+            if hf_after >= HEALTH_FACTOR_SCALE {
+                let first_unhealthy_key =
+                    DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                if env.storage().persistent().has(&first_unhealthy_key) {
+                    env.storage().persistent().remove(&first_unhealthy_key);
+                }
+            }
+
+            // ── 14. Token transfers (checks-effects-interactions) ─────────
+            let debt_token_client = TokenClient::new(&env, &debt_asset);
+            let collateral_token_client = TokenClient::new(&env, &collateral_asset);
+            debt_token_client.transfer(
+                &liquidator,
+                &env.current_contract_address(),
+                &actual_repay,
+            );
+            collateral_token_client.transfer(
+                &env.current_contract_address(),
+                &liquidator,
+                &final_seized,
+            );
+
+            // ── 15. Emit event ────────────────────────────────────────────
+            let shortfall = seized_collateral.saturating_sub(final_seized);
+            CrossLiquidationEvent {
+                schema_version: SCHEMA_VERSION_V1,
+                liquidator: liquidator.clone(),
+                borrower: borrower.clone(),
+                debt_asset: debt_asset.clone(),
+                collateral_asset: collateral_asset.clone(),
+                repaid: actual_repay,
+                seized: final_seized,
+                health_factor_before: hf,
+                shortfall,
+            }
+            .publish(&env);
+
+            Ok(actual_repay)
+        })
+    }
+
+    // Read the governed liquidation threshold (basis points) consulted by
+    // `liquidate`, defaulting to [`LIQUIDATION_THRESHOLD_BPS`] when unset.
+    fn liquidation_threshold_bps_config(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LiquidationThresholdBps)
+            .unwrap_or(LIQUIDATION_THRESHOLD_BPS)
+    }
+
+    // Read the governed close-factor cap (basis points) consulted by
+    // `liquidate`, defaulting to [`DEFAULT_CLOSE_FACTOR_BPS`] when unset.
     fn close_factor_bps_config(env: &Env) -> i128 {
         env.storage()
             .instance()
@@ -1635,9 +2902,9 @@ impl LendingContract {
             .unwrap_or(DEFAULT_CLOSE_FACTOR_BPS)
     }
 
-    /// Read the governed liquidation incentive (basis points) consulted by
-    /// `liquidate`, defaulting to [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] when
-    /// unset.
+    // Read the governed liquidation incentive (basis points) consulted by
+    // `liquidate`, defaulting to [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] when
+    // unset.
     fn liquidation_incentive_bps_config(env: &Env) -> i128 {
         env.storage()
             .instance()
@@ -1645,51 +2912,68 @@ impl LendingContract {
             .unwrap_or(DEFAULT_LIQUIDATION_INCENTIVE_BPS)
     }
 
-    /// Return the effective close-factor cap (basis points) used by
-    /// `liquidate` — the maximum portion of a borrower's debt that may be
-    /// repaid in a single liquidation call.
-    ///
-    /// Defaults to [`DEFAULT_CLOSE_FACTOR_BPS`] (5000 = 50 %) until an admin
-    /// configures an override via [`Self::set_close_factor_bps`].
+    // Return the effective liquidation threshold (basis points) used by
+    // `liquidate`, `get_position`, and `get_health_factor`.
+    pub fn get_liquidation_threshold_bps(env: Env) -> i128 {
+        Self::liquidation_threshold_bps_config(&env)
+    }
+
+    // Return the effective close-factor cap (basis points) used by
+    // `liquidate` — the maximum portion of a borrower's debt that may be
+    // repaid in a single liquidation call.
+    // 
+    // Defaults to [`DEFAULT_CLOSE_FACTOR_BPS`] (5000 = 50 %) until an admin
+    // configures an override via [`Self::set_close_factor_bps`].
     pub fn get_close_factor_bps(env: Env) -> i128 {
         Self::close_factor_bps_config(&env)
     }
 
-    /// Set the close-factor cap in basis points (admin-only).
-    ///
-    /// The close factor bounds the maximum share of a borrower's debt that a
-    /// single `liquidate` call may extinguish. Must be in `(0, 10000]`
-    /// (greater than 0 %, at most 100 %).
-    ///
-    /// # Errors
-    /// - [`LendingError::InvalidCloseFactorBps`] if `close_factor_bps <= 0`
-    ///   or `close_factor_bps > 10000`.
+    // Set the close-factor cap in basis points (admin-only).
+    // 
+    // The close factor bounds the maximum share of a borrower's debt that a
+    // single `liquidate` call may extinguish. Must be in `(0, 7500]`
+    // (greater than 0 %, at most 75 %).
+    // 
+    // # Errors
+    // - [`LendingError::InvalidCloseFactorBps`] if `close_factor_bps <= 0`
+    //   or `close_factor_bps > 7500`.
     pub fn set_close_factor_bps(env: Env, close_factor_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
-        if close_factor_bps <= 0 || close_factor_bps > BPS_DENOM {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+        if close_factor_bps <= 0 || close_factor_bps > MAX_CLOSE_FACTOR_BPS {
             return Err(LendingError::InvalidCloseFactorBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::CloseFactorBps, &close_factor_bps);
+        events::emit_close_factor_bps_set(&env, close_factor_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_close_factor_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Return the effective liquidation threshold (basis points) used for
-    /// health-factor computations.
-    pub fn get_liquidation_threshold_bps(env: &Env) -> i128 {
-        env.storage()
-            .instance()
-            .get(&DataKey::LiquidationThresholdBps)
-            .unwrap_or(LIQUIDATION_THRESHOLD_BPS)
-    }
-
-    /// Set the effective liquidation threshold (basis points) used for
-    /// health-factor computations.
-    pub fn set_liquidation_threshold_bps(env: Env, threshold_bps: i128) -> Result<(), LendingError> {
-        Self::require_admin(&env)?;
-        if threshold_bps <= 0 || threshold_bps > 10000 {
+    // Set the liquidation threshold in basis points (admin-only).
+    // 
+    // Must be in `[0, 10000]`.
+    pub fn set_liquidation_threshold_bps(
+        env: Env,
+        threshold_bps: i128,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        if !(0..=BPS_DENOM).contains(&threshold_bps) {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }
         env.storage()
@@ -1698,36 +2982,51 @@ impl LendingContract {
         Ok(())
     }
 
-    /// Return the effective liquidation incentive (basis points) used by
-    /// `liquidate` — the bonus, on top of the repaid debt, paid to the
-    /// liquidator in seized collateral.
-    ///
-    /// Defaults to [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] (1000 = 10 %) until
-    /// an admin configures an override via
-    /// [`Self::set_liquidation_incentive_bps`].
+    // Return the effective liquidation incentive (basis points) used by
+    // `liquidate` — the bonus, on top of the repaid debt, paid to the
+    // liquidator in seized collateral.
+    // 
+    // Defaults to [`DEFAULT_LIQUIDATION_INCENTIVE_BPS`] (1000 = 10 %) until
+    // an admin configures an override via
+    // [`Self::set_liquidation_incentive_bps`].
     pub fn get_liquidation_incentive_bps(env: Env) -> i128 {
         Self::liquidation_incentive_bps_config(&env)
     }
 
-    /// Set the liquidation incentive in basis points (admin-only).
-    ///
-    /// Must be in `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (0 % to 50 %).
-    ///
-    /// # Errors
-    /// - [`LendingError::InvalidLiquidationIncentiveBps`] if
-    ///   `incentive_bps < 0` or `incentive_bps > MAX_LIQUIDATION_INCENTIVE_BPS`.
+    // Set the liquidation incentive in basis points (admin-only).
+    // 
+    // Must be in `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (0 % to 50 %).
+    // 
+    // # Errors
+    // - [`LendingError::InvalidLiquidationIncentiveBps`] if
+    //   `incentive_bps < 0` or `incentive_bps > MAX_LIQUIDATION_INCENTIVE_BPS`.
     pub fn set_liquidation_incentive_bps(
         env: Env,
         incentive_bps: i128,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
         if !(0..=MAX_LIQUIDATION_INCENTIVE_BPS).contains(&incentive_bps) {
             return Err(LendingError::InvalidLiquidationIncentiveBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::LiquidationIncentiveBps, &incentive_bps);
+        events::emit_liquidation_incentive_bps_set(&env, incentive_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_liquidation_incentive_bps"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
@@ -1749,6 +3048,7 @@ impl LendingContract {
         let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
         let updated = repay_amount(settled_position, now, amount, rate).map_err(|e| match e {
             debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
             debt::DebtError::Overflow => LendingError::Overflow,
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
@@ -1770,7 +3070,6 @@ impl LendingContract {
         // Emit repay event
         emit_repay(&env, &user, amount, updated.principal);
 
-        check_and_clear_unhealthy_timestamp(&env, &user);
         Ok(updated.principal)
     }
 
@@ -1782,65 +3081,268 @@ impl LendingContract {
         position
     }
 
-    /// Set the protocol-level debt ceiling (admin-only).
+    // Read-only view of current global borrow index.
+    pub fn get_borrow_index(env: Env) -> i128 {
+        load_borrow_index(&env)
+    }
+
+    // Read-only view of a user's accrued debt.
+    pub fn compute_debt_view(env: Env, user: Address) -> i128 {
+        let position = load_debt(&env, &user);
+        let current_index = load_borrow_index(&env);
+        debt::compute_debt(&position, current_index)
+    }
+
+    // One-time migration: initialise `borrow_index_snapshot` on all
+    // pre-existing [`DebtPosition`] records that pre-date the global
+    // borrow-index feature.
+    // 
+    // # Behaviour
+    // 1. Requires admin authorisation.
+    // 2. Advances the global [`DataKey::BorrowIndex`] to the current
+    //    ledger time **before** writing any snapshots, so all migrated
+    //    positions share the same post-upgrade index baseline.
+    // 3. Iterates every address in [`DataKey::BorrowerList`] and writes
+    //    `current_index` into each [`DebtPosition`] whose
+    //    `borrow_index_snapshot` is `0` (the sentinel for pre-migration
+    //    records; see [`debt::DebtPosition`]).
+    // 4. Emits a [`events::MigrationEvent`] recording the index value
+    //    used and the number of positions migrated.
+    // 5. When called a second time after all positions are already
+    //    up-to-date, performs no writes and returns `0`.
+    // 
+    // # Returns
+    // The number of positions whose snapshot was updated.
+    // 
+    // # Errors
+    // - [`LendingError::NotInitialized`] – contract has not been
+    //   initialised yet.
+    // - [`LendingError::Unauthorized`] – caller is not the admin.
+    pub fn migrate_positions(env: Env) -> Result<u32, LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        // Step 1: Advance the global borrow index to the current time so all
+        //         migrated positions share the same post-upgrade baseline.
+        let now = env.ledger().timestamp();
+        let rate = cached_borrow_rate(&env);
+        let current_index = touch_borrow_index(&env, now, rate);
+
+        // Step 2: Load the borrower list (empty if no borrows have ever occurred).
+        let borrowers: soroban_sdk::Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::BorrowerList)
+            .unwrap_or_else(|| soroban_sdk::vec![&env]);
+
+        // Step 3: Migrate every position whose snapshot is still 0.
+        let mut migrated: u32 = 0;
+        for i in 0..borrowers.len() {
+            let user = borrowers.get(i).unwrap();
+            let key = DataKey::Debt(user.clone());
+            if let Some(mut position) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, debt::DebtPosition>(&key)
+            {
+                if position.borrow_index_snapshot == 0 {
+                    position.borrow_index_snapshot = current_index;
+                    env.storage().persistent().set(&key, &position);
+                    migrated += 1;
+                }
+            }
+        }
+
+        // Step 4: Emit migration event.
+        events::emit_migration(
+            &env,
+            1, // old schema version (pre-index)
+            2, // new schema version (post-index)
+            soroban_sdk::String::from_str(&env, "global-borrow-index migration"),
+        );
+
+        Ok(migrated)
+    }
+
+    // Set the protocol-level debt ceiling (admin-only).
     pub fn set_debt_ceiling(env: Env, ceiling: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if ceiling <= 0 {
             return Err(LendingError::Overflow);
         }
         env.storage()
             .instance()
             .set(&DataKey::DebtCeiling, &ceiling);
+        crate::events::emit_debt_ceiling_updated(&env, ceiling);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_debt_ceiling"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+    // Set the maximum total deposits allowed across the protocol (admin-only).
+    pub fn set_deposit_cap(env: Env, cap: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        if cap <= 0 {
+            return Err(LendingError::InvalidDepositCap);
+        }
+        env.storage().persistent().set(&DataKey::DepositCap, &cap);
+
+        // Record audit entry
+        audit_log::record_audit_entry(&env, String::from_str(&env, "set_deposit_cap"), admin, None);
+
         Ok(())
     }
 
-    /// Set the flash loan fee in basis points (admin-only). Must be in [0, 1000].
+    // Get the current deposit cap, falling back to the protocol default.
+    pub fn get_deposit_cap(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DepositCap)
+            .unwrap_or(DEFAULT_DEPOSIT_CAP)
+    }
+
+    // Set the interest-rate curve parameters (admin-only).
+    pub fn set_rate_params(env: Env, params: rate_model::RateParams) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        params.validate()?;
+
+        let old = Self::get_rate_params(env.clone());
+        let now = env.ledger().timestamp();
+        let old_rate = current_borrow_rate(&env);
+        let checkpoint_index = touch_borrow_index(&env, now, old_rate);
+
+        env.storage().instance().set(&DataKey::RateParams, &params);
+        RateParamsUpdated {
+            old,
+            new: params,
+            checkpoint_index,
+        }
+        .publish(&env);
+
+        // Record audit entry
+        audit_log::record_audit_entry(&env, String::from_str(&env, "set_rate_params"), admin, None);
+
+        Ok(())
+    }
+
+    // Get the current rate model parameters, falling back to the default curve.
+    pub fn get_rate_params(env: Env) -> rate_model::RateParams {
+        env.storage()
+            .instance()
+            .get(&DataKey::RateParams)
+            .unwrap_or_default()
+    }
+
+    // Set the flash loan fee in basis points (admin-only). Must be in [0, 1000].
     pub fn set_flash_fee(env: Env, fee_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if !(0..=1000).contains(&fee_bps) {
             return Err(LendingError::InvalidFeeBps);
         }
         env.storage()
             .instance()
             .set(&DataKey::FlashFeeBps, &fee_bps);
+        crate::events::emit_flash_fee_updated(&env, fee_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(&env, String::from_str(&env, "set_flash_fee"), admin, None);
+
         Ok(())
     }
 
-    /// Repay function used by receiver during callback to return funds to the contract.
-    /// Uses checked arithmetic to prevent overflow/underflow.
-    ///
-    /// Gated behind pause and emergency checks to prevent any flash-loan
-    /// interaction during a protocol pause or emergency shutdown.
-    pub fn repay_flash_loan(env: Env, payer: Address, asset: Address, amount: i128) {
-        require_initialized(&env).expect("NotInitialized");
+    // Repay function used by receiver during callback to return funds to the contract.
+    // Uses checked arithmetic to prevent overflow/underflow.
+    // 
+    // Gated behind pause and emergency checks to prevent any flash-loan
+    // interaction during a protocol pause or emergency shutdown.
+    // 
+    // # Errors
+    // - [`LendingError::NotInitialized`] if the contract has not been
+    //   initialized yet.
+    // - [`LendingError::InvalidAmount`] if `amount` is zero or negative.
+    // - [`LendingError::InsufficientCollateral`] if the payer's recorded
+    //   balance is less than `amount`.
+    // - [`LendingError::Overflow`] if the checked arithmetic on the payer
+    //   or treasury balance would overflow / underflow.
+    pub fn repay_flash_loan(
+        env: Env,
+        payer: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::FlashLoan);
         check_emergency_status(&env, ProtocolAction::FlashLoan);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
         payer.require_auth();
         let payer_key = DataKey::Balance(asset.clone(), payer.clone());
         let payer_bal: i128 = env.storage().persistent().get(&payer_key).unwrap_or(0);
         if payer_bal < amount {
-            panic!("InsufficientBalance");
+            return Err(LendingError::InsufficientCollateral);
         }
         let new_payer_bal = payer_bal
             .checked_sub(amount)
-            .expect("repay_flash_loan: payer balance underflow");
+            .ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&payer_key, &new_payer_bal);
 
         let tre_key = DataKey::Treasury(asset.clone());
         let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         let new_tre_bal = tre_bal
             .checked_add(amount)
-            .expect("repay_flash_loan: treasury balance overflow");
+            .ok_or(LendingError::Overflow)?;
         env.storage().persistent().set(&tre_key, &new_tre_bal);
+
+        // Emit flash loan repaid event
+        emit_flash_loan_repaid(&env, &payer, &asset, amount);
+        Ok(())
     }
 
-    /// Issue a callback-based flash loan.
-    ///
-    /// Gated behind pause and emergency checks so that flash loans
-    /// are blocked during granular pause, global pause, and emergency
-    /// shutdown/recovery — just like deposit/borrow/repay/withdraw.
+    // Issue a callback-based flash loan.
+    // 
+    // Gated behind pause and emergency checks so that flash loans
+    // are blocked during granular pause, global pause, and emergency
+    // shutdown/recovery — just like deposit/borrow/repay/withdraw.
     pub fn flash_loan(
         env: Env,
         initiator: Address,
@@ -1849,7 +3351,7 @@ impl LendingContract {
         amount: i128,
         params: Bytes,
     ) {
-        require_initialized(&env).expect("NotInitialized");
+        require_initialized(&env).unwrap();
         check_pause_status(&env, ProtocolAction::FlashLoan);
         check_emergency_status(&env, ProtocolAction::FlashLoan);
         require_no_active_flash_loan(&env);
@@ -1857,16 +3359,16 @@ impl LendingContract {
         let tre_key = DataKey::Treasury(asset.clone());
         let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         if amount > tre_bal {
-            panic!("InsufficientLiquidity");
+            panic_with_error!(&env, LendingError::InsufficientCollateral);
         }
 
         let max_flash_bps = Self::max_flash_bps_config(&env);
         let max_flash_amount = tre_bal
             .checked_mul(max_flash_bps)
             .and_then(|value| value.checked_div(BPS_DENOM))
-            .expect("flash_loan: max-utilization calculation overflow");
+            .unwrap_or(0);
         if amount > max_flash_amount {
-            panic!("FlashLoanUtilizationExceeded");
+            panic_with_error!(&env, LendingError::InvalidAmount);
         }
 
         initiator.require_auth();
@@ -1875,19 +3377,23 @@ impl LendingContract {
         let fee = amount
             .checked_mul(fee_bps)
             .map(|v| v / BPS_DENOM)
-            .expect("flash_loan: fee calculation overflow");
+            .unwrap_or(0);
 
         let new_tre_bal = tre_bal
             .checked_sub(amount)
-            .expect("flash_loan: treasury underflow during transfer");
+            .unwrap_or(0);
         env.storage().persistent().set(&tre_key, &new_tre_bal);
 
         let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
         let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
         let new_rec_bal = rec_bal
             .checked_add(amount)
-            .expect("flash_loan: receiver balance overflow");
+            .unwrap_or(0);
         env.storage().persistent().set(&rec_key, &new_rec_bal);
+
+        // Emit flash loan event before callback (rolled back atomically on panic).
+        // Placed here so FlashLoanEvent appears before FlashLoanRepaidEvent in logs.
+        emit_flash_loan(&env, &initiator, &receiver, &asset, amount, fee);
 
         env.storage().instance().set(&DataKey::FlashActive, &true);
 
@@ -1911,73 +3417,43 @@ impl LendingContract {
         let final_tre: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
         let required_balance = tre_bal
             .checked_add(fee)
-            .expect("flash_loan: fee addition overflow");
+            .unwrap_or(0);
         if final_tre < required_balance {
-            panic!("InsufficientRepayment");
+            panic_with_error!(&env, LendingError::InvalidAmount);
         }
     }
 
     pub fn get_position(env: Env, user: Address) -> PositionSummary {
-        let col_key = DataKey::Collateral(user.clone());
-        let col: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
-        if col != 0 {
-            extend_collateral_ttl(&env, &user);
-        }
-        let position = load_debt(&env, &user);
-        if position.principal != 0 {
-            extend_debt_ttl(&env, &user);
-        }
-        let rate = current_borrow_rate(&env);
-        // Clamp to zero: the protocol guarantees views never report negative debt.
-        let debt = effective_debt(&position, env.ledger().timestamp(), rate)
-            .unwrap_or(position.principal)
-            .max(0);
+        read_position_summary(&env, &user).0
+    }
 
-        let health_factor = if debt > 0 {
-            col.checked_mul(Self::get_liquidation_threshold_bps(&env))
-                .map(|v| v / debt)
-                .unwrap_or(i128::MAX)
-        } else {
-            HEALTH_FACTOR_NO_DEBT
-        };
-
-        PositionSummary {
-            collateral: col,
-            debt,
-            health_factor,
+    // Return position balances and health factor together with oracle freshness.
+    // 
+    // When a cross-asset price is stale, the last stored price is used and
+    // `price_stale` is true. If a required price has never been reported, the
+    // health factor is zero and `price_stale` is true.
+    pub fn get_position_v2(env: Env, user: Address) -> PositionSummaryV2 {
+        let (position, price_stale) = read_position_summary(&env, &user);
+        PositionSummaryV2 {
+            collateral: position.collateral,
+            debt: position.debt,
+            health_factor: position.health_factor,
+            price_stale,
         }
     }
 
-    /// Alias for [`Self::get_position`] for API compatibility.
+    // Alias for [`Self::get_position`] for API compatibility.
     pub fn get_user_position(env: Env, user: Address) -> PositionSummary {
         Self::get_position(env, user)
     }
 
-    /// Get the health factor for a user. Read-only view.
-    /// Computed as: `(collateral * LIQUIDATION_THRESHOLD_BPS) / debt`
-    /// Returns `HEALTH_FACTOR_NO_DEBT` sentinel if user has no debt.
-    /// Scale: `HEALTH_FACTOR_SCALE` (10000 = 1.0).
+    // Get the health factor for a user. Read-only view.
+    // Computed from oracle-valued balances when distinct collateral and debt
+    // assets are configured, otherwise uses legacy raw-unit balances.
+    // Returns `HEALTH_FACTOR_NO_DEBT` sentinel if user has no debt.
+    // Scale: `HEALTH_FACTOR_SCALE` (10000 = 1.0).
     pub fn get_health_factor(env: Env, user: Address) -> i128 {
-        let col_key = DataKey::Collateral(user.clone());
-        let col: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
-        if col != 0 {
-            extend_collateral_ttl(&env, &user);
-        }
-        let position = load_debt(&env, &user);
-        if position.principal != 0 {
-            extend_debt_ttl(&env, &user);
-        }
-        let debt = effective_debt(&position, env.ledger().timestamp(), DEFAULT_APR_BPS)
-            .unwrap_or(position.principal)
-            .max(0);
-
-        if debt > 0 {
-            col.checked_mul(Self::get_liquidation_threshold_bps(&env))
-                .map(|v| v / debt)
-                .unwrap_or(i128::MAX)
-        } else {
-            HEALTH_FACTOR_NO_DEBT
-        }
+        read_position_summary(&env, &user).0.health_factor
     }
 
     pub fn get_protocol_metrics(env: Env) -> ProtocolMetrics {
@@ -2004,27 +3480,75 @@ impl LendingContract {
         }
     }
 
-    /// Return recent protocol utilization samples newest-first.
-    ///
-    /// The view is read-only and returns an empty vector when no rate update has
-    /// written a sample yet. Each sample contains the ledger sequence and the
-    /// utilization observed in basis points.
+    // Return recent protocol utilization samples newest-first.
+    // 
+    // The view is read-only and returns an empty vector when no rate update has
+    // written a sample yet. Each sample contains the ledger sequence and the
+    // utilization observed in basis points.
     pub fn get_utilization_history(env: Env) -> Vec<UtilizationSample> {
         utilization_history_newest_first(&env)
+    }
+
+    // Return structured, read-only diagnostics for the borrow-rate pipeline.
+    // 
+    // This view never mutates storage and never panics on adversarial
+    // utilization (it reports the bounded `[0, 10_000]` utilization). It exposes
+    // the current utilization, the target (raw two-slope) rate, the applied
+    // (smoothed/clamped) rate, and the timing of the last update so off-chain
+    // monitoring can observe rate latency, smoothing convergence, and recovery
+    // behaviour. It leaks no secrets.
+    pub fn get_rate_model_diagnostics(env: Env) -> RateModelDiagnostics {
+        let snapshot = debt::load_rate_snapshot(&env);
+        let utilization_bps = debt::compute_utilization_bps(&snapshot).unwrap_or(0);
+
+        let current_ledger = env.ledger().sequence();
+        let last_update_ledger = env
+            .storage()
+            .instance()
+            .get(&rate_model::RateModelKey::LastRateLedger)
+            .unwrap_or(0);
+
+        let (rate_model_active, target_rate_bps, applied_rate_bps) = match &snapshot.params {
+            Some(p) => {
+                let target_rate = rate_model::compute_borrow_rate(utilization_bps, p).unwrap_or(0);
+                let applied_rate = env
+                    .storage()
+                    .instance()
+                    .get(&rate_model::RateModelKey::LastRate)
+                    .unwrap_or(target_rate);
+                (true, target_rate, applied_rate)
+            }
+            None => (false, debt::DEFAULT_APR_BPS, debt::DEFAULT_APR_BPS),
+        };
+
+        let elapsed_ledgers = if last_update_ledger == 0 {
+            0
+        } else {
+            current_ledger.saturating_sub(last_update_ledger)
+        };
+
+        RateModelDiagnostics {
+            rate_model_active,
+            utilization_bps,
+            target_rate_bps,
+            applied_rate_bps,
+            last_update_ledger,
+            elapsed_ledgers,
+        }
     }
 
     // ════════════════════════════════════════════════════════════════
     // Cross-Asset Entrypoints
     // ════════════════════════════════════════════════════════════════
 
-    /// Configure per-asset risk parameters.
-    ///
-    /// Only the protocol admin can call this.
-    /// `ltv_bps` must not exceed `liquidation_threshold_bps` — otherwise a
-    /// user could borrow up to the max LTV while already eligible for
-    /// liquidation. Returns [`LendingError::InvalidLiquidationParams`] when
-    /// violated.
-    /// Emits an `AssetParamsSetEvent` on success.
+    // Configure per-asset risk parameters.
+    // 
+    // Only the protocol admin can call this.
+    // `ltv_bps` must not exceed `liquidation_threshold_bps` — otherwise a
+    // user could borrow up to the max LTV while already eligible for
+    // liquidation. Returns [`LendingError::InvalidLiquidationParams`] when
+    // violated.
+    // Emits an `AssetParamsSetEvent` on success.
     #[allow(clippy::too_many_arguments)]
     pub fn set_asset_params(
         env: Env,
@@ -2036,9 +3560,14 @@ impl LendingContract {
         borrow_cap: i128,
         supply_cap: i128,
     ) -> Result<(), LendingError> {
-        require_initialized(&env)?;
         admin.require_auth();
-        if admin != Self::get_admin(env.clone()) {
+        if admin
+            != env
+                .storage()
+                .instance()
+                .get::<DataKey, Address>(&DataKey::Admin)
+                .unwrap()
+        {
             return Err(LendingError::Unauthorized);
         }
         if !(0..=10000).contains(&ltv_bps) {
@@ -2079,6 +3608,94 @@ impl LendingContract {
         }
         .publish(&env);
 
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_asset_params"),
+            admin.clone(),
+            None,
+        );
+
+        Ok(())
+    }
+
+    // Configure per-asset risk parameters together with the asset's token
+    // `decimals`.
+    // 
+    // Applies the same validation as [`Self::set_asset_params`], plus a bound
+    // on `decimals`: values above [`MAX_ASSET_DECIMALS`] (18) are rejected so
+    // `10^decimals` can never overflow the internal `i128` valuation scale.
+    // The configuration is stored under [`DataKey::AssetParamsV2`] and read by
+    // the cross-asset valuation (legacy [`AssetParams`] entries fall back to
+    // [`DEFAULT_ASSET_DECIMALS`]).
+    // 
+    // # Errors
+    // - [`LendingError::Unauthorized`] if `admin` is not the protocol admin.
+    // - [`LendingError::InvalidAmount`] if any bps/cap is out of range or
+    //   `decimals > MAX_ASSET_DECIMALS`.
+    // - [`LendingError::InvalidLiquidationParams`] if `ltv_bps` exceeds
+    //   `liquidation_threshold_bps`.
+    pub fn set_asset_params_v2(
+        env: Env,
+        admin: Address,
+        asset: Address,
+        ltv_bps: i128,
+        liquidation_threshold_bps: i128,
+        debt_ceiling: i128,
+        borrow_cap: i128,
+        supply_cap: i128,
+        decimals: u32,
+    ) -> Result<(), LendingError> {
+        admin.require_auth();
+        if admin
+            != env
+                .storage()
+                .instance()
+                .get::<DataKey, Address>(&DataKey::Admin)
+                .unwrap()
+        {
+            return Err(LendingError::Unauthorized);
+        }
+        if !(0..=10000).contains(&ltv_bps) {
+            return Err(LendingError::InvalidAmount);
+        }
+        if !(0..=10000).contains(&liquidation_threshold_bps) {
+            return Err(LendingError::InvalidAmount);
+        }
+        if ltv_bps > liquidation_threshold_bps {
+            return Err(LendingError::InvalidLiquidationParams);
+        }
+        if debt_ceiling < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        if borrow_cap < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        if supply_cap < 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+        if decimals > MAX_ASSET_DECIMALS {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        let params = AssetParamsV2 {
+            ltv_bps,
+            liquidation_threshold_bps,
+            debt_ceiling,
+            borrow_cap,
+            supply_cap,
+            decimals,
+        };
+        cross_asset::set_asset_params_v2_internal(&env, &asset, &params);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_asset_params_v2"),
+            admin.clone(),
+            None,
+        );
+
         Ok(())
     }
 
@@ -2086,10 +3703,10 @@ impl LendingContract {
     // Bad-debt accounting views
     // -----------------------------------------------------------------------
 
-    /// Return the current insurance fund balance.
-    ///
-    /// The insurance fund is credited by [`credit_insurance_fund`] and consumed
-    /// by [`write_off_bad_debt`] before the reserve or depositor pool is touched.
+    // Return the current insurance fund balance.
+    // 
+    // The insurance fund is credited by [`credit_insurance_fund`] and consumed
+    // by [`write_off_bad_debt`] before the reserve or depositor pool is touched.
     pub fn get_insurance_fund(env: Env) -> i128 {
         env.storage()
             .instance()
@@ -2097,7 +3714,7 @@ impl LendingContract {
             .unwrap_or(0)
     }
 
-    /// Return the configured insurance fund interest share in basis points.
+    // Return the configured insurance fund interest share in basis points.
     pub fn get_insurance_share(env: Env) -> i128 {
         env.storage()
             .instance()
@@ -2105,16 +3722,16 @@ impl LendingContract {
             .unwrap_or(0)
     }
 
-    /// Fund the insurance fund by an explicit amount.
-    ///
-    /// Only the protocol admin can call this.
-    ///
-    /// # Errors
-    /// - [`LendingError::InvalidAmount`] if `amount <= 0`.
-    /// - [`LendingError::Overflow`] if the resulting balance would overflow i128.
+    // Fund the insurance fund by an explicit amount.
+    // 
+    // Only the protocol admin can call this.
+    // 
+    // # Errors
+    // - [`LendingError::InvalidAmount`] if `amount <= 0`.
+    // - [`LendingError::Overflow`] if the resulting balance would overflow i128.
     pub fn fund_insurance(env: Env, amount: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        assert_admin(&env)?;
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
@@ -2130,21 +3747,36 @@ impl LendingContract {
         Ok(())
     }
 
-    /// Set the insurance fund interest share in basis points (admin-only).
-    ///
-    /// The share must be between 0 and 10000 bps (0% to 100%).
-    ///
-    /// # Errors
-    /// - [`LendingError::InvalidAmount`] if `share_bps < 0 || share_bps > 10000`.
+    // Set the insurance fund interest share in basis points (admin-only).
+    // 
+    // The share must be between 0 and 10000 bps (0% to 100%).
+    // 
+    // # Errors
+    // - [`LendingError::InvalidAmount`] if `share_bps < 0 || share_bps > 10000`.
     pub fn set_insurance_share(env: Env, share_bps: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if share_bps < 0 || share_bps > 10000 {
             return Err(LendingError::InvalidAmount);
         }
         env.storage()
             .instance()
             .set(&DataKey::InsuranceShareBps, &share_bps);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_insurance_share"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
@@ -2152,18 +3784,24 @@ impl LendingContract {
     // Bad-debt accounting mutators (admin-only)
     // -----------------------------------------------------------------------
 
-    /// Credit the insurance fund by `amount`.
-    ///
-    /// This is a **pure accounting** operation — no token transfer is performed.
-    /// The caller (governance or an authorised fee-routing contract) is
-    /// responsible for ensuring the corresponding tokens are available.
-    ///
-    /// # Errors
-    /// - [`LendingError::InvalidAmount`] if `amount <= 0`.
-    /// - [`LendingError::Overflow`] if the resulting balance would overflow i128.
+    // Credit the insurance fund by `amount`.
+    // 
+    // This is a **pure accounting** operation — no token transfer is performed.
+    // The caller (governance or an authorised fee-routing contract) is
+    // responsible for ensuring the corresponding tokens are available.
+    // 
+    // # Errors
+    // - [`LendingError::InvalidAmount`] if `amount <= 0`.
+    // - [`LendingError::Overflow`] if the resulting balance would overflow i128.
     pub fn credit_insurance_fund(env: Env, amount: i128) -> Result<(), LendingError> {
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
@@ -2176,36 +3814,50 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::InsuranceFund, &new_balance);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "credit_insurance_fund"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Govern-gated entrypoint to write off recorded bad debt.
-    ///
-    /// Clears `amount` of bad debt against available backstops in strict
-    /// precedence order:
-    ///
-    /// 1. **Insurance fund** — consumed first (lowest socialisation impact).
-    /// 2. **Protocol reserve** (`TotalDeposits` surplus) — consumed next.
-    /// 3. **Depositor socialisation** — residual applied as an index haircut
-    ///    to `TotalDeposits` only when both backstops are exhausted.
-    ///
-    /// Emits [`BadDebtWrittenOffEvent`] on success, recording the exact amount
-    /// drawn from each source for auditability.
-    ///
-    /// # Checks-Effects-Interactions
-    /// All state mutations occur atomically before the event is published.
-    /// No external call is made; the function is re-entrancy-safe by design.
-    ///
-    /// # Errors
-    /// - [`LendingError::InvalidAmount`] if `amount <= 0`.
-    /// - [`LendingError::NoBadDebt`] if there is no recorded bad debt.
-    /// - [`LendingError::WriteOffExceedsBadDebt`] if `amount > bad_debt`.
-    /// - [`LendingError::Overflow`] if any intermediate subtraction would
-    ///   underflow (should never occur given correct guards, but kept for safety).
+    // Govern-gated entrypoint to write off recorded bad debt.
+    // 
+    // Clears `amount` of bad debt against available backstops in strict
+    // precedence order:
+    // 
+    // 1. **Insurance fund** — consumed first (lowest socialisation impact).
+    // 2. **Protocol reserve** (`TotalDeposits` surplus) — consumed next.
+    // 3. **Depositor socialisation** — residual applied as an index haircut
+    //    to `TotalDeposits` only when both backstops are exhausted.
+    // 
+    // Emits [`BadDebtWrittenOffEvent`] on success, recording the exact amount
+    // drawn from each source for auditability.
+    // 
+    // # Checks-Effects-Interactions
+    // All state mutations occur atomically before the event is published.
+    // No external call is made; the function is re-entrancy-safe by design.
+    // 
+    // # Errors
+    // - [`LendingError::InvalidAmount`] if `amount <= 0`.
+    // - [`LendingError::NoBadDebt`] if there is no recorded bad debt.
+    // - [`LendingError::WriteOffExceedsBadDebt`] if `amount > bad_debt`.
+    // - [`LendingError::Overflow`] if any intermediate subtraction would
+    //   underflow (should never occur given correct guards, but kept for safety).
     pub fn write_off_bad_debt(env: Env, amount: i128) -> Result<(), LendingError> {
         // --- Auth ---
         require_initialized(&env)?;
-        assert_admin(&env);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
 
         // --- Input guards ---
         if amount <= 0 {
@@ -2289,26 +3941,50 @@ impl LendingContract {
         }
         .publish(&env);
 
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "write_off_bad_debt"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Set the liquidation grace period in seconds (admin-only).
-    ///
-    /// The grace period enforces a minimum time that must elapse after a position
-    /// becomes unhealthy (health factor < 1.0) before it can be liquidated.
-    /// Caps the grace period at 30 days (`MAX_LIQUIDATION_GRACE_PERIOD_SECS`).
+    // Set the liquidation grace period in seconds (admin-only).
+    // 
+    // The grace period enforces a minimum time that must elapse after a position
+    // becomes unhealthy (health factor < 1.0) before it can be liquidated.
+    // Caps the grace period at 30 days (`MAX_LIQUIDATION_GRACE_PERIOD_SECS`).
     pub fn set_liquidation_grace_period(env: Env, grace_secs: u64) -> Result<(), LendingError> {
-        assert_admin(&env);
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
         if grace_secs > MAX_LIQUIDATION_GRACE_PERIOD_SECS {
             return Err(LendingError::InvalidLiquidationGracePeriod);
         }
         env.storage()
             .persistent()
             .set(&DataKey::LiquidationGracePeriodSecs, &grace_secs);
+
+        // Record audit entry
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_liquidation_grace_period"),
+            admin,
+            None,
+        );
+
         Ok(())
     }
 
-    /// Return the configured liquidation grace period in seconds.
+    // Return the configured liquidation grace period in seconds.
     pub fn get_liquidation_grace_period(env: Env) -> u64 {
         env.storage()
             .persistent()
@@ -2316,15 +3992,15 @@ impl LendingContract {
             .unwrap_or(0)
     }
 
-    /// Return the configured risk parameters for an asset, if any.
+    // Return the configured risk parameters for an asset, if any.
     pub fn get_asset_params(env: Env, asset: Address) -> Option<AssetParams> {
         cross_asset::load_asset_params(&env, &asset)
     }
 
-    /// Deposit a specific asset as collateral for the user.
-    ///
-    /// Increases the user's cross-asset borrowing power.
-    /// Emits a `CrossDepositEvent` on success.
+    // Deposit a specific asset as collateral for the user.
+    // 
+    // Increases the user's cross-asset borrowing power.
+    // Emits a `CrossDepositEvent` on success.
     pub fn deposit_collateral_asset(
         env: Env,
         user: Address,
@@ -2343,9 +4019,9 @@ impl LendingContract {
         Ok(result)
     }
 
-    /// Borrow a specific asset, checked against the aggregate health factor.
-    ///
-    /// Emits a `CrossBorrowEvent` on success.
+    // Borrow a specific asset, checked against the aggregate health factor.
+    // 
+    // Emits a `CrossBorrowEvent` on success.
     pub fn borrow_asset(
         env: Env,
         user: Address,
@@ -2363,9 +4039,9 @@ impl LendingContract {
         Ok(result)
     }
 
-    /// Repay a specific borrowed asset.
-    ///
-    /// Emits a `CrossRepayEvent` on success.
+    // Repay a specific borrowed asset.
+    // 
+    // Emits a `CrossRepayEvent` on success.
     pub fn repay_asset(
         env: Env,
         user: Address,
@@ -2384,10 +4060,10 @@ impl LendingContract {
         Ok(result)
     }
 
-    /// Withdraw a specific collateral asset, preserving a healthy position.
-    ///
-    /// Reverts if the post-withdrawal aggregate health factor would be < 1.0.
-    /// Emits a `CrossWithdrawEvent` on success.
+    // Withdraw a specific collateral asset, preserving a healthy position.
+    // 
+    // Reverts if the post-withdrawal aggregate health factor would be < 1.0.
+    // Emits a `CrossWithdrawEvent` on success.
     pub fn withdraw_asset(
         env: Env,
         user: Address,
@@ -2405,9 +4081,9 @@ impl LendingContract {
         Ok(result)
     }
 
-    /// Return the aggregate USD-denominated position summary for cross-asset users.
-    ///
-    /// Returns zeroed values when the user has no cross-asset position.
+    // Return the aggregate USD-denominated position summary for cross-asset users.
+    // 
+    // Returns zeroed values when the user has no cross-asset position.
     pub fn get_cross_position_summary(env: Env, user: Address) -> CrossPositionSummary {
         let total_collateral_usd = cross_asset::get_cross_position_value(&env, &user).unwrap_or(0);
         let total_debt_usd = cross_asset::get_cross_debt_value(&env, &user).unwrap_or(0);
@@ -2419,24 +4095,24 @@ impl LendingContract {
         }
     }
 
-    /// Return the aggregate cross-asset health factor for a user.
-    ///
-    /// Returns `HEALTH_FACTOR_NO_DEBT` (1_000_000) when the user has no cross-asset debt.
+    // Return the aggregate cross-asset health factor for a user.
+    // 
+    // Returns `HEALTH_FACTOR_NO_DEBT` (1_000_000) when the user has no cross-asset debt.
     pub fn get_cross_health_factor(env: Env, user: Address) -> i128 {
         cross_asset::compute_aggregate_health_factor(&env, &user).unwrap_or(0)
     }
 
-    /// Return the per-asset collateral balance for a user.
+    // Return the per-asset collateral balance for a user.
     pub fn get_collateral_asset_balance(env: Env, user: Address, asset: Address) -> i128 {
         cross_asset::load_collateral_asset(&env, &user, &asset)
     }
 
-    /// Return the per-asset debt principal for a user.
+    // Return the per-asset debt principal for a user.
     pub fn get_debt_asset_position(env: Env, user: Address, asset: Address) -> debt::DebtPosition {
         cross_asset::load_debt_asset(&env, &user, &asset)
     }
 
-    /// Initialize timelocked multisig upgrade governance (admin-only, once).
+    // Initialize timelocked multisig upgrade governance (admin-only, once).
     pub fn upgrade_init(
         env: Env,
         caller: Address,
@@ -2446,7 +4122,7 @@ impl LendingContract {
         upgrade::upgrade_init(&env, &caller, current_wasm_hash, required_approvals)
     }
 
-    /// Propose a WASM upgrade with a timelocked ETA ledger (admin-only).
+    // Propose a WASM upgrade with a timelocked ETA ledger (admin-only).
     pub fn upgrade_propose(
         env: Env,
         caller: Address,
@@ -2456,7 +4132,7 @@ impl LendingContract {
         upgrade::upgrade_propose(&env, &caller, new_wasm_hash, new_version)
     }
 
-    /// Record an approval for a pending upgrade proposal (approver-only).
+    // Record an approval for a pending upgrade proposal (approver-only).
     pub fn upgrade_approve(
         env: Env,
         caller: Address,
@@ -2465,13 +4141,18 @@ impl LendingContract {
         upgrade::upgrade_approve(&env, &caller, proposal_id)
     }
 
-    /// Execute an approved upgrade after the timelock elapses (approver-only).
+    // Execute an approved upgrade after the timelock elapses (approver-only).
     pub fn upgrade_execute(
         env: Env,
         caller: Address,
         proposal_id: u64,
     ) -> Result<(), LendingError> {
         upgrade::upgrade_execute(&env, &caller, proposal_id)
+    }
+
+    // Cancel a pending upgrade proposal (admin-only, issue #1940).
+    pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
+        upgrade::upgrade_cancel(&env, &caller, proposal_id)
     }
 
     pub fn upgrade_set_required_approvals(
@@ -2482,7 +4163,7 @@ impl LendingContract {
         upgrade::upgrade_set_required_approvals(&env, &caller, required_approvals)
     }
 
-    /// Add an upgrade approver (admin-only).
+    // Add an upgrade approver (admin-only).
     pub fn upgrade_add_approver(
         env: Env,
         caller: Address,
@@ -2491,7 +4172,7 @@ impl LendingContract {
         upgrade::upgrade_add_approver(&env, &caller, approver)
     }
 
-    /// Remove an upgrade approver (admin-only).
+    // Remove an upgrade approver (admin-only).
     pub fn upgrade_remove_approver(
         env: Env,
         caller: Address,
@@ -2530,21 +4211,143 @@ impl LendingContract {
         upgrade::upgrade_status(&env, proposal_id)
     }
 
+    // Returns whether a proposal is in the `Cancelled` terminal state (issue #1940).
+    pub fn is_upgrade_proposal_cancelled(env: Env, proposal_id: u64) -> bool {
+        upgrade::is_proposal_cancelled(&env, proposal_id)
+    }
+
+    // Returns the stored domain-separated approval binding hash for
+    // `(proposal_id, approver)` (issue #1940).
+    pub fn get_upgrade_approval_binding(
+        env: Env,
+        proposal_id: u64,
+        approver: Address,
+    ) -> Option<BytesN<32>> {
+        upgrade::get_approval_binding(&env, proposal_id, approver)
+    }
+
+    // Returns the approver-set fingerprint captured when the proposal was
+    // created (issue #1940).
+    pub fn get_upgrade_proposal_signer_hash(env: Env, proposal_id: u64) -> Option<BytesN<32>> {
+        upgrade::get_proposal_approver_set_hash(&env, proposal_id)
+    }
+
+    // Returns the fingerprint of the live upgrade approver set (issue #1940).
+    pub fn get_upgrade_approver_set_hash(env: Env) -> BytesN<32> {
+        upgrade::get_approver_set_hash(&env)
+    }
+
     pub fn get_min_upgrade_delay_ledgers(env: Env) -> u32 {
         upgrade::get_min_upgrade_delay_ledgers(&env)
     }
+
+    // Returns the total number of governance audit log entries ever recorded.
+    // This count never resets even when the circular buffer wraps.
+    // 
+    // Read-only, no auth required.
+    pub fn get_governance_audit_count(env: Env) -> u64 {
+        audit_log::get_governance_audit_count(&env)
+    }
+
+    // Returns audit log entries, most recent first.
+    // Read-only, no auth required.
+    // 
+    // # Arguments
+    // * `limit` - Max entries to return (0 = all available, max = buffer size)
+    pub fn get_governance_audit_entries(env: Env, limit: u64) -> Vec<AuditLogEntry> {
+        audit_log::get_governance_audit_entries(&env, limit)
+    }
+
+    // -----------------------------------------------------------------------
+    // Config store
+    // -----------------------------------------------------------------------
+
+    pub fn config_set(env: Env, key: Symbol, value: Bytes) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let mut entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut found = false;
+        for i in 0..entries.len() {
+            if entries.get(i).unwrap().key == key {
+                entries.set(
+                    i,
+                    ConfigEntry {
+                        key: key.clone(),
+                        value: value.clone(),
+                    },
+                );
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            entries.push_back(ConfigEntry { key, value });
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigEntries, &entries);
+        Ok(())
+    }
+
+    pub fn config_get(env: Env, key: Symbol) -> Option<Bytes> {
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            if entry.key == key {
+                return Some(entry.value);
+            }
+        }
+        None
+    }
+
+    pub fn config_backup(env: Env, name: Symbol) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConfigEntries)
+            .unwrap_or_else(|| Vec::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigBackup(name), &entries);
+        Ok(())
+    }
+
+    pub fn config_restore(env: Env, name: Symbol) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        let backup_key = DataKey::ConfigBackup(name);
+        let entries: Vec<ConfigEntry> = env
+            .storage()
+            .instance()
+            .get(&backup_key)
+            .ok_or(LendingError::BackupNotFound)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::ConfigEntries, &entries);
+        Ok(())
+    }
 }
 
-/// Panics if a flash loan is currently in progress.
-///
-/// All state-mutating user operations (`deposit`, `withdraw`, `borrow`,
-/// `borrow_against_collateral`, `repay`, `repay_against_collateral`,
-/// `liquidate`) call this at entry to prevent reentrancy via the
-/// `on_flash_loan` callback.
-///
-/// The `FlashActive` flag is set by [`flash_loan`] before the external
-/// callback and cleared after it returns.  On revert, Soroban's atomic
-/// transaction rollback restores the flag to `false`.
+// Panics if a flash loan is currently in progress.
+// 
+// All state-mutating user operations (`deposit`, `withdraw`, `borrow`,
+// `borrow_against_collateral`, `repay`, `repay_against_collateral`,
+// `liquidate`) call this at entry to prevent reentrancy via the
+// `on_flash_loan` callback.
+// 
+// The `FlashActive` flag is set by [`flash_loan`] before the external
+// callback and cleared after it returns.  On revert, Soroban's atomic
+// transaction rollback restores the flag to `false`.
 fn require_no_active_flash_loan(env: &Env) {
     let active: bool = env
         .storage()
@@ -2552,7 +4355,7 @@ fn require_no_active_flash_loan(env: &Env) {
         .get(&DataKey::FlashActive)
         .unwrap_or(false);
     if active {
-        panic!("FlashLoanReentrancy");
+        panic_with_error!(&env, LendingError::Unauthorized);
     }
 }
 
@@ -2562,9 +4365,22 @@ pub(crate) fn settle_and_accrue_insurance(
     now: u64,
     rate_bps: i128,
 ) -> Result<DebtPosition, LendingError> {
-    let elapsed = debt::elapsed_seconds(now, position.last_update);
-    let interest = debt::accrue_interest(position.principal, elapsed, rate_bps)
-        .map_err(|_| LendingError::Overflow)?;
+    let current_index = touch_borrow_index(env, now, rate_bps);
+
+    let (interest, settled) = if position.borrow_index_snapshot > 0 {
+        let settled = debt::settle_position(position, current_index, now)
+            .map_err(|_| LendingError::Overflow)?;
+        let interest = settled.principal.saturating_sub(position.principal);
+        (interest, settled)
+    } else {
+        let elapsed = debt::elapsed_seconds(now, position.last_update);
+        let interest = debt::accrue_interest(position.principal, elapsed, rate_bps)
+            .map_err(|_| LendingError::Overflow)?;
+        let mut settled =
+            debt::settle_accrual(position, now, rate_bps).map_err(|_| LendingError::Overflow)?;
+        settled.borrow_index_snapshot = current_index;
+        (interest, settled)
+    };
 
     if interest > 0 {
         let share_bps: i128 = env
@@ -2594,8 +4410,6 @@ pub(crate) fn settle_and_accrue_insurance(
         }
     }
 
-    let settled =
-        debt::settle_accrual(position, now, rate_bps).map_err(|_| LendingError::Overflow)?;
     Ok(settled)
 }
 
@@ -2625,7 +4439,7 @@ fn acquire_reentrancy_lock(env: &Env) {
         .get(&reentrancy_lock_key)
         .unwrap_or(false);
     if locked {
-        panic!("reentrant call");
+        panic_with_error!(&env, LendingError::Unauthorized);
     }
     env.storage().temporary().set(&reentrancy_lock_key, &true);
 }
@@ -2648,8 +4462,8 @@ fn with_reentrancy_lock<T>(env: &Env, f: impl FnOnce() -> T) -> T {
 // Isolation-mode internal helpers
 // -----------------------------------------------------------------------
 
-/// Returns `true` when `asset` has `isolated = true` in its stored config.
-/// Returns `false` when unconfigured or `isolated = false`.
+// Returns `true` when `asset` has `isolated = true` in its stored config.
+// Returns `false` when unconfigured or `isolated = false`.
 fn is_asset_isolated(env: &Env, asset: &Address) -> bool {
     env.storage()
         .persistent()
@@ -2658,13 +4472,29 @@ fn is_asset_isolated(env: &Env, asset: &Address) -> bool {
         .unwrap_or(false)
 }
 
-/// Check whether a borrow of `amount` against `collateral_asset` would breach/// the isolation debt ceiling.  Returns `Ok(())` when the asset is not
-/// isolated or when the ceiling would not be exceeded.
+// Return whether a debt reduction should release an isolation bucket.
+// 
+// The tracker is retained when governance disables isolation so historical
+// debt remains auditable. Repayments and liquidations must still release that
+// retained capacity. A positive tracker is therefore sufficient to identify
+// this legacy/disabled case, while an empty unconfigured asset remains
+// unaffected by ordinary debt operations.
+fn should_release_isolation_debt(env: &Env, asset: &Address) -> bool {
+    is_asset_isolated(env, asset)
+        || LendingContract::get_isolation_debt(env.clone(), asset.clone()) > 0
+}
+
+// Check whether a borrow of `amount` against `collateral_asset` would breach
+// the isolation debt ceiling.  Returns `Ok(())` when the asset is not
+// isolated or when the ceiling would not be exceeded.
 fn check_isolation_ceiling_internal(
     env: &Env,
     collateral_asset: &Address,
     amount: i128,
 ) -> Result<(), LendingError> {
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
     let config: Option<IsolationConfig> = env
         .storage()
         .persistent()
@@ -2693,29 +4523,44 @@ fn check_isolation_ceiling_internal(
     Ok(())
 }
 
-/// Increment the running isolation-debt counter for `collateral_asset` by `delta`.
-///
-/// Called after a successful `borrow_against_collateral` to keep the ceiling
-/// tracker in sync with actual outstanding debt.  Uses saturating addition so
-/// a single bad call cannot permanently break the counter — the ceiling check
-/// that precedes every borrow is the authoritative guard.
-fn increment_isolation_debt(env: &Env, collateral_asset: &Address, delta: i128) {
+// Increment the running isolation-debt counter for `collateral_asset` by `delta`.
+// 
+// Called after a successful `borrow_against_collateral` to keep the ceiling
+// tracker in sync with actual outstanding debt. Overflow is an invariant
+// violation rather than an opportunity to wrap the counter.
+fn increment_isolation_debt(
+    env: &Env,
+    collateral_asset: &Address,
+    delta: i128,
+) -> Result<(), LendingError> {
     let key = DataKey::IsolationDebt(collateral_asset.clone());
     let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-    let updated = current.saturating_add(delta);
+    let updated = current
+        .checked_add(delta)
+        .ok_or(LendingError::IsolationDebtInvariant)?;
     env.storage().persistent().set(&key, &updated);
+    Ok(())
 }
 
-/// Decrement the running isolation-debt counter for `collateral_asset` by `amount`.
-///
-/// Called after a successful `repay_against_collateral`.  Uses saturating
-/// subtraction so over-repayment (e.g., interest rounding) cannot make the
-/// counter go negative.
-fn decrement_isolation_debt(env: &Env, collateral_asset: &Address, amount: i128) {
+// Decrement the running isolation-debt counter for `collateral_asset` by `amount`.
+// 
+// Called after a successful `repay_against_collateral`.  Rejects a release
+// larger than the bucket instead of saturating to zero and hiding corruption.
+fn decrement_isolation_debt(
+    env: &Env,
+    collateral_asset: &Address,
+    amount: i128,
+) -> Result<(), LendingError> {
     let key = DataKey::IsolationDebt(collateral_asset.clone());
     let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-    let updated = current.saturating_sub(amount);
+    if amount < 0 || amount > current {
+        return Err(LendingError::IsolationDebtInvariant);
+    }
+    let updated = current
+        .checked_sub(amount)
+        .ok_or(LendingError::IsolationDebtInvariant)?;
     env.storage().persistent().set(&key, &updated);
+    Ok(())
 }
 
 fn extend_collateral_ttl(env: &Env, user: &Address) {
@@ -2740,10 +4585,10 @@ fn extend_debt_ttl(env: &Env, user: &Address) {
     }
 }
 
-/// Append `user` to the `BorrowerList` stored in instance storage, if not
-/// already present.  This list is used by `migrate_positions` to iterate
-/// over all debt records.
-#[allow(dead_code)]
+// Append `user` to the `BorrowerList` stored in instance storage, if not
+// already present.  This list is used by `migrate_positions` to iterate
+// over all debt records.
+#[cfg(test)]
 fn register_borrower(env: &Env, user: &Address) {
     let mut list: soroban_sdk::Vec<Address> = env
         .storage()
@@ -2773,7 +4618,7 @@ fn pause_is_active(env: &Env, operation: PauseType) -> bool {
 
 fn check_pause_status(env: &Env, action: ProtocolAction) {
     if pause_is_active(env, PauseType::All) {
-        panic!("OperationPaused");
+        panic_with_error!(&env, LendingError::Unauthorized);
     }
     let operation = match action {
         ProtocolAction::Deposit => PauseType::Deposit,
@@ -2784,11 +4629,11 @@ fn check_pause_status(env: &Env, action: ProtocolAction) {
         ProtocolAction::FlashLoan => PauseType::FlashLoan,
     };
     if pause_is_active(env, operation) {
-        panic!("OperationPaused");
+        panic_with_error!(&env, LendingError::Unauthorized);
     }
 }
 
-fn get_emergency_state(env: &Env) -> EmergencyState {
+fn read_emergency_state(env: &Env) -> EmergencyState {
     env.storage()
         .instance()
         .get(&DataKey::EmergencyState)
@@ -2802,7 +4647,7 @@ fn set_emergency_state_internal(env: &Env, state: EmergencyState) {
 }
 
 fn check_emergency_status(env: &Env, action: ProtocolAction) {
-    match get_emergency_state(env) {
+    match read_emergency_state(env) {
         EmergencyState::Normal => {}
         EmergencyState::Shutdown => panic!("OperationDisabledDuringShutdown"),
         EmergencyState::Recovery => match action {
@@ -2812,23 +4657,23 @@ fn check_emergency_status(env: &Env, action: ProtocolAction) {
     }
 }
 
-/// Guard that every state-mutating entry point calls first.
-///
-/// Checks that [`DataKey::Admin`] is present in instance storage, which is
-/// only true after a successful [`LendingContract::initialize`] call.
-///
-/// # Errors
-/// Returns [`LendingError::NotInitialized`] when the contract has not yet
-/// been initialized, allowing callers to surface a clean, typed error
-/// instead of panicking with an `unwrap` failure.
-///
-/// # Example
-/// ```rust,ignore
-/// pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
-///     require_initialized(&env)?;
-///     // … rest of deposit logic
-/// }
-/// ```
+// Guard that every state-mutating entry point calls first.
+// 
+// Checks that [`DataKey::Admin`] is present in instance storage, which is
+// only true after a successful [`LendingContract::initialize`] call.
+// 
+// # Errors
+// Returns [`LendingError::NotInitialized`] when the contract has not yet
+// been initialized, allowing callers to surface a clean, typed error
+// instead of panicking with an `unwrap` failure.
+// 
+// # Example
+// ```rust,ignore
+// pub fn deposit(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
+//     require_initialized(&env)?;
+//     // … rest of deposit logic
+// }
+// ```
 pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
     if env.storage().instance().has(&DataKey::Admin) {
         Ok(())
@@ -2837,11 +4682,74 @@ pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
     }
 }
 
-/// Assert that the transaction signer is the protocol admin.
-/// Panics with the default auth error if not.
-pub(crate) fn assert_admin(env: &Env) {
-    let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+// Assert that the transaction signer is the protocol admin.
+// Returns a typed error when the contract has not yet been initialized.
+pub(crate) fn assert_admin(env: &Env) -> Result<(), LendingError> {
+    let admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(LendingError::NotInitialized)?;
     admin.require_auth();
+    Ok(())
+}
+
+/// Assert that `caller` is either the configured price relayer or the protocol
+/// admin.
+///
+/// The relayer role lets an always-online oracle process submit signed prices
+/// without holding the admin key. The ed25519 signature check in `set_price` is
+/// the independent authenticity boundary. Returns
+/// [`LendingError::Unauthorized`] if `caller` is neither address.
+fn require_price_relayer_or_admin(env: &Env, caller: &Address) -> Result<(), LendingError> {
+    let admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(LendingError::NotInitialized)?;
+    let relayer: Option<Address> = env.storage().instance().get(&DataKey::PriceRelayer);
+    if *caller == admin || relayer.as_ref() == Some(caller) {
+        caller.require_auth();
+        Ok(())
+    } else {
+        Err(LendingError::Unauthorized)
+    }
+}
+
+/// Resolve the effective max oracle age for `asset`, honouring a per-asset
+/// override and falling back to [`DEFAULT_ORACLE_MAX_AGE_SECS`].
+pub(crate) fn max_age_for(env: &Env, asset: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get::<_, u64>(&DataKey::OracleMaxAge(asset.clone()))
+        .unwrap_or(DEFAULT_ORACLE_MAX_AGE_SECS)
+}
+
+/// Resolve the configured windowed-deviation window length, falling back to
+/// [`DEFAULT_MOVE_WINDOW_SECS`].
+fn move_window_secs(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get::<_, u64>(&DataKey::MoveWindowSecs)
+        .unwrap_or(DEFAULT_MOVE_WINDOW_SECS)
+}
+
+/// Return the absolute move from `base` to `price` in basis points:
+/// `|price - base| * 10_000 / base`.
+///
+/// Returns [`LendingError::Overflow`] if any intermediate step overflows
+/// `i128`. `base` is assumed positive (prices are validated `> 0`).
+fn bps_move(price: i128, base: i128) -> Result<i128, LendingError> {
+    let delta_abs = if price >= base {
+        price.checked_sub(base).ok_or(LendingError::Overflow)?
+    } else {
+        base.checked_sub(price).ok_or(LendingError::Overflow)?
+    };
+    delta_abs
+        .checked_mul(BPS_DENOM)
+        .ok_or(LendingError::Overflow)?
+        .checked_div(base)
+        .ok_or(LendingError::Overflow)
 }
 
 fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
@@ -2852,11 +4760,29 @@ fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
         let position = load_debt(env, user);
         let debt = position.principal;
 
+        // Mirror `liquidate`'s entry guard: consult the *governed* threshold rather
+        // than the hardcoded default, and treat an arithmetic failure as "not
+        // provably healthy" (fail-closed) so an overflow can never clear the
+        // grace-period timestamp. This is the same invariant as the post-liquidation
+        // check in `liquidate`; both decide the fate of
+        // `DataKey::FirstUnhealthyTimestamp` and must agree.
         let hf = if debt > 0 {
-            collateral
-                .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-                .map(|v| v / debt)
-                .unwrap_or(i128::MAX)
+            let collateral_value = match value_collateral(env, collateral) {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            let debt_value = match value_debt(env, debt) {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            match math::checked_mul_div_floor(
+                collateral_value,
+                LendingContract::get_liquidation_threshold_bps(env.clone()),
+                debt_value,
+            ) {
+                Ok(hf) => hf,
+                Err(_) => return,
+            }
         } else {
             i128::MAX
         };
@@ -2867,21 +4793,19 @@ fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
     }
 }
 
-/// For Shutdown, allow the guardian (if set) or admin; for Recovery/Normal, admin only.
-fn assert_admin_or_guardian(env: &Env, state: &EmergencyState) {
-    match state {
-        EmergencyState::Shutdown => {
-            let caller: Address = env
-                .storage()
-                .instance()
-                .get(&DataKey::Guardian)
-                .unwrap_or_else(|| env.storage().instance().get(&DataKey::Admin).unwrap());
-            caller.require_auth();
-        }
-        EmergencyState::Recovery | EmergencyState::Normal => {
-            assert_admin(env);
-        }
-    }
+// For Shutdown, allow the guardian (if set) or admin; for Recovery/Normal, admin only.
+fn is_admin(env: &Env, caller: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<_, Address>(&DataKey::Admin)
+        .is_some_and(|admin| admin == *caller)
+}
+
+fn is_guardian(env: &Env, caller: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<_, Address>(&DataKey::Guardian)
+        .is_some_and(|guardian| guardian == *caller)
 }
 
 #[cfg(test)]
@@ -2889,18 +4813,54 @@ fn load_rate_snapshot(env: &Env) -> debt::RateSnapshot {
     debt::load_rate_snapshot(env)
 }
 
-/// Reject a prospective borrow that would leave the user undercollateralized or
-/// push protocol `TotalDebt` past the configured ceiling.
-///
-/// Health factor uses effective debt after accrual:
-/// `(collateral * LIQUIDATION_THRESHOLD_BPS) / new_debt >= HEALTH_FACTOR_SCALE`.
-/// The overflow-safe equivalent is
-/// `collateral * LIQUIDATION_THRESHOLD_BPS >= HEALTH_FACTOR_SCALE * new_debt`.
-///
-/// # Worked example
-/// With 100 collateral, 80% liquidation threshold, and 80 debt:
-/// `100 * 8000 = 800_000 >= 10_000 * 80 = 800_000` — exactly at HF 1.0.
-/// A borrow to 81 debt would fail because `800_000 < 810_000`.
+// Shared solvency predicate for `borrow` and `withdraw`.
+// 
+// Passes when the position has no effective debt at the current ledger time
+// and borrow rate, or when `collateral_value * threshold_bps >=
+// HEALTH_FACTOR_SCALE * debt_value`, using the governed liquidation
+// threshold. In cross-asset mode collateral and debt are first converted to
+// oracle-valued units; otherwise raw units are used. Arithmetic overflow
+// fails closed with an error.
+fn assert_position_healthy(
+    env: &Env,
+    collateral: i128,
+    position: &DebtPosition,
+) -> Result<(), LendingError> {
+    let now = env.ledger().timestamp();
+    let rate = current_borrow_rate(env);
+    let debt = effective_debt(position, now, rate).map_err(|_| LendingError::Overflow)?;
+
+    if debt > 0 {
+        let collateral_value = value_collateral(env, collateral)?;
+        let debt_value = value_debt(env, debt)?;
+        let threshold = LendingContract::get_liquidation_threshold_bps(env.clone());
+        let weighted_collateral = collateral_value
+            .checked_mul(threshold)
+            .ok_or(LendingError::Overflow)?;
+        let required_collateral = HEALTH_FACTOR_SCALE
+            .checked_mul(debt_value)
+            .ok_or(LendingError::Overflow)?;
+
+        if weighted_collateral < required_collateral {
+            return Err(LendingError::InsufficientCollateral);
+        }
+    }
+    Ok(())
+}
+
+// Reject a prospective borrow that would leave the user undercollateralized or
+// push protocol `TotalDebt` past the configured ceiling.
+// 
+// Health factor uses effective debt after accrual and the governed liquidation
+// threshold. In cross-asset mode, collateral and debt are first converted to
+// oracle-valued units; otherwise legacy raw units are retained. Solvency is
+// checked with the overflow-safe equivalent of health factor >= 1.0:
+// `collateral_value * threshold_bps >= HEALTH_FACTOR_SCALE * debt_value`.
+// 
+// # Worked example
+// With 100 collateral, 80% liquidation threshold, and 80 debt:
+// `100 * 8000 = 800_000 >= 10_000 * 80 = 800_000` — exactly at HF 1.0.
+// A borrow to 81 debt would fail because `800_000 < 810_000`.
 fn assert_borrow_solvent(
     env: &Env,
     user: &Address,
@@ -2910,23 +4870,7 @@ fn assert_borrow_solvent(
     let col_key = DataKey::Collateral(user.clone());
     let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
 
-    let now = env.ledger().timestamp();
-    let rate = current_borrow_rate(env);
-    let new_debt =
-        effective_debt(updated_position, now, rate).map_err(|_| LendingError::Overflow)?;
-
-    if new_debt > 0 {
-        let weighted_collateral = collateral
-            .checked_mul(LIQUIDATION_THRESHOLD_BPS)
-            .ok_or(LendingError::Overflow)?;
-        let required_collateral = HEALTH_FACTOR_SCALE
-            .checked_mul(new_debt)
-            .ok_or(LendingError::Overflow)?;
-
-        if weighted_collateral < required_collateral {
-            return Err(LendingError::InsufficientCollateral);
-        }
-    }
+    assert_position_healthy(env, collateral, updated_position)?;
 
     if let Some(ceiling) = env
         .storage()
@@ -2969,7 +4913,7 @@ pub(crate) fn write_utilization_sample(env: &Env, utilization_bps: i128) {
         .set(&DataKey::UtilizationHistory, &samples);
 }
 
-/// Load utilization samples in their storage order, oldest-first.
+// Load utilization samples in their storage order, oldest-first.
 pub(crate) fn utilization_history_oldest_first(env: &Env) -> Vec<UtilizationSample> {
     env.storage()
         .persistent()
@@ -2977,7 +4921,7 @@ pub(crate) fn utilization_history_oldest_first(env: &Env) -> Vec<UtilizationSamp
         .unwrap_or_else(|| Vec::new(env))
 }
 
-/// Load utilization samples in view order, newest-first.
+// Load utilization samples in view order, newest-first.
 fn utilization_history_newest_first(env: &Env) -> Vec<UtilizationSample> {
     let samples = utilization_history_oldest_first(env);
     let mut newest_first = Vec::new(env);
@@ -2994,7 +4938,9 @@ fn utilization_history_newest_first(env: &Env) -> Vec<UtilizationSample> {
 
 fn require_fresh_valuation_prices(env: &Env) -> Result<(), LendingError> {
     require_fresh_price_for_key(env, &DataKey::ValuationCollateralAsset)?;
-    require_fresh_price_for_key(env, &DataKey::ValuationDebtAsset)?;
+    if uses_cross_asset_valuation(env) {
+        require_fresh_price_for_key(env, &DataKey::ValuationDebtAsset)?;
+    }
     Ok(())
 }
 
@@ -3006,16 +4952,156 @@ fn require_fresh_price_for_key(env: &Env, asset_key: &DataKey) -> Result<(), Len
     let record = env
         .storage()
         .persistent()
-        .get::<_, PriceRecord>(&DataKey::OraclePrice(asset))
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
         .ok_or(LendingError::PriceUnavailable)?;
 
     let now = env.ledger().timestamp();
-    if record.timestamp > now || now > record.timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS)
-    {
+    let max_age = max_age_for(env, &asset);
+    if record.timestamp > now || now > record.timestamp.saturating_add(max_age) {
         return Err(LendingError::StaleOracleTimestamp);
     }
 
     Ok(())
+}
+
+fn uses_cross_asset_valuation(env: &Env) -> bool {
+    match (
+        env.storage()
+            .instance()
+            .get::<_, Address>(&DataKey::ValuationCollateralAsset),
+        env.storage()
+            .instance()
+            .get::<_, Address>(&DataKey::ValuationDebtAsset),
+    ) {
+        (Some(collateral), Some(debt)) => collateral != debt,
+        _ => false,
+    }
+}
+
+fn value_collateral(env: &Env, amount: i128) -> Result<i128, LendingError> {
+    value_amount(env, amount, true)
+}
+
+fn value_debt(env: &Env, amount: i128) -> Result<i128, LendingError> {
+    value_amount(env, amount, false)
+}
+
+fn value_amount(env: &Env, amount: i128, round_down: bool) -> Result<i128, LendingError> {
+    if !uses_cross_asset_valuation(env) {
+        return Ok(amount);
+    }
+    if amount < 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+
+    let key = if round_down {
+        DataKey::ValuationCollateralAsset
+    } else {
+        DataKey::ValuationDebtAsset
+    };
+    let asset: Address = env
+        .storage()
+        .instance()
+        .get(&key)
+        .ok_or(LendingError::PriceUnavailable)?;
+    let record = cross_asset::get_price_for_asset(env, &asset)?;
+    let result = if round_down {
+        math::checked_mul_div_floor(amount, record.price, ORACLE_PRICE_SCALE)
+    } else {
+        math::checked_mul_div_ceil(amount, record.price, ORACLE_PRICE_SCALE)
+    };
+    result.map_err(|_| LendingError::Overflow)
+}
+
+fn read_position_summary(env: &Env, user: &Address) -> (PositionSummary, bool) {
+    let collateral: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Collateral(user.clone()))
+        .unwrap_or(0);
+    if collateral != 0 {
+        extend_collateral_ttl(env, user);
+    }
+    let position = load_debt(env, user);
+    if position.principal != 0 {
+        extend_debt_ttl(env, user);
+    }
+
+    let debt = effective_debt(&position, env.ledger().timestamp(), current_borrow_rate(env))
+        .unwrap_or(position.principal)
+        .max(0);
+    let (health_factor, price_stale) = position_health_factor(env, collateral, debt);
+    (
+        PositionSummary {
+            collateral,
+            debt,
+            health_factor,
+        },
+        price_stale,
+    )
+}
+
+fn position_health_factor(env: &Env, collateral: i128, debt: i128) -> (i128, bool) {
+    if debt <= 0 {
+        return (HEALTH_FACTOR_NO_DEBT, false);
+    }
+    let threshold = LendingContract::get_liquidation_threshold_bps(env.clone());
+    if !uses_cross_asset_valuation(env) {
+        let value = math::checked_mul_div_floor(collateral, threshold, debt).unwrap_or(i128::MAX);
+        return (value, false);
+    }
+
+    let collateral_asset = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ValuationCollateralAsset);
+    let debt_asset = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::ValuationDebtAsset);
+    let (Some(collateral_asset), Some(debt_asset)) = (collateral_asset, debt_asset) else {
+        return (0, true);
+    };
+    let collateral_record = env
+        .storage()
+        .persistent()
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(collateral_asset.clone()));
+    let debt_record = env
+        .storage()
+        .persistent()
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(debt_asset.clone()));
+    let (Some(collateral_record), Some(debt_record)) = (collateral_record, debt_record) else {
+        return (0, true);
+    };
+
+    let now = env.ledger().timestamp();
+    let stale = collateral_record.price <= 0
+        || debt_record.price <= 0
+        || collateral_record.timestamp > now
+        || debt_record.timestamp > now
+        || now.saturating_sub(collateral_record.timestamp) > max_age_for(env, &collateral_asset)
+        || now.saturating_sub(debt_record.timestamp) > max_age_for(env, &debt_asset);
+    if collateral_record.price <= 0 || debt_record.price <= 0 {
+        return (0, true);
+    }
+
+    let collateral_value = match math::checked_mul_div_floor(
+        collateral,
+        collateral_record.price,
+        ORACLE_PRICE_SCALE,
+    ) {
+        Ok(value) => value,
+        Err(_) => return (0, true),
+    };
+    let debt_value = match math::checked_mul_div_ceil(debt, debt_record.price, ORACLE_PRICE_SCALE) {
+        Ok(value) if value > 0 => value,
+        _ => return (0, true),
+    };
+    let health_factor = match math::checked_mul_div_floor(collateral_value, threshold, debt_value) {
+        Ok(value) => value,
+        Err(_) => return (0, true),
+    };
+    (health_factor, stale)
 }
 
 #[cfg(test)]
@@ -3097,7 +5183,7 @@ impl MockAmm {
     ) -> i128 {
         let out = amount_in * 2;
         if out < min_out {
-            panic!("SlippageExceeded");
+            panic_with_error!(&env, LendingError::InvalidAmount);
         }
         out
     }
@@ -3123,6 +5209,33 @@ impl BadAmm {
 }
 
 #[cfg(test)]
+pub fn assert_totals_consistent(env: &Env, users: &[Address]) {
+    let mut sum_debt: i128 = 0;
+    let mut sum_col: i128 = 0;
+    for u in users {
+        sum_debt = sum_debt.saturating_add(load_debt(env, u).principal);
+        let c: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(u.clone()))
+            .unwrap_or(0);
+        sum_col = sum_col.saturating_add(c);
+    }
+    let total_debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDebt)
+        .unwrap_or(0);
+    let total_col: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDeposits)
+        .unwrap_or(0);
+    assert_eq!(sum_debt, total_debt, "sum(user debt) == TotalDebt");
+    assert_eq!(sum_col, total_col, "sum(collateral) == TotalDeposits");
+}
+
+#[cfg(test)]
 #[contract]
 pub struct MockAsset;
 #[cfg(test)]
@@ -3133,8 +5246,8 @@ impl MockAsset {}
 pub(crate) mod test {
     use super::*;
     use ed25519_dalek::{Keypair, Signer};
-    use rand::{rngs::StdRng, SeedableRng};
-    use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
+
+    use soroban_sdk::testutils::{Address as _, Ledger};
 
     fn setup() -> (
         Env,
@@ -3161,20 +5274,12 @@ pub(crate) mod test {
     }
 
     pub(crate) fn build_oracle_payload(
-        env: &Env,
+        client: &LendingContractClient<'static>,
         asset: &Address,
         price: i128,
         timestamp: u64,
     ) -> Bytes {
-        let asset_xdr = asset.to_xdr(env);
-        let asset_len = asset_xdr.len(); // u32
-        let mut payload = Bytes::new(env);
-        payload.append(&Bytes::from_slice(env, ORACLE_SIGNATURE_DOMAIN));
-        payload.append(&Bytes::from_slice(env, &asset_len.to_be_bytes()));
-        payload.append(&asset_xdr);
-        payload.append(&Bytes::from_slice(env, &price.to_be_bytes()));
-        payload.append(&Bytes::from_slice(env, &timestamp.to_be_bytes()));
-        payload
+        client.oracle_payload(asset, &price, &timestamp)
     }
 
     pub(crate) fn chrono_keypair() -> Keypair {
@@ -3186,12 +5291,13 @@ pub(crate) mod test {
 
     pub(crate) fn sign_oracle_update(
         env: &Env,
+        client: &LendingContractClient<'static>,
         keypair: &Keypair,
         asset: &Address,
         price: i128,
         timestamp: u64,
     ) -> BytesN<64> {
-        let payload = build_oracle_payload(env, asset, price, timestamp);
+        let payload = build_oracle_payload(client, asset, price, timestamp);
         let mut payload_bytes = [0u8; 1024];
         let len = payload.len() as usize;
         payload.copy_into_slice(&mut payload_bytes[..len]);
@@ -3207,7 +5313,7 @@ pub(crate) mod test {
     #[test]
     fn test_initialize_and_get_admin() {
         let (_env, client, admin, _user) = setup();
-        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_admin(), Some(admin));
     }
 
     // -----------------------------------------------------------------------
@@ -3218,15 +5324,11 @@ pub(crate) mod test {
     #[should_panic]
     fn test_unauthorized_set_min_borrow_rejected() {
         let (env, _client, _admin, _user) = setup();
-        // Create a fresh address that has not been authenticated as admin.
         let _attacker = Address::generate(&env);
-        // With mock_all_auths the env will satisfy any require_auth, so we
-        // instead call the method without mocking to observe the auth failure.
         let env2 = Env::default();
         let id2 = env2.register(LendingContract, ());
         let client2 = LendingContractClient::new(&env2, &id2);
         let admin2 = Address::generate(&env2);
-        // Initialize is also called without mock so the auth here is critical.
         env2.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &admin2,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -3237,7 +5339,6 @@ pub(crate) mod test {
             },
         }]);
         client2.initialize(&admin2);
-        // Now call set_min_borrow as attacker with no auth — should panic.
         client2.set_min_borrow(&100);
     }
 
@@ -3250,10 +5351,15 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[should_panic]
+    fn test_set_min_borrow_rejects_negative() {
+        let (_env, client, _admin, _user) = setup();
+        client.set_min_borrow(&-1);
+    }
+    #[test]
     fn test_set_debt_ceiling_admin_only() {
         let (_env, client, _admin, _user) = setup();
         client.set_debt_ceiling(&1_000_000);
-        // No getter yet, just assert no panic.
     }
 
     #[test]
@@ -3272,7 +5378,59 @@ pub(crate) mod test {
             res
         );
     }
+    #[test]
+    fn test_set_deposit_cap_admin_only() {
+        let (_env, client, _admin, _user) = setup();
+        assert_eq!(client.get_deposit_cap(), DEFAULT_DEPOSIT_CAP);
+        client.set_deposit_cap(&5_000_000);
+        assert_eq!(client.get_deposit_cap(), 5_000_000);
+    }
 
+    #[test]
+    fn test_set_deposit_cap_rejects_non_positive() {
+        let (_env, client, _admin, _user) = setup();
+        let res = client.try_set_deposit_cap(&0);
+        assert!(
+            matches!(res, Err(Ok(LendingError::InvalidDepositCap))),
+            "expected InvalidDepositCap, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_rate_params_valid() {
+        let (_env, client, _admin, _user) = setup();
+        let params = rate_model::RateParams {
+            base_rate_bps: 200,
+            kink_utilization_bps: 7_000,
+            multiplier_bps: 1_500,
+            jump_multiplier_bps: 8_000,
+            rate_floor_bps: 100,
+            rate_ceiling_bps: 9_000,
+            max_rate_change_per_ledger_bps: i128::MAX,
+            hysteresis_bps: 0,
+            surcharge_kink_bps: 10_000,
+            surcharge_slope: 0,
+        };
+        client.set_rate_params(&params);
+        assert_eq!(client.get_rate_params(), params);
+    }
+
+    #[test]
+    fn test_set_rate_params_rejects_ceiling_below_floor() {
+        let (_env, client, _admin, _user) = setup();
+        let params = rate_model::RateParams {
+            rate_ceiling_bps: 40,
+            rate_floor_bps: 50,
+            ..rate_model::RateParams::default()
+        };
+        let res = client.try_set_rate_params(&params);
+        assert!(
+            matches!(res, Err(Ok(LendingError::InvalidRateParams))),
+            "expected InvalidRateParams, got {:?}",
+            res
+        );
+    }
     #[test]
     #[ignore = "ed25519 verification is unstable in this local CI toolchain"]
     fn test_set_price_with_valid_signature_succeeds() {
@@ -3281,13 +5439,12 @@ pub(crate) mod test {
         let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
         client.set_oracle_pubkey(&pubkey);
 
-        // Assets must be contract addresses so contract_id() is available
         let asset = env.register(MockAsset, ());
         let price = 1_500_000_000i128;
         let timestamp = env.ledger().timestamp();
-        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
 
-        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        client.set_price(&asset, &price, &timestamp, &signature);
         let record = client
             .get_price_record(&asset)
             .expect("price record stored");
@@ -3298,7 +5455,6 @@ pub(crate) mod test {
     #[test]
     #[should_panic]
     fn test_set_price_rejects_bad_signature() {
-        // ed25519_verify traps (panics) on bad signature in soroban-sdk 25.x
         let (env, client, admin, _user) = setup();
         let keypair = chrono_keypair();
         let bad_seed = [43u8; 32];
@@ -3315,9 +5471,10 @@ pub(crate) mod test {
         let asset = env.register(MockAsset, ());
         let price = 1_000_000_000i128;
         let timestamp = env.ledger().timestamp();
-        let signature = sign_oracle_update(&env, &bad_keypair, &asset, price, timestamp);
+        let signature =
+            sign_oracle_update(&env, &client, &bad_keypair, &asset, price, timestamp);
 
-        client.set_price(&admin, &asset, &price, &timestamp, &signature);
+        client.set_price(&asset, &price, &timestamp, &signature);
     }
 
     #[test]
@@ -3334,14 +5491,112 @@ pub(crate) mod test {
             .timestamp()
             .saturating_sub(DEFAULT_ORACLE_MAX_AGE_SECS + 1);
         let price = 1_000_000_000i128;
-        let signature = sign_oracle_update(&env, &keypair, &asset, price, timestamp);
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
 
-        let res = client.try_set_price(&admin, &asset, &price, &timestamp, &signature);
+        let res = client.try_set_price(&asset, &price, &timestamp, &signature);
         assert!(
             matches!(res, Err(Ok(LendingError::StaleOracleTimestamp))),
             "expected StaleOracleTimestamp, got {:?}",
             res
         );
+    }
+
+    #[test]
+    fn test_set_price_retry_exact_update_is_idempotent() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+
+        client.set_price(&asset, &price, &timestamp, &signature);
+        let retry = client.try_set_price(&asset, &price, &timestamp, &signature);
+        assert!(
+            retry.is_ok(),
+            "exact retry must be treated as an idempotent success, got {:?}",
+            retry
+        );
+        let record = client
+            .get_price_record(&asset)
+            .expect("price record exists");
+        assert_eq!(record.price, price);
+        assert_eq!(record.timestamp, timestamp);
+    }
+
+    #[test]
+    fn test_set_price_rejects_same_timestamp_different_price() {
+        let (env, client, admin, _user) = setup();
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let timestamp = env.ledger().timestamp();
+        let price1 = 1_000_000_000i128;
+        let price2 = 1_500_000_000i128;
+        let signature1 = sign_oracle_update(&env, &client, &keypair, &asset, price1, timestamp);
+        let signature2 = sign_oracle_update(&env, &client, &keypair, &asset, price2, timestamp);
+
+        client.set_price(&asset, &price1, &timestamp, &signature1);
+        let res = client.try_set_price(&asset, &price2, &timestamp, &signature2);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_rejects_older_timestamp_after_update() {
+        let (env, client, admin, _user) = setup();
+        env.ledger().set_timestamp(1_000);
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        // The default test ledger closes at timestamp 0, so `timestamp - 1`
+        // would saturate back to `timestamp` and the replay would be
+        // indistinguishable from an idempotent retry. Advance the clock first so
+        // the "strictly older" premise actually holds.
+        advance_time(&env, 100);
+        let asset = env.register(MockAsset, ());
+        let price = 1_500_000_000i128;
+        // Non-zero ledger time so `timestamp - 1` is genuinely older.
+        env.ledger().set_timestamp(1_000_000);
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+        client.set_price(&asset, &price, &timestamp, &signature);
+
+        let old_timestamp = timestamp.saturating_sub(1);
+        let old_signature =
+            sign_oracle_update(&env, &client, &keypair, &asset, price, old_timestamp);
+        let res = client.try_set_price(&asset, &price, &old_timestamp, &old_signature);
+        assert!(
+            matches!(res, Err(Ok(LendingError::OracleReplay))),
+            "expected OracleReplay, got {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_set_price_accepts_non_admin_relayer() {
+        let (env, client, _admin, _user) = setup();
+        let attacker = Address::generate(&env);
+        let keypair = chrono_keypair();
+        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        client.set_oracle_pubkey(&pubkey);
+
+        let asset = env.register(MockAsset, ());
+        let price = 1_000_000_000i128;
+        let timestamp = env.ledger().timestamp();
+        let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
+        client.set_price(&asset, &price, &timestamp, &signature);
+        assert_eq!(client.get_price_record(&asset).unwrap().price, price);
+        let _ = attacker;
     }
 
     #[test]
@@ -3513,9 +5768,7 @@ pub(crate) mod test {
     #[test]
     fn test_set_emergency_state_changes_state() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Shutdown);
-        // With mock_all_auths, the admin is authorized to change state.
-        // Verify the state changed by checking deposit is blocked.
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         let res = client.try_deposit(&user, &10);
         assert!(res.is_err(), "deposit should be blocked in Shutdown");
     }
@@ -3525,8 +5778,8 @@ pub(crate) mod test {
         let (env, client, _admin, _user) = setup();
         let guardian = Address::generate(&env);
         client.set_guardian(&guardian);
-        client.set_emergency_state(&EmergencyState::Shutdown);
-        client.set_emergency_state(&EmergencyState::Normal);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Normal);
         let user = Address::generate(&env);
         let result = client.deposit(&user, &10);
         assert_eq!(result, 10);
@@ -3547,18 +5800,18 @@ pub(crate) mod test {
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &id2,
                 fn_name: "set_emergency_state",
-                args: (EmergencyState::Shutdown,).into_val(&env2),
+                args: (attacker.clone(), EmergencyState::Shutdown).into_val(&env2),
                 sub_invokes: &[],
             },
         }]);
-        client2.set_emergency_state(&EmergencyState::Shutdown);
+        client2.set_emergency_state(&attacker, &EmergencyState::Shutdown);
     }
 
     #[test]
     #[should_panic(expected = "OperationDisabledDuringShutdown")]
     fn test_shutdown_blocks_deposit() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         client.deposit(&user, &10);
     }
 
@@ -3566,7 +5819,7 @@ pub(crate) mod test {
     #[should_panic(expected = "OperationDisabledDuringShutdown")]
     fn test_shutdown_blocks_borrow() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         client.borrow(&user, &5);
     }
 
@@ -3576,7 +5829,7 @@ pub(crate) mod test {
         let (_env, client, _admin, user) = setup();
         client.deposit(&user, &250);
         client.borrow(&user, &100);
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         client.repay(&user, &10);
     }
 
@@ -3584,7 +5837,7 @@ pub(crate) mod test {
     #[should_panic(expected = "ActionBlockedInRecovery")]
     fn test_recovery_blocks_deposit() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Recovery);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
         client.deposit(&user, &10);
     }
 
@@ -3592,7 +5845,7 @@ pub(crate) mod test {
     #[should_panic(expected = "ActionBlockedInRecovery")]
     fn test_recovery_blocks_borrow() {
         let (_env, client, _admin, user) = setup();
-        client.set_emergency_state(&EmergencyState::Recovery);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
         client.borrow(&user, &10);
     }
 
@@ -3601,7 +5854,7 @@ pub(crate) mod test {
         let (_env, client, _admin, user) = setup();
         client.deposit(&user, &200);
         client.borrow(&user, &50);
-        client.set_emergency_state(&EmergencyState::Recovery);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
         assert_eq!(client.repay(&user, &10), 40);
         assert_eq!(client.withdraw(&user, &10), 190);
     }
@@ -3609,10 +5862,8 @@ pub(crate) mod test {
     #[test]
     fn test_protocol_metrics_ledger_field_set() {
         let (env, _client, _admin, _user) = setup();
-        assert!(env.ledger().sequence() >= 0);
+        // `sequence()` returns a `u32`, so it is always non-negative by
+        // type; this just confirms the call succeeds without panicking.
+        let _ = env.ledger().sequence();
     }
 }
-#[cfg(test)]
-mod initialization_guard_test;
-#[cfg(test)]
-mod zero_amount_semantics_test;

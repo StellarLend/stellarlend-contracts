@@ -7,10 +7,7 @@
 ///
 /// See docs/ZERO_AMOUNT_SEMANTICS.md for the design invariants these enforce.
 use crate::{LendingContract, LendingContractClient, LendingError};
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup() -> (Env, LendingContractClient<'static>, Address) {
     let env = Env::default();
@@ -70,7 +67,10 @@ fn deposit_negative_does_not_mutate_collateral() {
     let _ = client.try_deposit(&user, &-100);
 
     let after = client.get_position(&user).collateral;
-    assert_eq!(before, after, "collateral must not change on negative deposit");
+    assert_eq!(
+        before, after,
+        "collateral must not change on negative deposit"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +122,10 @@ fn withdraw_negative_does_not_mutate_collateral() {
     let _ = client.try_withdraw(&user, &-75);
 
     let after = client.get_position(&user).collateral;
-    assert_eq!(before, after, "collateral must not change on negative withdraw");
+    assert_eq!(
+        before, after,
+        "collateral must not change on negative withdraw"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -267,24 +270,33 @@ fn repay_exact_reduces_debt_to_zero() {
 }
 
 #[test]
-fn repay_overpay_clamps_debt_to_zero() {
+fn repay_overpay_returns_error() {
     let (_env, client, user) = setup();
     client.deposit(&user, &200);
     client.borrow(&user, &100);
 
-    let remaining = client.repay(&user, &150);
-
-    assert_eq!(remaining, 0);
-    assert_eq!(client.get_position(&user).debt, 0);
+    // Overpaying (150 > 100) must return RepayAmountTooHigh, not silently clamp.
+    let result = client.try_repay(&user, &150);
+    assert!(
+        matches!(result, Err(Ok(crate::LendingError::RepayAmountTooHigh))),
+        "overpay must return RepayAmountTooHigh, got: {:?}",
+        result
+    );
+    // Debt must remain unchanged after rejected repay.
+    assert_eq!(client.get_position(&user).debt, 100);
 }
 
 #[test]
-fn repay_with_no_debt_returns_zero() {
+fn repay_with_no_debt_returns_error() {
     let (_env, client, user) = setup();
 
-    let remaining = client.repay(&user, &50);
-
-    assert_eq!(remaining, 0);
+    // No outstanding debt: repaying any amount must return RepayAmountTooHigh.
+    let result = client.try_repay(&user, &50);
+    assert!(
+        matches!(result, Err(Ok(crate::LendingError::RepayAmountTooHigh))),
+        "repaying with no debt must return RepayAmountTooHigh, got: {:?}",
+        result
+    );
     assert_eq!(client.get_position(&user).debt, 0);
 }
 
@@ -309,6 +321,9 @@ fn get_position_unaffected_after_all_rejected_calls() {
     let _ = client.try_repay(&user, &-1);
 
     let pos = client.get_position(&user);
-    assert_eq!(pos.collateral, 1000, "collateral corrupted by rejected calls");
+    assert_eq!(
+        pos.collateral, 1000,
+        "collateral corrupted by rejected calls"
+    );
     assert_eq!(pos.debt, 200, "debt corrupted by rejected calls");
 }

@@ -1,6 +1,6 @@
 use proptest::prelude::*;
 
-use super::Grant;
+use crate::test_harness::Grant;
 
 /// Generates a `Grant` with bounded fields that avoid arithmetic overflow in
 /// `Grant::vested_at`. Times are capped at `MAX_TIME` and `total` at

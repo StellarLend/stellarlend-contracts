@@ -84,7 +84,8 @@ mod cross_asset_health_doctest {
             &asset_a,
             &7500i128,             // ltv_bps
             &7500i128,             // liquidation_threshold_bps
-            &1_000_000_000_000i128, // debt_ceiling (unconstrained)
+            &1_000_000_000_000i128, // debt_ceiling (unconstrained, &0i128,
+            &0i128)
             &0i128,                // borrow_cap   (0 = uncapped)
         );
 
@@ -94,7 +95,8 @@ mod cross_asset_health_doctest {
             &asset_b,
             &9000i128,             // ltv_bps
             &9000i128,             // liquidation_threshold_bps
-            &1_000_000_000_000i128, // debt_ceiling (unconstrained)
+            &1_000_000_000_000i128, // debt_ceiling (unconstrained, &0i128,
+            &0i128)
             &0i128,                // borrow_cap   (0 = uncapped)
         );
 

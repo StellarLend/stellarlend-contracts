@@ -211,7 +211,7 @@ fn populate_hf_positions(
             &asset,
             &debt::DebtPosition {
                 principal: 100i128 * (i as i128 + 1),
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
@@ -280,22 +280,28 @@ fn hf_budget_formula_is_linear_not_quadratic() {
 }
 
 /// Constants must be internally consistent with the source-code formula.
+///
+/// These are genuinely compile-time facts about the budget constants (not
+/// runtime behavior), so they're expressed as `const` assertions -- a plain
+/// runtime `assert!` on a constant expression is optimized out entirely and
+/// is flagged by clippy's `assertions_on_constants` lint. Kept as a `#[test]`
+/// so it still shows up in test output/coverage.
 #[test]
 fn hf_budget_constants_are_self_consistent() {
     // Formula constant for N is 3; ceiling must be ≥ 3
-    assert!(
+    const _: () = assert!(
         HF_BUDGET_PER_COLLATERAL >= 3,
         "HF_BUDGET_PER_COLLATERAL must cover at least 3 reads per collateral asset"
     );
 
     // Formula constant for M is 2; ceiling must be ≥ 2
-    assert!(
+    const _: () = assert!(
         HF_BUDGET_PER_DEBT >= 2,
         "HF_BUDGET_PER_DEBT must cover at least 2 reads per debt asset"
     );
 
     // Formula base is 2; fixed ceiling must be ≥ 2
-    assert!(
+    const _: () = assert!(
         HF_BUDGET_FIXED >= 2,
         "HF_BUDGET_FIXED must cover at least 2 base reads"
     );
@@ -528,7 +534,7 @@ fn hf_bench_undercollateralised_position_below_scale() {
             &debt_asset,
             &debt::DebtPosition {
                 principal: 1_000_000_000i128,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
