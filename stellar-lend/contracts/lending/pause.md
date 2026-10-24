@@ -10,8 +10,9 @@ complementary.
 - **Granular Control**: Pause specific operations (`Deposit`, `Borrow`, `Repay`,
   `Withdraw`, `Liquidation`, `FlashLoan`) without affecting others.
 - **Global Pause**: A master switch (`All`) that immediately halts every operation.
-- **Admin & Guardian Managed**: The admin or the configured guardian can toggle
-  individual pause flags and trigger an emergency shutdown.
+- **Admin & Guardian Managed**: The admin or the configured guardian can
+  activate granular pauses and trigger an emergency shutdown. Only the admin
+  can clear a granular pause.
 - **Guardian Trigger**: A configured guardian (e.g., a security multisig) can
   trigger emergency shutdown without waiting for full governance latency.
 - **Recovery Mode**: After a shutdown the admin can move the protocol into a
@@ -155,9 +156,8 @@ identically to the deposit/borrow/repay/withdraw entrypoints.
 - **Precedence Rules**: Emergency states take precedence over granular pause flags.
 - **Atomic Operations**: Pause checks happen before any state changes.
 - **Event Transparency**: All pause changes emit events for off-chain monitoring.
-- **Role Separation**: Only the admin can set granular pauses; the guardian can
-  additionally trigger `EmergencyState::Shutdown` but cannot compute with the
-  lifecycle beyond that.
+- **Role Separation**: Admin and guardian can pause operations and trigger
+  Shutdown. Only admin can unpause operations or transition to Recovery/Normal.
 
 ## Contract Interface
 
@@ -166,11 +166,12 @@ The pause mechanism is governed by the following public entrypoints (all
 
 ### Admin / Guardian Functions
 
-#### `set_pause(pause_type: PauseType, paused: bool, ttl_ledgers: u32)`
+#### `set_pause(caller: Address, pause_type: PauseType, paused: bool, ttl_ledgers: u32)`
 
 Sets or clears a granular pause flag with a time-to-live expressed in ledger count.
 
 - **Parameters**:
+  - `caller` — The address that signs the invocation and is checked against the stored admin/guardian roles.
   - `pause_type` — The `PauseType` variant to pause or unpause (e.g. `Deposit`, `Borrow`, `All`).
   - `paused` — `true` to activate the pause, `false` to clear it. Setting `paused = false` is a
     valid unpause call regardless of TTL.
@@ -182,9 +183,16 @@ Sets or clears a granular pause flag with a time-to-live expressed in ledger cou
     returns `false` right away.
   - `ttl_ledgers = N` means the pause remains active for the next `N` ledgers (including the
     current one), then auto-expires.
-- **Authorization**: Admin or guardian (mirrors `set_emergency_state` Shutdown auth — if a guardian
-  is configured, the guardian is the expected caller; otherwise admin is required).
-- **Emits**: `PauseStateChangedEvent` with `old_state` and `new_state`.
+- **Authorization**:
+
+  | Action | Admin | Guardian |
+  | --- | --- | --- |
+  | Pause (`paused = true`) | Yes | Yes, when configured |
+  | Unpause (`paused = false`) | Yes | No |
+
+- Guardian pause TTL is not capped; it follows the same `ttl_ledgers` semantics as an admin pause.
+- An unpause for an already inactive or expired pause is a no-op, but still requires admin authorization.
+- **Emits**: `PauseStateChangedEvent { caller, operation, old_state, new_state }` and records the signer in the audit log when state changes.
 
 > The function supports effective extension simply by re-issuing `set_pause` with a later TTL
 > — the contract does **not** expose a separate `extend_pause` entrypoint.
@@ -196,15 +204,21 @@ Sets or rotates the guardian authorized to trigger emergency shutdown.
 - **Requires Authorization**: Yes (admin).
 - **Emits**: `GuardianSetEvent`.
 
-#### `set_emergency_state(new_state: EmergencyState)`
+#### `clear_guardian()`
+
+Removes the configured guardian. Requires admin authorization and emits
+`GuardianSetEvent { caller, old_guardian, new_guardian: None }`.
+
+#### `set_emergency_state(caller: Address, new_state: EmergencyState)`
 
 Transitions the protocol to a new emergency lifecycle state.
 
 - **Authorization**:
-  - `EmergencyState::Shutdown` → admin **or** guardian.
+  - `EmergencyState::Shutdown` → admin **or** configured guardian.
   - `EmergencyState::Recovery` → admin only.
   - `EmergencyState::Normal`   → admin only.
-- **Emits**: `EmergencyStateChangedEvent { old_state, new_state }`.
+- `caller` must sign and match an authorized stored role.
+- **Emits**: `EmergencyStateChangedEvent { caller, old_state, new_state }`.
 - **See**: [`emergency_shutdown.md`](./emergency_shutdown.md) for the full lifecycle.
 
 This single entrypoint replaces the `start_recovery` / `complete_recovery` pair: passing
@@ -212,8 +226,9 @@ This single entrypoint replaces the `start_recovery` / `complete_recovery` pair:
 
 #### `emergency_shutdown(caller: Address)`
 
-Convenience entrypoint that triggers `set_emergency_state(EmergencyState::Shutdown)`.
-Accepts either the configured guardian or the admin.
+Convenience entrypoint that triggers `set_emergency_state(caller, EmergencyState::Shutdown)`.
+Accepts either the configured guardian or the admin. This is a documentation alias;
+the lending contract exposes `set_emergency_state` directly.
 
 #### `set_read_only(read_only: bool)`
 
@@ -345,35 +360,37 @@ global `All` flag are inactive. Deposit, borrow, and liquidation remain blocked 
 ## Usage Examples (Rust SDK)
 
 ```rust
+let admin = client.get_admin().unwrap();
+
 // Pause borrowing for 100 ledgers
-client.set_pause(&PauseType::Borrow, &true, &100u32);
+client.set_pause(&admin, &PauseType::Borrow, &true, &100u32);
 
 // Re-enable borrowing (paused=false is an unpause)
-client.set_pause(&PauseType::Borrow, &false, &0u32);
+client.set_pause(&admin, &PauseType::Borrow, &false, &0u32);
 
 // Query pause state before presenting UI options
 let borrow_paused = client.get_pause_state(&PauseType::Borrow);
 
 // Global pause for 500 ledgers
-client.set_pause(&PauseType::All, &true, &500u32);
+client.set_pause(&admin, &PauseType::All, &true, &500u32);
 
 // Pause with immediate expiry (ttl=0 means pause_is_active returns false)
-client.set_pause(&PauseType::Deposit, &true, &0u32);
+client.set_pause(&admin, &PauseType::Deposit, &true, &0u32);
 
 // Extend an active pause by re-issuing with a later TTL
-client.set_pause(&PauseType::Deposit, &true, &500u32);
+client.set_pause(&admin, &PauseType::Deposit, &true, &500u32);
 
 // Configure a guardian (e.g., security multisig)
 client.set_guardian(&security_multisig);
 
 // Guardian (or admin) triggers emergency shutdown
-client.set_emergency_state(&EmergencyState::Shutdown);
+client.set_emergency_state(&security_multisig, &EmergencyState::Shutdown);
 
 // Admin moves to controlled recovery so users can exit
-client.set_emergency_state(&EmergencyState::Recovery);
+client.set_emergency_state(&admin, &EmergencyState::Recovery);
 
 // After all positions are resolved, return to normal
-client.set_emergency_state(&EmergencyState::Normal);
+client.set_emergency_state(&admin, &EmergencyState::Normal);
 ```
 
 ## Security Notes: Operational Correctness

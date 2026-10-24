@@ -85,6 +85,7 @@ pub const ALL_LENDING_ERRORS: &[(LendingError, u32)] = &[
     (LendingError::InvalidDepositCap, 7005),
     (LendingError::InvalidRateParams, 7006),
     (LendingError::InvalidLiquidationGracePeriod, 7007),
+    (LendingError::InvalidMaxLtvBps, 7008),
     // 8xxx: Configuration management
     (LendingError::BackupNotFound, 8001),
 ];
@@ -201,6 +202,7 @@ fn all_variants_covered() {
             LendingError::InvalidDepositCap => {}
             LendingError::InvalidRateParams => {}
             LendingError::InvalidLiquidationGracePeriod => {}
+            LendingError::InvalidMaxLtvBps => {}
             // 8xxx
             LendingError::BackupNotFound => {}
         }

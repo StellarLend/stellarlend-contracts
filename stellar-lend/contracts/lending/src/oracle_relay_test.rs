@@ -78,7 +78,7 @@ fn v1_signature_is_rejected() {
     let asset = Address::generate(&env);
     let price = 42_000_i128;
     let timestamp = env.ledger().timestamp();
-    let asset_xdr = asset.to_xdr(&env);
+    let asset_xdr = asset.clone().to_xdr(&env);
     let mut legacy_payload = Bytes::new(&env);
     legacy_payload.append(&Bytes::from_slice(&env, b"StellarLendOracle"));
     legacy_payload.append(&Bytes::from_slice(&env, &asset_xdr.len().to_be_bytes()));

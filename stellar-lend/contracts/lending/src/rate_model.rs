@@ -1,6 +1,12 @@
 #[allow(unused_imports)]
 use soroban_sdk::{contracttype, Env};
-use stellar_lend_common::BPS_DENOM;
+use stellar_lend_common::{LendingError, BPS_DENOM};
+
+/// Maximum configured borrow APR, in basis points (1,000% APR).
+pub const MAX_RATE_CEILING_BPS: i128 = 100_000;
+
+/// Maximum value for each rate-curve slope coefficient.
+pub const MAX_RATE_SLOPE_BPS: i128 = 100_000;
 
 /// Configuration parameters for the two-slope kink interest-rate model with
 /// an optional emergency surcharge band at high utilization.
@@ -70,6 +76,31 @@ pub struct RateParams {
     /// `BPS_DENOM = 10_000`. A value of `0` disables the surcharge regardless of
     /// the kink.
     pub surcharge_slope: i128,
+}
+
+impl RateParams {
+    /// Validate parameters against the constraints used by the rate model.
+    pub fn validate(&self) -> Result<(), LendingError> {
+        if self.base_rate_bps < 0
+            || self.base_rate_bps > MAX_RATE_CEILING_BPS
+            || !(0..=BPS_DENOM).contains(&self.kink_utilization_bps)
+            || self.multiplier_bps < 0
+            || self.multiplier_bps > MAX_RATE_SLOPE_BPS
+            || self.jump_multiplier_bps < 0
+            || self.jump_multiplier_bps > MAX_RATE_SLOPE_BPS
+            || self.rate_floor_bps < 0
+            || self.rate_ceiling_bps < self.rate_floor_bps
+            || self.rate_ceiling_bps > MAX_RATE_CEILING_BPS
+            || self.max_rate_change_per_ledger_bps < 0
+            || self.hysteresis_bps < 0
+            || self.surcharge_kink_bps < 0
+            || self.surcharge_slope < 0
+            || self.surcharge_slope > MAX_RATE_SLOPE_BPS
+        {
+            return Err(LendingError::InvalidRateParams);
+        }
+        Ok(())
+    }
 }
 
 impl Default for RateParams {
@@ -217,17 +248,7 @@ pub fn compute_borrow_rate(
     if !(0..=BPS_DENOM).contains(&utilization_bps) {
         return Err(RateModelError::OutOfRange);
     }
-    if params.base_rate_bps < 0
-        || params.kink_utilization_bps < 0
-        || params.multiplier_bps < 0
-        || params.jump_multiplier_bps < 0
-        || params.rate_floor_bps < 0
-        || params.rate_ceiling_bps < 0
-        || params.max_rate_change_per_ledger_bps < 0
-        || params.hysteresis_bps < 0
-        || params.surcharge_kink_bps < 0
-        || params.surcharge_slope < 0
-    {
+    if params.validate().is_err() {
         return Err(RateModelError::OutOfRange);
     }
     let pre_kink_rate = params

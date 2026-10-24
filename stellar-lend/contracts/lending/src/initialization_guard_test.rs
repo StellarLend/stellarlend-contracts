@@ -312,8 +312,8 @@ fn test_set_guardian_before_init_returns_not_initialized() {
 
 #[test]
 fn test_set_emergency_state_before_init_returns_not_initialized() {
-    let (_, client, _admin) = uninit_client();
-    let result = client.try_set_emergency_state(&EmergencyState::Shutdown);
+    let (_, client, admin) = uninit_client();
+    let result = client.try_set_emergency_state(&admin, &EmergencyState::Shutdown);
     assert!(
         matches!(result, Err(Ok(LendingError::NotInitialized))),
         "expected NotInitialized, got {:?}",
@@ -323,8 +323,8 @@ fn test_set_emergency_state_before_init_returns_not_initialized() {
 
 #[test]
 fn test_set_pause_before_init_returns_not_initialized() {
-    let (_, client, _admin) = uninit_client();
-    let result = client.try_set_pause(&PauseType::Deposit, &true, &100);
+    let (_, client, admin) = uninit_client();
+    let result = client.try_set_pause(&admin, &PauseType::Deposit, &true, &100);
     assert!(
         matches!(result, Err(Ok(LendingError::NotInitialized))),
         "expected NotInitialized, got {:?}",
