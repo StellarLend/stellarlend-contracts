@@ -10,10 +10,17 @@ A scenario fails when any metric exceeds its baseline by more than 10%. The fail
 
 ### Updating baselines
 
-Run `\
-UPDATE_BENCH=1 cargo test -p stellarlend-lending --test budget_bench
-\
-` to rewrite `bench_baseline.json`. Review the diff and justify the increase in the PR description.
+Run `UPDATE_BENCH=1 cargo test -p stellarlend-lending --test budget_bench` to rewrite `bench_baseline.json`. Review the diff and justify the increase in the PR description.
+
+### CI workflow
+
+The budget benchmark job must resolve its Rust toolchain from a maintained action or a direct `rustup` install step. Do not reference unresolved or unverified third-party action repositories. The unresolvable `dtolny/rust-toolchain` reference (which fails with `repository not found`) must not appear in any workflow file; it has been replaced with a maintained toolchain action or a direct `rustup` install step.
+
+Use a maintained toolchain action such as `actions-rust-lang/setup-rust-toolchain`, or install the toolchain directly with `rustup` in a run step. Pin all action references to a full commit SHA or a published tag.
+
+The toolchain version installed by the replacement must match the version the existing CI workflows already install (locate it by grepping `.github/workflows` for the toolchain channel). Do not introduce a new toolchain version when replacing the action.
+
+The unresolved `dtolny/rust-toolchain` action failed in both the `Build & Test` and `Fuzz smoke (lending)` checks with `repository not found`. Any workflow step still referencing it must be replaced with a maintained toolchain action or a direct `rustup` install step, keeping the channel already pinned by the existing workflows.
 
 ## How Baselines Are Chosen
 The performance baselines defined in `test_performance.rs` are established by observing the standard execution cost of each operation in the Soroban test environment (`env.budget().cpu_instruction_cost()`) and applying a **~20% variance buffer**. 
@@ -39,8 +46,8 @@ If a new feature is legitimately added that increases the gas ceiling of a core 
 
 1. Run the test suite and observe the exact overflow value.
 2. Verify the added performance cost is strictly necessary and well-optimized.
-3. Update the specific `THEASHOLD_*` constant by adding the new marginal cost plus a proportional buffer.
+3. Update the specific `THRESHOLD_*` constant by adding the new marginal cost plus a proportional buffer.
 4. Document the architectural reason for the increase in the pull request description.
 
 ## Expected Variance
-Expect $\pm 5%$ standard variance when upgrading the Rust toolchain or Soroban SDK versions.
+Expect ±5% standard variance when upgrading the Rust toolchain or Soroban SDK versions.
