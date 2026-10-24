@@ -169,6 +169,8 @@ mod repay_overpay_test;
 #[cfg(test)]
 mod reserve_split_proptest;
 #[cfg(test)]
+mod reserve_factor_test;
+#[cfg(test)]
 mod rounding_drift_test;
 #[cfg(test)]
 mod self_liquidation_test;
@@ -189,6 +191,8 @@ mod utilization_history_test;
 mod utilization_math_boundary_test;
 #[cfg(test)]
 mod withdraw_overflow_test;
+#[cfg(test)]
+mod withdraw_reserve_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt, repay_amount,
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
@@ -231,6 +235,8 @@ pub const ORACLE_PRICE_SCALE: i128 = 10_000_000;
 /// Caps the close factor at 75 % so a single liquidation cannot
 /// extinguish a borrower's entire debt in one block.
 pub const MAX_CLOSE_FACTOR_BPS: i128 = 7500;
+/// Maximum protocol reserve factor (50% of gross accrued interest).
+pub const MAX_RESERVE_FACTOR_BPS: i128 = 5000;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
 /// Lower bound accepted by [`LendingContract::set_oracle_max_age`]. A max age
 /// of zero would treat every price as instantly stale and brick borrowing.
@@ -394,6 +400,11 @@ pub enum DataKey {
     ConfigEntries,
     /// Config store: named backup snapshot.
     ConfigBackup(Symbol),
+    /// Share of gross accrued interest retained as protocol reserves.
+    /// Defaults to zero for compatibility with existing deployments.
+    ReserveFactorBps,
+    /// Persistent accounting balance of protocol reserves, excluded from depositor supply.
+    ProtocolReserves,
 }
 
 #[contractevent]
@@ -580,10 +591,23 @@ pub struct BadDebtWrittenOffEvent {
     pub amount: i128,
     /// Portion absorbed by the insurance fund.
     pub insurance_used: i128,
-    /// Portion absorbed by the protocol reserve (TotalDeposits surplus).
+    /// Portion absorbed by the protocol reserve balance.
     pub reserve_used: i128,
     /// Residual applied as a depositor haircut (index socialisation).
     pub socialized: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReserveFactorSetEvent {
+    pub reserve_factor_bps: i128,
+}
+
+#[contractevent(topics = ["protocol_reserves_withdrawn"])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProtocolReservesWithdrawnEvent {
+    pub amount: i128,
+    pub recipient: Address,
 }
 
 #[contracttype(export = false)]
@@ -676,6 +700,7 @@ pub struct ProtocolMetrics {
     pub total_supply: i128,
     pub utilization_bps: i128,
     pub ledger: u32,
+    pub protocol_reserves: i128,
 }
 
 /// Versioned read model for borrow-rate smoothing state persisted by the rate model.
@@ -2107,6 +2132,7 @@ impl LendingContract {
             .set(&DataKey::TotalDebt, &new_total_debt);
 
         save_debt(&env, &user, &updated);
+        register_borrower(&env, &user);
         // Extend TTL to prevent archival of debt entry
         extend_debt_ttl(&env, &user);
 
@@ -2162,6 +2188,7 @@ impl LendingContract {
             debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
         })?;
         save_debt(&env, &user, &updated);
+        register_borrower(&env, &user);
 
         // Track protocol-level total debt.
         let total_debt: i128 = env
@@ -3477,6 +3504,11 @@ impl LendingContract {
             total_supply,
             utilization_bps,
             ledger: env.ledger().sequence(),
+            protocol_reserves: env
+                .storage()
+                .persistent()
+                .get(&DataKey::ProtocolReserves)
+                .unwrap_or(0),
         }
     }
 
@@ -3722,10 +3754,59 @@ impl LendingContract {
             .unwrap_or(0)
     }
 
+    // Return the current protocol reserve balance.
+    pub fn get_protocol_reserves(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ProtocolReserves)
+            .unwrap_or(0)
+    }
+
+    // Return the configured reserve factor in basis points.
+    pub fn get_reserve_factor_bps(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReserveFactorBps)
+            .unwrap_or(0)
+    }
+
+    // Set the share of gross accrued interest retained as protocol reserves.
+    //
+    // Existing positions are settled with the previous factor before this
+    // setting changes, preserving the accrual period's configuration.
+    pub fn set_reserve_factor_bps(
+        env: Env,
+        reserve_factor_bps: i128,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+        if !(0..=MAX_RESERVE_FACTOR_BPS).contains(&reserve_factor_bps) {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        checkpoint_reserve_factor(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::ReserveFactorBps, &reserve_factor_bps);
+        ReserveFactorSetEvent { reserve_factor_bps }.publish(&env);
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_reserve_factor_bps"),
+            admin,
+            None,
+        );
+        Ok(())
+    }
+
     // Fund the insurance fund by an explicit amount.
-    // 
+    //
     // Only the protocol admin can call this.
-    // 
+    //
     // # Errors
     // - [`LendingError::InvalidAmount`] if `amount <= 0`.
     // - [`LendingError::Overflow`] if the resulting balance would overflow i128.
@@ -3826,23 +3907,71 @@ impl LendingContract {
         Ok(())
     }
 
+    // Withdraw protocol reserves from accounting to `to`.
+    //
+    // This changes accounting only. A real token transfer is intentionally
+    // left to the token-transfer integration.
+    pub fn withdraw_reserves(
+        env: Env,
+        amount: i128,
+        to: Address,
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        let reserves: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolReserves)
+            .unwrap_or(0);
+        if amount > reserves {
+            return Err(LendingError::InvalidAmount);
+        }
+        let remaining = reserves
+            .checked_sub(amount)
+            .ok_or(LendingError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolReserves, &remaining);
+        ProtocolReservesWithdrawnEvent {
+            amount,
+            recipient: to.clone(),
+        }
+        .publish(&env);
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "withdraw_reserves"),
+            admin,
+            None,
+        );
+        Ok(())
+    }
+
     // Govern-gated entrypoint to write off recorded bad debt.
-    // 
+    //
     // Clears `amount` of bad debt against available backstops in strict
     // precedence order:
-    // 
+    //
     // 1. **Insurance fund** — consumed first (lowest socialisation impact).
-    // 2. **Protocol reserve** (`TotalDeposits` surplus) — consumed next.
+    // 2. **Protocol reserves** — consumed next.
     // 3. **Depositor socialisation** — residual applied as an index haircut
     //    to `TotalDeposits` only when both backstops are exhausted.
-    // 
+    //
     // Emits [`BadDebtWrittenOffEvent`] on success, recording the exact amount
     // drawn from each source for auditability.
-    // 
+    //
     // # Checks-Effects-Interactions
     // All state mutations occur atomically before the event is published.
     // No external call is made; the function is re-entrancy-safe by design.
-    // 
+    //
     // # Errors
     // - [`LendingError::InvalidAmount`] if `amount <= 0`.
     // - [`LendingError::NoBadDebt`] if there is no recorded bad debt.
@@ -3881,6 +4010,11 @@ impl LendingContract {
             .instance()
             .get(&DataKey::InsuranceFund)
             .unwrap_or(0);
+        let protocol_reserves: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolReserves)
+            .unwrap_or(0);
         let total_deposits: i128 = env
             .storage()
             .persistent()
@@ -3896,9 +4030,9 @@ impl LendingContract {
             .checked_sub(insurance_used)
             .ok_or(LendingError::Overflow)?;
 
-        // --- Precedence 2: protocol reserve (TotalDeposits surplus) ---
-        let reserve_used = remaining.min(total_deposits);
-        let new_total_deposits = total_deposits
+        // --- Precedence 2: protocol reserves ---
+        let reserve_used = remaining.min(protocol_reserves);
+        let new_protocol_reserves = protocol_reserves
             .checked_sub(reserve_used)
             .ok_or(LendingError::Overflow)?;
         remaining = remaining
@@ -3906,15 +4040,12 @@ impl LendingContract {
             .ok_or(LendingError::Overflow)?;
 
         // --- Precedence 3: depositor socialisation (index haircut) ---
-        // `remaining` is the unabsorbed residual after both insurance and
-        // reserves have been consumed.  If the socialized amount would drive
-        // `TotalDeposits` negative, we reject with Overflow — governance must
-        // top up the backstops before calling again.
+        // `remaining` is the unabsorbed residual after both backstops.
         let socialized = remaining;
-        if socialized > new_total_deposits {
+        if socialized > total_deposits {
             return Err(LendingError::Overflow);
         }
-        let final_total_deposits = new_total_deposits
+        let final_total_deposits = total_deposits
             .checked_sub(socialized)
             .ok_or(LendingError::Overflow)?;
 
@@ -3925,6 +4056,9 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::InsuranceFund, &new_insurance);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolReserves, &new_protocol_reserves);
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &final_total_deposits);
@@ -4370,7 +4504,10 @@ pub(crate) fn settle_and_accrue_insurance(
     let (interest, settled) = if position.borrow_index_snapshot > 0 {
         let settled = debt::settle_position(position, current_index, now)
             .map_err(|_| LendingError::Overflow)?;
-        let interest = settled.principal.saturating_sub(position.principal);
+        let interest = settled
+            .principal
+            .checked_sub(position.principal)
+            .ok_or(LendingError::Overflow)?;
         (interest, settled)
     } else {
         let elapsed = debt::elapsed_seconds(now, position.last_update);
@@ -4383,13 +4520,43 @@ pub(crate) fn settle_and_accrue_insurance(
     };
 
     if interest > 0 {
+        let reserve_factor_bps: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReserveFactorBps)
+            .unwrap_or(0);
+        let reserve_factor_bps =
+            u32::try_from(reserve_factor_bps).map_err(|_| LendingError::Overflow)?;
+        let (_, reserve_cut) =
+            math::split_interest_by_reserve_factor(interest, reserve_factor_bps)
+                .map_err(|_| LendingError::Overflow)?;
+        if reserve_cut > 0 {
+            let reserves: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ProtocolReserves)
+                .unwrap_or(0);
+            let new_reserves = reserves
+                .checked_add(reserve_cut)
+                .ok_or(LendingError::Overflow)?;
+            env.storage()
+                .persistent()
+                .set(&DataKey::ProtocolReserves, &new_reserves);
+        }
+
         let share_bps: i128 = env
             .storage()
             .instance()
             .get(&DataKey::InsuranceShareBps)
             .unwrap_or(0);
         if share_bps > 0 {
-            let share = interest
+            // The reserve cut is taken first; insurance receives its configured
+            // share of the remaining interest, so the two protocol cuts cannot
+            // exceed gross interest.
+            let insurance_base = interest
+                .checked_sub(reserve_cut)
+                .ok_or(LendingError::Overflow)?;
+            let share = insurance_base
                 .checked_mul(share_bps)
                 .ok_or(LendingError::Overflow)?
                 .checked_div(BPS_DENOM)
@@ -4411,6 +4578,55 @@ pub(crate) fn settle_and_accrue_insurance(
     }
 
     Ok(settled)
+}
+
+fn checkpoint_reserve_factor(env: &Env) -> Result<(), LendingError> {
+    let now = env.ledger().timestamp();
+    let rate = cached_borrow_rate(env);
+    touch_borrow_index(env, now, rate);
+
+    let borrowers: Vec<Address> = env
+        .storage()
+        .instance()
+        .get(&DataKey::BorrowerList)
+        .unwrap_or_else(|| soroban_sdk::vec![env]);
+    let mut accrued_total = 0i128;
+
+    for i in 0..borrowers.len() {
+        let borrower = borrowers.get(i).ok_or(LendingError::Overflow)?;
+        let position = load_debt(env, &borrower);
+        if position.principal <= 0 {
+            continue;
+        }
+        let settled = settle_and_accrue_insurance(env, &position, now, rate)?;
+        let accrued = settled
+            .principal
+            .checked_sub(position.principal)
+            .ok_or(LendingError::Overflow)?;
+        if accrued < 0 {
+            return Err(LendingError::Overflow);
+        }
+        accrued_total = accrued_total
+            .checked_add(accrued)
+            .ok_or(LendingError::Overflow)?;
+        save_debt(env, &borrower, &settled);
+        extend_debt_ttl(env, &borrower);
+    }
+
+    if accrued_total > 0 {
+        let total_debt: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDebt)
+            .unwrap_or(0);
+        let new_total_debt = total_debt
+            .checked_add(accrued_total)
+            .ok_or(LendingError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDebt, &new_total_debt);
+    }
+    Ok(())
 }
 
 fn draw_insurance(env: &Env, amount: i128) -> Result<i128, LendingError> {
@@ -4587,8 +4803,8 @@ fn extend_debt_ttl(env: &Env, user: &Address) {
 
 // Append `user` to the `BorrowerList` stored in instance storage, if not
 // already present.  This list is used by `migrate_positions` to iterate
-// over all debt records.
-#[cfg(test)]
+// over all debt records. Also used by the reserve-factor checkpoint, so it
+// must run in production borrow paths.
 fn register_borrower(env: &Env, user: &Address) {
     let mut list: soroban_sdk::Vec<Address> = env
         .storage()
