@@ -147,6 +147,8 @@ mod rate_cache_test;
 #[cfg(test)]
 mod rate_hysteresis_test;
 #[cfg(test)]
+mod rate_params_checkpoint_test;
+#[cfg(test)]
 mod rate_persistence_test;
 #[cfg(test)]
 mod rate_smoothing_proof_doctest;
@@ -476,6 +478,14 @@ pub struct GuardianSetEvent {
 pub struct OraclePubKeySetEvent {
     pub old_pubkey: Option<BytesN<32>>,
     pub new_pubkey: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateParamsUpdated {
+    pub old: rate_model::RateParams,
+    pub new: rate_model::RateParams,
+    pub checkpoint_index: i128,
 }
 
 #[contractevent]
@@ -3193,21 +3203,20 @@ impl LendingContract {
             .ok_or(LendingError::NotInitialized)?;
         admin.require_auth();
 
-        if params.base_rate_bps < 0
-            || params.kink_utilization_bps < 0
-            || params.kink_utilization_bps > 10_000
-            || params.multiplier_bps < 0
-            || params.jump_multiplier_bps < 0
-            || params.rate_floor_bps < 0
-            || params.rate_ceiling_bps < params.rate_floor_bps
-            || params.hysteresis_bps < 0
-            || params.surcharge_kink_bps < 0
-            || params.surcharge_slope < 0
-        {
-            return Err(LendingError::InvalidRateParams);
-        }
+        params.validate()?;
+
+        let old = Self::get_rate_params(env.clone());
+        let now = env.ledger().timestamp();
+        let old_rate = current_borrow_rate(&env);
+        let checkpoint_index = touch_borrow_index(&env, now, old_rate);
 
         env.storage().instance().set(&DataKey::RateParams, &params);
+        RateParamsUpdated {
+            old,
+            new: params,
+            checkpoint_index,
+        }
+        .publish(&env);
 
         // Record audit entry
         audit_log::record_audit_entry(&env, String::from_str(&env, "set_rate_params"), admin, None);

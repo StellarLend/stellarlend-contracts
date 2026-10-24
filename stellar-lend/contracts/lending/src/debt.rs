@@ -319,13 +319,24 @@ pub fn settle_position(
 
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.
 ///
-/// Panics on arithmetic overflow, matching the existing borrow-rate API shape
-/// while keeping the underlying arithmetic checked.
+/// If utilization or curve computation fails, use the last persisted effective
+/// rate (or the legacy default before one has been stored). This keeps rate
+/// math failures from blocking repayment or liquidation.
 pub(crate) fn compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
 ) -> BorrowRateComputation {
-    try_compute_borrow_rate_from_snapshot(env, snapshot).unwrap_or(BorrowRateComputation { utilization_bps: 0, rate_bps: DEFAULT_APR_BPS })
+    match try_compute_borrow_rate_from_snapshot(env, snapshot) {
+        Ok(computation) => computation,
+        Err(_) => BorrowRateComputation {
+            utilization_bps: compute_utilization_bps(snapshot).unwrap_or(0),
+            rate_bps: env
+                .storage()
+                .instance()
+                .get(&rate_model::RateModelKey::LastRate)
+                .unwrap_or(DEFAULT_APR_BPS),
+        },
+    }
 }
 
 fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
