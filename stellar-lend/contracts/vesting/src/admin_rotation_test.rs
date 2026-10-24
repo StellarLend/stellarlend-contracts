@@ -84,17 +84,29 @@ fn mint(f: &Fixture, to: &Address, amount: i128) {
     token::StellarAssetClient::new(&f.env, &f.token_id).mint(to, &amount);
 }
 
-fn mock_add_grant_auth(f: &Fixture, amount: i128) {
-    // `add_grant` itself only compares the caller argument to the stored admin
-    // (the separate `require_admin` auth fix is out of scope). The only auth
-    // in the call tree is therefore the SAC transfer from the admin.
-    mock_auth(
-        &f.env,
-        &f.admin,
-        &f.token_id,
-        "transfer",
-        (f.admin.clone(), f.contract_id.clone(), amount).into_val(&f.env),
-    );
+fn mock_add_grant_auth(f: &Fixture, grantee: &Address, amount: i128, start_ts: u64, cliff_secs: u64, duration_secs: u64) {
+    f.env.mock_auths(&[MockAuth {
+        address: &f.admin,
+        invoke: &MockAuthInvoke {
+            contract: &f.contract_id,
+            fn_name: "add_grant",
+            args: (
+                f.admin.clone(),
+                grantee.clone(),
+                amount,
+                start_ts,
+                cliff_secs,
+                duration_secs,
+            )
+                .into_val(&f.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &f.token_id,
+                fn_name: "transfer",
+                args: (f.admin.clone(), f.contract_id.clone(), amount).into_val(&f.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
 }
 
 /// Assert the call emitted exactly one event with the expected topics and data.
@@ -430,7 +442,7 @@ fn set_treasury_redirects_revoke_clawback_to_new_treasury() {
     let amount = 10_000i128;
 
     mint(&f, &f.admin, amount);
-    mock_add_grant_auth(&f, amount);
+    mock_add_grant_auth(&f, &grantee, amount, START_TS, 0, 1_000);
     f.client
         .add_grant(&f.admin, &grantee, &amount, &START_TS, &0, &1_000);
 
