@@ -1,7 +1,14 @@
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, Env,
+    testutils::{storage::{Instance as _, Persistent as _}, Address as _, Ledger},
+    contract, contractimpl, Address, Env,
 };
+
+/// Minimal registered contract so tests have real instance storage to bump.
+#[contract]
+struct TtlTestContract;
+
+#[contractimpl]
+impl TtlTestContract {}
 
 use crate::ttl::{
     bump_instance, bump_persistent, INSTANCE_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT,
@@ -11,7 +18,7 @@ use crate::ttl::{
 #[test]
 fn persistent_bump_is_capped_at_max_ttl() {
     let env = Env::default();
-    let contract_id = Address::generate(&env);
+    let contract_id = env.register(TtlTestContract, ());
     let key = Address::generate(&env);
     let initial_ttl = env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &1_u32);
@@ -33,7 +40,7 @@ fn persistent_bump_is_capped_at_max_ttl() {
 #[test]
 fn persistent_bump_is_a_noop_for_absent_keys() {
     let env = Env::default();
-    let contract_id = Address::generate(&env);
+    let contract_id = env.register(TtlTestContract, ());
     let key = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
@@ -45,7 +52,7 @@ fn persistent_bump_is_a_noop_for_absent_keys() {
 #[test]
 fn instance_bump_is_capped_at_max_ttl() {
     let env = Env::default();
-    let contract_id = Address::generate(&env);
+    let contract_id = env.register(TtlTestContract, ());
     let initial_ttl = env.as_contract(&contract_id, || {
         env.storage().instance().set(&"test_state", &1_u32);
         env.storage().instance().get_ttl()

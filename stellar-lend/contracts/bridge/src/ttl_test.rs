@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    testutils::Ledger, Bytes, BytesN, Env, Vec,
+    testutils::{storage::Persistent as _, Ledger}, Bytes, BytesN, Env, Vec,
 };
 
 use crate::{Bridge, BridgeClient, BridgeDataKey, SourceDomain};
