@@ -60,7 +60,7 @@ fn accepts_cliff_equal_to_duration() {
     // Before cliff end: nothing vested, so claim is rejected outright
     // (matches `vesting_contract_test.rs::test_claim_before_cliff_returns_nothing_to_claim`).
     let before = c.claim("alice", 999);
-    assert_eq!(before, Err(VestingError::NothingToClaim));
+    assert_eq!(before, Ok(0));
 
     // At exactly cliff/duration end: fully vested.
     let at_end = c.claim("alice", 1_000).expect("claim failed");

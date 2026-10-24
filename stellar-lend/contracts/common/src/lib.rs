@@ -6,6 +6,8 @@
 
 #![no_std]
 
+pub mod ttl;
+
 use soroban_sdk::contracterror;
 
 /// Denominator for basis-point arithmetic (`10_000` = 100 %).
@@ -116,6 +118,9 @@ pub enum LendingError {
     InvalidRateParams = 7006,
     /// Liquidation grace period exceeds the protocol maximum.
     InvalidLiquidationGracePeriod = 7007,
+    /// Single-asset max LTV is outside the valid range or not below the
+    /// liquidation threshold.
+    InvalidMaxLtvBps = 7008,
     /// Config backup not found.
     BackupNotFound = 8001,
     /// `receive` called with a payload version other than `1`.
@@ -301,6 +306,9 @@ pub fn normalize_price_ceil(raw_price: i128, asset_decimals: u32) -> Option<i128
 
 #[cfg(test)]
 mod bps_roundtrip_test;
+
+#[cfg(test)]
+mod ttl_test;
 
 #[cfg(test)]
 mod bps_inverse_proptest;

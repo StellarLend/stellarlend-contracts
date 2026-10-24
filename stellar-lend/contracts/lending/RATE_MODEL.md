@@ -26,6 +26,46 @@ raw_rate.max(rate_floor_bps).min(rate_ceiling_bps)
 
 All rates in this document are expressed in basis points (bps), where `100 bps = 1%`.
 
+## Parameter validation and arithmetic bounds
+
+`RateParams::validate` is shared by the admin setter and `compute_borrow_rate`.
+It rejects negative coefficients, a kink above 10,000 bps, a floor above the
+ceiling, a negative smoothing step, and values exceeding these explicit limits:
+
+| Parameter | Maximum |
+|---|---:|
+| `rate_ceiling_bps` | 100,000 bps (1,000% APR) |
+| `base_rate_bps` | 100,000 bps |
+| `multiplier_bps` | 100,000 bps |
+| `jump_multiplier_bps` | 100,000 bps |
+| `surcharge_slope` | 100,000 bps |
+
+The base-rate bound keeps the raw-rate addition safe; the slope bounds keep
+each utilization-times-slope product and the sum of curve segments far below
+`i128::MAX`. `rate_floor_bps` is bounded by the ceiling through
+`rate_floor_bps <= rate_ceiling_bps`. The surcharge kink may exceed 10,000 to
+retain its documented use as a disabled threshold.
+
+### Index accrual overflow horizon
+
+The global index uses `INDEX_SCALE = 10,000,000` and accrues a linear rate over
+one elapsed interval. At the maximum accepted ceiling of 100,000 bps (1,000%
+APR), an uninterrupted **10-year** interval from the initialized index
+produces:
+
+```text
+delta = 10,000,000 × 100,000 × 315,360,000
+        / (31,536,000 × 10,000)
+      = 1,000,000,000
+new_index = 1,010,000,000
+```
+
+The largest intermediate product is `315,360,000,000,000,000,000`, far below
+`i128::MAX` (approximately `1.7 × 10^38`). Thus one idle accrual of up to 10
+years from `INDEX_SCALE` cannot overflow. This bound describes a single idle
+interval from the initialized index; it is not a limit on lifetime cumulative
+growth across repeated index updates.
+
 ## Default parameters
 
 The defaults are taken directly from `RateParams::default()`:

@@ -11,7 +11,7 @@ use crate::events::MAX_AUDIT_PAGE_SIZE;
 
 /// Storage keys for the governance audit log.
 /// Implements a circular buffer with a configurable maximum.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditLogKey {
     /// Total number of audit log entries ever written (monotonically increasing).
@@ -23,7 +23,7 @@ pub enum AuditLogKey {
 }
 
 /// A single governance audit log entry.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug)]
 pub struct AuditLogEntry {
     /// Sequential entry number (never resets, used to detect overwrites).
@@ -73,7 +73,7 @@ pub fn record_audit_entry(env: &Env, action: String, actor: Address, details: Op
     };
 
     // Circular buffer: write at index = count % max_size
-    let index = count % max_size;
+    let index = count.checked_rem(max_size).unwrap_or(0);
     env.storage()
         .persistent()
         .set(&AuditLogKey::Entry(index), &entry);
