@@ -26,6 +26,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Val,
     Vec,
 };
+use stellar_lend_common::ttl;
 
 /// Maximum number of milestones allowed in a single milestone vesting schedule.
 ///
@@ -81,6 +82,7 @@ pub enum VestingKey {
     PausedAt,
     TotalPausedSecs,
     Grant(Address),
+    GrantPauseSnapshots(Address),
     PendingAdmin,
 }
 
@@ -211,6 +213,12 @@ pub const MAX_ADMIN_PROPOSAL_TTL: u64 = 30 * 24 * 60 * 60;
 #[contract]
 pub struct VestingContract;
 
+#[cfg(test)]
+mod ttl_test;
+
+#[cfg(test)]
+mod pause_offset_grant_test;
+
 impl VestingContract {
     /// Validate a milestone schedule before escrowing tokens and creating a grant.
     ///
@@ -268,6 +276,32 @@ impl VestingContract {
 
 #[contractimpl]
 impl VestingContract {
+    /// Refresh global vesting state without requiring an admin signature.
+    pub fn bump(env: Env) {
+        ttl::bump_instance(&env);
+        for key in [
+            VestingKey::Admin,
+            VestingKey::Treasury,
+            VestingKey::TokenAddress,
+            VestingKey::Initialized,
+            VestingKey::TotalLocked,
+            VestingKey::Paused,
+            VestingKey::PausedAt,
+            VestingKey::TotalPausedSecs,
+            VestingKey::PendingAdmin,
+        ] {
+            ttl::bump_persistent(&env, &key);
+        }
+    }
+
+    /// Refresh one grantee's grant vector after a long period without activity.
+    pub fn bump_grant(env: Env, grantee: Address) {
+        ttl::bump_instance(&env);
+        ttl::bump_persistent(&env, &VestingKey::Grants(grantee.clone()));
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
+        ttl::bump_persistent(&env, &VestingKey::Grant(grantee));
+    }
+
     // ── Initialization ────────────────────────────────────────────────────
 
     /// Initialize with admin, treasury, and token address.
@@ -292,24 +326,14 @@ impl VestingContract {
         {
             return Err(VestingError::AlreadyInitialized);
         }
-        env.storage().persistent().set(&VestingKey::Admin, &admin);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Treasury, &treasury);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TokenAddress, &token_address);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Initialized, &true);
-        env.storage().persistent().set(&VestingKey::Paused, &false);
-        env.storage().persistent().set(&VestingKey::PausedAt, &0u64);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalPausedSecs, &0u64);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalLocked, &0i128);
+        ttl::set_persistent(&env, &VestingKey::Admin, &admin);
+        ttl::set_persistent(&env, &VestingKey::Treasury, &treasury);
+        ttl::set_persistent(&env, &VestingKey::TokenAddress, &token_address);
+        ttl::set_persistent(&env, &VestingKey::Initialized, &true);
+        ttl::set_persistent(&env, &VestingKey::Paused, &false);
+        ttl::set_persistent(&env, &VestingKey::PausedAt, &0u64);
+        ttl::set_persistent(&env, &VestingKey::TotalPausedSecs, &0u64);
+        ttl::set_persistent(&env, &VestingKey::TotalLocked, &0i128);
         Ok(())
     }
 
@@ -343,6 +367,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TokenAddress)
             .ok_or(VestingError::InvalidGrant)?;
+        ttl::bump_persistent(&env, &VestingKey::TokenAddress);
         token::Client::new(&env, &token_address).transfer(
             &caller,
             env.current_contract_address(),
@@ -361,20 +386,22 @@ impl VestingContract {
         };
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
             .get(&key)
             .unwrap_or_else(|| Vec::new(&env));
         grants.push_back(grant);
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
+        Self::append_pause_snapshot(&env, &grantee, grants.len() - 1);
 
         let locked: i128 = env
             .storage()
             .persistent()
             .get(&VestingKey::TotalLocked)
             .unwrap_or(0i128);
-        env.storage().persistent().set(
+        ttl::set_persistent(&env,
             &VestingKey::TotalLocked,
             &locked.saturating_add(total_amount),
         );
@@ -425,6 +452,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TokenAddress)
             .ok_or(VestingError::InvalidGrant)?;
+        ttl::bump_persistent(&env, &VestingKey::TokenAddress);
         token::Client::new(&env, &token_address).transfer(
             &caller,
             env.current_contract_address(),
@@ -443,20 +471,23 @@ impl VestingContract {
         };
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
             .get(&key)
             .unwrap_or_else(|| Vec::new(&env));
         grants.push_back(grant);
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
+        Self::append_pause_snapshot(&env, &grantee, grants.len() - 1);
 
         let locked: i128 = env
             .storage()
             .persistent()
             .get(&VestingKey::TotalLocked)
             .unwrap_or(0i128);
-        env.storage().persistent().set(
+        ttl::set_persistent(&env,
             &VestingKey::TotalLocked,
             &locked.saturating_add(total_amount),
         );
@@ -475,6 +506,7 @@ impl VestingContract {
         Self::require_not_paused(&env)?;
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -485,12 +517,18 @@ impl VestingContract {
             return Err(VestingError::GrantNotFound);
         }
 
-        let effective_now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         let mut total_claimable: i128 = 0;
         let mut locked_delta: i128 = 0;
 
         for i in 0..grants.len() {
             let mut g = grants.get(i).unwrap();
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             let vested = g.vested_at(effective_now);
             let claimable = vested.saturating_sub(g.claimed_amount);
             if claimable > 0 {
@@ -501,7 +539,7 @@ impl VestingContract {
             }
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         if total_claimable > 0 {
             let token_address: Address = env
@@ -509,6 +547,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TokenAddress)
                 .ok_or(VestingError::InvalidGrant)?;
+            ttl::bump_persistent(&env, &VestingKey::TokenAddress);
             token::Client::new(&env, &token_address).transfer(
                 &env.current_contract_address(),
                 &grantee,
@@ -520,7 +559,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TotalLocked)
                 .unwrap_or(0i128);
-            env.storage().persistent().set(
+            ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
                 &locked.saturating_sub(locked_delta),
             );
@@ -539,6 +578,8 @@ impl VestingContract {
         }
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -548,7 +589,8 @@ impl VestingContract {
             return Err(VestingError::GrantNotFound);
         }
 
-        let effective_now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
 
         // Compute total claimable
         let mut total_claimable: i128 = 0;
@@ -557,6 +599,11 @@ impl VestingContract {
             if g.revoked {
                 continue;
             }
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             total_claimable = total_claimable
                 .saturating_add(g.vested_at(effective_now).saturating_sub(g.claimed_amount));
         }
@@ -574,6 +621,11 @@ impl VestingContract {
             if g.revoked {
                 continue;
             }
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             let claimable = g.vested_at(effective_now).saturating_sub(g.claimed_amount);
             if claimable <= 0 {
                 continue;
@@ -584,13 +636,14 @@ impl VestingContract {
             grants.set(i, g);
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         let token_address: Address = env
             .storage()
             .persistent()
             .get(&VestingKey::TokenAddress)
             .ok_or(VestingError::InvalidGrant)?;
+        ttl::bump_persistent(&env, &VestingKey::TokenAddress);
         token::Client::new(&env, &token_address).transfer(
             &env.current_contract_address(),
             &grantee,
@@ -602,9 +655,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TotalLocked)
             .unwrap_or(0i128);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalLocked, &locked.saturating_sub(amount));
+        ttl::set_persistent(&env, &VestingKey::TotalLocked, &locked.saturating_sub(amount));
 
         Self::emit_event(&env, "claimed_partial", &grantee);
         Ok(amount)
@@ -625,6 +676,8 @@ impl VestingContract {
         Self::require_not_paused(&env)?;
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -639,7 +692,8 @@ impl VestingContract {
             return Err(VestingError::AlreadyRevoked);
         }
 
-        let effective_now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         let mut total_clawback: i128 = 0;
         let mut locked_delta: i128 = 0;
 
@@ -648,6 +702,11 @@ impl VestingContract {
             if g.revoked {
                 continue;
             }
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             let vested = g.vested_at(effective_now);
             let unvested = g.total_amount.saturating_sub(vested);
             total_clawback = total_clawback.saturating_add(unvested);
@@ -657,7 +716,7 @@ impl VestingContract {
             grants.set(i, g);
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         if total_clawback > 0 {
             let token_address: Address = env
@@ -665,11 +724,13 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TokenAddress)
                 .ok_or(VestingError::InvalidGrant)?;
+            ttl::bump_persistent(&env, &VestingKey::TokenAddress);
             let treasury: Address = env
                 .storage()
                 .persistent()
                 .get(&VestingKey::Treasury)
                 .ok_or(VestingError::InvalidGrant)?;
+            ttl::bump_persistent(&env, &VestingKey::Treasury);
             token::Client::new(&env, &token_address).transfer(
                 &env.current_contract_address(),
                 &treasury,
@@ -681,7 +742,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TotalLocked)
                 .unwrap_or(0i128);
-            env.storage().persistent().set(
+            ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
                 &locked.saturating_sub(locked_delta),
             );
@@ -705,6 +766,8 @@ impl VestingContract {
         Self::require_not_paused(&env)?;
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -735,7 +798,7 @@ impl VestingContract {
             }
         }
 
-        env.storage().persistent().set(&key, &grants);
+        ttl::set_persistent(&env, &key, &grants);
 
         if any_changed {
             let locked: i128 = env
@@ -743,7 +806,7 @@ impl VestingContract {
                 .persistent()
                 .get(&VestingKey::TotalLocked)
                 .unwrap_or(0i128);
-            env.storage().persistent().set(
+            ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
                 &locked.saturating_sub(locked_delta),
             );
@@ -775,6 +838,7 @@ impl VestingContract {
             .persistent()
             .get(&from_key)
             .ok_or(VestingError::GrantNotFound)?;
+        ttl::bump_persistent(&env, &from_key);
         if from_grants.is_empty() {
             return Err(VestingError::GrantNotFound);
         }
@@ -784,19 +848,27 @@ impl VestingContract {
             .persistent()
             .get(&to_key)
             .unwrap_or_else(|| Vec::new(&env));
+        ttl::bump_persistent(&env, &to_key);
         if !to_existing.is_empty() {
             return Err(VestingError::DestinationAlreadyHasGrant);
         }
 
         let mut new_grants: Vec<Grant> = Vec::new(&env);
+        let from_snapshots = Self::grant_pause_snapshots(&env, &from, from_grants.len());
+        let mut new_snapshots: Vec<u64> = Vec::new(&env);
         for i in 0..from_grants.len() {
             let mut g = from_grants.get(i).unwrap();
             g.grantee = to.clone();
             new_grants.push_back(g);
+            new_snapshots.push_back(from_snapshots.get(i).unwrap_or(0));
         }
 
         env.storage().persistent().remove(&from_key);
-        env.storage().persistent().set(&to_key, &new_grants);
+        env.storage()
+            .persistent()
+            .remove(&VestingKey::GrantPauseSnapshots(from.clone()));
+        ttl::set_persistent(&env, &to_key, &new_grants);
+        ttl::set_persistent(&env, &VestingKey::GrantPauseSnapshots(to.clone()), &new_snapshots);
 
         Self::emit_event(&env, "grant_transferred", &from);
         Ok(())
@@ -815,8 +887,8 @@ impl VestingContract {
             return Ok(());
         }
         let now = env.ledger().timestamp();
-        env.storage().persistent().set(&VestingKey::Paused, &true);
-        env.storage().persistent().set(&VestingKey::PausedAt, &now);
+        ttl::set_persistent(&env, &VestingKey::Paused, &true);
+        ttl::set_persistent(&env, &VestingKey::PausedAt, &now);
         Self::emit_event(&env, "paused", &caller);
         Ok(())
     }
@@ -845,11 +917,9 @@ impl VestingContract {
             .unwrap_or(0u64);
         let interval = now.saturating_sub(paused_at);
         let new_total = total_paused.saturating_add(interval);
-        env.storage()
-            .persistent()
-            .set(&VestingKey::TotalPausedSecs, &new_total);
-        env.storage().persistent().set(&VestingKey::Paused, &false);
-        env.storage().persistent().set(&VestingKey::PausedAt, &0u64);
+        ttl::set_persistent(&env, &VestingKey::TotalPausedSecs, &new_total);
+        ttl::set_persistent(&env, &VestingKey::Paused, &false);
+        ttl::set_persistent(&env, &VestingKey::PausedAt, &0u64);
         Self::emit_event(&env, "resumed", &caller);
         Ok(())
     }
@@ -875,16 +945,19 @@ impl VestingContract {
         let grants: Vec<Grant> = env
             .storage()
             .persistent()
-            .get(&VestingKey::Grants(grantee))
+            .get(&VestingKey::Grants(grantee.clone()))
             .unwrap_or_else(|| Vec::new(&env));
-        let now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         let mut total: i128 = 0;
         for i in 0..grants.len() {
             let g = grants.get(i).unwrap();
             if g.revoked {
                 continue;
             }
-            total = total.saturating_add(g.claimable_at(now));
+            let effective_now =
+                Self::effective_now_for(&env, now, snapshots.get(i).unwrap_or(0));
+            total = total.saturating_add(g.claimable_at(effective_now));
         }
         total
     }
@@ -893,12 +966,15 @@ impl VestingContract {
         let grants: Vec<Grant> = env
             .storage()
             .persistent()
-            .get(&VestingKey::Grants(grantee))
+            .get(&VestingKey::Grants(grantee.clone()))
             .ok_or(VestingError::GrantNotFound)?;
         let mut total: i128 = 0;
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         for i in 0..grants.len() {
             let g = grants.get(i).unwrap();
-            total = total.saturating_add(g.vested_at(now));
+            let effective_now =
+                Self::effective_now_for(&env, now, snapshots.get(i).unwrap_or(0));
+            total = total.saturating_add(g.vested_at(effective_now));
         }
         Ok(total)
     }
@@ -933,7 +1009,6 @@ impl VestingContract {
         caller: Address,
         new_treasury: Address,
     ) -> Result<(), VestingError> {
-        caller.require_auth();
         Self::require_admin(&env, &caller)?;
 
         if new_treasury == env.current_contract_address() {
@@ -945,9 +1020,7 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::Treasury)
             .ok_or(VestingError::InvalidTreasury)?;
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Treasury, &new_treasury);
+        ttl::set_persistent(&env, &VestingKey::Treasury, &new_treasury);
 
         env.events().publish(
             (Symbol::new(&env, "treasury_changed"), caller),
@@ -980,9 +1053,7 @@ impl VestingContract {
             .ledger()
             .timestamp()
             .saturating_add(ttl_secs.min(MAX_ADMIN_PROPOSAL_TTL));
-        env.storage()
-            .persistent()
-            .set(&VestingKey::PendingAdmin, &(new_admin.clone(), expires_at));
+        ttl::set_persistent(&env, &VestingKey::PendingAdmin, &(new_admin.clone(), expires_at));
 
         env.events().publish(
             (Symbol::new(&env, "admin_proposed"), current_admin.clone()),
@@ -1001,6 +1072,7 @@ impl VestingContract {
     /// `AdminProposalExpired` once the proposal's expiry has passed. On
     /// success the pending slot is cleared.
     pub fn accept_admin(env: Env) -> Result<(), VestingError> {
+        ttl::bump_persistent(&env, &VestingKey::PendingAdmin);
         let (pending_admin, expires_at): (Address, u64) = env
             .storage()
             .persistent()
@@ -1017,9 +1089,8 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::Admin)
             .ok_or(VestingError::Unauthorized)?;
-        env.storage()
-            .persistent()
-            .set(&VestingKey::Admin, &pending_admin);
+        ttl::bump_persistent(&env, &VestingKey::Admin);
+        ttl::set_persistent(&env, &VestingKey::Admin, &pending_admin);
         env.storage().persistent().remove(&VestingKey::PendingAdmin);
 
         env.events().publish(
@@ -1034,6 +1105,9 @@ impl VestingContract {
 
     /// Cancel the pending admin proposal. Current admin only.
     pub fn cancel_admin_proposal(env: Env) -> Result<(), VestingError> {
+        ttl::bump_instance(&env);
+        ttl::bump_persistent(&env, &VestingKey::Admin);
+        ttl::bump_persistent(&env, &VestingKey::PendingAdmin);
         let admin: Address = env
             .storage()
             .persistent()
@@ -1072,17 +1146,62 @@ impl VestingContract {
 
     // ── Internal helpers ──────────────────────────────────────────────────
 
-    fn effective_now(env: &Env) -> u64 {
-        let now = env.ledger().timestamp();
-        let paused: u64 = env
+    fn cumulative_paused_at(env: &Env, timestamp: u64) -> u64 {
+        let total_paused: u64 = env
             .storage()
             .persistent()
             .get(&VestingKey::TotalPausedSecs)
             .unwrap_or(0u64);
-        now.saturating_sub(paused)
+        let paused: bool = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Paused)
+            .unwrap_or(false);
+        if !paused {
+            return total_paused;
+        }
+        let paused_at: u64 = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::PausedAt)
+            .unwrap_or(timestamp);
+        total_paused.saturating_add(timestamp.saturating_sub(paused_at))
+    }
+
+    fn effective_now_for(env: &Env, timestamp: u64, paused_secs_at_creation: u64) -> u64 {
+        // Historical queries before grant creation have no grant-live paused time to subtract.
+        let paused_after_creation = Self::cumulative_paused_at(env, timestamp)
+            .checked_sub(paused_secs_at_creation)
+            .unwrap_or(0);
+        timestamp.saturating_sub(paused_after_creation)
+    }
+
+    fn grant_pause_snapshots(env: &Env, grantee: &Address, grant_count: u32) -> Vec<u64> {
+        let key = VestingKey::GrantPauseSnapshots(grantee.clone());
+        let stored: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        let mut snapshots: Vec<u64> = Vec::new(env);
+        for i in 0..grant_count {
+            snapshots.push_back(stored.get(i).unwrap_or(0));
+        }
+        snapshots
+    }
+
+    fn append_pause_snapshot(env: &Env, grantee: &Address, grant_index: u32) {
+        let mut snapshots = Self::grant_pause_snapshots(env, grantee, grant_index);
+        snapshots.push_back(Self::cumulative_paused_at(env, env.ledger().timestamp()));
+        ttl::set_persistent(
+            env,
+            &VestingKey::GrantPauseSnapshots(grantee.clone()),
+            &snapshots,
+        );
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), VestingError> {
+        ttl::bump_persistent(env, &VestingKey::Admin);
         let admin: Address = env
             .storage()
             .persistent()
@@ -1091,11 +1210,13 @@ impl VestingContract {
         if admin != *caller {
             Err(VestingError::Unauthorized)
         } else {
+            caller.require_auth();
             Ok(())
         }
     }
 
     fn require_not_paused(env: &Env) -> Result<(), VestingError> {
+        ttl::bump_persistent(env, &VestingKey::Paused);
         if env
             .storage()
             .persistent()
@@ -1128,520 +1249,51 @@ impl VestingContract {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test-only sim model
-// ═══════════════════════════════════════════════════════════════════════════
 
-/// Sim-model types used by most non-Soroban tests.
-///
-/// Accessed via `use super::{VestingContract, VestingError, Grant}`.
-#[cfg(all(test, any()))]
-pub mod sim {
-    extern crate std;
-    use std::collections::HashMap;
-    use std::string::String;
-    use std::vec::Vec as StdVec;
-
-    // ── Sim Grant ─────────────────────────────────────────────────────────
-
-    /// Sim-model grant (pure Rust, test-only).
-    ///
-    /// Fields: total / claimed / released / start_seconds / duration_seconds / cliff_seconds
-    /// These differ from the on-chain `Grant` (total_amount / claimed_amount / etc.)
-    #[derive(Clone, Debug, PartialEq)]
-    pub struct Grant {
-        pub grantee: String,
-        pub total: u128,
-        pub claimed: u128,
-        pub released: u128,
-        pub start_seconds: u64,
-        pub duration_seconds: u64,
-        pub cliff_seconds: u64,
-        pub revoked: bool,
-    }
-
-    impl Grant {
-        pub fn vested_at(&self, now: u64) -> u128 {
-            if self.total == 0 {
-                return 0;
-            }
-            let cliff_end = self.start_seconds.saturating_add(self.cliff_seconds);
-            if now < cliff_end {
-                return 0;
-            }
-            let elapsed = now.saturating_sub(self.start_seconds);
-            if self.duration_seconds == 0 || elapsed >= self.duration_seconds {
-                return self.total;
-            }
-            let q = self.total / self.duration_seconds as u128;
-            let r = self.total % self.duration_seconds as u128;
-            (elapsed as u128 * q + elapsed as u128 * r / self.duration_seconds as u128)
-                .min(self.total)
-        }
-
-        /// Tokens released (synced via vesting) but not yet claimed.
-        pub fn claimable(&self) -> u128 {
-            self.released.saturating_sub(self.claimed)
-        }
-
-        /// Tokens not yet vested (locked in contract).
-        pub fn locked(&self) -> u128 {
-            self.total.saturating_sub(self.released)
-        }
-    }
-
-    // ── Sim VestingEvent ──────────────────────────────────────────────────
-
-    #[derive(Clone, Debug)]
-    pub struct VestingEvent {
-        pub kind: String,
-        pub grantee: String,
-        pub amount: u128,
-        pub timestamp: u64,
-    }
-
-    // ── Sim VestingError ──────────────────────────────────────────────────
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub enum VestingError {
-        Unauthorized,
-        ContractPaused,
-        NoSuchGrant,
-        NoGrantFound,
-        GrantNotFound,
-        AlreadyRevoked,
-        Overflow,
-        NotPaused,
-        InvalidGrant,
-        AlreadyInitialized,
-        OverClaim,
-        InvalidAmount,
-        DestinationAlreadyHasGrant,
-        ZeroPrincipal,
-        ZeroDuration,
-        CliffExceedsDuration,
-        NothingToClaim,
-        InvalidMilestoneOrder,
-        MilestoneTotalMismatch,
-        TooManyMilestones,
-    }
-
-    // ── Sim VestingContract ───────────────────────────────────────────────
-
-    pub struct VestingContract {
-        pub admin: String,
-        pub treasury: String,
-        pub grants: HashMap<String, StdVec<Grant>>,
-        pub balances: HashMap<String, u128>,
-        pub total_locked: u128,
-        pub paused: bool,
-        pub events: StdVec<VestingEvent>,
-    }
-
-    impl VestingContract {
-        pub fn new(admin: &str, treasury: &str) -> Self {
-            let mut balances = HashMap::new();
-            balances.insert(treasury.to_string(), 0u128);
-            balances.insert("contract".to_string(), 0u128);
-            Self {
-                admin: admin.to_string(),
-                treasury: treasury.to_string(),
-                grants: HashMap::new(),
-                balances,
-                total_locked: 0,
-                paused: false,
-                events: StdVec::new(),
-            }
-        }
-
-        fn require_admin(&self, caller: &str) -> Result<(), VestingError> {
-            if caller != self.admin {
-                Err(VestingError::Unauthorized)
-            } else {
-                Ok(())
-            }
-        }
-
-        fn require_not_paused(&self) -> Result<(), VestingError> {
-            if self.paused {
-                Err(VestingError::ContractPaused)
-            } else {
-                Ok(())
-            }
-        }
-
-        fn do_transfer(&mut self, from: &str, to: &str, amount: u128) {
-            let from_bal = self.balances.entry(from.to_string()).or_insert(0);
-            *from_bal = from_bal.saturating_sub(amount);
-            *self.balances.entry(to.to_string()).or_insert(0) += amount;
-        }
-
-        pub fn balance_of(&self, who: &str) -> u128 {
-            self.balances.get(who).copied().unwrap_or(0)
-        }
-
-        pub fn total_locked(&self) -> u128 {
-            self.total_locked
-        }
-        pub fn is_paused(&self) -> bool {
-            self.paused
-        }
-
-        pub fn get_grants(&self, grantee: &str) -> StdVec<Grant> {
-            self.grants.get(grantee).cloned().unwrap_or_default()
-        }
-
-        pub fn claimable_total(&self, grantee: &str, now: u64) -> u128 {
-            self.grants
-                .get(grantee)
-                .map(|gs| {
-                    gs.iter()
-                        .filter(|g| !g.revoked)
-                        .map(|g| g.vested_at(now).max(g.released).saturating_sub(g.claimed))
-                        .sum()
-                })
-                .unwrap_or(0)
-        }
-
-        /// Create a linear vesting grant.
-        ///
-        /// Caller must be admin. Implicitly funds the admin and transfers into vault.
-        pub fn add_grant(
-            &mut self,
-            caller: &str,
-            grantee: &str,
-            total: u128,
-            start_seconds: u64,
-            duration_seconds: u64,
-            cliff_seconds: u64,
-        ) -> Result<(), VestingError> {
-            self.require_admin(caller)?;
-            if total == 0 {
-                return Err(VestingError::ZeroPrincipal);
-            }
-            if duration_seconds == 0 {
-                return Err(VestingError::ZeroDuration);
-            }
-            if cliff_seconds > duration_seconds {
-                return Err(VestingError::CliffExceedsDuration);
-            }
-
-            // Implicit mint: admin always has enough in sim
-            let admin_key = self.admin.clone();
-            let bal = self.balances.entry(admin_key.clone()).or_insert(0);
-            if *bal < total {
-                *bal = total;
-            }
-            self.do_transfer(&admin_key, "contract", total);
-
-            let grant = Grant {
-                grantee: grantee.to_string(),
-                total,
-                claimed: 0,
-                released: 0,
-                start_seconds,
-                duration_seconds,
-                cliff_seconds,
-                revoked: false,
-            };
-            self.grants
-                .entry(grantee.to_string())
-                .or_default()
-                .push(grant);
-            self.total_locked += total;
-            Ok(())
-        }
-
-        /// Claim all vested tokens at time `now`.
-        pub fn claim(&mut self, grantee: &str, now: u64) -> Result<u128, VestingError> {
-            self.require_not_paused()?;
-            let grants = self
-                .grants
-                .get_mut(grantee)
-                .ok_or(VestingError::NoSuchGrant)?;
-            let mut total_claimed = 0u128;
-            let mut locked_delta = 0u128;
-
-            for g in grants.iter_mut() {
-                let vested = g.vested_at(now);
-                if vested > g.released {
-                    locked_delta += vested - g.released;
-                    g.released = vested;
-                }
-                let claimable = g.released.saturating_sub(g.claimed);
-                if claimable > 0 {
-                    g.claimed += claimable;
-                    total_claimed += claimable;
-                }
-            }
-
-            if total_claimed > 0 {
-                self.do_transfer("contract", grantee, total_claimed);
-                self.total_locked = self.total_locked.saturating_sub(locked_delta);
-            }
-            Ok(total_claimed)
-        }
-
-        /// Claim a specific amount at time `now`.
-        pub fn claim_partial(
-            &mut self,
-            grantee: &str,
-            amount: u128,
-            now: u64,
-        ) -> Result<u128, VestingError> {
-            self.require_not_paused()?;
-            if amount == 0 {
-                return Err(VestingError::InvalidAmount);
-            }
-
-            let grants = self
-                .grants
-                .get_mut(grantee)
-                .ok_or(VestingError::NoSuchGrant)?;
-
-            let mut total_claimable = 0u128;
-            let mut locked_delta = 0u128;
-            for g in grants.iter_mut() {
-                if g.revoked {
-                    continue;
-                }
-                let vested = g.vested_at(now);
-                if vested > g.released {
-                    locked_delta += vested - g.released;
-                    g.released = vested;
-                }
-                total_claimable += g.released.saturating_sub(g.claimed);
-            }
-            self.total_locked = self.total_locked.saturating_sub(locked_delta);
-
-            if amount > total_claimable {
-                return Err(VestingError::OverClaim);
-            }
-
-            let mut remaining = amount;
-            let grants = self.grants.get_mut(grantee).unwrap();
-            for g in grants.iter_mut() {
-                if remaining == 0 {
-                    break;
-                }
-                if g.revoked {
-                    continue;
-                }
-                let c = g.released.saturating_sub(g.claimed);
-                if c == 0 {
-                    continue;
-                }
-                let take = remaining.min(c);
-                g.claimed += take;
-                remaining -= take;
-            }
-
-            self.do_transfer("contract", grantee, amount);
-            Ok(amount)
-        }
-
-        /// Revoke all active grants at time `now`. Returns clawback amount.
-        pub fn revoke(
-            &mut self,
-            caller: &str,
-            grantee: &str,
-            now: u64,
-        ) -> Result<u128, VestingError> {
-            self.require_admin(caller)?;
-            self.require_not_paused()?;
-
-            let grants = self
-                .grants
-                .get_mut(grantee)
-                .ok_or(VestingError::NoSuchGrant)?;
-            if grants.iter().all(|g| g.revoked) {
-                return Err(VestingError::AlreadyRevoked);
-            }
-
-            let mut total_clawback = 0u128;
-            let mut locked_delta = 0u128;
-
-            for g in grants.iter_mut() {
-                if g.revoked {
-                    continue;
-                }
-                let vested = g.vested_at(now);
-                if vested > g.released {
-                    locked_delta += vested - g.released;
-                    g.released = vested;
-                }
-                let unvested = g.total.saturating_sub(vested);
-                total_clawback += unvested;
-                locked_delta += unvested;
-                g.total = vested;
-                g.revoked = true;
-            }
-
-            self.total_locked = self.total_locked.saturating_sub(locked_delta);
-            if total_clawback > 0 {
-                self.do_transfer("contract", &self.treasury.clone(), total_clawback);
-            }
-            Ok(total_clawback)
-        }
-
-        /// Immediately unlock all unvested tokens (accelerate).
-        pub fn accelerate_grant(
-            &mut self,
-            caller: &str,
-            grantee: &str,
-            now: u64,
-        ) -> Result<(), VestingError> {
-            self.require_admin(caller)?;
-            self.require_not_paused()?;
-
-            let grants = self
-                .grants
-                .get_mut(grantee)
-                .ok_or(VestingError::NoSuchGrant)?;
-            if grants.is_empty() {
-                return Err(VestingError::NoSuchGrant);
-            }
-
-            let mut total_delta = 0u128;
-            let mut event_amount = 0u128;
-            let mut any_changed = false;
-
-            for g in grants.iter_mut() {
-                if g.revoked {
-                    continue;
-                }
-                if g.total > g.released {
-                    let delta = g.total - g.released;
-                    total_delta += delta;
-                    event_amount += delta;
-                    g.released = g.total;
-                    any_changed = true;
-                }
-            }
-
-            self.total_locked = self.total_locked.saturating_sub(total_delta);
-
-            if any_changed {
-                self.events.push(VestingEvent {
-                    kind: "GrantAccelerated".to_string(),
-                    grantee: grantee.to_string(),
-                    amount: event_amount,
-                    timestamp: now,
-                });
-            }
-            Ok(())
-        }
-
-        /// Transfer all grants from `from` to `to`.
-        pub fn transfer_grant(
-            &mut self,
-            caller: &str,
-            from: &str,
-            to: &str,
-            _now: u64,
-        ) -> Result<(), VestingError> {
-            self.require_admin(caller)?;
-            self.require_not_paused()?;
-
-            if !self.grants.contains_key(from) {
-                return Err(VestingError::NoSuchGrant);
-            }
-            if self.grants.contains_key(to) {
-                return Err(VestingError::DestinationAlreadyHasGrant);
-            }
-
-            let mut grants = self.grants.remove(from).unwrap();
-            for g in grants.iter_mut() {
-                g.grantee = to.to_string();
-            }
-            self.grants.insert(to.to_string(), grants);
-            Ok(())
-        }
-
-        pub fn pause(&mut self, caller: &str) -> Result<(), VestingError> {
-            self.require_admin(caller)?;
-            self.paused = true;
-            Ok(())
-        }
-
-        pub fn resume(&mut self, caller: &str) -> Result<(), VestingError> {
-            self.require_admin(caller)?;
-            self.paused = false;
-            Ok(())
-        }
-    }
-}
-
-// ── Test module declarations ──────────────────────────────────────────────────
-//
-// Sim-model tests (pure Rust, no Soroban host) are grouped inside a module
-// that re-exports the sim types as `VestingContract`, `Grant`, and
-// `VestingError` so that each test file can use `use super::{...}` naturally.
-//
-// Soroban SDK integration tests (vesting_contract_test, milestone_schedule_test)
-// are declared at crate level and import `VestingContract` from the #[contract]
-// struct directly.
-//
-// Legacy Soroban tests that use the OLD API (pause_offset_test,
-// vested_at_overflow_test) remain disabled until they are updated to the new
-// three-arg initialize / token-transfer API.
-
-/// Wrapper module that exposes sim types under the names the test files expect.
-///
-/// All sim test files live in `src/` alongside `lib.rs`. The `#[path]`
-/// attribute is required because this module is declared inside `lib.rs`
-/// (not a separate directory), so Rust would otherwise look for e.g.
-/// `src/sim_tests/accelerate_test.rs`.
-#[cfg(all(test, any()))]
-pub mod sim_tests {
-    // Re-export sim types at this module level so that child test files can
-    // write `use super::{VestingContract, VestingError, Grant}`.
-    pub use super::sim::{Grant, VestingContract, VestingError, VestingEvent};
-
-    #[path = "../accelerate_test.rs"]
-    mod accelerate_test;
-    #[path = "../claimable_consistency_test.rs"]
-    mod claimable_consistency_test;
-    #[path = "../cliff_bound_test.rs"]
-    mod cliff_bound_test;
-    #[path = "../grant_transfer_test.rs"]
-    mod grant_transfer_test;
-    #[path = "../lifecycle_e2e_test.rs"]
-    mod lifecycle_e2e_test;
-    #[path = "../multi_grant_test.rs"]
-    mod multi_grant_test;
-    #[path = "../partial_claim_test.rs"]
-    mod partial_claim_test;
-    #[path = "../pause_test.rs"]
-    mod pause_test;
-    #[path = "../revoke_split_test.rs"]
-    mod revoke_split_test;
-    #[path = "../vested_at_proptest.rs"]
-    mod vested_at_proptest;
-    #[path = "../vesting_doc_example_test.rs"]
-    mod vesting_doc_example_test;
-    #[path = "../vesting_views_test.rs"]
-    mod vesting_views_test;
-}
-
-// Admin rotation + treasury rotation tests (real host, explicit mock_auths).
+// Test harness and unit / integration test suites
+#[cfg(test)]
+mod test_harness;
 #[cfg(test)]
 mod admin_rotation_test;
+
+// Admin authorization tests (real host, explicit mock_auths).
+#[cfg(test)]
+mod admin_auth_test;
 
 // Soroban SDK integration tests (use VestingContractClient / real host)
 #[cfg(test)]
 mod milestone_validation_test;
 #[cfg(test)]
-#[cfg(any())]
 mod milestone_schedule_test;
 #[cfg(test)]
-#[cfg(any())]
 mod vesting_contract_test;
-
-// Legacy API tests — kept but gated behind a feature flag until updated
-// to use the new three-arg initialize + token transfer model.
-// Uncomment when ready:
-// #[cfg(all(test, feature = "legacy-tests"))]
-// mod pause_offset_test;
-// #[cfg(all(test, feature = "legacy-tests"))]
-// mod vested_at_overflow_test;
+#[cfg(test)]
+mod pause_offset_test;
+#[cfg(test)]
+mod vested_at_overflow_test;
+#[cfg(test)]
+mod initialize_test;
+#[cfg(test)]
+mod accelerate_test;
+#[cfg(test)]
+mod claimable_consistency_test;
+#[cfg(test)]
+mod cliff_bound_test;
+#[cfg(test)]
+mod grant_transfer_test;
+#[cfg(test)]
+mod lifecycle_e2e_test;
+#[cfg(test)]
+mod multi_grant_test;
+#[cfg(test)]
+mod partial_claim_test;
+#[cfg(test)]
+mod pause_test;
+#[cfg(test)]
+mod revoke_split_test;
+#[cfg(test)]
+mod vested_at_proptest;
+#[cfg(test)]
+mod vesting_doc_example_test;
+#[cfg(test)]
+mod vesting_views_test;

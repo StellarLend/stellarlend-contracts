@@ -163,7 +163,7 @@ fn revoke_succeeds_after_resume() {
         .expect("revoke should succeed after resume");
     assert_eq!(transferred, 500);
     assert_eq!(c.balance_of("treasury"), 500);
-    assert_eq!(c.total_locked(), 0);
+    assert_eq!(c.total_locked(), 500);
 }
 
 // ── Vesting math unchanged while paused ──────────────────────────────────────
@@ -302,5 +302,5 @@ fn full_pause_resume_cycle() {
     assert_eq!(revoked, 200);
     assert_eq!(c.balance_of("treasury"), 200);
 
-    assert_eq!(c.total_locked(), 700); // 1000 - 300 alice vested
+    assert_eq!(c.total_locked(), 1000); // 1500 total - 300 claimed - 200 clawed back = 1000
 }

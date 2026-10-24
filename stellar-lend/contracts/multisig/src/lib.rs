@@ -6,6 +6,7 @@ use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, xdr::ToXdr,
     Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
 };
+use stellar_lend_common::ttl;
 
 /// Domain separator for multisig approval-authorization payloads (issue #1278).
 ///
@@ -183,8 +184,55 @@ pub struct ApprovalRevokedEvent {
 #[contract]
 pub struct MultisigContract;
 
+#[cfg(test)]
+mod ttl_test;
+
 #[contractimpl]
 impl MultisigContract {
+    /// Refresh the multisig's shared configuration without signer authorization.
+    pub fn bump(env: Env) {
+        ttl::bump_instance(&env);
+        for key in [
+            MultisigDataKey::Threshold,
+            MultisigDataKey::Signers,
+            MultisigDataKey::ProposalCount,
+            MultisigDataKey::NextNonce,
+            MultisigDataKey::SignerSetHash,
+        ] {
+            ttl::bump_persistent(&env, &key);
+        }
+    }
+
+    /// Refresh a proposal, its approval bindings, and its execution marker.
+    pub fn bump_proposal(env: Env, id: u64) {
+        ttl::bump_instance(&env);
+        let proposal_key = MultisigDataKey::Proposal(id);
+        ttl::bump_persistent(&env, &proposal_key);
+        ttl::bump_persistent(&env, &MultisigDataKey::ProposalSignerSetHash(id));
+
+        if let Some(proposal) = env
+            .storage()
+            .persistent()
+            .get::<MultisigDataKey, Proposal>(&proposal_key)
+        {
+            for approver in proposal.approvals.iter() {
+                ttl::bump_persistent(
+                    &env,
+                    &MultisigDataKey::ApprovalBinding(id, approver),
+                );
+            }
+        }
+
+        if let Some(nonce) = env
+            .storage()
+            .persistent()
+            .get::<MultisigDataKey, u64>(&MultisigDataKey::ProposalNonce(id))
+        {
+            ttl::bump_persistent(&env, &MultisigDataKey::ProposalNonce(id));
+            ttl::bump_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce));
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Initialisation
     // -----------------------------------------------------------------------
@@ -212,22 +260,12 @@ impl MultisigContract {
             }
             return Err(MultisigError::InvalidSigners);
         }
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::Signers, &signers);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::Threshold, &threshold);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ProposalCount, &0u64);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::NextNonce, &0u64);
+        ttl::set_persistent(&env, &MultisigDataKey::Signers, &signers);
+        ttl::set_persistent(&env, &MultisigDataKey::Threshold, &threshold);
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalCount, &0u64);
+        ttl::set_persistent(&env, &MultisigDataKey::NextNonce, &0u64);
         let signer_set_hash = Self::signer_set_hash(&env, &signers);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::SignerSetHash, &signer_set_hash);
+        ttl::set_persistent(&env, &MultisigDataKey::SignerSetHash, &signer_set_hash);
         Ok(())
     }
 
@@ -236,6 +274,7 @@ impl MultisigContract {
     // -----------------------------------------------------------------------
 
     fn require_signer(env: &Env, caller: &Address) -> Result<(), MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::Signers);
         let signers: Vec<Address> = env
             .storage()
             .persistent()
@@ -248,6 +287,7 @@ impl MultisigContract {
     }
 
     fn fetch_threshold(env: &Env) -> u32 {
+        ttl::bump_persistent(env, &MultisigDataKey::Threshold);
         env.storage()
             .persistent()
             .get(&MultisigDataKey::Threshold)
@@ -255,6 +295,7 @@ impl MultisigContract {
     }
 
     fn fetch_proposal(env: &Env, id: u64) -> Result<Proposal, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::Proposal(id));
         env.storage()
             .persistent()
             .get(&MultisigDataKey::Proposal(id))
@@ -262,6 +303,7 @@ impl MultisigContract {
     }
 
     fn fetch_signers(env: &Env) -> Vec<Address> {
+        ttl::bump_persistent(env, &MultisigDataKey::Signers);
         env.storage()
             .persistent()
             .get(&MultisigDataKey::Signers)
@@ -284,6 +326,7 @@ impl MultisigContract {
     }
 
     fn fetch_proposal_signer_set_hash(env: &Env, id: u64) -> Result<BytesN<32>, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalSignerSetHash(id));
         env.storage()
             .persistent()
             .get(&MultisigDataKey::ProposalSignerSetHash(id))
@@ -291,6 +334,8 @@ impl MultisigContract {
     }
 
     fn fetch_proposal_nonce(env: &Env, id: u64) -> Result<u64, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalNonce(id));
+        ttl::bump_persistent(env, &MultisigDataKey::Proposal(id));
         env.storage()
             .persistent()
             .get(&MultisigDataKey::ProposalNonce(id))
@@ -307,6 +352,8 @@ impl MultisigContract {
     }
 
     fn allocate_proposal_nonce(env: &Env) -> Result<u64, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::NextNonce);
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalCount);
         let nonce: u64 = env
             .storage()
             .persistent()
@@ -320,9 +367,7 @@ impl MultisigContract {
                     .unwrap_or(0)
             });
         let next = nonce.checked_add(1).ok_or(MultisigError::NonceOverflow)?;
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::NextNonce, &next);
+        ttl::set_persistent(&env, &MultisigDataKey::NextNonce, &next);
         Ok(nonce)
     }
 
@@ -338,12 +383,11 @@ impl MultisigContract {
     }
 
     fn save_proposal(env: &Env, proposal: &Proposal) {
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::Proposal(proposal.id), proposal);
+        ttl::set_persistent(&env, &MultisigDataKey::Proposal(proposal.id), proposal);
     }
 
     fn next_proposal_id(env: &Env) -> Result<u64, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalCount);
         let count: u64 = env
             .storage()
             .persistent()
@@ -352,9 +396,7 @@ impl MultisigContract {
         let new_count = count
             .checked_add(1)
             .ok_or(MultisigError::ProposalIdOverflow)?;
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ProposalCount, &new_count);
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalCount, &new_count);
         Ok(count)
     }
 
@@ -464,10 +506,8 @@ impl MultisigContract {
             expires_at,
         };
         Self::save_proposal(&env, &proposal);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ProposalNonce(id), &nonce);
-        env.storage().persistent().set(
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalNonce(id), &nonce);
+        ttl::set_persistent(&env,
             &MultisigDataKey::ProposalSignerSetHash(id),
             &signer_set_hash,
         );
@@ -552,7 +592,7 @@ impl MultisigContract {
 
         // Persist the domain-separated binding for off-chain / indexer checks
         // and for `verify_approval_binding`.
-        env.storage().persistent().set(
+        ttl::set_persistent(&env,
             &MultisigDataKey::ApprovalBinding(id, caller.clone()),
             &binding,
         );
@@ -621,6 +661,7 @@ impl MultisigContract {
         }
         let _signer_set_hash = Self::require_current_proposal_signer_set(&env, id)?;
         let nonce = Self::fetch_proposal_nonce(&env, id)?;
+        ttl::bump_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce));
         if env
             .storage()
             .persistent()
@@ -639,9 +680,7 @@ impl MultisigContract {
         // The nonce is consumed only after the action succeeds. Soroban
         // transaction rollback therefore leaves it available after a failed
         // cross-contract invocation, while a retry after success is rejected.
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ConsumedNonce(nonce), &true);
+        ttl::set_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce), &true);
         proposal.status = ProposalStatus::Executed;
         Self::save_proposal(&env, &proposal);
 
@@ -667,9 +706,7 @@ impl MultisigContract {
                 if bounds::validate_signer_set(&signers, *new_threshold).is_err() {
                     return Err(MultisigError::InvalidThreshold);
                 }
-                env.storage()
-                    .persistent()
-                    .set(&MultisigDataKey::Threshold, new_threshold);
+                ttl::set_persistent(&env, &MultisigDataKey::Threshold, new_threshold);
                 Ok(())
             }
             ProposalAction::RotateSigners(new_signers) => {
@@ -677,13 +714,9 @@ impl MultisigContract {
                 if bounds::validate_signer_set(new_signers, threshold).is_err() {
                     return Err(MultisigError::InvalidSigners);
                 }
-                env.storage()
-                    .persistent()
-                    .set(&MultisigDataKey::Signers, new_signers);
+                ttl::set_persistent(&env, &MultisigDataKey::Signers, new_signers);
                 let signer_set_hash = Self::signer_set_hash(env, new_signers);
-                env.storage()
-                    .persistent()
-                    .set(&MultisigDataKey::SignerSetHash, &signer_set_hash);
+                ttl::set_persistent(&env, &MultisigDataKey::SignerSetHash, &signer_set_hash);
                 Ok(())
             }
             ProposalAction::InvokeContract(contract, fn_symbol, args) => {
@@ -851,10 +884,8 @@ impl MultisigContract {
 
         let nonce = Self::fetch_proposal_nonce(&env, id)?;
         let signer_set_hash = Self::current_signer_set_hash(&env);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ProposalNonce(id), &nonce);
-        env.storage().persistent().set(
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalNonce(id), &nonce);
+        ttl::set_persistent(&env,
             &MultisigDataKey::ProposalSignerSetHash(id),
             &signer_set_hash,
         );
@@ -1011,6 +1042,7 @@ impl MultisigContract {
             }
             Self::require_current_proposal_signer_set(&env, id)?;
             let nonce = Self::fetch_proposal_nonce(&env, id)?;
+            ttl::bump_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce));
             if env
                 .storage()
                 .persistent()
@@ -1032,9 +1064,7 @@ impl MultisigContract {
             let mut proposal = proposals.get(i).unwrap();
             let nonce = Self::fetch_proposal_nonce(&env, proposal.id)?;
             Self::dispatch_action(&env, &proposal.action)?;
-            env.storage()
-                .persistent()
-                .set(&MultisigDataKey::ConsumedNonce(nonce), &true);
+            ttl::set_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce), &true);
             proposal.status = ProposalStatus::Executed;
             Self::save_proposal(&env, &proposal);
         }
