@@ -565,6 +565,7 @@ pub fn commit_withdraw(env: &Env, prepared: PreparedWithdraw) -> Result<i128, Le
         &DataKey::TotalCollateralAsset(prepared.asset.clone()),
         &new_total,
     );
+    crate::ttl::bump_global(env, &DataKey::TotalCollateralAsset(prepared.asset.clone()));
 
     // 4. Extend TTL
     crate::cross_asset::extend_collateral_asset_ttl(env, &prepared.user, &prepared.asset);
