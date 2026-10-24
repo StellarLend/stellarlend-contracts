@@ -217,6 +217,15 @@ const DEFAULT_DEPOSIT_CAP: i128 = 1_000_000_000_000;
 pub(crate) const HEALTH_FACTOR_SCALE: i128 = 10_000;
 const HEALTH_FACTOR_NO_DEBT: i128 = 100_000_000;
 pub const LIQUIDATION_THRESHOLD_BPS: i128 = 8000;
+/// Default maximum loan-to-value ratio for the single-asset borrow path.
+/// 7500 bps = 75%, leaving a 5% buffer below the default liquidation threshold.
+pub const DEFAULT_MAX_LTV_BPS: i128 = 7500;
+/// Minimum accepted governed liquidation threshold (50%).
+pub const MIN_LIQUIDATION_THRESHOLD_BPS: i128 = 5000;
+/// Maximum accepted governed liquidation threshold (95%).
+pub const MAX_LIQUIDATION_THRESHOLD_BPS: i128 = 9500;
+/// Maximum accepted governed LTV (90%).
+pub const MAX_LTV_BPS: i128 = 9000;
 /// Default close-factor cap (basis points) applied by `liquidate` when
 /// `DataKey::CloseFactorBps` has not been configured via
 /// [`LendingContract::set_close_factor_bps`]. 5000 bps = 50 %.
@@ -377,6 +386,8 @@ pub enum DataKey {
     /// `get_position`, and `get_health_factor`. Bounds: `[0, 10000]`.
     /// Defaults to [`LIQUIDATION_THRESHOLD_BPS`] (8000 = 80%) when unset.
     LiquidationThresholdBps,
+    /// Governed single-asset maximum LTV (bps). Defaults to [`DEFAULT_MAX_LTV_BPS`].
+    MaxLtvBps,
     /// Global borrow index (fixed-point, scaled by [`debt::INDEX_SCALE`]).
     /// Grows monotonically as interest accrues; see `debt.rs`.
     BorrowIndex,
@@ -405,6 +416,24 @@ pub enum DataKey {
     ReserveFactorBps,
     /// Persistent accounting balance of protocol reserves, excluded from depositor supply.
     ProtocolReserves,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GovernedRiskParameter {
+    LiquidationThresholdBps,
+    MaxLtvBps,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernanceAuditEvent {
+    pub id: u64,
+    pub parameter: GovernedRiskParameter,
+    pub caller: Address,
+    pub timestamp: u64,
+    pub old_value: i128,
+    pub new_value: i128,
 }
 
 #[contractevent]
@@ -2309,7 +2338,7 @@ impl LendingContract {
     // [`Self::get_close_factor_bps`] / [`Self::set_close_factor_bps`] and
     // [`Self::get_liquidation_incentive_bps`] /
     // [`Self::set_liquidation_incentive_bps`] — and the liquidation
-    // threshold is the top-level [`LIQUIDATION_THRESHOLD_BPS`] constant.
+    // threshold is governed through [`Self::set_liquidation_threshold_bps`].
     // 
     // # Rounding policy (all divisions favour protocol solvency)
     // 
@@ -2993,19 +3022,67 @@ impl LendingContract {
 
     // Set the liquidation threshold in basis points (admin-only).
     // 
-    // Must be in `[0, 10000]`.
+    // Must be within [`MIN_LIQUIDATION_THRESHOLD_BPS`] and
+    // [`MAX_LIQUIDATION_THRESHOLD_BPS`], and strictly above the max LTV.
     pub fn set_liquidation_threshold_bps(
         env: Env,
         threshold_bps: i128,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
-        if !(0..=BPS_DENOM).contains(&threshold_bps) {
+        if !(MIN_LIQUIDATION_THRESHOLD_BPS..=MAX_LIQUIDATION_THRESHOLD_BPS)
+            .contains(&threshold_bps)
+            || threshold_bps <= Self::max_ltv_bps_config(&env)
+        {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }
+        let old_value = Self::liquidation_threshold_bps_config(&env);
+        record_governance_audit(
+            &env,
+            GovernedRiskParameter::LiquidationThresholdBps,
+            old_value,
+            threshold_bps,
+        )?;
         env.storage()
             .instance()
             .set(&DataKey::LiquidationThresholdBps, &threshold_bps);
+        Ok(())
+    }
+
+    fn max_ltv_bps_config(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MaxLtvBps)
+            .unwrap_or(DEFAULT_MAX_LTV_BPS)
+    }
+
+    // Return the effective maximum LTV (basis points) for single-asset borrows.
+    pub fn get_max_ltv_bps(env: Env) -> i128 {
+        Self::max_ltv_bps_config(&env)
+    }
+
+    // Set the maximum LTV for single-asset borrows (admin-only).
+    //
+    // Must be between 0 and [`MAX_LTV_BPS`] inclusive and strictly below the
+    // effective liquidation threshold.
+    pub fn set_max_ltv_bps(env: Env, max_ltv_bps: i128) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        assert_admin(&env)?;
+        if !(0..=MAX_LTV_BPS).contains(&max_ltv_bps)
+            || max_ltv_bps >= Self::liquidation_threshold_bps_config(&env)
+        {
+            return Err(LendingError::InvalidMaxLtvBps);
+        }
+        let old_value = Self::max_ltv_bps_config(&env);
+        record_governance_audit(
+            &env,
+            GovernedRiskParameter::MaxLtvBps,
+            old_value,
+            max_ltv_bps,
+        )?;
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxLtvBps, &max_ltv_bps);
         Ok(())
     }
 
@@ -4900,6 +4977,37 @@ pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
 
 // Assert that the transaction signer is the protocol admin.
 // Returns a typed error when the contract has not yet been initialized.
+// Record a governed risk-parameter change in the shared governance audit log
+// (`get_governance_audit_entries`) and emit a typed `GovernanceAuditEvent`
+// carrying the old and new values.
+fn record_governance_audit(
+    env: &Env,
+    parameter: GovernedRiskParameter,
+    old_value: i128,
+    new_value: i128,
+) -> Result<(), LendingError> {
+    let caller: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(LendingError::NotInitialized)?;
+    let action = match parameter {
+        GovernedRiskParameter::LiquidationThresholdBps => "set_liquidation_threshold_bps",
+        GovernedRiskParameter::MaxLtvBps => "set_max_ltv_bps",
+    };
+    audit_log::record_audit_entry(env, String::from_str(env, action), caller.clone(), None);
+    GovernanceAuditEvent {
+        id: audit_log::get_governance_audit_count(env),
+        parameter,
+        caller,
+        timestamp: env.ledger().timestamp(),
+        old_value,
+        new_value,
+    }
+    .publish(env);
+    Ok(())
+}
+
 pub(crate) fn assert_admin(env: &Env) -> Result<(), LendingError> {
     let admin: Address = env
         .storage()
@@ -5042,6 +5150,19 @@ fn assert_position_healthy(
     collateral: i128,
     position: &DebtPosition,
 ) -> Result<(), LendingError> {
+    let threshold = LendingContract::get_liquidation_threshold_bps(env.clone());
+    assert_position_within_bps(env, collateral, position, threshold)
+}
+
+// Same predicate as [`assert_position_healthy`] but against an explicit
+// collateral weight (`bps`): the liquidation threshold for withdrawals, the
+// governed max LTV for new single-asset borrows.
+fn assert_position_within_bps(
+    env: &Env,
+    collateral: i128,
+    position: &DebtPosition,
+    threshold: i128,
+) -> Result<(), LendingError> {
     let now = env.ledger().timestamp();
     let rate = current_borrow_rate(env);
     let debt = effective_debt(position, now, rate).map_err(|_| LendingError::Overflow)?;
@@ -5049,7 +5170,6 @@ fn assert_position_healthy(
     if debt > 0 {
         let collateral_value = value_collateral(env, collateral)?;
         let debt_value = value_debt(env, debt)?;
-        let threshold = LendingContract::get_liquidation_threshold_bps(env.clone());
         let weighted_collateral = collateral_value
             .checked_mul(threshold)
             .ok_or(LendingError::Overflow)?;
@@ -5067,16 +5187,16 @@ fn assert_position_healthy(
 // Reject a prospective borrow that would leave the user undercollateralized or
 // push protocol `TotalDebt` past the configured ceiling.
 // 
-// Health factor uses effective debt after accrual and the governed liquidation
-// threshold. In cross-asset mode, collateral and debt are first converted to
+// The governed maximum LTV (not the liquidation threshold) bounds new borrows,
+// using effective debt after accrual, so a successful borrow can never be
+// instantly liquidatable. In cross-asset mode, collateral and debt are first converted to
 // oracle-valued units; otherwise legacy raw units are retained. Solvency is
 // checked with the overflow-safe equivalent of health factor >= 1.0:
-// `collateral_value * threshold_bps >= HEALTH_FACTOR_SCALE * debt_value`.
+// `collateral_value * max_ltv_bps >= HEALTH_FACTOR_SCALE * debt_value`.
 // 
 // # Worked example
-// With 100 collateral, 80% liquidation threshold, and 80 debt:
-// `100 * 8000 = 800_000 >= 10_000 * 80 = 800_000` — exactly at HF 1.0.
-// A borrow to 81 debt would fail because `800_000 < 810_000`.
+// With 100 collateral and a 75% maximum LTV, 75 debt is the boundary.
+// A borrow to 76 debt fails because `100 * 7500 < 10_000 * 76`.
 fn assert_borrow_solvent(
     env: &Env,
     user: &Address,
@@ -5086,7 +5206,12 @@ fn assert_borrow_solvent(
     let col_key = DataKey::Collateral(user.clone());
     let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
 
-    assert_position_healthy(env, collateral, updated_position)?;
+    assert_position_within_bps(
+        env,
+        collateral,
+        updated_position,
+        LendingContract::max_ltv_bps_config(env),
+    )?;
 
     if let Some(ceiling) = env
         .storage()

@@ -118,6 +118,9 @@ pub enum LendingError {
     InvalidRateParams = 7006,
     /// Liquidation grace period exceeds the protocol maximum.
     InvalidLiquidationGracePeriod = 7007,
+    /// Single-asset max LTV is outside the valid range or not below the
+    /// liquidation threshold.
+    InvalidMaxLtvBps = 7008,
     /// Config backup not found.
     BackupNotFound = 8001,
     /// `receive` called with a payload version other than `1`.

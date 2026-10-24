@@ -32,14 +32,17 @@ fn total_deposits(env: &Env, id: &Address) -> i128 {
 fn withdraw_rejected_when_debt_outstanding_and_hf_would_drop_below_one() {
     let (env, client, id, user) = setup();
     client.deposit(&user, &1_000);
-    client.borrow(&user, &800);
+    // Borrows are capped by the governed max LTV (75% by default), so borrow
+    // at that cap; the withdrawal is checked against the 80% threshold.
+    client.borrow(&user, &750);
 
-    let res = client.try_withdraw(&user, &1);
+    // 937 * 80% = 749.6 < 750 debt, so this withdrawal would break HF >= 1.
+    let res = client.try_withdraw(&user, &63);
     assert_eq!(res, Err(Ok(LendingError::InsufficientCollateral)));
 
     // Nothing changed.
     assert_eq!(total_deposits(&env, &id), 1_000);
-    assert_eq!(client.get_debt_position(&user).principal, 800);
+    assert_eq!(client.get_debt_position(&user).principal, 750);
     assert!(client.get_health_factor(&user) >= HEALTH_FACTOR_SCALE);
 }
 
