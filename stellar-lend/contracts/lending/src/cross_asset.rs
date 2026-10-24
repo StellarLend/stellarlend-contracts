@@ -1,5 +1,5 @@
 use soroban_sdk::{Address, Env, Map, Vec};
-use stellar_lend_common::pow10_checked;
+use stellar_lend_common::{pow10_checked, BPS_DENOM};
 
 use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
 use crate::{
@@ -63,6 +63,19 @@ pub fn load_collateral_asset(env: &Env, user: &Address, asset: &Address) -> i128
 pub fn save_collateral_asset(env: &Env, user: &Address, asset: &Address, amount: i128) {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     env.storage().persistent().set(&key, &amount);
+}
+
+/// Load the total collateral supplied for `asset`.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Returns
+/// The stored total collateral amount, or `0` if no entry exists.
+pub fn load_total_collateral_asset(env: &Env, asset: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TotalCollateralAsset(asset.clone()))
+        .unwrap_or(0)
 }
 
 /// Load the debt position for a single `(user, asset)` pair.
@@ -552,6 +565,60 @@ pub fn get_cross_debt_value(env: &Env, user: &Address) -> Result<i128, LendingEr
     Ok(total_debt_value)
 }
 
+/// Compute the aggregate cross-asset borrowing capacity for `user`.
+///
+/// Sums each collateral leg's USD value multiplied by its configured `ltv_bps`,
+/// then divides by [`BPS_DENOM`] (`10_000`). Uses the exact same price and
+/// freshness path as [`compute_aggregate_health_factor`].
+///
+/// # Formula
+///
+/// ```text
+/// collateral_value_i = floor(amount_i × price_i / 10^decimals_i)
+/// capacity           = (Σ collateral_value_i × ltv_bps_i) / 10_000
+/// ```
+///
+/// # Edge cases
+/// - Assets with `ltv_bps == 0` contribute zero to capacity.
+/// - If a user has zero collateral, returns `Ok(0)`.
+/// - Stale prices fail closed with [`LendingError::StaleOracleTimestamp`].
+/// - Missing prices fail closed with [`LendingError::PriceFeedNotFound`].
+///
+/// # Errors
+/// Returns [`LendingError`] on unconfigured asset, stale price, missing price,
+/// or arithmetic overflow.
+pub fn compute_borrow_capacity(env: &Env, user: &Address) -> Result<i128, LendingError> {
+    let collateral_assets = get_user_collateral_assets(env, user);
+    let mut weighted_ltv_collateral: i128 = 0;
+
+    for i in 0..collateral_assets.len() {
+        let asset = collateral_assets.get(i).unwrap();
+        let amount = load_collateral_asset(env, user, &asset);
+        if amount == 0 {
+            continue;
+        }
+        let params = load_asset_params(env, &asset).ok_or(LendingError::AssetNotConfigured)?;
+        let decimals = load_asset_decimals(env, &asset);
+        let price_record = get_price_for_asset(env, &asset)?;
+        if params.ltv_bps == 0 {
+            continue;
+        }
+        let value = value_in_base(amount, price_record.price, decimals)?;
+        let weighted = value
+            .checked_mul(params.ltv_bps)
+            .ok_or(LendingError::Overflow)?;
+        weighted_ltv_collateral = weighted_ltv_collateral
+            .checked_add(weighted)
+            .ok_or(LendingError::Overflow)?;
+    }
+
+    let capacity = weighted_ltv_collateral
+        .checked_div(BPS_DENOM)
+        .ok_or(LendingError::Overflow)?;
+
+    Ok(capacity)
+}
+
 /// Validate that `asset` has been configured and return its [`AssetParams`].
 ///
 /// Issues **1 instance-storage read**.
@@ -590,6 +657,7 @@ pub fn set_asset_params_v2_internal(env: &Env, asset: &Address, params: &AssetPa
 /// # Errors
 /// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
 /// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::SupplyCapExceeded`] if deposit would exceed the per-asset supply cap.
 pub fn deposit_collateral_asset_internal(
     env: &Env,
     user: &Address,
@@ -603,15 +671,25 @@ pub fn deposit_collateral_asset_internal(
         return Err(LendingError::InvalidAmount);
     }
 
-    validate_asset_params_configured(env, asset)?;
+    let params = validate_asset_params_configured(env, asset)?;
 
     user.require_auth();
+
+    let total_col = load_total_collateral_asset(env, asset);
+    let new_total_col = total_col.checked_add(amount).ok_or(LendingError::Overflow)?;
+    if params.supply_cap > 0 && new_total_col > params.supply_cap {
+        return Err(LendingError::SupplyCapExceeded);
+    }
 
     let current = load_collateral_asset(env, user, asset);
     let new_balance = current.checked_add(amount).ok_or(LendingError::Overflow)?;
     save_collateral_asset(env, user, asset, new_balance);
     add_to_user_collateral_list(env, user, asset);
     extend_collateral_asset_ttl(env, user, asset);
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::TotalCollateralAsset(asset.clone()), &new_total_col);
 
     Ok(new_balance)
 }
@@ -649,6 +727,12 @@ pub fn withdraw_asset_internal(
         return Err(LendingError::InvalidAmount);
     }
 
+    let total_col = load_total_collateral_asset(env, asset);
+    let new_total_col = total_col.checked_sub(amount).ok_or(LendingError::Overflow)?;
+    if new_total_col < 0 {
+        return Err(LendingError::Overflow);
+    }
+
     let new_balance = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
     save_collateral_asset(env, user, asset, new_balance);
 
@@ -678,6 +762,10 @@ pub fn withdraw_asset_internal(
         return Err(LendingError::HealthFactorTooLow);
     }
 
+    env.storage()
+        .persistent()
+        .set(&DataKey::TotalCollateralAsset(asset.clone()), &new_total_col);
+
     extend_collateral_asset_ttl(env, user, asset);
 
     Ok(new_balance)
@@ -704,6 +792,23 @@ pub fn withdraw_asset_internal(
 /// Repay is intentionally *not* gated by this check (see
 /// `PARTIAL_STALENESS_POLICY.md`): reducing risk must remain allowed.
 ///
+fn rollback_borrow(
+    env: &Env,
+    user: &Address,
+    asset: &Address,
+    position: &DebtPosition,
+    prev_principal: i128,
+) {
+    if prev_principal == 0 {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
+        remove_from_user_debt_list(env, user, asset);
+    } else {
+        save_debt_asset(env, user, asset, position);
+    }
+}
+
 /// # Errors
 /// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
 /// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
@@ -711,6 +816,7 @@ pub fn withdraw_asset_internal(
 /// - [`LendingError::StaleOracleTimestamp`] if any collateral, existing debt,
 ///   or the borrowed asset has a price older than `DEFAULT_ORACLE_MAX_AGE_SECS`.
 /// - [`LendingError::PriceFeedNotFound`] if a required oracle price is missing.
+/// - [`LendingError::LtvExceeded`] if borrow would exceed the user's borrowing capacity.
 /// - [`LendingError::HealthFactorTooLow`] if borrow would under-collateralise the position.
 /// - [`LendingError::DebtCeilingExceeded`] if borrow would exceed the per-asset ceiling.
 /// - [`LendingError::BorrowCapExceeded`] if borrow would exceed the per-asset borrow cap.
@@ -757,39 +863,39 @@ pub fn borrow_asset_internal(
     save_debt_asset(env, user, asset, &updated);
     add_to_user_debt_list(env, user, asset);
 
+    // Enforce borrow capacity (LTV): require total_debt_value_after <= capacity.
+    let capacity = match compute_borrow_capacity(env, user) {
+        Ok(c) => c,
+        Err(err) => {
+            rollback_borrow(env, user, asset, &position, prev_principal);
+            return Err(err);
+        }
+    };
+
+    let total_debt_value_after = match get_cross_debt_value(env, user) {
+        Ok(v) => v,
+        Err(err) => {
+            rollback_borrow(env, user, asset, &position, prev_principal);
+            return Err(err);
+        }
+    };
+
+    if total_debt_value_after > capacity {
+        rollback_borrow(env, user, asset, &position, prev_principal);
+        return Err(LendingError::LtvExceeded);
+    }
+
+    // Health factor check (second guard): require hf >= HEALTH_FACTOR_SCALE (1.0).
     let hf = match compute_aggregate_health_factor(env, user) {
         Ok(hf) => hf,
         Err(err) => {
-            // Roll back the provisional debt write if the health check itself
-            // fails. The borrow is rejected, so the user's debt position must
-            // be restored to its original state.
-            save_debt_asset(env, user, asset, &position);
-            if prev_principal == 0 {
-                remove_from_user_debt_list(env, user, asset);
-            }
+            rollback_borrow(env, user, asset, &position, prev_principal);
             return Err(err);
         }
     };
 
     if hf < HEALTH_FACTOR_SCALE {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
-        if prev_principal == 0 {
-            env.storage()
-                .persistent()
-                .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
-            remove_from_user_debt_list(env, user, asset);
-        } else {
-            save_debt_asset(env, user, asset, &position);
-        }
+        rollback_borrow(env, user, asset, &position, prev_principal);
         return Err(LendingError::HealthFactorTooLow);
     }
 
@@ -806,36 +912,12 @@ pub fn borrow_asset_internal(
         .checked_add(delta)
         .ok_or(LendingError::Overflow)?;
     if new_total_debt > params.debt_ceiling {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
-        if prev_principal == 0 {
-            remove_from_user_debt_list(env, user, asset);
-        }
+        rollback_borrow(env, user, asset, &position, prev_principal);
         return Err(LendingError::DebtCeilingExceeded);
     }
     // Enforce optional per-asset borrow cap: 0 means uncapped.
     if params.borrow_cap != 0 && new_total_debt > params.borrow_cap {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
-        if prev_principal == 0 {
-            remove_from_user_debt_list(env, user, asset);
-        }
+        rollback_borrow(env, user, asset, &position, prev_principal);
         return Err(LendingError::BorrowCapExceeded);
     }
     env.storage()

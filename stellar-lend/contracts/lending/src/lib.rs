@@ -2476,6 +2476,18 @@ impl LendingContract {
                 cross_asset::extend_collateral_asset_ttl(&env, &borrower, &collateral_asset);
             }
 
+            let total_col_asset = cross_asset::load_total_collateral_asset(&env, &collateral_asset);
+            let new_total_col_asset = total_col_asset
+                .checked_sub(final_seized)
+                .ok_or(LendingError::Overflow)?;
+            if new_total_col_asset < 0 {
+                return Err(LendingError::Overflow);
+            }
+            env.storage().persistent().set(
+                &DataKey::TotalCollateralAsset(collateral_asset.clone()),
+                &new_total_col_asset,
+            );
+
             // ── 12. Release isolation bucket if applicable ────────────────
             if should_release_isolation_debt(&env, &collateral_asset) {
                 decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
@@ -3752,6 +3764,15 @@ impl LendingContract {
     /// Return the per-asset debt principal for a user.
     pub fn get_debt_asset_position(env: Env, user: Address, asset: Address) -> debt::DebtPosition {
         cross_asset::load_debt_asset(&env, &user, &asset)
+    }
+
+    /// Return the user's aggregate cross-asset borrowing capacity.
+    ///
+    /// Sums (collateral_value * ltv_bps) across all collateral legs, divided by
+    /// `BPS_DENOM` (10_000). Returns `Err(LendingError)` on unconfigured asset,
+    /// missing price feed, or stale oracle timestamp.
+    pub fn get_borrow_capacity(env: Env, user: Address) -> Result<i128, LendingError> {
+        cross_asset::compute_borrow_capacity(&env, &user)
     }
 
     /// Initialize timelocked multisig upgrade governance (admin-only, once).
