@@ -1648,6 +1648,8 @@ impl LendingContract {
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
 
+        check_and_clear_unhealthy_timestamp(&env, &user);
+
         Ok(new_balance)
     }
 
@@ -2088,6 +2090,40 @@ impl LendingContract {
                     env.storage().persistent().remove(&first_unhealthy_key);
                 }
                 return Err(LendingError::PositionHealthy);
+            }
+
+            let grace_secs = Self::get_liquidation_grace_period(env.clone());
+            if grace_secs > 0 {
+                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                let first_unhealthy_ts = match env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, u64>(&first_unhealthy_key)
+                {
+                    Some(ts) => ts,
+                    None => {
+                        // Position was observed unhealthy for the first time.
+                        // Record the current timestamp and extend TTL.
+                        //
+                        // Note on Soroban storage rollback:
+                        // Because returning `Err(LiquidationGracePeriodActive)` causes the Soroban
+                        // host to roll back storage mutations within this transaction, this write
+                        // will not persist unless `mark_unhealthy` is called in a separate successful
+                        // invocation. Keepers/liquidators are expected to call `mark_unhealthy` first
+                        // to establish the grace period start time on-chain.
+                        env.storage()
+                            .persistent()
+                            .set(&first_unhealthy_key, &now);
+                        extend_first_unhealthy_ttl(&env, &borrower);
+                        return Err(LendingError::LiquidationGracePeriodActive);
+                    }
+                };
+
+                extend_first_unhealthy_ttl(&env, &borrower);
+
+                if now < first_unhealthy_ts.saturating_add(grace_secs) {
+                    return Err(LendingError::LiquidationGracePeriodActive);
+                }
             }
 
             let close_factor_bps = Self::close_factor_bps_config(&env);
@@ -3634,6 +3670,65 @@ impl LendingContract {
             .unwrap_or(0)
     }
 
+    /// Record the timestamp when a borrower's position first became unhealthy.
+    ///
+    /// Permissionless entrypoint. If the position is unhealthy (`HF < 1.0`) and no
+    /// `FirstUnhealthyTimestamp` is recorded, stores the current ledger timestamp and
+    /// extends its TTL. If the position is healthy (`HF >= 1.0`), this is a no-op that
+    /// writes nothing.
+    ///
+    /// # Rollback note
+    /// Because `liquidate` must fail with [`LendingError::LiquidationGracePeriodActive`]
+    /// when a grace period is active, any storage write inside `liquidate` would be
+    /// rolled back by the Soroban runtime upon returning `Err`. This entrypoint returns
+    /// `Ok(())` on success, allowing keepers to atomically mark the position and begin
+    /// the grace period countdown in storage.
+    pub fn mark_unhealthy(env: Env, borrower: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+
+        let position = load_debt(&env, &borrower);
+        let debt = position.principal;
+        if debt <= 0 {
+            // Position with no debt is healthy; no-op and write nothing
+            if env.storage().persistent().has(&first_unhealthy_key) {
+                env.storage().persistent().remove(&first_unhealthy_key);
+            }
+            return Ok(());
+        }
+
+        let col_key = DataKey::Collateral(borrower.clone());
+        let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
+        let threshold_bps = Self::get_liquidation_threshold_bps(env.clone());
+        let collateral_value = value_collateral(&env, collateral)?;
+        let debt_value = value_debt(&env, debt)?;
+        let hf = math::checked_mul_div_floor(collateral_value, threshold_bps, debt_value)
+            .map_err(|_| LendingError::Overflow)?;
+
+        if hf >= HEALTH_FACTOR_SCALE {
+            // Position is healthy; no-op and write nothing
+            if env.storage().persistent().has(&first_unhealthy_key) {
+                env.storage().persistent().remove(&first_unhealthy_key);
+            }
+            return Ok(());
+        }
+
+        // Position is unhealthy: record timestamp if not yet set
+        if !env.storage().persistent().has(&first_unhealthy_key) {
+            let now = env.ledger().timestamp();
+            env.storage().persistent().set(&first_unhealthy_key, &now);
+        }
+        extend_first_unhealthy_ttl(&env, &borrower);
+        Ok(())
+    }
+
+    /// Return the timestamp when `borrower`'s position first became unhealthy, if recorded.
+    pub fn get_first_unhealthy_timestamp(env: Env, borrower: Address) -> Option<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FirstUnhealthyTimestamp(borrower))
+    }
+
     /// Return the configured risk parameters for an asset, if any.
     pub fn get_asset_params(env: Env, asset: Address) -> Option<AssetParams> {
         cross_asset::load_asset_params(&env, &asset)
@@ -4218,6 +4313,17 @@ fn extend_collateral_ttl(env: &Env, user: &Address) {
 
 fn extend_debt_ttl(env: &Env, user: &Address) {
     let key = DataKey::Debt(user.clone());
+    let extend_to = env.storage().max_ttl().min(PERSISTENT_TTL_LEDGERS);
+    let threshold = extend_to / 2 + 1;
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, threshold, extend_to);
+    }
+}
+
+fn extend_first_unhealthy_ttl(env: &Env, user: &Address) {
+    let key = DataKey::FirstUnhealthyTimestamp(user.clone());
     let extend_to = env.storage().max_ttl().min(PERSISTENT_TTL_LEDGERS);
     let threshold = extend_to / 2 + 1;
     if env.storage().persistent().has(&key) {

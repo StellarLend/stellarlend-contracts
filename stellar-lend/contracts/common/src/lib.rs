@@ -134,6 +134,8 @@ pub enum LendingError {
     IsolationCeilingBelowDebt = 2012,
     /// Isolation-mode debt tracking invariant violation detected.
     IsolationDebtInvariant = 2013,
+    /// Position is within the liquidation grace period and cannot be liquidated yet.
+    LiquidationGracePeriodActive = 2014,
     /// The upgrade proposal has been cancelled and cannot be acted on.
     UpgradeProposalCancelled = 4012,
     /// The upgrade proposal is not in a cancellable (pending) state.
@@ -440,6 +442,7 @@ mod tests {
         assert_eq!(LendingError::InvalidLiquidationParams as u32, 2011);
         assert_eq!(LendingError::IsolationCeilingBelowDebt as u32, 2012);
         assert_eq!(LendingError::IsolationDebtInvariant as u32, 2013);
+        assert_eq!(LendingError::LiquidationGracePeriodActive as u32, 2014);
         assert_eq!(LendingError::AssetNotConfigured as u32, 3001);
         assert_eq!(LendingError::PriceFeedNotFound as u32, 3002);
         assert_eq!(LendingError::HealthFactorTooLow as u32, 3003);

@@ -211,7 +211,7 @@ fn test_liquidation_grace_rejects_before_elapsed() {
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(matches!(
         res,
-        Err(Ok(LendingError::LiquidationGracePeriodNotMet))
+        Err(Ok(LendingError::LiquidationGracePeriodActive))
     ));
 
     // Advance by 30 minutes — still within grace period
@@ -224,7 +224,7 @@ fn test_liquidation_grace_rejects_before_elapsed() {
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(matches!(
         res,
-        Err(Ok(LendingError::LiquidationGracePeriodNotMet))
+        Err(Ok(LendingError::LiquidationGracePeriodActive))
     ));
 
     // Advance by another 1801 seconds — grace period has now elapsed
@@ -308,7 +308,7 @@ fn test_liquidation_grace_resets_on_health_recovery() {
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(matches!(
         res,
-        Err(Ok(LendingError::LiquidationGracePeriodNotMet))
+        Err(Ok(LendingError::LiquidationGracePeriodActive))
     ));
 
     // Advance past grace period — first liquidation should now succeed.
@@ -346,7 +346,7 @@ fn test_liquidation_grace_resets_on_health_recovery() {
     let res = client.try_liquidate(&liquidator, &user, &asset_dbt, &asset_col, &350i128);
     assert!(matches!(
         res,
-        Err(Ok(LendingError::LiquidationGracePeriodNotMet))
+        Err(Ok(LendingError::LiquidationGracePeriodActive))
     ));
 }
 
