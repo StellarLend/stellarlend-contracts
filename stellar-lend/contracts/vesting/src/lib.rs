@@ -1134,8 +1134,12 @@ impl VestingContract {
 mod test_harness;
 #[cfg(test)]
 mod admin_rotation_test;
+
+// Admin authorization tests (real host, explicit mock_auths).
 #[cfg(test)]
 mod admin_auth_test;
+
+// Soroban SDK integration tests (use VestingContractClient / real host)
 #[cfg(test)]
 mod milestone_validation_test;
 #[cfg(test)]

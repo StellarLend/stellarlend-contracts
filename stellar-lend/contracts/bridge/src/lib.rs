@@ -4,8 +4,7 @@ use soroban_sdk::{
     Map, Vec,};
 
 pub const QUORUM_PROOF_DOMAIN: &[u8] = b"stellarlend::bridge::quorum_proof::v1";
-const PAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_PAUSE:";
-const UNPAUSE_PAYLOAD_TAG: &[u8] = b"BRIDGE_UNPAUSE:";
+pub const GUARDIAN_ACTION_DOMAIN: &[u8] = b"stellarlend::bridge::guardian_action::v1";
 
 /// Domain separator for inbound message IDs (issue #1901).
 ///
@@ -134,6 +133,8 @@ pub enum BridgeDataKey {
     ConsumedInboundMessage(BytesN<32>),
     /// `Vec<u32>` count of registered source domains (bounds iteration).
     SourceDomainCount,
+    /// Monotonic nonce for guardian actions.
+    GuardianNonce,
 }
 
 #[contracttype]
@@ -221,6 +222,17 @@ impl Bridge {
     }
     fn save_guardian(env: &Env, pk: &BytesN<32>) {
         env.storage().persistent().set(&BridgeDataKey::Guardian, pk);
+    }
+    fn load_guardian_nonce(env: &Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::GuardianNonce)
+            .unwrap_or(0)
+    }
+    fn save_guardian_nonce(env: &Env, nonce: u64) {
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::GuardianNonce, &nonce);
     }
     fn load_max_churn(env: &Env) -> Option<u32> {
         env.storage()
@@ -389,6 +401,63 @@ impl Bridge {
 
     pub fn get_guardian(env: Env) -> Option<BytesN<32>> {
         Self::load_guardian(&env)
+    }
+
+    pub fn get_guardian_nonce(env: Env) -> u64 {
+        Self::load_guardian_nonce(&env)
+    }
+
+    pub fn guardian_action_payload(
+        env: Env,
+        action: u8,
+        validator: BytesN<32>,
+        expires_at: u64,
+    ) -> BytesN<32> {
+        let bridge_id = Self::load_bridge_id(&env);
+        let nonce = Self::load_guardian_nonce(&env);
+        let epoch = Self::load_epoch(&env);
+        Self::build_guardian_payload(
+            &env,
+            &bridge_id,
+            action,
+            &validator,
+            nonce,
+            epoch,
+            expires_at,
+        )
+    }
+
+    fn build_guardian_payload(
+        env: &Env,
+        bridge_id: &Bytes,
+        action: u8,
+        validator: &BytesN<32>,
+        nonce: u64,
+        epoch: u64,
+        expires_at: u64,
+    ) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.extend_from_slice(GUARDIAN_ACTION_DOMAIN);
+        let contract_id = env.current_contract_address();
+        let contract_id_xdr = contract_id.to_xdr(env);
+        let cid_len = contract_id_xdr.len();
+        data.extend_from_slice(&cid_len.to_le_bytes());
+        data.append(&contract_id_xdr);
+
+        let id_len = bridge_id.len();
+        data.extend_from_slice(&id_len.to_le_bytes());
+        data.append(bridge_id);
+
+        data.extend_from_slice(&[action]);
+
+        let validator_bytes: [u8; 32] = validator.into();
+        data.extend_from_slice(&validator_bytes);
+
+        data.extend_from_slice(&nonce.to_be_bytes());
+        data.extend_from_slice(&epoch.to_be_bytes());
+        data.extend_from_slice(&expires_at.to_be_bytes());
+
+        env.crypto().sha256(&data).into()
     }
 
     pub fn set_max_churn(env: Env, max_churn: u32) {
@@ -883,6 +952,8 @@ impl Bridge {
     // Inbound epoch validation
     // -----------------------------------------------------------------------
 
+    // Reject a signed_epoch ... retired validator set.
+    pub fn validate_inbound_epoch(...) {
     /// Reject a `signed_epoch` that belongs to a retired validator set.    pub fn validate_inbound_epoch(env: Env, signed_epoch: u64) -> Result<(), BridgeError> {
         let current = Self::load_epoch(&env);
         if signed_epoch < current {
@@ -906,6 +977,7 @@ impl Bridge {
         env: Env,
         validator: BytesN<32>,
         signature: BytesN<64>,
+        expires_at: u64,
     ) -> Result<(), BridgeError> {
         let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
 
@@ -932,15 +1004,32 @@ impl Bridge {
             return Err(BridgeError::PauseWouldBreakQuorum);
         }
 
-        // Verify guardian signature over action-bound payload.
-        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
-        let payload = Self::build_tagged_payload(&env, PAUSE_PAYLOAD_TAG, &validator);
-        let payload_hash = env.crypto().sha256(&payload);
+        let nonce = Self::load_guardian_nonce(&env);
+        let bridge_id = Self::load_bridge_id(&env);
+        let epoch = Self::load_epoch(&env);
+        let payload_hash = Self::build_guardian_payload(
+            &env,
+            &bridge_id,
+            1,
+            &validator,
+            nonce,
+            epoch,
+            expires_at,
+        );
+
         env.crypto()
             .ed25519_verify(&guardian, &payload_hash.into(), &signature);
 
-        paused.set(validator, true);
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        Self::save_guardian_nonce(&env, next_nonce);
+
+        paused.set(validator.clone(), true);
         Self::save_paused(&env, &paused);
+
+        env.events().publish(
+            (symbol_short!("validator"), symbol_short!("paused")),
+            (validator, nonce),
+        );
         Ok(())
     }
 
@@ -951,6 +1040,7 @@ impl Bridge {
         env: Env,
         validator: BytesN<32>,
         signature: BytesN<64>,
+        expires_at: u64,
     ) -> Result<(), BridgeError> {
         let guardian = Self::load_guardian(&env).ok_or(BridgeError::NoGuardianConfigured)?;
 
@@ -964,26 +1054,34 @@ impl Bridge {
             return Err(BridgeError::NotPaused);
         }
 
-        // Verify guardian signature over action-bound payload.
-        // `ed25519_verify` traps on failure in soroban-sdk 25.x (returns `()`).
-        let payload = Self::build_tagged_payload(&env, UNPAUSE_PAYLOAD_TAG, &validator);
-        let payload_hash = env.crypto().sha256(&payload);
+        let nonce = Self::load_guardian_nonce(&env);
+        let bridge_id = Self::load_bridge_id(&env);
+        let epoch = Self::load_epoch(&env);
+        let payload_hash = Self::build_guardian_payload(
+            &env,
+            &bridge_id,
+            2,
+            &validator,
+            nonce,
+            epoch,
+            expires_at,
+        );
+
         env.crypto()
             .ed25519_verify(&guardian, &payload_hash.into(), &signature);
 
-        paused.remove(validator);
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        Self::save_guardian_nonce(&env, next_nonce);
+
+        paused.remove(validator.clone());
         Self::save_paused(&env, &paused);
+
+        env.events().publish(
+            (symbol_short!("validator"), symbol_short!("unpaused")),
+            (validator, nonce),
+        );
         Ok(())
     }
-
-    /// Build a guardian-signature payload as `tag || validator_key`.
-    fn build_tagged_payload(env: &Env, tag: &[u8], validator: &BytesN<32>) -> Bytes {
-        let mut payload = Bytes::new(env);
-        payload.extend_from_slice(tag);
-        let validator_bytes: [u8; 32] = validator.into();
-        payload.extend_from_slice(&validator_bytes);
-        payload    }
-
     // -----------------------------------------------------------------------
     // Inbound value-cap
     // -----------------------------------------------------------------------

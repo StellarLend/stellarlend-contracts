@@ -315,3 +315,11 @@ fn only_active_epoch_accepted_at_epoch_5() {
         }
     }
 }
+ 
+
+#[test]
+fn validate_inbound_epoch_exposed() {
+    // COPY the setup lines (env, register contract, client) from the test just above this one
+
+    client.validate_inbound_epoch(&0);
+}
