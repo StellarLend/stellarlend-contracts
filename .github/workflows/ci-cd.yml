@@ -48,6 +48,13 @@ jobs:
             -p stellarlend-vesting \
             -p stellarlend-multisig
 
+      - name: Optimize WASMs
+        run: |
+          sudo apt-get update && sudo apt-get install -y binaryen
+          for f in stellar-lend/target/wasm32v1-none/release/stellarlend_*.wasm; do
+            wasm-opt -Oz --strip-debug --strip-producers "$f" -o "$f.tmp" && mv "$f.tmp" "$f"
+          done
+
       - name: Enforce WASM size budgets
         run: bash scripts/check_wasm_sizes.sh
 

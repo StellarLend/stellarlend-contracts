@@ -3,8 +3,8 @@ use stellar_lend_common::pow10_checked;
 
 use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
 use crate::{
-    check_emergency_status, check_pause_status, AssetParams, AssetParamsV2, DataKey, LendingError,
-    PriceRecord, ProtocolAction, DEFAULT_ASSET_DECIMALS, DEFAULT_ORACLE_MAX_AGE_SECS,
+    check_emergency_status, check_pause_status, max_age_for, AssetParams, AssetParamsV2, DataKey,
+    LendingError, PriceRecord, ProtocolAction, DEFAULT_ASSET_DECIMALS,
 };
 
 /// Fixed-point divisor defining the oracle price scale, and the conversion of a
@@ -223,8 +223,8 @@ pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, Le
         return Err(LendingError::PriceFeedNotFound);
     }
     let now = env.ledger().timestamp();
-    if record.timestamp > now || now.saturating_sub(record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS
-    {
+    let max_age = max_age_for(env, asset);
+    if record.timestamp > now || now.saturating_sub(record.timestamp) > max_age {
         return Err(LendingError::StaleOracleTimestamp);
     }
     // A non-positive price is never valid; treat as missing feed.

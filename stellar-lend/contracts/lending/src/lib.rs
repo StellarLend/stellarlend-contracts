@@ -228,6 +228,18 @@ pub const ORACLE_PRICE_SCALE: i128 = 10_000_000;
 /// extinguish a borrower's entire debt in one block.
 pub const MAX_CLOSE_FACTOR_BPS: i128 = 7500;
 const DEFAULT_ORACLE_MAX_AGE_SECS: u64 = 3600;
+/// Lower bound accepted by [`LendingContract::set_oracle_max_age`]. A max age
+/// of zero would treat every price as instantly stale and brick borrowing.
+const MIN_ORACLE_MAX_AGE_SECS: u64 = 60;
+/// Upper bound accepted by [`LendingContract::set_oracle_max_age`].
+const MAX_ORACLE_MAX_AGE_SECS: u64 = 24 * 3600;
+/// Default length of the windowed deviation guard used by
+/// [`LendingContract::set_price`] when [`DataKey::MoveWindowSecs`] is unset.
+const DEFAULT_MOVE_WINDOW_SECS: u64 = 3600;
+/// Lower bound accepted by [`LendingContract::set_move_window_secs`].
+const MIN_MOVE_WINDOW_SECS: u64 = 1;
+/// Upper bound accepted by [`LendingContract::set_move_window_secs`].
+const MAX_MOVE_WINDOW_SECS: u64 = 24 * 3600;
 const ORACLE_SIGNATURE_DOMAIN: &[u8] = b"StellarLendOracle:v2";
 const BPS_DENOM: i128 = 10_000;
 const SCHEMA_VERSION_V1: u32 = 1;
@@ -284,8 +296,23 @@ pub enum DataKey {
     UserOperationSequence(Address),
     OperationRecord(soroban_sdk::BytesN<32>),
     OraclePubKey,
+    // Optional address permitted (in addition to the admin) to relay signed
+    // oracle price updates. See set_price_relayer.
+    /// Optional price relayer.
+    PriceRelayer,
+    // Falls back to DEFAULT_ORACLE_MAX_AGE_SECS when unset. Configured via
+    // set_oracle_max_age.
+    /// Per-asset max oracle age (secs).
+    OracleMaxAge(Address),
     OraclePrice(Address),
+    // Used by the time-windowed deviation guard in set_price.
+    /// Per-asset (anchor_price, anchor_timestamp).
+    OracleAnchor(Address),
     MaxMoveBps,
+    // Defaults to DEFAULT_MOVE_WINDOW_SECS when unset. Configured via
+    // set_move_window_secs.
+    /// Windowed deviation guard length (secs).
+    MoveWindowSecs,
     PriceMin(Address),
     PriceMax(Address),
     ValuationCollateralAsset,
@@ -398,6 +425,25 @@ pub struct MinBorrowSetEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaxMoveBpsSetEvent {
     pub max_move_bps: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleMaxAgeSetEvent {
+    pub asset: Address,
+    pub max_age_secs: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MoveWindowSetEvent {
+    pub move_window_secs: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PriceRelayerSetEvent {
+    pub relayer: Address,
 }
 
 #[contractevent]
@@ -591,6 +637,19 @@ pub struct IsolationConfig {
 #[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PriceRecord {
+    pub price: i128,
+    pub timestamp: u64,
+}
+
+// Each accepted update is compared against the anchor's `price`; the anchor is
+// only reset (to the newly accepted price) once `move_window_secs` has elapsed
+// since `timestamp`. This bounds the cumulative distance a price may travel
+// within a window, unlike a per-update cap which can be walked arbitrarily
+// through many small updates.
+/// Anchor for the windowed deviation guard in `set_price`.
+#[contracttype(export = false)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleAnchor {
     pub price: i128,
     pub timestamp: u64,
 }
@@ -892,14 +951,28 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::OraclePubKey)
     }
 
+    // Authorization: `caller` must be the configured price relayer
+    // (set_price_relayer) or the admin, and must authorize the invocation. The
+    // relayer role lets an always-online oracle process avoid the admin key.
+    // The ed25519 signature over the canonical payload
+    // (`oracle_price_signature_payload`) is the real authenticity boundary.
+    // Freshness: the timestamp must not be in the future and must be no older
+    // than the per-asset max age (set_oracle_max_age, default
+    // DEFAULT_ORACLE_MAX_AGE_SECS).
+    // Velocity: a per-update cap (MaxMoveBps) and a time-windowed deviation
+    // guard are both enforced. The windowed guard compares against a per-asset
+    // anchor and bounds the cumulative move within `move_window_secs`.
+    /// Store a signed oracle price update. Caller: relayer or admin.
     pub fn set_price(
         env: Env,
+        caller: Address,
         asset: Address,
         price: i128,
         timestamp: u64,
         signature: BytesN<64>,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
+        require_price_relayer_or_admin(&env, &caller)?;
         if price <= 0 {
             return Err(LendingError::InvalidAmount);
         }
@@ -923,8 +996,9 @@ impl LendingContract {
             }
         }
 
+        let max_age = max_age_for(&env, &asset);
         let now = env.ledger().timestamp();
-        if timestamp > now || now > timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS) {
+        if timestamp > now || now > timestamp.saturating_add(max_age) {
             return Err(LendingError::StaleOracleTimestamp);
         }
         // Load the existing record once. The freshness and retry policy is:
@@ -948,33 +1022,57 @@ impl LendingContract {
             }
         }
 
-        // Per-update move-cap circuit breaker. Run before the expensive
-        // signature verification, along with the other input checks.
-        if let Some(max_move_bps) = env
+        // Velocity guards. Both run before the expensive signature
+        // verification, along with the other input checks.
+        let max_move_bps: Option<i128> = env
             .storage()
             .instance()
-            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
-        {
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps);
+
+        // Per-update move-cap circuit breaker (relative to the previous update).
+        if let Some(max_move_bps) = max_move_bps {
             if let Some(last) = existing_record.as_ref() {
-                let last_price = last.price;
-                let delta_abs = if price >= last_price {
-                    price
-                        .checked_sub(last_price)
-                        .ok_or(LendingError::Overflow)?
-                } else {
-                    last_price
-                        .checked_sub(price)
-                        .ok_or(LendingError::Overflow)?
-                };
-                let move_bps = delta_abs
-                    .checked_mul(BPS_DENOM)
-                    .ok_or(LendingError::Overflow)?
-                    .checked_div(last_price)
-                    .ok_or(LendingError::Overflow)?;
-                if move_bps > max_move_bps {
+                if bps_move(price, last.price)? > max_move_bps {
                     return Err(LendingError::MaxMoveBpsExceeded);
                 }
             }
+        }
+
+        // Time-windowed deviation guard (relative to the window anchor). The
+        // anchor is reset once `move_window_secs` has elapsed, at which point a
+        // move of up to `max_move_bps` from the new anchor is permitted. When no
+        // cap is configured (or the asset has no prior record) the anchor is
+        // simply (re)seeded and no deviation check applies.
+        let window = move_window_secs(&env);
+        let existing_anchor: Option<OracleAnchor> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OracleAnchor(asset.clone()));
+        let anchor_expired = match existing_anchor.as_ref() {
+            Some(anchor) => now.saturating_sub(anchor.timestamp) >= window,
+            None => true,
+        };
+        match (max_move_bps, existing_anchor.as_ref()) {
+            (Some(max_move_bps), Some(anchor)) if !anchor_expired => {
+                if bps_move(price, anchor.price)? > max_move_bps {
+                    return Err(LendingError::MaxMoveBpsExceeded);
+                }
+            }
+            (Some(_), Some(_)) => {
+                // Window elapsed: reseed the anchor at the new price.
+                env.storage().persistent().set(
+                    &DataKey::OracleAnchor(asset.clone()),
+                    &OracleAnchor { price, timestamp },
+                );
+            }
+            (Some(_), None) => {
+                // First observed price for this asset seeds the anchor.
+                env.storage().persistent().set(
+                    &DataKey::OracleAnchor(asset.clone()),
+                    &OracleAnchor { price, timestamp },
+                );
+            }
+            (None, _) => {}
         }
 
         let oracle_pubkey: BytesN<32> = env
@@ -1095,6 +1193,127 @@ impl LendingContract {
         env.storage().instance().get(&DataKey::MaxMoveBps)
     }
 
+    // Freshness checks for `asset` (in set_price, the cross-asset valuation
+    // paths and require_fresh_valuation_prices) use this value instead of the
+    // protocol default. `secs` must lie in
+    // [MIN_ORACLE_MAX_AGE_SECS, MAX_ORACLE_MAX_AGE_SECS] (60 s to 24 h). A max
+    // age of 0 is rejected because it would mark every price as instantly
+    // stale and brick borrowing. Returns LendingError::InvalidAmount when out
+    // of range.
+    /// Set per-asset max oracle price age in seconds (admin-only).
+    pub fn set_oracle_max_age(env: Env, asset: Address, secs: u64) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        if !(MIN_ORACLE_MAX_AGE_SECS..=MAX_ORACLE_MAX_AGE_SECS).contains(&secs) {
+            return Err(LendingError::InvalidAmount);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::OracleMaxAge(asset.clone()), &secs);
+        OracleMaxAgeSetEvent {
+            asset,
+            max_age_secs: secs,
+        }
+        .publish(&env);
+
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_oracle_max_age"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+
+    /// Read the configured per-asset max oracle age, if set.
+    pub fn get_oracle_max_age(env: Env, asset: Address) -> Option<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OracleMaxAge(asset))
+    }
+
+    // A price may deviate at most `max_move_bps` from its per-asset anchor
+    // within this window; the anchor resets once the window elapses. Bounds are
+    // [MIN_MOVE_WINDOW_SECS, MAX_MOVE_WINDOW_SECS] (1 s to 24 h).
+    /// Set the windowed deviation guard length in seconds (admin-only).
+    pub fn set_move_window_secs(env: Env, secs: u64) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        if !(MIN_MOVE_WINDOW_SECS..=MAX_MOVE_WINDOW_SECS).contains(&secs) {
+            return Err(LendingError::InvalidAmount);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::MoveWindowSecs, &secs);
+        MoveWindowSetEvent {
+            move_window_secs: secs,
+        }
+        .publish(&env);
+
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_move_window_secs"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+
+    /// Read the configured windowed-deviation window length in seconds.
+    pub fn get_move_window_secs(env: Env) -> u64 {
+        move_window_secs(&env)
+    }
+
+    // Separates the always-online oracle relayer key from the admin key. The
+    // relayer still must supply a valid ed25519 signature over the price
+    // payload; the role only gates who may submit an otherwise-valid update.
+    /// Set the optional price relayer address (admin-only).
+    pub fn set_price_relayer(env: Env, relayer: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(LendingError::NotInitialized)?;
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PriceRelayer, &relayer);
+        PriceRelayerSetEvent {
+            relayer: relayer.clone(),
+        }
+        .publish(&env);
+
+        audit_log::record_audit_entry(
+            &env,
+            String::from_str(&env, "set_price_relayer"),
+            admin,
+            None,
+        );
+
+        Ok(())
+    }
+
+    /// Read the configured price relayer, if any.
+    pub fn get_price_relayer(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PriceRelayer)
+    }
+
     // Set the maximum flash-loan utilization ratio in basis points (admin-only).
     // The requested amount must not exceed `max_flash_bps × available_liquidity / 10000`.
     pub fn set_max_flash_bps(env: Env, max_flash_bps: i128) -> Result<(), LendingError> {
@@ -1127,11 +1346,19 @@ impl LendingContract {
 
     // Set per‑asset price bounds (admin‑only).
     // `min_price` must be > 0 and less than `max_price`.
+    //
+    // If the asset already has a stored price, the new bounds must contain it,
+    // otherwise the stored price would be rejected by future `set_price` calls
+    // until refreshed, and freshness would fail closed. Pass `force = true` to
+    // intentionally install bounds that exclude the current price (for example
+    // when the price is known to be wrong and will be corrected immediately).
+    // This is an explicit, audited override.
     pub fn set_price_bounds(
         env: Env,
         asset: Address,
         min_price: i128,
         max_price: i128,
+        force: bool,
     ) -> Result<(), LendingError> {
         require_initialized(&env)?;
         let admin: Address = env
@@ -1144,6 +1371,19 @@ impl LendingContract {
         if min_price <= 0 || max_price <= 0 || min_price >= max_price {
             return Err(LendingError::InvalidAmount);
         }
+
+        if !force {
+            if let Some(current) = env
+                .storage()
+                .persistent()
+                .get::<_, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
+            {
+                if current.price < min_price || current.price > max_price {
+                    return Err(LendingError::PriceOutOfBounds);
+                }
+            }
+        }
+
         env.storage()
             .persistent()
             .set(&DataKey::PriceMin(asset.clone()), &min_price);
@@ -4412,6 +4652,64 @@ pub(crate) fn assert_admin(env: &Env) -> Result<(), LendingError> {
     Ok(())
 }
 
+/// Assert that `caller` is either the configured price relayer or the protocol
+/// admin.
+///
+/// The relayer role lets an always-online oracle process submit signed prices
+/// without holding the admin key. The ed25519 signature check in `set_price` is
+/// the independent authenticity boundary. Returns
+/// [`LendingError::Unauthorized`] if `caller` is neither address.
+fn require_price_relayer_or_admin(env: &Env, caller: &Address) -> Result<(), LendingError> {
+    let admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(LendingError::NotInitialized)?;
+    let relayer: Option<Address> = env.storage().instance().get(&DataKey::PriceRelayer);
+    if *caller == admin || relayer.as_ref() == Some(caller) {
+        caller.require_auth();
+        Ok(())
+    } else {
+        Err(LendingError::Unauthorized)
+    }
+}
+
+/// Resolve the effective max oracle age for `asset`, honouring a per-asset
+/// override and falling back to [`DEFAULT_ORACLE_MAX_AGE_SECS`].
+pub(crate) fn max_age_for(env: &Env, asset: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get::<_, u64>(&DataKey::OracleMaxAge(asset.clone()))
+        .unwrap_or(DEFAULT_ORACLE_MAX_AGE_SECS)
+}
+
+/// Resolve the configured windowed-deviation window length, falling back to
+/// [`DEFAULT_MOVE_WINDOW_SECS`].
+fn move_window_secs(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get::<_, u64>(&DataKey::MoveWindowSecs)
+        .unwrap_or(DEFAULT_MOVE_WINDOW_SECS)
+}
+
+/// Return the absolute move from `base` to `price` in basis points:
+/// `|price - base| * 10_000 / base`.
+///
+/// Returns [`LendingError::Overflow`] if any intermediate step overflows
+/// `i128`. `base` is assumed positive (prices are validated `> 0`).
+fn bps_move(price: i128, base: i128) -> Result<i128, LendingError> {
+    let delta_abs = if price >= base {
+        price.checked_sub(base).ok_or(LendingError::Overflow)?
+    } else {
+        base.checked_sub(price).ok_or(LendingError::Overflow)?
+    };
+    delta_abs
+        .checked_mul(BPS_DENOM)
+        .ok_or(LendingError::Overflow)?
+        .checked_div(base)
+        .ok_or(LendingError::Overflow)
+}
+
 fn check_and_clear_unhealthy_timestamp(env: &Env, user: &Address) {
     let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(user.clone());
     if env.storage().persistent().has(&first_unhealthy_key) {
@@ -4619,12 +4917,12 @@ fn require_fresh_price_for_key(env: &Env, asset_key: &DataKey) -> Result<(), Len
     let record = env
         .storage()
         .persistent()
-        .get::<_, PriceRecord>(&DataKey::OraclePrice(asset))
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(asset.clone()))
         .ok_or(LendingError::PriceUnavailable)?;
 
     let now = env.ledger().timestamp();
-    if record.timestamp > now || now > record.timestamp.saturating_add(DEFAULT_ORACLE_MAX_AGE_SECS)
-    {
+    let max_age = max_age_for(env, &asset);
+    if record.timestamp > now || now > record.timestamp.saturating_add(max_age) {
         return Err(LendingError::StaleOracleTimestamp);
     }
 
@@ -4732,11 +5030,11 @@ fn position_health_factor(env: &Env, collateral: i128, debt: i128) -> (i128, boo
     let collateral_record = env
         .storage()
         .persistent()
-        .get::<_, PriceRecord>(&DataKey::OraclePrice(collateral_asset));
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(collateral_asset.clone()));
     let debt_record = env
         .storage()
         .persistent()
-        .get::<_, PriceRecord>(&DataKey::OraclePrice(debt_asset));
+        .get::<_, PriceRecord>(&DataKey::OraclePrice(debt_asset.clone()));
     let (Some(collateral_record), Some(debt_record)) = (collateral_record, debt_record) else {
         return (0, true);
     };
@@ -4746,8 +5044,8 @@ fn position_health_factor(env: &Env, collateral: i128, debt: i128) -> (i128, boo
         || debt_record.price <= 0
         || collateral_record.timestamp > now
         || debt_record.timestamp > now
-        || now.saturating_sub(collateral_record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS
-        || now.saturating_sub(debt_record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS;
+        || now.saturating_sub(collateral_record.timestamp) > max_age_for(env, &collateral_asset)
+        || now.saturating_sub(debt_record.timestamp) > max_age_for(env, &debt_asset);
     if collateral_record.price <= 0 || debt_record.price <= 0 {
         return (0, true);
     }

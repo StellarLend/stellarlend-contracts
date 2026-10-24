@@ -77,8 +77,18 @@
 |---|---|---|---|
 | `set_oracle_pubkey` | `(pubkey: BytesN<32>)` | admin | `()` |
 | `get_oracle_pubkey` | `()` | — | `Option<BytesN<32>>` |
-| `set_price` | `(caller: Address, asset: Address, price: i128, timestamp: u64, signature: BytesN<64>)` | `caller` must be admin | `Result<(), LendingError>` |
+| `set_price` | `(caller: Address, asset: Address, price: i128, timestamp: u64, signature: BytesN<64>)` | `caller` must be admin or the configured price relayer | `Result<(), LendingError>` |
 | `get_price_record` | `(asset: Address)` | — | `Option<PriceRecord>` |
+| `set_price_relayer` | `(relayer: Address)` | admin | `Result<(), LendingError>` |
+| `get_price_relayer` | `()` | — | `Option<Address>` |
+| `set_oracle_max_age` | `(asset: Address, secs: u64)` | admin | `Result<(), LendingError>` — bounds `60..=86_400` |
+| `get_oracle_max_age` | `(asset: Address)` | — | `Option<u64>` |
+| `set_move_window_secs` | `(secs: u64)` | admin | `Result<(), LendingError>` — bounds `1..=86_400` |
+| `get_move_window_secs` | `()` | — | `u64` |
+| `set_max_move_bps` | `(max_move_bps: i128)` | admin | `Result<(), LendingError>` |
+| `get_max_move_bps` | `()` | — | `Option<i128>` |
+| `set_price_bounds` | `(asset: Address, min_price: i128, max_price: i128, force: bool)` | admin | `Result<(), LendingError>` — rejects bounds excluding the current price unless `force` |
+| `get_price_bounds` | `(asset: Address)` | — | `(Option<i128>, Option<i128>)` |
 
 ### Admin & Risk Controls
 
