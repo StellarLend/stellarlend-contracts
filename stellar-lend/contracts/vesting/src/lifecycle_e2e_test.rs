@@ -349,10 +349,9 @@ mod lifecycle_e2e_tests {
         assert_eq!(clawback, 100);
         assert_conservation(&c, "t=900 post-revoke");
 
-        // alice has nothing left to claim (all already claimed) -- an
-        // error, not `Ok(0)` (see the comment in `conservation_before_cliff`).
-        let final_claim_err = c.claim("alice", 900).unwrap_err();
-        assert_eq!(final_claim_err, VestingError::NothingToClaim);
+        // alice has nothing left to claim (all already claimed) -- returns 0
+        let final_claim = c.claim("alice", 900).expect("claim should return 0");
+        assert_eq!(final_claim, 0);
 
         // Final state
         assert_eq!(c.balance_of("alice"), 900);

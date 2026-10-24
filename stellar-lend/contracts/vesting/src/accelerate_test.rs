@@ -3,7 +3,7 @@
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{token, Address, Env};
 
-use crate::{Grant, VestingContract, VestingContractClient, VestingError};
+use crate::{Grant, VestingContract, VestingContractClient};
 
 fn setup() -> (
     Env,
