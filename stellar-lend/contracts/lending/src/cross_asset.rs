@@ -16,7 +16,7 @@ use crate::{
 /// `price` is:
 ///
 /// ```text
-/// value = amount × price / 10^decimals      (7-decimal USD scale)
+/// value = amount × price.checked_div(10).unwrap_or(0)^decimals      (7-decimal USD scale)
 /// ```
 ///
 /// `PRICE_DIVISOR` == `10^7` is that conversion for a 7-decimal asset: it is the
@@ -145,12 +145,12 @@ pub fn load_asset_decimals(env: &Env, asset: &Address) -> u32 {
 /// # Formula
 ///
 /// ```text
-/// value = amount × price / 10^decimals      (floor)
+/// value = amount × price.checked_div(10).unwrap_or(0)^decimals      (floor)
 /// ```
 ///
 /// `price` is the oracle price on the protocol's uniform 7-decimal scale
 /// (`10_000_000` = \$1.00). For `decimals == 7` this reduces to the historical
-/// `amount × price / PRICE_DIVISOR`.
+/// `amount × price.checked_div(PRICE_DIVISOR).unwrap_or(0)`.
 ///
 /// # Rounding
 /// Rounds **down** (floor), which is conservative for collateral values — it
@@ -192,7 +192,7 @@ fn value_in_base_rounded(
     let denom = pow10_checked(decimals).ok_or(LendingError::Overflow)?;
     let product = amount.checked_mul(price).ok_or(LendingError::Overflow)?;
     let value = product.checked_div(denom).ok_or(LendingError::Overflow)?;
-    if round_up && product % denom != 0 {
+    if round_up && product.checked_rem(denom).unwrap_or(0) != 0 {
         return value.checked_add(1).ok_or(LendingError::Overflow);
     }
     Ok(value)
@@ -311,7 +311,7 @@ fn get_user_debt_assets(env: &Env, user: &Address) -> Vec<Address> {
 pub(crate) fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
-    let threshold = extend_to / 2 + 1;
+    let threshold = extend_to.checked_div(2).unwrap_or(0) + 1;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -322,7 +322,7 @@ pub(crate) fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Add
 pub(crate) fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
-    let threshold = extend_to / 2 + 1;
+    let threshold = extend_to.checked_div(2).unwrap_or(0) + 1;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -371,9 +371,9 @@ pub(crate) fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) 
 /// ceiling) using the asset's configured decimals:
 ///
 /// ```text
-/// collateral_value_i  = floor(amount_i × price_i / 10^decimals_i)
+/// collateral_value_i  = floor(amount_i × price_i.checked_div(10).unwrap_or(0)^decimals_i)
 /// weighted_collateral = Σ  collateral_value_i × liquidation_threshold_bps_i
-/// debt_value_j        = ceil(effective_debt_j × price_j / 10^decimals_j)
+/// debt_value_j        = ceil(effective_debt_j × price_j.checked_div(10).unwrap_or(0)^decimals_j)
 /// total_debt_value    = Σ  debt_value_j
 /// health_factor       = weighted_collateral / total_debt_value
 /// ```
