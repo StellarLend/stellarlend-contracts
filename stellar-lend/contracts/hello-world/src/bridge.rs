@@ -233,8 +233,7 @@ pub fn initialize(env: &Env, admin: Address) {
     if crate::admin::has_admin(env) {
         return;
     }
-    crate::admin::set_admin(env, admin, None)
-        .expect("bridge admin initialization should succeed");
+    crate::admin::set_admin(env, admin, None).expect("bridge admin initialization should succeed");
 }
 
 /// Register a bridge for `network_id` (admin only).
@@ -473,9 +472,7 @@ pub fn unfreeze_bridge(env: &Env, caller: Address) -> Result<(), BridgeError> {
         // No-op: do not double-emit.
         return Ok(());
     }
-    env.storage()
-        .instance()
-        .remove(&BridgeDataKey::IsFrozen);
+    env.storage().instance().remove(&BridgeDataKey::IsFrozen);
     emit_freeze_event(env, &caller, false);
     Ok(())
 }

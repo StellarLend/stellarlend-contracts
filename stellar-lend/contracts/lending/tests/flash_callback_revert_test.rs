@@ -68,6 +68,7 @@ fn setup(env: &Env, treasury_balance: i128) -> (LendingContractClient<'_>, Addre
     let client = LendingContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     client.initialize(&admin);
+    client.set_max_flash_bps(&10_000);
     let asset = Address::generate(env);
     // Seed treasury directly so flash_loan has liquidity.
     env.as_contract(&contract_id, || {

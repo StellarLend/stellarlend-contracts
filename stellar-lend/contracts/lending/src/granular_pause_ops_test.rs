@@ -46,7 +46,7 @@ fn setup_with_guardian() -> (
 
 fn pause(_env: &Env, client: &LendingContractClient<'static>, operation: PauseType) {
     let ttl = 5u32;
-    client.set_pause(&operation, &true, &ttl);
+    client.set_pause(&client.get_admin().unwrap(), &operation, &true, &ttl);
 }
 
 fn advance_past_pause_expiry(env: &Env) {
@@ -128,7 +128,7 @@ fn admin_can_pause() {
     let (env, client, cid, _admin, _user) = setup();
     let ttl = 100u32;
     let current_ledger = env.ledger().sequence();
-    client.set_pause(&PauseType::Deposit, &true, &ttl);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &true, &ttl);
 
     env.as_contract(&cid, || {
         let state: PauseState = env
@@ -141,13 +141,13 @@ fn admin_can_pause() {
     });
 }
 
-// ─── set_pause: guardian can pause (via assert_admin_or_guardian) ────────────
+// ─── set_pause: guardian can pause ───────────────────────────────────────────
 
 #[test]
 fn guardian_can_pause() {
-    let (_env, client, _cid, _admin, _guardian, _user) = setup_with_guardian();
+    let (_env, client, _cid, _admin, guardian, _user) = setup_with_guardian();
     let ttl = 100u32;
-    client.set_pause(&PauseType::Borrow, &true, &ttl);
+    client.set_pause(&guardian, &PauseType::Borrow, &true, &ttl);
 
     assert!(client.get_pause_state(&PauseType::Borrow));
 }
@@ -168,11 +168,11 @@ fn unauthorized_caller_rejected() {
         invoke: &MockAuthInvoke {
             contract: &id,
             fn_name: "set_pause",
-            args: (PauseType::Deposit, true, 100u32).into_val(&env),
+            args: (attacker.clone(), PauseType::Deposit, true, 100u32).into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    client.set_pause(&PauseType::Deposit, &true, &100u32);
+    client.set_pause(&attacker, &PauseType::Deposit, &true, &100u32);
 }
 
 // ─── set_pause: unpause via paused=false ─────────────────────────────────────
@@ -180,10 +180,10 @@ fn unauthorized_caller_rejected() {
 #[test]
 fn unpause_via_paused_false() {
     let (_env, client, _cid, _admin, user) = setup();
-    client.set_pause(&PauseType::Deposit, &true, &100u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &true, &100u32);
     assert!(client.get_pause_state(&PauseType::Deposit));
 
-    client.set_pause(&PauseType::Deposit, &false, &100u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &false, &100u32);
     assert!(!client.get_pause_state(&PauseType::Deposit));
 
     assert_eq!(client.deposit(&user, &100), 100);
@@ -194,7 +194,7 @@ fn unpause_via_paused_false() {
 #[test]
 fn ttl_zero_expires_immediately() {
     let (env, client, cid, _admin, _user) = setup();
-    client.set_pause(&PauseType::Borrow, &true, &0u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Borrow, &true, &0u32);
 
     env.as_contract(&cid, || {
         let state: PauseState = env
@@ -215,7 +215,7 @@ fn ttl_zero_expires_immediately() {
 fn expiry_by_ledger_advancement() {
     let (env, client, _cid, _admin, _user) = setup();
     let ttl = 5u32;
-    client.set_pause(&PauseType::Borrow, &true, &ttl);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Borrow, &true, &ttl);
     assert!(client.get_pause_state(&PauseType::Borrow));
 
     let mut ledger = env.ledger().get();
@@ -230,12 +230,12 @@ fn expiry_by_ledger_advancement() {
 #[test]
 fn re_pausing_overwrites_state() {
     let (env, client, cid, _admin, _user) = setup();
-    client.set_pause(&PauseType::Deposit, &true, &10u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &true, &10u32);
     assert!(client.get_pause_state(&PauseType::Deposit));
 
     let ttl2 = 200u32;
     let expected_expiry = env.ledger().sequence().saturating_add(ttl2);
-    client.set_pause(&PauseType::Deposit, &true, &ttl2);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &true, &ttl2);
 
     env.as_contract(&cid, || {
         let state: PauseState = env
@@ -255,7 +255,7 @@ fn pause_all_blocks_all_granular_operations() {
     let (_env, client, _cid, _admin, user) = setup();
     client.deposit(&user, &200);
     client.borrow(&user, &50);
-    client.set_pause(&PauseType::All, &true, &100u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::All, &true, &100u32);
 
     assert!(client.get_pause_state(&PauseType::All));
     assert!(client.get_pause_state(&PauseType::Deposit));
@@ -270,7 +270,7 @@ fn pause_all_blocks_all_granular_operations() {
 #[test]
 fn granular_pause_only_blocks_that_type() {
     let (_env, client, _cid, _admin, user) = setup();
-    client.set_pause(&PauseType::Borrow, &true, &100u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Borrow, &true, &100u32);
 
     assert!(client.get_pause_state(&PauseType::Borrow));
     assert!(!client.get_pause_state(&PauseType::Deposit));
@@ -291,11 +291,12 @@ fn set_pause_emits_event_with_correct_states() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    client.set_pause(&PauseType::Deposit, &true, &100u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &true, &100u32);
 
     assert_eq!(
         env.events().all(),
         [PauseStateChangedEvent {
+            caller: client.get_admin().unwrap(),
             operation: PauseType::Deposit,
             old_state: PauseState {
                 paused: false,
@@ -319,13 +320,14 @@ fn set_pause_emits_event_on_unpause() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    client.set_pause(&PauseType::Deposit, &true, &100u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &true, &100u32);
 
-    client.set_pause(&PauseType::Deposit, &false, &150u32);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::Deposit, &false, &150u32);
 
     assert_eq!(
         env.events().all(),
         [PauseStateChangedEvent {
+            caller: client.get_admin().unwrap(),
             operation: PauseType::Deposit,
             old_state: PauseState {
                 paused: true,

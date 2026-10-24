@@ -79,7 +79,7 @@ fn mock_only_for_state_transition(
         invoke: &MockAuthInvoke {
             contract: cid,
             fn_name: "set_emergency_state",
-            args: (state.clone(),).into_val(env),
+            args: (caller.clone(), state).into_val(env),
             sub_invokes: &[],
         },
     }]);
@@ -87,14 +87,12 @@ fn mock_only_for_state_transition(
 
 // ─── Auth matrix: admin ───────────────────────────────────────────────────────
 
-/// Admin may transition to Shutdown when no guardian is configured.
-/// When a guardian IS set, the contract calls `guardian.require_auth()` for
-/// Shutdown, so only the guardian (not the admin) satisfies that path.
+/// Admin may transition to Shutdown whether or not a guardian is configured.
 #[test]
 fn admin_can_set_shutdown() {
     let (env, client, cid, admin, _user) = setup_no_guardian();
     mock_only_for_state_transition(&env, &cid, &admin, EmergencyState::Shutdown);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&admin, &EmergencyState::Shutdown);
 }
 
 /// Admin may transition to Recovery.
@@ -102,7 +100,7 @@ fn admin_can_set_shutdown() {
 fn admin_can_set_recovery() {
     let (env, client, cid, admin, _guardian, _user) = setup_with_guardian();
     mock_only_for_state_transition(&env, &cid, &admin, EmergencyState::Recovery);
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&admin, &EmergencyState::Recovery);
 }
 
 /// Admin may transition through Shutdown and back to Normal when no guardian
@@ -111,9 +109,34 @@ fn admin_can_set_recovery() {
 fn admin_can_set_normal() {
     let (env, client, cid, admin, _user) = setup_no_guardian();
     mock_only_for_state_transition(&env, &cid, &admin, EmergencyState::Shutdown);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&admin, &EmergencyState::Shutdown);
     mock_only_for_state_transition(&env, &cid, &admin, EmergencyState::Normal);
-    client.set_emergency_state(&EmergencyState::Normal);
+    client.set_emergency_state(&admin, &EmergencyState::Normal);
+}
+
+#[test]
+fn emergency_state_getter_tracks_transitions() {
+    let (_env, client, _cid, admin, _guardian, _user) = setup_with_guardian();
+
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Normal));
+
+    client.set_emergency_state(&admin, &EmergencyState::Shutdown);
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Shutdown));
+
+    client.set_emergency_state(&admin, &EmergencyState::Recovery);
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Recovery));
+
+    client.set_emergency_state(&admin, &EmergencyState::Normal);
+    assert_eq!(client.get_emergency_state(), Some(EmergencyState::Normal));
+}
+
+#[test]
+fn emergency_state_getter_returns_none_before_initialization() {
+    let env = Env::default();
+    let cid = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &cid);
+
+    assert_eq!(client.get_emergency_state(), None);
 }
 
 // ─── Auth matrix: guardian ────────────────────────────────────────────────────
@@ -123,7 +146,7 @@ fn admin_can_set_normal() {
 fn guardian_can_set_shutdown() {
     let (env, client, cid, _admin, guardian, _user) = setup_with_guardian();
     mock_only_for_state_transition(&env, &cid, &guardian, EmergencyState::Shutdown);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&guardian, &EmergencyState::Shutdown);
 }
 
 /// Guardian cannot set Recovery; only the admin can lift an emergency.
@@ -131,9 +154,9 @@ fn guardian_can_set_shutdown() {
 #[should_panic]
 fn guardian_cannot_set_recovery() {
     let (env, client, cid, _admin, guardian, _user) = setup_with_guardian();
-    // Guardian's auth is mocked; admin.require_auth() (called for Recovery) will fail.
+    // The guardian is authenticated, but is not authorized to enter Recovery.
     mock_only_for_state_transition(&env, &cid, &guardian, EmergencyState::Recovery);
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&guardian, &EmergencyState::Recovery);
 }
 
 /// Guardian cannot set Normal; only the admin can return to full operation.
@@ -142,7 +165,7 @@ fn guardian_cannot_set_recovery() {
 fn guardian_cannot_set_normal() {
     let (env, client, cid, _admin, guardian, _user) = setup_with_guardian();
     mock_only_for_state_transition(&env, &cid, &guardian, EmergencyState::Normal);
-    client.set_emergency_state(&EmergencyState::Normal);
+    client.set_emergency_state(&guardian, &EmergencyState::Normal);
 }
 
 // ─── Auth matrix: random address ─────────────────────────────────────────────
@@ -155,7 +178,7 @@ fn random_cannot_set_shutdown() {
     let random = Address::generate(&env);
     // random's auth is mocked, but the contract will require guardian or admin auth.
     mock_only_for_state_transition(&env, &cid, &random, EmergencyState::Shutdown);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&random, &EmergencyState::Shutdown);
 }
 
 /// A random address cannot set Recovery.
@@ -165,7 +188,7 @@ fn random_cannot_set_recovery() {
     let (env, client, cid, _admin, _guardian, _user) = setup_with_guardian();
     let random = Address::generate(&env);
     mock_only_for_state_transition(&env, &cid, &random, EmergencyState::Recovery);
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&random, &EmergencyState::Recovery);
 }
 
 /// A random address cannot set Normal.
@@ -175,7 +198,7 @@ fn random_cannot_set_normal() {
     let (env, client, cid, _admin, _guardian, _user) = setup_with_guardian();
     let random = Address::generate(&env);
     mock_only_for_state_transition(&env, &cid, &random, EmergencyState::Normal);
-    client.set_emergency_state(&EmergencyState::Normal);
+    client.set_emergency_state(&random, &EmergencyState::Normal);
 }
 
 // ─── Edge case: no guardian configured ───────────────────────────────────────
@@ -185,7 +208,7 @@ fn random_cannot_set_normal() {
 fn no_guardian_admin_can_set_shutdown() {
     let (env, client, cid, admin, _user) = setup_no_guardian();
     mock_only_for_state_transition(&env, &cid, &admin, EmergencyState::Shutdown);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&admin, &EmergencyState::Shutdown);
 }
 
 /// When no guardian is set a random address still cannot trigger Shutdown.
@@ -196,7 +219,7 @@ fn no_guardian_random_cannot_set_shutdown() {
     let random = Address::generate(&env);
     // No guardian → admin required; random's auth will not satisfy admin.require_auth().
     mock_only_for_state_transition(&env, &cid, &random, EmergencyState::Shutdown);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&random, &EmergencyState::Shutdown);
 }
 
 // ─── Lifecycle matrix: Shutdown blocks all user operations ───────────────────
@@ -206,7 +229,7 @@ fn no_guardian_random_cannot_set_shutdown() {
 #[should_panic(expected = "OperationDisabledDuringShutdown")]
 fn shutdown_blocks_deposit() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
     client.deposit(&user, &100);
 }
 
@@ -216,7 +239,7 @@ fn shutdown_blocks_deposit() {
 fn shutdown_blocks_withdraw() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
     client.deposit(&user, &100);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
     client.withdraw(&user, &10);
 }
 
@@ -225,7 +248,7 @@ fn shutdown_blocks_withdraw() {
 #[should_panic(expected = "OperationDisabledDuringShutdown")]
 fn shutdown_blocks_borrow() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
     client.borrow(&user, &50);
 }
 
@@ -236,7 +259,7 @@ fn shutdown_blocks_repay() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
     client.deposit(&user, &250);
     client.borrow(&user, &100);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
     client.repay(&user, &10);
 }
 
@@ -264,12 +287,12 @@ fn shutdown_does_not_block_liquidation() {
             &DataKey::Debt(user.clone()),
             &DebtPosition {
                 principal: 200,
-                borrow_index_snapshot: crate::debt::INDEX_SCALE,
+                borrow_index_snapshot: 0,
                 last_update: env.ledger().timestamp(),
             },
         );
     });
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
     let result = client.try_liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &100);
     assert!(
         result.is_ok(),
@@ -284,7 +307,7 @@ fn shutdown_does_not_block_liquidation() {
 #[should_panic(expected = "ActionBlockedInRecovery")]
 fn recovery_blocks_deposit() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
     client.deposit(&user, &100);
 }
 
@@ -293,7 +316,7 @@ fn recovery_blocks_deposit() {
 #[should_panic(expected = "ActionBlockedInRecovery")]
 fn recovery_blocks_borrow() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
     client.borrow(&user, &50);
 }
 
@@ -305,7 +328,7 @@ fn recovery_allows_repay() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
     client.deposit(&user, &250);
     client.borrow(&user, &100);
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
     let remaining = client.repay(&user, &40);
     assert_eq!(remaining, 60);
 }
@@ -315,7 +338,7 @@ fn recovery_allows_repay() {
 fn recovery_allows_withdraw() {
     let (_env, client, _cid, _admin, _guardian, user) = setup_with_guardian();
     client.deposit(&user, &200);
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
     let remaining = client.withdraw(&user, &50);
     assert_eq!(remaining, 150);
 }
@@ -351,18 +374,12 @@ fn normal_allows_all_operations() {
 fn set_shutdown_emits_event_with_correct_states() {
     let (env, client, cid, _admin, _guardian, _user) = setup_with_guardian();
 
-    // initialize and set_guardian do not emit events.
-    assert_eq!(
-        env.events().all().events().len(),
-        0,
-        "no events expected after setup"
-    );
-
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
 
     assert_eq!(
         env.events().all(),
         [EmergencyStateChangedEvent {
+            caller: client.get_admin().unwrap(),
             old_state: EmergencyState::Normal,
             new_state: EmergencyState::Shutdown,
         }
@@ -377,11 +394,12 @@ fn set_shutdown_emits_event_with_correct_states() {
 fn set_recovery_emits_event_with_correct_states() {
     let (env, client, cid, _admin, _guardian, _user) = setup_with_guardian();
 
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
 
     assert_eq!(
         env.events().all(),
         [EmergencyStateChangedEvent {
+            caller: client.get_admin().unwrap(),
             old_state: EmergencyState::Normal,
             new_state: EmergencyState::Recovery,
         }
@@ -399,10 +417,11 @@ fn full_cycle_emits_three_events_with_correct_transitions() {
     let (env, client, cid, _admin, _guardian, _user) = setup_with_guardian();
 
     // Normal → Shutdown
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
     assert_eq!(
         env.events().all(),
         [EmergencyStateChangedEvent {
+            caller: client.get_admin().unwrap(),
             old_state: EmergencyState::Normal,
             new_state: EmergencyState::Shutdown,
         }
@@ -411,10 +430,11 @@ fn full_cycle_emits_three_events_with_correct_transitions() {
     );
 
     // Shutdown → Recovery
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
     assert_eq!(
         env.events().all(),
         [EmergencyStateChangedEvent {
+            caller: client.get_admin().unwrap(),
             old_state: EmergencyState::Shutdown,
             new_state: EmergencyState::Recovery,
         }
@@ -423,10 +443,11 @@ fn full_cycle_emits_three_events_with_correct_transitions() {
     );
 
     // Recovery → Normal
-    client.set_emergency_state(&EmergencyState::Normal);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Normal);
     assert_eq!(
         env.events().all(),
         [EmergencyStateChangedEvent {
+            caller: client.get_admin().unwrap(),
             old_state: EmergencyState::Recovery,
             new_state: EmergencyState::Normal,
         }
@@ -448,7 +469,7 @@ fn shutdown_recovery_normal_full_cycle() {
     client.borrow(&user, &100);
 
     // ── Shutdown ───────────────────────────────────────────────────────────
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
 
     assert!(
         client.try_deposit(&user, &10).is_err(),
@@ -468,7 +489,7 @@ fn shutdown_recovery_normal_full_cycle() {
     );
 
     // ── Recovery ──────────────────────────────────────────────────────────
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
 
     assert!(
         client.try_deposit(&user, &10).is_err(),
@@ -487,7 +508,7 @@ fn shutdown_recovery_normal_full_cycle() {
     assert_eq!(after_withdraw, 400, "withdraw allowed in Recovery");
 
     // ── Normal ─────────────────────────────────────────────────────────────
-    client.set_emergency_state(&EmergencyState::Normal);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Normal);
 
     let new_bal = client.deposit(&user, &200);
     assert_eq!(new_bal, 600, "deposit restored in Normal");
@@ -508,8 +529,8 @@ fn no_guardian_admin_can_cycle_all_states() {
         EmergencyState::Recovery,
         EmergencyState::Normal,
     ] {
-        mock_only_for_state_transition(&env, &cid, &admin, state.clone());
-        client.set_emergency_state(&state);
+        mock_only_for_state_transition(&env, &cid, &admin, state);
+        client.set_emergency_state(&admin, &state);
     }
 }
 
@@ -526,5 +547,5 @@ fn rotated_out_guardian_cannot_set_shutdown() {
 
     // Old guardian's auth is mocked; the contract now requires new_guardian.
     mock_only_for_state_transition(&env, &cid, &old_guardian, EmergencyState::Shutdown);
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&old_guardian, &EmergencyState::Shutdown);
 }

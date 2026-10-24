@@ -1,7 +1,7 @@
 use proptest::prelude::*;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Events as _}, Address, Env};
 use stellarlend_lending::{
-    GovernedRiskParameter, LendingContract, LendingContractClient, LendingError,
+    LendingContract, LendingContractClient, LendingError,
     DEFAULT_MAX_LTV_BPS, LIQUIDATION_THRESHOLD_BPS, MAX_LIQUIDATION_THRESHOLD_BPS, MAX_LTV_BPS,
     MIN_LIQUIDATION_THRESHOLD_BPS,
 };
@@ -105,27 +105,29 @@ fn ltv_setter_bounds() {
 #[test]
 fn setters_emit_events_and_audit() {
     let (env, client, admin, _user) = setup();
-    assert_eq!(client.get_governance_audit_count(), 0);
+    let before = client.get_governance_audit_count();
 
     client.set_max_ltv_bps(&7_000);
-    assert_eq!(env.events().all().len(), 1);
+    assert_eq!(env.events().all().events().len(), 1);
     client.set_liquidation_threshold_bps(&7_500);
-    assert_eq!(env.events().all().len(), 1);
+    assert_eq!(env.events().all().events().len(), 1);
 
-    assert_eq!(client.get_governance_audit_count(), 2);
+    assert_eq!(client.get_governance_audit_count(), before + 2);
     let entries = client.get_governance_audit_entries(&2);
     assert_eq!(entries.len(), 2);
     let newest = entries.get(0).unwrap();
     assert_eq!(
-        newest.parameter,
-        GovernedRiskParameter::LiquidationThresholdBps
+        newest.action,
+        soroban_sdk::String::from_str(&env, "set_liquidation_threshold_bps")
     );
-    assert_eq!(newest.caller, admin);
-    assert_eq!(newest.old_value, LIQUIDATION_THRESHOLD_BPS);
-    assert_eq!(newest.new_value, 7_500);
+    assert_eq!(newest.actor, admin);
     let previous = entries.get(1).unwrap();
-    assert_eq!(previous.parameter, GovernedRiskParameter::MaxLtvBps);
-    assert_eq!(previous.new_value, 7_000);
+    assert_eq!(
+        previous.action,
+        soroban_sdk::String::from_str(&env, "set_max_ltv_bps")
+    );
+    assert_eq!(client.get_max_ltv_bps(), 7_000);
+    assert_eq!(client.get_liquidation_threshold_bps(), 7_500);
 }
 
 proptest! {

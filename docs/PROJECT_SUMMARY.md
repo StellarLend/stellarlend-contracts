@@ -27,7 +27,6 @@ The lending contract is organized into focused modules under `src/`:
 | `oracle.rs` | Price feed management: primary/fallback oracles, staleness checks |
 | `pause.rs` | Granular pause flags per operation type + global pause + emergency lifecycle |
 | `governance_audit.rs` | Immutable audit log for all governance actions |
-| `data_store.rs` | Persistent key-value storage with backup/restore/migration |
 | `interest_rate.rs` | Interest rate model configuration |
 | `views.rs` | Read-only view functions for frontends (health factor, balances, position summary) |
 | `token_receiver.rs` | Soroban token receiver hook for callback-based deposits |
@@ -71,10 +70,9 @@ The lending contract is organized into focused modules under `src/`:
 - Every governance action (initialize, pause, upgrade, oracle config, etc.) is logged immutably.
 - Entries include action type, caller, timestamp, and structured payload.
 
-### 3.7 Data Store
-- Persistent storage with schema versioning.
-- Backup/restore snapshots.
-- Writer-grant access control.
+### 3.7 Storage Architecture
+- Soroban native storage tiers: `persistent` (for user positions/debts), `instance` (for contract config/admin state), and `temporary` (for transient execution state).
+- TTL extension handling for persistent and instance storage entries.
 
 ---
 
@@ -104,13 +102,14 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 | **Liquidation** | `liquidate_test.rs`, `liquidation_boundary_test.rs`, `liquidation_invariant_test.rs`, `liquidation_max_amount_correctness_test.rs` | Close factor, incentives, health factor changes |
 | **Pause & Emergency** | `pause_matrix_test.rs`, `emergency_shutdown_test.rs`, `emergency_lifecycle_conformance_test.rs`, `guardian_scope_test.rs` | Granular pauses, lifecycle transitions, authorization |
 | **Oracle** | `oracle_test.rs`, `oracle_adversarial_test.rs`, `oracle_staleness_test.rs`, `oracle_migration_test.rs` | Price updates, staleness, fallback, adversarial feeds |
-| **Flash Loans** | `flash_loan_test.rs`, `flash_adversarial_test.rs`, `flash_loan_fee_rounding_test.rs` | Repayment verification, reentrancy, fee rounding |
+| **Flash Loans** | `tests/flash_loan_repayment.rs`, `tests/flash_callback_revert_test.rs`, `src/flash_utilization_test.rs`, `src/flash_pause_gating_test.rs` | Repayment verification, callback-revert rollback, max-utilization, pause gating |
+| **Reentrancy** | `tests/reentrancy_guard_test.rs`, `tests/liquidate_reentrancy_test.rs` | Every state-mutating op blocked inside an active flash-loan callback |
 | **Cross-Asset** | `cross_asset_test.rs`, `cross_asset_liquidation_test.rs`, `cross_asset_view_invariants_test.rs` | Multi-asset positions, cross-liquidation |
 | **Adversarial / Security** | `borrow_withdraw_adversarial_test.rs`, `borrow_withdraw_rounding_timing_test.rs`, `borrow_withdraw_sequence_adversarial_test.rs`, `auth_boundary_test.rs`, `zero_amount_semantics_test.rs` | Rounding exploits, timing attacks, sequence attacks, auth bypass |
 | **Governance & Upgrades** | `governance_audit_test.rs`, `upgrade_test.rs`, `upgrade_migration_safety_test.rs`, `proposal_race_test.rs` | Audit log correctness, upgrade flow, race conditions |
 | **Math & Invariants** | `math_safety_test.rs`, `health_factor_monotonicity_test.rs`, `debt_ceiling_invariant_test.rs` | Overflow/underflow, monotonicity, ceiling enforcement |
 | **Performance & Stress** | `stress_test.rs`, `multi_user_contention_test.rs`, `test_performance.rs` | Gas usage, concurrent access, large-scale scenarios |
-| **Data Store** | `data_store_test.rs`, `storage_collision_test.rs` | Persistence, backup/restore, migration, key collisions |
+| **Storage Tiers** | `storage_tier_test.rs` | Persistent, instance, and temporary storage tiers |
 | **Views & Serialization** | `views_test.rs`, `view_serialization_test.rs` | Frontend data consistency, XDR encoding stability |
 | **Bad Debt** | `bad_debt_test.rs`, `bad_debt_accounting.md` | Insurance fund, bad debt offset |
 
@@ -164,12 +163,9 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 ### View Functions (Read-Only)
 - `get_position(user)` / `get_user_position(user)` → `PositionSummary`
 - `get_health_factor(user)` → `i128`
-- `get_collateral_value(user)` → `i128`
-- `get_debt_value(user)` → `i128`
 - `get_max_liquidatable_amount(user)` → `i128`
 - `get_liquidation_incentive_bps()` → `i128`
 - `get_emergency_state()` → `EmergencyState`
-- `get_performance_stats()` → `Vec<u64>`
 - `get_price(asset)` → `Result<i128, OracleError>`
 
 ### Admin & Risk Control
@@ -183,7 +179,6 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 - `set_close_factor_bps(admin, bps)` → `Result<(), BorrowError>`
 - `set_liquidation_incentive_bps(admin, bps)` → `Result<(), BorrowError>`
 - `credit_insurance_fund(caller, asset, amount)` → `Result<(), BorrowError>`
-- `offset_bad_debt(caller, asset, amount)` → `Result<(), BorrowError>`
 
 ### Oracle Management
 - `configure_oracle(caller, config)` → `Result<(), OracleError>`
@@ -191,7 +186,6 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 - `set_fallback_oracle(caller, asset, oracle)` → `Result<(), OracleError>`
 - `update_price_feed(caller, asset, price)` → `Result<(), OracleError>`
 - `set_oracle_paused(caller, paused)` → `Result<(), OracleError>`
-- `set_asset_max_staleness(caller, asset, seconds)` → `Result<(), OracleError>`
 
 ### Governance (Upgrades)
 - `upgrade_init(admin, wasm_hash, threshold)`
@@ -200,13 +194,8 @@ The project maintains an extensive test suite with **>95% coverage target** for 
 - `upgrade_execute(caller, proposal_id)`
 - `upgrade_rollback(caller, proposal_id)`
 
-### Data Store
-- `data_store_init(admin)`
-- `data_grant_writer(caller, writer)`
-- `data_save(caller, key, value)`
-- `data_load(key)` → `Bytes`
-- `data_backup(caller, name)` / `data_restore(caller, name)`
-- `data_migrate_bump_version(caller, new_version, memo)`
+### Storage & Persistence Primitives
+- State persistence uses standard Soroban storage primitives: `env.storage().persistent()`, `env.storage().instance()`, and `env.storage().temporary()` for state reads/writes.
 
 ---
 
@@ -247,7 +236,6 @@ stellarlend-contracts/
     │           ├── oracle.rs
     │           ├── pause.rs
     │           ├── governance_audit.rs
-    │           ├── data_store.rs
     │           ├── interest_rate.rs
     │           ├── views.rs
     │           ├── token_receiver.rs
@@ -278,7 +266,8 @@ cargo test
 # Run specific test module
 cargo test borrow_withdraw_adversarial_test --lib
 cargo test pause_matrix_test --lib
-cargo test flash_loan_test --lib
+cargo test --test flash_loan_repayment
+cargo test --test reentrancy_guard_test
 
 # Lint
 cargo clippy --all-targets --all-features

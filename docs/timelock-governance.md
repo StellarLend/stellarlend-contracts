@@ -250,6 +250,65 @@ pub fn get_pending_threshold_change(env: Env) -> Option<ThresholdChange>
 pub fn get_min_threshold_delay_ledgers(env: Env) -> u32
 ```
 
+## Multisig Proposal Cancel State Machine
+
+The multisig contract's `cancel_proposal` entrypoint transitions proposals from `Active` to `Cancelled`. A cancelled proposal is permanently dead — it cannot be approved, executed, or batch-executed.
+
+### Cancel State Machine
+
+```
+                    ┌─────────────────────────────────────┐
+                    │                                     │
+                    │   create_proposal                   │
+                    │         │                           │
+                    │         v                           │
+                    │   ┌──────────┐    cancel_proposal   │
+                    │   │  Active  │ ──────────────────►  │
+                    │   └──────────┘    ┌───────────┐    │
+                    │         │         │ Cancelled │    │
+                    │         │         └───────────┘    │
+                    │         │              │           │
+                    │         v              │           │
+                    │   ┌──────────┐         │           │
+                    │   │  Passed  │         │           │
+                    │   └──────────┘         │           │
+                    │         │              │           │
+                    │         v              │           │
+                    │   ┌──────────┐         │           │
+                    │   │ Executed │         │           │
+                    │   └──────────┘         │           │
+                    │         │              │           │
+                    │         v              │           │
+                    │   ┌──────────┐         │           │
+                    │   │ Expired  │         │           │
+                    │   └──────────┘         │           │
+                    │                                     │
+                    └─────────────────────────────────────┘
+```
+
+### Cancel Guards
+
+| Gate | Reverts with | Triggered when |
+|---|---|---|
+| Non-signer | `Unauthorized` | Caller is not a registered signer |
+| Already executed | `AlreadyExecuted` | `proposal.status == Executed` |
+| Already cancelled | `AlreadyCancelled` | `proposal.status == Cancelled` |
+| Expired | `ProposalExpired` | `ledger.sequence() > proposal.expires_at` |
+
+### Cancel Effects
+
+- The `Proposal.status` field is set to `Cancelled` in persistent storage.
+- `approve_proposal`, `execute_proposal`, and `batch_execute` all check `proposal.status == Cancelled` **before** any other processing and return `AlreadyCancelled`.
+- A cancelled proposal can never be revived or re-executed — the status is permanent.
+
+### Cancel Authorization
+
+- **Any registered signer** may call `cancel_proposal`, not only the proposer.
+- `caller.require_auth()` is enforced so the caller must authorize the cancel invocation.
+- `Self::require_signer` verifies the caller is in the registered signer set.
+
+---
+
 ## Timelock Test Coverage
 
 ### Upgrade governance (`contracts/lending/src/upgrade.rs`)
@@ -274,6 +333,20 @@ pub fn get_min_threshold_delay_ledgers(env: Env) -> u32
 | `test_apply_at_exact_min_delay_boundary` | queue + MIN − 1 then queue + MIN | first `DelayNotElapsed`; second succeeds |
 | `test_apply_threshold_change_after_delay` | queue + MIN | threshold updated, pending cleared |
 | `test_same_ledger_protection` | same ledger as queue | `DelayNotElapsed` |
+
+### Multisig cancel lifecycle (`contracts/multisig/src/cancel_proposal_test.rs`)
+
+| Test | Scenario | Expected outcome |
+|---|---|---|
+| `test_cancel_proposal_status_is_cancelled` | Cancel an Active proposal | Status becomes `Cancelled` |
+| `test_cancel_proposal_by_non_proposer_signer` | Non-proposer signer cancels | Status becomes `Cancelled` |
+| `test_cancel_already_cancelled_returns_error` | Double-cancel | `AlreadyCancelled` |
+| `test_cancel_executed_proposal_returns_error` | Cancel an executed proposal | `AlreadyExecuted` |
+| `test_cancel_expired_proposal_returns_error` | Cancel an expired proposal | `ProposalExpired` |
+| `test_cancel_proposal_non_signer_rejected` | Non-signer calls cancel | `Unauthorized` |
+| `test_execute_cancelled_proposal_returns_error` | Execute after cancel | `AlreadyCancelled` |
+| `test_batch_execute_cancelled_proposal_rejected` | Batch-execute after cancel | `AlreadyCancelled` |
+| `test_approve_cancelled_proposal_returns_error` | Approve (vote) after cancel | `AlreadyCancelled` |
 
 ## Integration Checklist
 

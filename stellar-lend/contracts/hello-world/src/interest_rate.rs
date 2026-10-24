@@ -189,9 +189,11 @@ pub fn update_interest_rate_config(
 /// accounting in a module separate from the rate model.
 pub fn set_protocol_totals(
     env: &Env,
+    admin: Address,
     total_deposits: i128,
     total_borrows: i128,
 ) -> Result<(), InterestRateError> {
+    require_rate_admin(env, &admin)?;
     if total_deposits < 0 || total_borrows < 0 {
         return Err(InterestRateError::InvalidParameter);
     }
@@ -372,10 +374,15 @@ pub fn clamp_rate(rate_bps: i128, min_rate_bps: i128, max_rate_bps: i128) -> i12
 }
 
 fn require_rate_admin(env: &Env, caller: &Address) -> Result<(), InterestRateError> {
-    admin::require_admin(env, caller).map_err(|e| match e {
-        crate::admin::AdminError::NotInitialized => InterestRateError::NotInitialized,
-        _ => InterestRateError::Unauthorized,
-    })
+    if !admin::has_admin(env) {
+        return Err(InterestRateError::NotInitialized);
+    }
+    let stored = admin::get_admin(env).ok_or(InterestRateError::NotInitialized)?;
+    stored.require_auth();
+    if &stored != caller {
+        return Err(InterestRateError::Unauthorized);
+    }
+    Ok(())
 }
 
 fn validate_config(config: &InterestRateConfig) -> Result<(), InterestRateError> {

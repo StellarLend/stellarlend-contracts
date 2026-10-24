@@ -103,3 +103,69 @@ fn rounding_modes_have_bounded_integer_divergence() {
         "rounding mode divergence should be bounded by one integer unit per period"
     );
 }
+
+
+#[test]
+fn failure_path_negative_principal() {
+    let result = stellarlend_lending::rounding_strategy::calculate_interest_with_rounding(-1000, 365, 500, stellarlend_lending::rounding_strategy::RoundingMode::Bankers);
+    assert_eq!(result.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::InvalidParameter);
+}
+
+#[test]
+fn failure_path_negative_rate() {
+    let result = stellarlend_lending::rounding_strategy::calculate_interest_with_rounding(1000, 365, -500, stellarlend_lending::rounding_strategy::RoundingMode::Bankers);
+    assert_eq!(result.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::InvalidParameter);
+}
+
+#[test]
+fn boundary_case_max_elapsed_time() {
+    let result = stellarlend_lending::rounding_strategy::calculate_interest_with_rounding(i128::MAX, u64::MAX, i128::MAX, stellarlend_lending::rounding_strategy::RoundingMode::Bankers);
+    assert_eq!(result.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::Overflow);
+}
+
+#[test]
+fn reconcile_debt_failure_path_drift_exceeded() {
+    // 10% drift where only 1% (100 bps) is allowed
+    let stored_debt = 100_000;
+    let freshly_calculated_debt = 110_000; // 10% more
+    let accumulated_drift = 0;
+    let max_allowed_drift_bps = 100; // 1%
+
+    let result = stellarlend_lending::rounding_strategy::reconcile_debt_with_drift_correction(stored_debt, freshly_calculated_debt, accumulated_drift, max_allowed_drift_bps);
+    assert_eq!(result.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::InvalidParameter);
+}
+
+#[test]
+fn reconcile_debt_boundary_case_exact_max_drift() {
+    let stored_debt = 100_000;
+    let freshly_calculated_debt = 101_000; // exactly 1% (100 bps) more
+    let accumulated_drift = 0;
+    let max_allowed_drift_bps = 100; // 1%
+
+    let result = stellarlend_lending::rounding_strategy::reconcile_debt_with_drift_correction(stored_debt, freshly_calculated_debt, accumulated_drift, max_allowed_drift_bps);
+    assert!(result.is_ok(), "Exact max drift should be accepted");
+}
+
+#[test]
+fn failure_path_reconcile_debt_overflow() {
+    let stored_debt = 100_000;
+    let freshly_calculated_debt = i128::MAX;
+    let accumulated_drift = i128::MAX;
+    let max_allowed_drift_bps = 100_000;
+
+    let result = stellarlend_lending::rounding_strategy::reconcile_debt_with_drift_correction(stored_debt, freshly_calculated_debt, accumulated_drift, max_allowed_drift_bps);
+    assert_eq!(result.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::Overflow);
+}
+
+
+
+#[test]
+fn reconcile_debt_failure_path_negative_inputs() {
+    let result1 = stellarlend_lending::rounding_strategy::reconcile_debt_with_drift_correction(-100, 100, 0, 100);
+    assert_eq!(result1.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::InvalidParameter);
+    let result2 = stellarlend_lending::rounding_strategy::reconcile_debt_with_drift_correction(100, -100, 0, 100);
+    assert_eq!(result2.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::InvalidParameter);
+    let result3 = stellarlend_lending::rounding_strategy::reconcile_debt_with_drift_correction(100, 100, 0, -100);
+    assert_eq!(result3.unwrap_err(), stellarlend_lending::rounding_strategy::RoundingError::InvalidParameter);
+}
+

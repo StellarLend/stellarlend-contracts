@@ -155,12 +155,15 @@ fn liquidation_sequence_invariants_hold_across_seeded_sequences() {
                     Operation::Repay(amount) => {
                         let amount = amount as i128;
                         let result = client.try_repay(&borrower, &amount);
-                        prop_assert!(result.is_ok());
-                        expected_debt = if amount >= expected_debt {
-                            0
+                        // Overpaying is rejected outright with
+                        // `RepayAmountTooHigh` rather than silently
+                        // clamping -- see `repay_overpay_test.rs`.
+                        if amount <= expected_debt {
+                            prop_assert!(result.is_ok());
+                            expected_debt = expected_debt.saturating_sub(amount);
                         } else {
-                            expected_debt.saturating_sub(amount)
-                        };
+                            prop_assert!(result.is_err());
+                        }
                     }
                     Operation::Liquidate(amount) => {
                         liquidations_seen += 1;
