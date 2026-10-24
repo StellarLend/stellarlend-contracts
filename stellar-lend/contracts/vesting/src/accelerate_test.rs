@@ -240,10 +240,14 @@ fn total_locked_decremented_correctly() {
 
     client.accelerate_grant(&admin, &grantee);
 
+    // Accelerated tokens stay in the vault (and in TotalLocked) until claimed.
+    assert_eq!(client.total_locked(), 1_000);
+    advance(&env, 1);
+    client.claim(&grantee);
     assert_eq!(
         client.total_locked(),
         0,
-        "all 1_000 tokens should now be unlocked"
+        "all 1_000 tokens should be released once claimed"
     );
 }
 
@@ -269,10 +273,13 @@ fn total_locked_decremented_by_remaining_only() {
 
     client.accelerate_grant(&admin, &grantee);
 
+    // Acceleration must not touch TotalLocked; the claim settles it exactly once.
+    assert_eq!(client.total_locked(), 600);
+    client.claim(&grantee);
     assert_eq!(
         client.total_locked(),
         0,
-        "remaining 600 should now be unlocked"
+        "remaining 600 should be released once claimed"
     );
 }
 

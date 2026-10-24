@@ -403,7 +403,9 @@ impl VestingContract {
             .unwrap_or(0i128);
         ttl::set_persistent(&env,
             &VestingKey::TotalLocked,
-            &locked.saturating_add(total_amount),
+            &locked
+                .checked_add(total_amount)
+                .ok_or(VestingError::Overflow)?,
         );
 
         Self::emit_event(&env, "grant_created", &grantee);
@@ -489,7 +491,9 @@ impl VestingContract {
             .unwrap_or(0i128);
         ttl::set_persistent(&env,
             &VestingKey::TotalLocked,
-            &locked.saturating_add(total_amount),
+            &locked
+                .checked_add(total_amount)
+                .ok_or(VestingError::Overflow)?,
         );
 
         Self::emit_event(&env, "grant_created", &grantee);
@@ -504,6 +508,8 @@ impl VestingContract {
     /// Rejected while the contract is paused.
     pub fn claim(env: Env, grantee: Address) -> Result<i128, VestingError> {
         Self::require_not_paused(&env)?;
+        // Only the beneficiary may trigger settlement of their own grants.
+        grantee.require_auth();
 
         let key = VestingKey::Grants(grantee.clone());
         ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
@@ -561,7 +567,9 @@ impl VestingContract {
                 .unwrap_or(0i128);
             ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
-                &locked.saturating_sub(locked_delta),
+                &locked
+                    .checked_sub(locked_delta)
+                    .ok_or(VestingError::Overflow)?,
             );
 
             Self::emit_event(&env, "claimed", &grantee);
@@ -573,6 +581,8 @@ impl VestingContract {
     /// Claim a specific amount of vested tokens.
     pub fn claim_partial(env: Env, grantee: Address, amount: i128) -> Result<i128, VestingError> {
         Self::require_not_paused(&env)?;
+        // Only the beneficiary may trigger settlement of their own grants.
+        grantee.require_auth();
         if amount <= 0 {
             return Err(VestingError::InvalidAmount);
         }
@@ -592,13 +602,11 @@ impl VestingContract {
         let now = env.ledger().timestamp();
         let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
 
-        // Compute total claimable
+        // Compute total claimable. Revoked grants are included: their vested-but-
+        // unclaimed balance stays claimable, matching `claim`.
         let mut total_claimable: i128 = 0;
         for i in 0..grants.len() {
             let g = grants.get(i).unwrap();
-            if g.revoked {
-                continue;
-            }
             let effective_now = Self::effective_now_for(
                 &env,
                 now,
@@ -618,9 +626,6 @@ impl VestingContract {
                 break;
             }
             let mut g = grants.get(i).unwrap();
-            if g.revoked {
-                continue;
-            }
             let effective_now = Self::effective_now_for(
                 &env,
                 now,
@@ -655,7 +660,11 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TotalLocked)
             .unwrap_or(0i128);
-        ttl::set_persistent(&env, &VestingKey::TotalLocked, &locked.saturating_sub(amount));
+        ttl::set_persistent(
+            &env,
+            &VestingKey::TotalLocked,
+            &locked.checked_sub(amount).ok_or(VestingError::Overflow)?,
+        );
 
         Self::emit_event(&env, "claimed_partial", &grantee);
         Ok(amount)
@@ -744,7 +753,9 @@ impl VestingContract {
                 .unwrap_or(0i128);
             ttl::set_persistent(&env,
                 &VestingKey::TotalLocked,
-                &locked.saturating_sub(locked_delta),
+                &locked
+                    .checked_sub(locked_delta)
+                    .ok_or(VestingError::Overflow)?,
             );
         }
 
@@ -800,16 +811,11 @@ impl VestingContract {
 
         ttl::set_persistent(&env, &key, &grants);
 
+        // Acceleration only makes the remaining tokens claimable now; they stay
+        // in the vault (and in TotalLocked) until the grantee actually claims
+        // them, otherwise every later claim would double-decrement TotalLocked.
+        let _ = locked_delta;
         if any_changed {
-            let locked: i128 = env
-                .storage()
-                .persistent()
-                .get(&VestingKey::TotalLocked)
-                .unwrap_or(0i128);
-            ttl::set_persistent(&env,
-                &VestingKey::TotalLocked,
-                &locked.saturating_sub(locked_delta),
-            );
             Self::emit_event(&env, "grant_accelerated", &grantee);
         }
 
@@ -991,6 +997,22 @@ impl VestingContract {
             .persistent()
             .get(&VestingKey::TotalPausedSecs)
             .unwrap_or(0u64)
+    }
+
+    /// Return `(token_balance, total_locked)` for dashboards and auditors.
+    ///
+    /// A healthy vault always satisfies `token_balance >= total_locked`.
+    pub fn get_vault_health(env: Env) -> (i128, i128) {
+        let locked = Self::total_locked(env.clone());
+        let token_address: Option<Address> =
+            env.storage().persistent().get(&VestingKey::TokenAddress);
+        match token_address {
+            Some(token_address) => (
+                token::Client::new(&env, &token_address).balance(&env.current_contract_address()),
+                locked,
+            ),
+            None => (0, locked),
+        }
     }
 
     pub fn total_locked(env: Env) -> i128 {
