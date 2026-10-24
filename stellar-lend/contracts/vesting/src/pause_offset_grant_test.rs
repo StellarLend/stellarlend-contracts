@@ -33,7 +33,7 @@ fn add_grant(
     start: u64,
 ) {
     token_asset.mint(admin, &GRANT_AMOUNT);
-    client.add_grant(grantee, &GRANT_AMOUNT, &start, &GRANT_DURATION, &0);
+    client.add_grant(admin, grantee, &GRANT_AMOUNT, &start, &0, &GRANT_DURATION);
 }
 
 #[test]

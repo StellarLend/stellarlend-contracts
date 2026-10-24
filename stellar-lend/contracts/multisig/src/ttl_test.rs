@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{storage::Persistent as _, Address as _, Ledger},
     Address, Bytes, Env, Vec,
 };
 

@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{storage::Persistent as _, Address as _, Ledger},
     token, Address, Env, Vec,
 };
 
@@ -39,7 +39,7 @@ fn keeper_refreshes_grants_and_global_state() {
         assert!(
             env.storage()
                 .persistent()
-                .get_ttl(&VestingKey::Grants(grantee))
+                .get_ttl(&VestingKey::Grants(grantee.clone()))
                 > remaining
         );
         assert!(env.storage().persistent().get_ttl(&VestingKey::Admin) > remaining);

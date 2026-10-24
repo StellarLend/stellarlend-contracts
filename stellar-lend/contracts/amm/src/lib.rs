@@ -97,33 +97,78 @@ const FEE_TIERS_KEY: &str = "fee_tiers";
 const KEY_RES_A: (&str, &str) = ("pool", "a");
 const KEY_RES_B: (&str, &str) = ("pool", "b");
 
-/// A single TWAP observation snapshot.
-///
-/// Both prices are stored as scaled integer ratios (price * 10^9) to preserve
-/// precision without floating-point arithmetic in `#![no_std]`.
-///
-/// * `price0` – spot price of token A in terms of token B, scaled by 1_000_000_000.
-///   Computed as `reserve_b * 1_000_000_000 / reserve_a`.
-/// * `price1` – spot price of token B in terms of token A, scaled by 1_000_000_000.
-///   Computed as `reserve_a * 1_000_000_000 / reserve_b`.
-/// * `timestamp` – ledger timestamp at the time of the observation.
-#[contracttype]
-#[derive(Clone)]
-pub struct TwapObservation {
-    pub price0: i128,
-    pub price1: i128,
-    pub timestamp: u64,
-}
-
 // Token contract addresses — stored at `init_pool` time and read by
 // `add_liquidity` / `remove_liquidity` to perform real token transfers.
 const KEY_TOKEN_A: (&str, &str) = ("pool", "token_a");
 const KEY_TOKEN_B: (&str, &str) = ("pool", "token_b");
 
-// TWAP observation ring-buffer. Each observation stores (timestamp, cumulative_price_numerator,
-// cumulative_price_denominator) so off-chain consumers can compute time-weighted average prices.
-const KEY_TWAP_OBS: (&str, &str) = ("pool", "twap_obs");
-const KEY_TWAP_LAST_TS: (&str, &str) = ("pool", "twap_last_ts");
+// ---------------------------------------------------------------------------
+// TWAP oracle (Uniswap-v2-style cumulative prices)
+// ---------------------------------------------------------------------------
+//
+// The oracle stores two fixed-point *cumulative* prices. Before every reserve
+// mutation the accumulator is advanced by `spot_price * dt` using the reserves
+// that were in force for that interval, and the new cumulative pair is written
+// to a fixed-size ring buffer. A consumer can then recover the time-weighted
+// average price over any window with `consult(window_secs)`:
+//
+//     TWAP = (cumulative(now) - cumulative(now - window)) / window
+//
+// Storing cumulative sums (rather than a ratio of sums) is what makes the
+// result a true time-weighted average when reserves change mid-window. See
+// [TWAP.md](../TWAP.md) for the full scheme, overflow policy and manipulation
+// cost argument.
+
+/// Fixed-point scale for TWAP prices: a value of `1e18` represents a price of
+/// `1.0`.
+pub const TWAP_PRICE_SCALE: i128 = 1_000_000_000_000_000_000;
+
+/// Number of observation slots in the fixed-size TWAP ring buffer.
+///
+/// Once full, every new observation overwrites the oldest slot, so oracle
+/// storage is `O(TWAP_OBSERVATION_COUNT)` and never grows with the number of
+/// swaps.
+pub const TWAP_OBSERVATION_COUNT: u32 = 48;
+
+/// A single TWAP observation: the cumulative prices at `timestamp`.
+///
+/// * `price0_cumulative` – cumulative `price(A in B) * dt`, scaled by
+///   [`TWAP_PRICE_SCALE`], where `price(A in B) = reserve_b / reserve_a`.
+/// * `price1_cumulative` – cumulative `price(B in A) * dt`, scaled by
+///   [`TWAP_PRICE_SCALE`], where `price(B in A) = reserve_a / reserve_b`.
+#[contracttype]
+#[derive(Clone)]
+pub struct TwapObservation {
+    pub timestamp: u64,
+    pub price0_cumulative: i128,
+    pub price1_cumulative: i128,
+}
+
+/// Aggregated TWAP accumulator state, stored in a single persistent entry.
+///
+/// `index` is the physical ring slot holding the newest observation and
+/// `cardinality` is the number of written slots, capped at
+/// [`TWAP_OBSERVATION_COUNT`]. When the ring is full the oldest observation
+/// lives at `(index + 1) % TWAP_OBSERVATION_COUNT`.
+#[contracttype]
+#[derive(Clone)]
+pub struct TwapState {
+    pub price0_cumulative: i128,
+    pub price1_cumulative: i128,
+    pub last_ts: u64,
+    pub index: u32,
+    pub cardinality: u32,
+}
+
+/// Storage keys for the TWAP oracle.
+#[contracttype]
+#[derive(Clone)]
+pub enum TwapKey {
+    /// The aggregated [`TwapState`].
+    State,
+    /// One physical slot of the observation ring (`TwapObservation`).
+    Obs(u32),
+}
 
 // Price-impact guard.
 //
@@ -172,6 +217,11 @@ const KEY_K_BEFORE: (&str, &str) = ("pool", "flash_k_before");
 /// original caller (who received the optimistically-debited tokens) may
 /// complete the swap.  Cleared when the swap completes or reverts.
 const KEY_FLASH_INITIATOR: (&str, &str) = ("pool", "flash_initiator");
+/// Reserves `(reserve_a, reserve_b)` captured immediately before the
+/// optimistic debit. `repay_flash_swap` feeds these to the TWAP oracle so the
+/// in-flight imbalance (which only exists between the two flash operations)
+/// can never leak into the cumulative price.
+const KEY_FLASH_PRE_RESERVES: (&str, &str) = ("pool", "flash_pre_reserves");
 
 // Per-side swap fee accumulators.
 //
@@ -312,6 +362,11 @@ pub enum AmmPoolError {
     PriceImpactExceeded = 20,
     /// The trader may not be the pool contract itself.
     InvalidTrader = 21,
+    /// `consult` requested a window longer than the retained TWAP history.
+    /// See [TWAP.md](../TWAP.md).
+    TwapInsufficientHistory = 22,
+    /// The requested TWAP ring slot is out of range or has never been written.
+    TwapObservationNotFound = 23,
 }
 
 /// Return value of [`AmmContract::get_swap_quote`].
@@ -346,9 +401,8 @@ impl AmmContract {
             &KEY_RES_B,
             &KEY_TOKEN_A,
             &KEY_TOKEN_B,
-            &KEY_TWAP_OBS,
-            &KEY_TWAP_LAST_TS,
             &KEY_MAX_IMPACT_BPS,
+            &KEY_FLASH_PRE_RESERVES,
             &KEY_FLASH_ACTIVE,
             &KEY_K_BEFORE,
             &KEY_FLASH_INITIATOR,
@@ -361,6 +415,10 @@ impl AmmContract {
             &KEY_MIN_LIQUIDITY,
         ] {
             ttl::bump_persistent(&env, key);
+        }
+        ttl::bump_persistent(&env, &TwapKey::State);
+        for slot in 0..TWAP_OBSERVATION_COUNT {
+            ttl::bump_persistent(&env, &TwapKey::Obs(slot));
         }
         ttl::bump_persistent(&env, &FEE_TIERS_KEY);
     }
@@ -407,6 +465,11 @@ impl AmmContract {
         {
             ttl::set_persistent(&env, &KEY_ADMIN, &admin);
         }
+        // Fold the interval since the previous reserve state into the TWAP
+        // accumulator before overwriting the reserves (pre-update values).
+        let previous_a: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
+        let previous_b: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
+        Self::update_oracle(&env, previous_a, previous_b)?;
         ttl::set_persistent(&env, &KEY_RES_A, &a);
         ttl::set_persistent(&env, &KEY_RES_B, &b);
         ttl::set_persistent(&env, &KEY_TOKEN_A, &token_a);
@@ -702,12 +765,10 @@ impl AmmContract {
             .get(&KEY_LP_TOTAL_SUPPLY)
             .unwrap_or(0);
 
-        let (add_a, add_b) =
-            quote_optimal_amounts(amount_a_desired, amount_b_desired, ra, rb).map_err(|e| {
-                match e {
-                    LiquidityMathError::Overflow => AmmPoolError::Overflow,
-                    _ => AmmPoolError::InvariantViolation,
-                }
+        let (add_a, add_b) = quote_optimal_amounts(amount_a_desired, amount_b_desired, ra, rb)
+            .map_err(|e| match e {
+                LiquidityMathError::Overflow => AmmPoolError::Overflow,
+                _ => AmmPoolError::InvariantViolation,
             })?;
         if add_a < amount_a_min || add_b < amount_b_min {
             return Err(AmmPoolError::SlippageExceeded);
@@ -747,7 +808,9 @@ impl AmmContract {
         TokenClient::new(&env, &token_a).transfer(&caller, env.current_contract_address(), &add_a);
         TokenClient::new(&env, &token_b).transfer(&caller, env.current_contract_address(), &add_b);
 
-        // Update reserves.
+        // Advance the TWAP accumulator over the interval that just elapsed,
+        // using the pre-deposit reserves, then update the reserves.
+        Self::update_oracle(&env, ra, rb)?;
         ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
         ttl::set_persistent(&env, &KEY_RES_B, &new_rb);
 
@@ -854,8 +917,11 @@ impl AmmContract {
 
         assert_k_monotonic(ra, rb, new_ra, new_rb, false)?;
 
-        // Update reserves and LP supply before transferring out to follow
+        // Advance the TWAP accumulator over the interval that just elapsed,
+        // using the pre-burn reserves, then update the reserves.  Reserves
+        // and LP supply are written before the outgoing transfer to follow
         // the checks-effects-interactions pattern.
+        Self::update_oracle(&env, ra, rb)?;
         ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
         ttl::set_persistent(&env, &KEY_RES_B, &new_rb);
 
@@ -1119,6 +1185,10 @@ impl AmmContract {
         let pool = env.current_contract_address();
         TokenClient::new(env, &token_in).transfer(trader, &pool, &amount_in);
 
+        // Advance the TWAP accumulator with the pre-swap reserves so the
+        // trade being priced now is not folded into the interval it just
+        // closed.
+        Self::update_oracle(env, ra, rb)?;
         ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
         ttl::set_persistent(&env, &KEY_RES_B, &new_rb);
         ttl::set_persistent(&env, &fee_key, &accrued_fee.saturating_add(fee));
@@ -1248,6 +1318,14 @@ impl AmmContract {
         let k_before: i128 = ra.checked_mul(rb).ok_or(AmmPoolError::Overflow)?;
         let new_rb: i128 = rb - amount_out;
 
+        // Advance the TWAP accumulator with the pre-flash reserves.  Those
+        // same reserves are persisted so the matching `repay_flash_swap` can
+        // extend the interval without ever pricing the in-flight imbalance.
+        Self::update_oracle(&env, ra, rb)?;
+        env.storage()
+            .persistent()
+            .set(&KEY_FLASH_PRE_RESERVES, &(ra, rb));
+
         // Snapshot the invariant before applying the debit so the matching
         // `repay_flash_swap` can compare against the post-debit state.
         ttl::set_persistent(&env, &KEY_K_BEFORE, &k_before);
@@ -1354,7 +1432,19 @@ impl AmmContract {
             return Err(AmmPoolError::InvariantViolation);
         }
 
+        // Extend the TWAP interval using the reserves that were in force
+        // before the flash began.  The pool is still holding the optimistic
+        // debit here, and pricing that imbalance would let a caller who
+        // straddles the flash across ledgers skew the oracle.
+        let (pre_flash_a, pre_flash_b): (i128, i128) = env
+            .storage()
+            .persistent()
+            .get(&KEY_FLASH_PRE_RESERVES)
+            .ok_or(AmmPoolError::InvariantViolation)?;
+        Self::update_oracle(&env, pre_flash_a, pre_flash_b)?;
+
         ttl::set_persistent(&env, &KEY_RES_A, &new_ra);
+        env.storage().persistent().remove(&KEY_FLASH_PRE_RESERVES);
         env.storage().instance().set(&KEY_FLASH_ACTIVE, &false);
         env.storage().instance().remove(&KEY_FLASH_INITIATOR);
         Ok(())
@@ -1464,61 +1554,296 @@ impl AmmContract {
         (fee_a, fee_b)
     }
 
-    /// Record a time-weighted spot-price observation for off-chain TWAP reconstruction.
+    /// Advance the TWAP accumulator up to the current ledger timestamp.
     ///
-    /// Each call appends `(timestamp, cumulative_num, cumulative_denom)` to the
-    /// persistent observation buffer. Off-chain indexers can fetch the full buffer
-    /// via `get_twap_observations()` and compute TWAP over any sub-window as:
+    /// Must be called with the reserves that were in force *before* the
+    /// pending reserve mutation. On the first call the accumulator is
+    /// initialised and a baseline observation is written; afterwards an
+    /// observation is written at most once per ledger timestamp.
     ///
-    ///   TWAP = (cum_num[t1] - cum_num[t0]) / (cum_denom[t1] - cum_denom[t0])
+    /// # Overflow policy
     ///
-    /// where `cum_denom` is cumulative time (seconds) and `cum_num` is cumulative
-    /// `reserve_b * dt / reserve_a` (price of A in units of B weighted by time).
+    /// Spot prices are computed with checked multiplication and surface
+    /// [`AmmPoolError::Overflow`] if `reserve * TWAP_PRICE_SCALE` does not fit
+    /// in `i128` (reserves above ~`1.7e20`, far beyond any realistic pool and
+    /// already incompatible with the `reserve_a * reserve_b` invariant).
     ///
-    /// Only callable internally by swap functions; exposed here for testability.
-    fn record_twap_observation(env: &Env) {
-        let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(1);
-        let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(1);
-        let now: u64 = env.ledger().timestamp();
+    /// The cumulative sums themselves use *wrapping* arithmetic. This is the
+    /// Uniswap-v2 approach: consumers only ever read differences of
+    /// cumulatives, and wrapping addition/subtraction is exact modulo
+    /// `2^128`. Any window whose true growth is below `2^127` therefore yields
+    /// the correct difference regardless of how many times the accumulator
+    /// has wrapped. At a price of `1.0` (`TWAP_PRICE_SCALE` per second) that
+    /// is a horizon of roughly `5.4e12` years; even at an extreme reserve
+    /// ratio of `1e12` a two-year window is still safe. See
+    /// [TWAP.md](../TWAP.md#overflow-policy).
+    fn update_oracle(
+        env: &Env,
+        reserve_a_before: i128,
+        reserve_b_before: i128,
+    ) -> Result<(), AmmPoolError> {
+        let now = env.ledger().timestamp();
+        let state_key = TwapKey::State;
 
-        let last_ts: u64 = env
-            .storage()
-            .persistent()
-            .get(&KEY_TWAP_LAST_TS)
-            .unwrap_or(now);
+        let mut state: TwapState = match env.storage().persistent().get(&state_key) {
+            Some(state) => state,
+            None => {
+                let state = TwapState {
+                    price0_cumulative: 0,
+                    price1_cumulative: 0,
+                    last_ts: now,
+                    index: 0,
+                    cardinality: 1,
+                };
+                write_observation(
+                    env,
+                    0,
+                    &TwapObservation {
+                        timestamp: now,
+                        price0_cumulative: 0,
+                        price1_cumulative: 0,
+                    },
+                );
+                ttl::set_persistent(env, &state_key, &state);
+                return Ok(());
+            }
+        };
 
-        let dt = now.saturating_sub(last_ts) as i128;
+        let dt = now.saturating_sub(state.last_ts);
+        state.last_ts = now;
 
-        let mut obs: Vec<(u64, i128, i128)> = env
-            .storage()
-            .persistent()
-            .get(&KEY_TWAP_OBS)
-            .unwrap_or_else(|| Vec::new(env));
+        // A zero-length interval contributes nothing and must not create a
+        // second observation for the same timestamp. An empty or half-empty
+        // pool has no defined price, so the accumulator is frozen over that
+        // interval (no division by zero, no observation).
+        if dt == 0 || reserve_a_before <= 0 || reserve_b_before <= 0 {
+            ttl::set_persistent(env, &state_key, &state);
+            return Ok(());
+        }
 
-        let prev_num: i128 = obs.last().map(|(_, n, _)| n).unwrap_or(0);
-        let prev_denom: i128 = obs.last().map(|(_, _, d)| d).unwrap_or(0);
+        let price0 = scaled_price(reserve_b_before, reserve_a_before)?;
+        let price1 = scaled_price(reserve_a_before, reserve_b_before)?;
 
-        // Accumulate price * time (price = rb / ra; avoid division, store numerator * dt separately)
-        let new_num = prev_num.saturating_add(rb.saturating_mul(dt));
-        let new_denom = prev_denom.saturating_add(ra.saturating_mul(dt));
+        let dt = dt as i128;
+        state.price0_cumulative = state
+            .price0_cumulative
+            .wrapping_add(price0.wrapping_mul(dt));
+        state.price1_cumulative = state
+            .price1_cumulative
+            .wrapping_add(price1.wrapping_mul(dt));
 
-        obs.push_back((now, new_num, new_denom));
+        let next = next_observation_slot(&state);
+        write_observation(
+            env,
+            next,
+            &TwapObservation {
+                timestamp: now,
+                price0_cumulative: state.price0_cumulative,
+                price1_cumulative: state.price1_cumulative,
+            },
+        );
+        state.index = next;
+        state.cardinality = state
+            .cardinality
+            .saturating_add(1)
+            .min(TWAP_OBSERVATION_COUNT);
 
-        ttl::set_persistent(&env, &KEY_TWAP_OBS, &obs);
-        ttl::set_persistent(&env, &KEY_TWAP_LAST_TS, &now);
+        ttl::set_persistent(env, &state_key, &state);
+        Ok(())
     }
 
-    /// Return the full TWAP observation buffer as `Vec<(timestamp, cumulative_num, cumulative_denom)>`.
+    /// Number of observations currently retained in the TWAP ring buffer.
     ///
-    /// Off-chain consumers can reconstruct any-window TWAP:
-    ///   TWAP_price_of_A_in_B = Δnum / Δdenom
-    /// where Δnum = cum_num[t1] - cum_num[t0] and Δdenom = cum_denom[t1] - cum_denom[t0].
-    pub fn get_twap_observations(env: Env) -> Vec<(u64, i128, i128)> {
+    /// Grows from `0` to [`TWAP_OBSERVATION_COUNT`] and then stays at that cap:
+    /// once the ring is full every new observation overwrites the oldest slot,
+    /// so oracle storage never grows with the number of swaps.
+    pub fn observation_cardinality(env: Env) -> u32 {
         env.storage()
             .persistent()
-            .get(&KEY_TWAP_OBS)
-            .unwrap_or_else(|| Vec::new(&env))
+            .get::<_, TwapState>(&TwapKey::State)
+            .map(|state| state.cardinality)
+            .unwrap_or(0)
     }
+
+    /// Return the observation stored in physical ring slot `i`.
+    ///
+    /// Slots are physical storage positions, not chronological positions.
+    /// When the ring is full the oldest observation is at
+    /// `(index + 1) % TWAP_OBSERVATION_COUNT`, where `index` is the slot of the
+    /// newest observation; iterate chronologically by wrapping from there.
+    /// Off-chain consumers that just need the current price should call
+    /// [`consult`](AmmContract::consult) instead.
+    ///
+    /// # Errors
+    /// * [`AmmPoolError::TwapObservationNotFound`] — `i` is outside
+    ///   `0..TWAP_OBSERVATION_COUNT` or that slot has never been written.
+    pub fn get_observation(env: Env, i: u32) -> Result<TwapObservation, AmmPoolError> {
+        if i >= TWAP_OBSERVATION_COUNT {
+            return Err(AmmPoolError::TwapObservationNotFound);
+        }
+        read_observation(&env, i).ok_or(AmmPoolError::TwapObservationNotFound)
+    }
+
+    /// Time-weighted average price over the last `window_secs` seconds.
+    ///
+    /// Returns `(price_a_in_b, price_b_in_a)`, both scaled by
+    /// [`TWAP_PRICE_SCALE`]. `price_a_in_b` is the average number of token-B
+    /// units per token-A unit over the window.
+    ///
+    /// The start of the window is the *most recent observation that is at
+    /// least* `window_secs` old, so the effective window can be slightly
+    /// longer than requested (never shorter). The end of the window is now,
+    /// using the current reserves to extrapolate the accumulator since the
+    /// last observation. A `window_secs` of `0` returns the current spot
+    /// price.
+    ///
+    /// # Errors
+    /// * [`AmmPoolError::EmptyPool`] — either reserve is zero (no price).
+    /// * [`AmmPoolError::TwapInsufficientHistory`] — the window reaches past
+    ///   the oldest retained observation.
+    /// * [`AmmPoolError::Overflow`] — a spot price does not fit in `i128`.
+    pub fn consult(env: Env, window_secs: u64) -> Result<(i128, i128), AmmPoolError> {
+        let ra: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
+        let rb: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
+        if ra <= 0 || rb <= 0 {
+            return Err(AmmPoolError::EmptyPool);
+        }
+
+        let price0_now = scaled_price(rb, ra)?;
+        let price1_now = scaled_price(ra, rb)?;
+        if window_secs == 0 {
+            return Ok((price0_now, price1_now));
+        }
+
+        let state: TwapState = env
+            .storage()
+            .persistent()
+            .get(&TwapKey::State)
+            .ok_or(AmmPoolError::TwapInsufficientHistory)?;
+        if state.cardinality == 0 {
+            return Err(AmmPoolError::TwapInsufficientHistory);
+        }
+
+        let now = env.ledger().timestamp();
+        let target = now
+            .checked_sub(window_secs)
+            .ok_or(AmmPoolError::TwapInsufficientHistory)?;
+        let observation = find_observation_at_or_before(&env, &state, target)?
+            .ok_or(AmmPoolError::TwapInsufficientHistory)?;
+
+        // Extrapolate the newest cumulative to `now` with the current reserves.
+        let elapsed = now.saturating_sub(state.last_ts) as i128;
+        let cumulative0_now = state
+            .price0_cumulative
+            .wrapping_add(price0_now.wrapping_mul(elapsed));
+        let cumulative1_now = state
+            .price1_cumulative
+            .wrapping_add(price1_now.wrapping_mul(elapsed));
+
+        let dt = now.saturating_sub(observation.timestamp);
+        if dt == 0 {
+            // Defensive: a non-zero window can never select an observation at
+            // `now`, but never divide by zero even if the clock misbehaves.
+            return Err(AmmPoolError::TwapInsufficientHistory);
+        }
+        let dt = dt as i128;
+
+        let price0 = cumulative0_now.wrapping_sub(observation.price0_cumulative) / dt;
+        let price1 = cumulative1_now.wrapping_sub(observation.price1_cumulative) / dt;
+        Ok((price0, price1))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TWAP ring-buffer helpers
+// ---------------------------------------------------------------------------
+
+/// Compute `numerator * TWAP_PRICE_SCALE / denominator` as a fixed-point price.
+///
+/// Callers must guarantee `denominator > 0`. Returns
+/// [`AmmPoolError::Overflow`] when the scaled numerator does not fit in `i128`.
+fn scaled_price(numerator: i128, denominator: i128) -> Result<i128, AmmPoolError> {
+    numerator
+        .checked_mul(TWAP_PRICE_SCALE)
+        .map(|scaled| scaled / denominator)
+        .ok_or(AmmPoolError::Overflow)
+}
+
+/// Physical slot the next observation should be written to.
+fn next_observation_slot(state: &TwapState) -> u32 {
+    if state.cardinality < TWAP_OBSERVATION_COUNT {
+        if state.cardinality == 0 {
+            0
+        } else {
+            state.index + 1
+        }
+    } else {
+        (state.index + 1) % TWAP_OBSERVATION_COUNT
+    }
+}
+
+/// Physical slot of the oldest retained observation.
+fn ring_start(state: &TwapState) -> u32 {
+    if state.cardinality < TWAP_OBSERVATION_COUNT {
+        0
+    } else {
+        (state.index + 1) % TWAP_OBSERVATION_COUNT
+    }
+}
+
+/// Map a chronological offset (`0` = oldest) to a physical ring slot.
+fn ring_slot(state: &TwapState, chronological: u32) -> u32 {
+    (ring_start(state) + chronological) % TWAP_OBSERVATION_COUNT
+}
+
+fn read_observation(env: &Env, slot: u32) -> Option<TwapObservation> {
+    env.storage().persistent().get(&TwapKey::Obs(slot))
+}
+
+fn write_observation(env: &Env, slot: u32, observation: &TwapObservation) {
+    ttl::set_persistent(env, &TwapKey::Obs(slot), observation);
+}
+
+/// Return the newest observation whose timestamp is `<= target_ts`.
+///
+/// Observations are sorted by timestamp in chronological (ring) order, so a
+/// binary search over the retained window finds the start of the TWAP window.
+/// Returns `Ok(None)` when every retained observation is newer than
+/// `target_ts` (insufficient history).
+fn find_observation_at_or_before(
+    env: &Env,
+    state: &TwapState,
+    target_ts: u64,
+) -> Result<Option<TwapObservation>, AmmPoolError> {
+    if state.cardinality == 0 {
+        return Ok(None);
+    }
+
+    let oldest =
+        read_observation(env, ring_slot(state, 0)).ok_or(AmmPoolError::TwapObservationNotFound)?;
+    if oldest.timestamp > target_ts {
+        return Ok(None);
+    }
+
+    // `i64` avoids unsigned underflow when `hi` moves below zero.
+    let mut lo: i64 = 0;
+    let mut hi: i64 = i64::from(state.cardinality) - 1;
+    let mut best: i64 = 0;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let observation = read_observation(env, ring_slot(state, mid as u32))
+            .ok_or(AmmPoolError::TwapObservationNotFound)?;
+        if observation.timestamp <= target_ts {
+            best = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    read_observation(env, ring_slot(state, best as u32))
+        .map(Some)
+        .ok_or(AmmPoolError::TwapObservationNotFound)
 }
 
 // ---------------------------------------------------------------------------
@@ -1835,77 +2160,6 @@ mod inline_test {
         // sqrt(100*10)=31 < MINIMUM_LIQUIDITY(1000) → rejected
         client.add_liquidity(&caller, &100_i128, &10_i128, &0, &0, &0, &u64::MAX);
     }
-
-    // -----------------------------------------------------------------------
-    // Regression test: get_twap_observations() must grow after every swap
-    // -----------------------------------------------------------------------
-
-    #[test]
-    #[ignore = "TWAP observation recording not wired into swap functions — pre-existing issue"]
-    fn test_twap_observations_grow_after_each_swap() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let id = env.register(AmmContract, ());
-        let client = AmmContractClient::new(&env, &id);
-
-        let token_a = crate::swap_test_util::register_token(&env);
-        let token_b = crate::swap_test_util::register_token(&env);
-        let caller = Address::generate(&env);
-        let admin = Address::generate(&env);
-        let trader = crate::swap_test_util::new_trader(&env, &token_a, &token_b);
-
-        client.init_pool(&admin, &1_000_000, &1_000_000, &token_a, &token_b);
-        crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, 1_000_000, 1_000_000);
-
-        // Before any swap, the observation list is empty.
-        assert_eq!(
-            client.get_twap_observations().len(),
-            0,
-            "no observations expected before any swap"
-        );
-
-        // --- swap_a_for_b ---
-        client.swap_a_for_b(&trader, &1_000, &0);
-        assert_eq!(
-            client.get_twap_observations().len(),
-            1,
-            "expected 1 observation after swap_a_for_b"
-        );
-
-        // --- swap_b_for_a ---
-        client.swap_b_for_a(&trader, &1_000, &0);
-        assert_eq!(
-            client.get_twap_observations().len(),
-            2,
-            "expected 2 observations after swap_b_for_a"
-        );
-
-        // --- flash_swap_a_for_b ---
-        client.flash_swap_a_for_b(&caller, &1_000, &Bytes::new(&env));
-        assert_eq!(
-            client.get_twap_observations().len(),
-            3,
-            "expected 3 observations after flash_swap_a_for_b"
-        );
-
-        // Also verify the cumulative fields are sensible (non-zero
-        // cumulative numerator/denominator once the pool has non-zero
-        // reserves and any time has elapsed).
-        let obs = client.get_twap_observations();
-        for i in 0..obs.len() {
-            let (_timestamp, cum_num, cum_denom) = obs.get(i).unwrap();
-            assert!(
-                cum_num >= 0,
-                "cumulative numerator must be non-negative (obs {})",
-                i
-            );
-            assert!(
-                cum_denom >= 0,
-                "cumulative denominator must be non-negative (obs {})",
-                i
-            );
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1934,3 +2188,5 @@ mod dynamic_fee_test;
 mod inverse_swap_proptest;
 #[cfg(test)]
 mod swap_quote_test;
+#[cfg(test)]
+mod twap_test;
