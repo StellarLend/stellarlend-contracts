@@ -30,6 +30,10 @@ jobs:
         working-directory: stellar-lend
         run: cargo check --workspace --lib  --keep-going
 
+      - name: Run vesting contract tests
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-vesting
+
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
 
