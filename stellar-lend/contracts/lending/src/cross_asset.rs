@@ -841,6 +841,7 @@ pub fn borrow_asset_internal(
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebtAsset(asset.clone()), &new_total_debt);
+    crate::ttl::bump_global(env, &DataKey::TotalDebtAsset(asset.clone()));
 
     let total_debt_protocol: i128 = env
         .storage()
@@ -853,6 +854,7 @@ pub fn borrow_asset_internal(
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_protocol);
+    crate::ttl::bump_global(env, &DataKey::TotalDebt);
 
     extend_debt_asset_ttl(env, user, asset);
 
@@ -1004,6 +1006,7 @@ pub fn repay_asset_internal(
         &DataKey::TotalDebtAsset(asset.clone()),
         &new_total_debt_asset,
     );
+    crate::ttl::bump_global(env, &DataKey::TotalDebtAsset(asset.clone()));
 
     let total_debt_protocol: i128 = env
         .storage()
@@ -1019,6 +1022,7 @@ pub fn repay_asset_internal(
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_protocol);
+    crate::ttl::bump_global(env, &DataKey::TotalDebt);
 
     extend_debt_asset_ttl(env, user, asset);
 
