@@ -43,6 +43,8 @@ pub const ALL_LENDING_ERRORS: &[(LendingError, u32)] = &[
     (LendingError::InvalidLiquidationParams, 2011),
     (LendingError::IsolationCeilingBelowDebt, 2012),
     (LendingError::IsolationDebtInvariant, 2013),
+    (LendingError::SupplyCapExceeded, 2014),
+    (LendingError::LtvExceeded, 2015),
     // 3xxx: Oracle and price feed errors
     (LendingError::AssetNotConfigured, 3001),
     (LendingError::PriceFeedNotFound, 3002),
@@ -92,8 +94,8 @@ fn exhaustive_error_code_stability() {
     // Verify that the table length matches the enum variant count
     assert_eq!(
         ALL_LENDING_ERRORS.len(),
-        62,
-        "ALL_LENDING_ERRORS table must include all 62 LendingError variants"
+        64,
+        "ALL_LENDING_ERRORS table must include all 64 LendingError variants"
     );
 
     // Check each variant's discriminant matches its expected code
@@ -157,6 +159,8 @@ fn all_variants_covered() {
             LendingError::InvalidLiquidationParams => {}
             LendingError::IsolationCeilingBelowDebt => {}
             LendingError::IsolationDebtInvariant => {}
+            LendingError::SupplyCapExceeded => {}
+            LendingError::LtvExceeded => {}
             // 3xxx
             LendingError::AssetNotConfigured => {}
             LendingError::PriceFeedNotFound => {}
