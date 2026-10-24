@@ -85,7 +85,7 @@ fn withdraw_in_recovery_mode_still_checks_solvency() {
     let (_env, client, _id, user) = setup();
     client.deposit(&user, &1_000);
     client.borrow(&user, &400);
-    client.set_emergency_state(&EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
 
     // Healthy withdrawal is still allowed.
     assert_eq!(client.withdraw(&user, &500), 500);

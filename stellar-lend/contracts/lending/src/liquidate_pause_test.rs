@@ -68,7 +68,7 @@ mod liquidate_pause_tests {
     #[should_panic(expected = "OperationPaused")]
     fn liquidate_blocked_when_global_pause() {
         let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_pause(&PauseType::All, &true, &u32::MAX);
+        client.set_pause(&client.get_admin().unwrap(), &PauseType::All, &true, &u32::MAX);
         client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
     }
 
@@ -76,15 +76,15 @@ mod liquidate_pause_tests {
     #[should_panic(expected = "OperationPaused")]
     fn liquidate_blocked_when_liquidation_pause_granular() {
         let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_pause(&PauseType::Liquidation, &true, &u32::MAX);
+        client.set_pause(&client.get_admin().unwrap(), &PauseType::Liquidation, &true, &u32::MAX);
         client.liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
     }
 
     #[test]
     fn liquidate_allowed_in_recovery() {
         let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_emergency_state(&EmergencyState::Recovery);
-        client.set_pause(&PauseType::All, &false, &0);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Recovery);
+        client.set_pause(&client.get_admin().unwrap(), &PauseType::All, &false, &0);
         let res =
             client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
         assert!(res.is_ok());
@@ -93,7 +93,7 @@ mod liquidate_pause_tests {
     #[test]
     fn liquidate_allowed_in_shutdown() {
         let (_env, client, _admin, borrower, liquidator, debt_asset, collateral_asset) = setup();
-        client.set_emergency_state(&EmergencyState::Shutdown);
+        client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
         let res =
             client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &100);
         assert!(res.is_ok(), "liquidation must be allowed during Shutdown");

@@ -6,6 +6,8 @@
 
 #![no_std]
 
+pub mod ttl;
+
 use soroban_sdk::contracterror;
 
 /// Denominator for basis-point arithmetic (`10_000` = 100 %).
@@ -299,6 +301,9 @@ pub fn normalize_price_ceil(raw_price: i128, asset_decimals: u32) -> Option<i128
 
 #[cfg(test)]
 mod bps_roundtrip_test;
+
+#[cfg(test)]
+mod ttl_test;
 
 #[cfg(test)]
 mod bps_inverse_proptest;

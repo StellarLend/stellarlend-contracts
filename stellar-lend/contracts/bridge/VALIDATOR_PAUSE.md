@@ -45,6 +45,20 @@ pub fn guardian(&self) -> Option<&PublicKey>;
   later attempt to exfiltrate the bridge by rewriting the guardian still
   requires possession of the current guardian's signing key.
 
+### Guardian Payload & Nonce Domain Separation
+
+Guardian actions (pause and unpause) require signatures over a domain-separated payload containing:
+- `GUARDIAN_ACTION_DOMAIN` (`stellarlend::bridge::guardian_action::v1`)
+- Current contract address XDR
+- Bridge ID
+- Action tag (`1` for pause, `2` for unpause)
+- Validator public key
+- Monotonic guardian nonce (big-endian 8 bytes)
+- Current epoch (big-endian 8 bytes)
+- Expiry timestamp
+
+Storage maintains a monotonic `GuardianNonce` that increments on every successful guardian action, preventing signature replay.
+
 ### Pause / unpause
 
 ```rust
