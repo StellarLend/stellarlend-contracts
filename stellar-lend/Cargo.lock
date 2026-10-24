@@ -1882,13 +1882,16 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "soroban-sdk",
+ "stellar-lend-common",
 ]
 
 [[package]]
 name = "stellarlend-bridge"
 version = "0.0.0"
 dependencies = [
+ "ed25519-dalek 2.2.0",
  "soroban-sdk",
+ "stellar-lend-common",
 ]
 
 [[package]]
@@ -1907,7 +1910,9 @@ dependencies = [
 name = "stellarlend-multisig"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "soroban-sdk",
+ "stellar-lend-common",
 ]
 
 [[package]]
@@ -1917,6 +1922,7 @@ dependencies = [
  "proptest",
  "soroban-sdk",
  "soroban-token-sdk",
+ "stellar-lend-common",
 ]
 
 [[package]]

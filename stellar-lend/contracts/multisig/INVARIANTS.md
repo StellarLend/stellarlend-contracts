@@ -128,9 +128,10 @@ This document defines the explicit state, data, authorization, and failure invar
 - `require_signer()` checks: `Signers.contains(caller)`
 - Operations requiring signer: `approve_proposal`, `create_proposal`, `revoke_approval`, `cancel_proposal`
 - Unauthorized callers fail with `Unauthorized` error
+- `revoke_approval()` additionally requires the caller's own `require_auth()`; it cannot remove another signer's approval
 
 **Enforcement**:
-- Every public function begins with `require_signer(&env, &caller)?`
+- Signer-scoped public functions call `require_signer(&env, &caller)?`
 - Signer set retrieved from persistent storage
 
 **Failure Mode**: If violated, non-signers could approve proposals or execute actions.
@@ -183,11 +184,13 @@ This document defines the explicit state, data, authorization, and failure invar
   Active/Passed/Expired → Cancelled (by any signer, if Active or Passed)
   ```
 - Once `Executed`, `Expired`, or `Cancelled`, state is immutable
-- Approval only valid on `Active` status
-- Execution only valid on `Passed` status
+- Approvals and revocations are allowed on unexpired `Active` or `Passed` proposals
+- `Passed` is a cached hint, not authorization to execute
+- Execution is allowed only when the proposal has enough distinct current-signer approvals for the threshold at the execution ledger
 
 **Enforcement**:
-- State transitions checked in each function: `match proposal.status { ... }`
+- Terminal states (`Executed`, `Expired`, and `Cancelled`) are rejected by approval, revocation, and execution
+- Expiry is checked against the current ledger before approval, revocation, or execution
 - Invalid transitions return appropriate errors
 
 **Failure Mode**: If violated, proposals could be re-executed or modified after expiry.
@@ -214,18 +217,24 @@ This document defines the explicit state, data, authorization, and failure invar
 ---
 
 ### L3: Quorum Requirement
-**Invariant**: Proposals only pass when approval count reaches threshold.
+**Invariant**: A proposal executes only if, at the execution ledger, distinct current-signer approvals ≥ current threshold.
 
 **Properties**:
-- Passing condition: `approvals.len() ≥ threshold`
-- Proposal moves to `Passed` state exactly when this condition first becomes true
+- `Passed` is derived/cached state and may be stale after a threshold change
+- Execution-time condition: `approvals.len() ≥ current threshold`
+- Distinct signers may continue to add approvals to a `Passed` proposal
+- Raising the threshold immediately blocks proposals that no longer meet quorum, even if their stored status is `Passed`
+- Lowering the threshold makes already-active proposals executable when their current approvals meet it
+- A signer can revoke their own approval on an active or passed, unexpired proposal; quorum is recalculated after removal
 - Duplicate approvals prevented: `if approvals.contains(caller) return AlreadyApproved`
-- Execution only possible on `Passed` status
+- Execution eligibility is independent of the cached `Passed` status
 
 **Enforcement**:
 - `approve_proposal()` checks: `!approvals.contains(&caller)`
-- After adding approval, if `approvals.len() >= threshold`, set status to `Passed`
-- `execute_proposal()` checks: `status == Passed`
+- `approve_proposal()` updates the cached status using the current threshold; it allows a stale `Passed` proposal to gather approvals after a threshold increase
+- `revoke_approval()` removes the approval and its `ApprovalBinding`; it sets the status to `Active` below quorum and `Passed` at quorum
+- `execute_proposal()` and each action in `batch_execute()` check the current approval count against the live threshold immediately before dispatch
+- Threshold actions are evaluated against the pre-dispatch threshold, so a `SetThreshold` proposal is not blocked by its own effect
 
 **Failure Mode**: If violated, proposals could pass with insufficient approvals or execute before passing.
 

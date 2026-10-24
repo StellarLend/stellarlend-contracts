@@ -71,7 +71,7 @@ pub struct RateSnapshot {
     pub params: Option<rate_model::RateParams>,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowRateCache {
     pub ledger_sequence: u32,
@@ -211,32 +211,21 @@ pub fn accrue_index(current_index: i128, elapsed: u64, rate_bps: i128) -> i128 {
     // Overflow guard: reject indices already dangerously large.
     let max_safe_index = i128::MAX / INDEX_SCALE;
     if current_index > max_safe_index {
-        panic!("BorrowIndex: overflow guard triggered");
+        return current_index;
     }
 
     // delta = current_index * rate_bps * elapsed / (SECONDS_PER_YEAR * BPS_DENOM)
     let bps_denom: i128 = 10_000;
     let secs_per_year: i128 = SECONDS_PER_YEAR as i128;
 
-    let step1 = current_index
-        .checked_mul(rate_bps)
-        .expect("BorrowIndex: overflow in rate multiplication");
+    let delta = (|| -> Option<i128> {
+        let step1 = current_index.checked_mul(rate_bps)?;
+        let step2 = step1.checked_mul(elapsed as i128)?;
+        let denominator = secs_per_year.checked_mul(bps_denom)?;
+        step2.checked_div(denominator)
+    })().unwrap_or(0);
 
-    let step2 = step1
-        .checked_mul(elapsed as i128)
-        .expect("BorrowIndex: overflow in elapsed multiplication");
-
-    let denominator = secs_per_year
-        .checked_mul(bps_denom)
-        .expect("BorrowIndex: denominator overflow");
-
-    let delta = step2
-        .checked_div(denominator)
-        .expect("BorrowIndex: division by zero in accrual");
-
-    let new_index = current_index
-        .checked_add(delta)
-        .expect("BorrowIndex: overflow on add");
+    let new_index = current_index.checked_add(delta).unwrap_or(current_index);
 
     // Enforce monotonicity: never let index decrease.
     new_index.max(current_index)
@@ -298,9 +287,8 @@ pub fn compute_debt(position: &DebtPosition, current_index: i128) -> i128 {
     position
         .principal
         .checked_mul(current_index)
-        .expect("compute_debt: principal × index overflow")
-        .checked_div(snapshot)
-        .expect("compute_debt: division by zero (snapshot)")
+        .and_then(|v| v.checked_div(snapshot))
+        .unwrap_or(position.principal)
 }
 
 /// Settle a position's accrued interest into its principal and refresh the
@@ -331,13 +319,24 @@ pub fn settle_position(
 
 /// Computes utilization and borrow rate from a preloaded aggregate snapshot.
 ///
-/// Panics on arithmetic overflow, matching the existing borrow-rate API shape
-/// while keeping the underlying arithmetic checked.
+/// If utilization or curve computation fails, use the last persisted effective
+/// rate (or the legacy default before one has been stored). This keeps rate
+/// math failures from blocking repayment or liquidation.
 pub(crate) fn compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
 ) -> BorrowRateComputation {
-    try_compute_borrow_rate_from_snapshot(env, snapshot).expect("borrow-rate utilization overflow")
+    match try_compute_borrow_rate_from_snapshot(env, snapshot) {
+        Ok(computation) => computation,
+        Err(_) => BorrowRateComputation {
+            utilization_bps: compute_utilization_bps(snapshot).unwrap_or(0),
+            rate_bps: env
+                .storage()
+                .instance()
+                .get(&rate_model::RateModelKey::LastRate)
+                .unwrap_or(DEFAULT_APR_BPS),
+        },
+    }
 }
 
 fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {

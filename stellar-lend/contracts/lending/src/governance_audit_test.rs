@@ -195,7 +195,7 @@ fn test_governance_action_is_recorded_after_set_guardian() {
 fn test_governance_action_is_recorded_after_set_emergency_state() {
     let (_env, client, admin) = init_client();
 
-    client.set_emergency_state(&EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &EmergencyState::Shutdown);
 
     let entries = client.get_governance_audit_entries(&1);
     assert_eq!(entries.len(), 1);
@@ -206,7 +206,7 @@ fn test_governance_action_is_recorded_after_set_emergency_state() {
 fn test_governance_action_is_recorded_after_set_pause() {
     let (_env, client, admin) = init_client();
 
-    client.set_pause(&PauseType::All, &true, &1000);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::All, &true, &1000);
 
     let entries = client.get_governance_audit_entries(&1);
     assert_eq!(entries.len(), 1);

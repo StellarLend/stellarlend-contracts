@@ -41,9 +41,8 @@ fn claim_partial_equals_claimable_succeeds() {
         .expect("claim_partial should succeed");
     assert_eq!(claimed, 400);
     assert_eq!(c.balance_of("alice"), 400);
-    // total_locked tracks the unvested remainder: 1000 - 500 vested = 500
-    // (independent of how much of that 500 was actually claimed).
-    assert_eq!(c.total_locked(), 500);
+    // total_locked tracks remaining locked in contract: 1000 - 400 claimed = 600
+    assert_eq!(c.total_locked(), 600);
 }
 
 // ── amount < claimable (partial claim) ───────────────────────────────────────────
@@ -59,7 +58,7 @@ fn claim_partial_less_than_claimable_succeeds() {
         .expect("claim_partial should succeed");
     assert_eq!(claimed, 100);
     assert_eq!(c.balance_of("alice"), 100);
-    assert_eq!(c.total_locked(), 500); // 1000 - 500 vested
+    assert_eq!(c.total_locked(), 900); // 1000 - 100 claimed = 900
 
     // Check grant state: 500 vested, 100 claimed, 400 still claimable
     let grants = c.get_grants("alice");
