@@ -82,6 +82,7 @@ pub enum VestingKey {
     PausedAt,
     TotalPausedSecs,
     Grant(Address),
+    GrantPauseSnapshots(Address),
     PendingAdmin,
 }
 
@@ -215,6 +216,9 @@ pub struct VestingContract;
 #[cfg(test)]
 mod ttl_test;
 
+#[cfg(test)]
+mod pause_offset_grant_test;
+
 impl VestingContract {
     /// Validate a milestone schedule before escrowing tokens and creating a grant.
     ///
@@ -294,6 +298,7 @@ impl VestingContract {
     pub fn bump_grant(env: Env, grantee: Address) {
         ttl::bump_instance(&env);
         ttl::bump_persistent(&env, &VestingKey::Grants(grantee.clone()));
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         ttl::bump_persistent(&env, &VestingKey::Grant(grantee));
     }
 
@@ -381,6 +386,7 @@ impl VestingContract {
         };
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -388,6 +394,7 @@ impl VestingContract {
             .unwrap_or_else(|| Vec::new(&env));
         grants.push_back(grant);
         ttl::set_persistent(&env, &key, &grants);
+        Self::append_pause_snapshot(&env, &grantee, grants.len() - 1);
 
         let locked: i128 = env
             .storage()
@@ -465,6 +472,7 @@ impl VestingContract {
 
         let key = VestingKey::Grants(grantee.clone());
         ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -472,6 +480,7 @@ impl VestingContract {
             .unwrap_or_else(|| Vec::new(&env));
         grants.push_back(grant);
         ttl::set_persistent(&env, &key, &grants);
+        Self::append_pause_snapshot(&env, &grantee, grants.len() - 1);
 
         let locked: i128 = env
             .storage()
@@ -497,6 +506,7 @@ impl VestingContract {
         Self::require_not_paused(&env)?;
 
         let key = VestingKey::Grants(grantee.clone());
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -507,12 +517,18 @@ impl VestingContract {
             return Err(VestingError::GrantNotFound);
         }
 
-        let effective_now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         let mut total_claimable: i128 = 0;
         let mut locked_delta: i128 = 0;
 
         for i in 0..grants.len() {
             let mut g = grants.get(i).unwrap();
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             let vested = g.vested_at(effective_now);
             let claimable = vested.saturating_sub(g.claimed_amount);
             if claimable > 0 {
@@ -563,6 +579,7 @@ impl VestingContract {
 
         let key = VestingKey::Grants(grantee.clone());
         ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -572,7 +589,8 @@ impl VestingContract {
             return Err(VestingError::GrantNotFound);
         }
 
-        let effective_now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
 
         // Compute total claimable
         let mut total_claimable: i128 = 0;
@@ -581,6 +599,11 @@ impl VestingContract {
             if g.revoked {
                 continue;
             }
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             total_claimable = total_claimable
                 .saturating_add(g.vested_at(effective_now).saturating_sub(g.claimed_amount));
         }
@@ -598,6 +621,11 @@ impl VestingContract {
             if g.revoked {
                 continue;
             }
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             let claimable = g.vested_at(effective_now).saturating_sub(g.claimed_amount);
             if claimable <= 0 {
                 continue;
@@ -649,6 +677,7 @@ impl VestingContract {
 
         let key = VestingKey::Grants(grantee.clone());
         ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -663,7 +692,8 @@ impl VestingContract {
             return Err(VestingError::AlreadyRevoked);
         }
 
-        let effective_now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         let mut total_clawback: i128 = 0;
         let mut locked_delta: i128 = 0;
 
@@ -672,6 +702,11 @@ impl VestingContract {
             if g.revoked {
                 continue;
             }
+            let effective_now = Self::effective_now_for(
+                &env,
+                now,
+                snapshots.get(i).unwrap_or(0),
+            );
             let vested = g.vested_at(effective_now);
             let unvested = g.total_amount.saturating_sub(vested);
             total_clawback = total_clawback.saturating_add(unvested);
@@ -732,6 +767,7 @@ impl VestingContract {
 
         let key = VestingKey::Grants(grantee.clone());
         ttl::bump_persistent(&env, &key);
+        ttl::bump_persistent(&env, &VestingKey::GrantPauseSnapshots(grantee.clone()));
         let mut grants: Vec<Grant> = env
             .storage()
             .persistent()
@@ -818,14 +854,21 @@ impl VestingContract {
         }
 
         let mut new_grants: Vec<Grant> = Vec::new(&env);
+        let from_snapshots = Self::grant_pause_snapshots(&env, &from, from_grants.len());
+        let mut new_snapshots: Vec<u64> = Vec::new(&env);
         for i in 0..from_grants.len() {
             let mut g = from_grants.get(i).unwrap();
             g.grantee = to.clone();
             new_grants.push_back(g);
+            new_snapshots.push_back(from_snapshots.get(i).unwrap_or(0));
         }
 
         env.storage().persistent().remove(&from_key);
+        env.storage()
+            .persistent()
+            .remove(&VestingKey::GrantPauseSnapshots(from.clone()));
         ttl::set_persistent(&env, &to_key, &new_grants);
+        ttl::set_persistent(&env, &VestingKey::GrantPauseSnapshots(to.clone()), &new_snapshots);
 
         Self::emit_event(&env, "grant_transferred", &from);
         Ok(())
@@ -902,16 +945,19 @@ impl VestingContract {
         let grants: Vec<Grant> = env
             .storage()
             .persistent()
-            .get(&VestingKey::Grants(grantee))
+            .get(&VestingKey::Grants(grantee.clone()))
             .unwrap_or_else(|| Vec::new(&env));
-        let now = Self::effective_now(&env);
+        let now = env.ledger().timestamp();
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         let mut total: i128 = 0;
         for i in 0..grants.len() {
             let g = grants.get(i).unwrap();
             if g.revoked {
                 continue;
             }
-            total = total.saturating_add(g.claimable_at(now));
+            let effective_now =
+                Self::effective_now_for(&env, now, snapshots.get(i).unwrap_or(0));
+            total = total.saturating_add(g.claimable_at(effective_now));
         }
         total
     }
@@ -920,12 +966,15 @@ impl VestingContract {
         let grants: Vec<Grant> = env
             .storage()
             .persistent()
-            .get(&VestingKey::Grants(grantee))
+            .get(&VestingKey::Grants(grantee.clone()))
             .ok_or(VestingError::GrantNotFound)?;
         let mut total: i128 = 0;
+        let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         for i in 0..grants.len() {
             let g = grants.get(i).unwrap();
-            total = total.saturating_add(g.vested_at(now));
+            let effective_now =
+                Self::effective_now_for(&env, now, snapshots.get(i).unwrap_or(0));
+            total = total.saturating_add(g.vested_at(effective_now));
         }
         Ok(total)
     }
@@ -1097,14 +1146,58 @@ impl VestingContract {
 
     // ── Internal helpers ──────────────────────────────────────────────────
 
-    fn effective_now(env: &Env) -> u64 {
-        let now = env.ledger().timestamp();
-        let paused: u64 = env
+    fn cumulative_paused_at(env: &Env, timestamp: u64) -> u64 {
+        let total_paused: u64 = env
             .storage()
             .persistent()
             .get(&VestingKey::TotalPausedSecs)
             .unwrap_or(0u64);
-        now.saturating_sub(paused)
+        let paused: bool = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::Paused)
+            .unwrap_or(false);
+        if !paused {
+            return total_paused;
+        }
+        let paused_at: u64 = env
+            .storage()
+            .persistent()
+            .get(&VestingKey::PausedAt)
+            .unwrap_or(timestamp);
+        total_paused.saturating_add(timestamp.saturating_sub(paused_at))
+    }
+
+    fn effective_now_for(env: &Env, timestamp: u64, paused_secs_at_creation: u64) -> u64 {
+        // Historical queries before grant creation have no grant-live paused time to subtract.
+        let paused_after_creation = Self::cumulative_paused_at(env, timestamp)
+            .checked_sub(paused_secs_at_creation)
+            .unwrap_or(0);
+        timestamp.saturating_sub(paused_after_creation)
+    }
+
+    fn grant_pause_snapshots(env: &Env, grantee: &Address, grant_count: u32) -> Vec<u64> {
+        let key = VestingKey::GrantPauseSnapshots(grantee.clone());
+        let stored: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        let mut snapshots: Vec<u64> = Vec::new(env);
+        for i in 0..grant_count {
+            snapshots.push_back(stored.get(i).unwrap_or(0));
+        }
+        snapshots
+    }
+
+    fn append_pause_snapshot(env: &Env, grantee: &Address, grant_index: u32) {
+        let mut snapshots = Self::grant_pause_snapshots(env, grantee, grant_index);
+        snapshots.push_back(Self::cumulative_paused_at(env, env.ledger().timestamp()));
+        ttl::set_persistent(
+            env,
+            &VestingKey::GrantPauseSnapshots(grantee.clone()),
+            &snapshots,
+        );
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), VestingError> {
