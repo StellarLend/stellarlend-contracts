@@ -438,6 +438,14 @@ pub struct LiquidationEventV1 {
     pub shortfall: i128,
 }
 
+/// Emitted when bad debt is recorded during a liquidation shortfall.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BadDebtEvent {
+    pub borrower: Address,
+    pub amount: i128,
+}
+
 /// Emitted by [`LendingContract::liquidate_cross_asset`] when a cross-asset
 /// liquidation completes.  Carries the identities of both the debt and
 /// collateral assets so indexers can reconstruct each individual leg.
@@ -2058,12 +2066,15 @@ impl LendingContract {
             let col_key = DataKey::Collateral(borrower.clone());
             let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
             let position = load_debt(&env, &borrower);
+            let prev_principal = position.principal;
             let now = env.ledger().timestamp();
+            let rate = current_borrow_rate(&env);
             let settled_position =
-                settle_and_accrue_insurance(&env, &position, now, DEFAULT_APR_BPS)
+                settle_and_accrue_insurance(&env, &position, now, rate)
                     .map_err(|_| LendingError::Overflow)?;
             save_debt(&env, &borrower, &settled_position);
             let debt = settled_position.principal;
+            let accrued_interest = settled_position.principal.saturating_sub(prev_principal);
 
             // A position with no outstanding debt has nothing to liquidate --
             // treat it as healthy rather than dividing by zero below (mirrors
@@ -2161,9 +2172,11 @@ impl LendingContract {
                     env.storage()
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
-                    #[allow(deprecated)]
-                    env.events()
-                        .publish((Symbol::new(&env, "bad_debt"), borrower.clone()), residual);
+                    BadDebtEvent {
+                        borrower: borrower.clone(),
+                        amount: residual,
+                    }
+                    .publish(&env);
                 }
                 final_seized = available_collateral;
             }
@@ -2207,6 +2220,62 @@ impl LendingContract {
             };
             save_debt(&env, &borrower, &updated_position);
             env.storage().persistent().set(&col_key, &new_col);
+
+            let total_debt_key = DataKey::TotalDebt;
+            let total_deposits_key = DataKey::TotalDeposits;
+
+            if env.storage().persistent().has(&total_debt_key) {
+                let total_debt: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&total_debt_key)
+                    .unwrap_or(0);
+                let total_debt_with_interest = total_debt
+                    .checked_add(accrued_interest)
+                    .ok_or(LendingError::Overflow)?;
+                let new_total_debt = total_debt_with_interest
+                    .checked_sub(actual_repay)
+                    .ok_or(LendingError::Overflow)?;
+                env.storage()
+                    .persistent()
+                    .set(&total_debt_key, &new_total_debt);
+            }
+
+            if env.storage().persistent().has(&total_deposits_key) {
+                let total_deposits: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&total_deposits_key)
+                    .unwrap_or(0);
+                let new_total_deposits = total_deposits
+                    .checked_sub(final_seized)
+                    .ok_or(LendingError::Overflow)?;
+                env.storage()
+                    .persistent()
+                    .set(&total_deposits_key, &new_total_deposits);
+            }
+
+            #[cfg(test)]
+            {
+                if let Some(borrowers) = env
+                    .storage()
+                    .instance()
+                    .get::<DataKey, soroban_sdk::Vec<Address>>(&DataKey::BorrowerList)
+                {
+                    let mut sum_debt: i128 = 0;
+                    for i in 0..borrowers.len() {
+                        let u = borrowers.get(i).unwrap();
+                        sum_debt = sum_debt.saturating_add(load_debt(&env, &u).principal);
+                    }
+                    if let Some(td) = env
+                        .storage()
+                        .persistent()
+                        .get::<DataKey, i128>(&total_debt_key)
+                    {
+                        debug_assert_eq!(sum_debt, td, "sum(user debt) == TotalDebt");
+                    }
+                }
+            }
 
             // A liquidation repays the same principal that is removed from
             // the position. Release that amount exactly once from any
@@ -4796,6 +4865,33 @@ impl BadAmm {
     ) -> i128 {
         amount_in / 4
     }
+}
+
+#[cfg(test)]
+pub fn assert_totals_consistent(env: &Env, users: &[Address]) {
+    let mut sum_debt: i128 = 0;
+    let mut sum_col: i128 = 0;
+    for u in users {
+        sum_debt = sum_debt.saturating_add(load_debt(env, u).principal);
+        let c: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(u.clone()))
+            .unwrap_or(0);
+        sum_col = sum_col.saturating_add(c);
+    }
+    let total_debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDebt)
+        .unwrap_or(0);
+    let total_col: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDeposits)
+        .unwrap_or(0);
+    assert_eq!(sum_debt, total_debt, "sum(user debt) == TotalDebt");
+    assert_eq!(sum_col, total_col, "sum(collateral) == TotalDeposits");
 }
 
 #[cfg(test)]
