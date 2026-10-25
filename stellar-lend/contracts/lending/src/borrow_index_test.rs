@@ -23,7 +23,7 @@
 #[cfg(test)]
 mod borrow_index_tests {
     use crate::debt::{
-        accrue_index, compute_debt, load_borrow_index, load_debt, touch_borrow_index, DebtPosition,
+        accrue_index, compute_debt, load_borrow_index, touch_borrow_index, DebtPosition,
         INDEX_SCALE,
     };
     use crate::{LendingContract, LendingContractClient};
@@ -98,7 +98,7 @@ mod borrow_index_tests {
 
     #[test]
     fn test_zero_elapsed_touch_is_no_op() {
-        let (env, client, _admin, user) = setup();
+        let (_env, client, _admin, user) = setup();
 
         // Borrow at t=0
         client.borrow(&user, &1_000);
@@ -441,7 +441,7 @@ mod borrow_index_tests {
 
     #[test]
     fn test_interest_always_non_negative() {
-        let (env, client, _admin, _user) = setup();
+        let (_env, _client, _admin, _user) = setup();
 
         let principals = [1i128, 100, 10_000, 1_000_000];
         let time_steps = [1u64, 3600, SECONDS_PER_YEAR, SECONDS_PER_YEAR * 5];

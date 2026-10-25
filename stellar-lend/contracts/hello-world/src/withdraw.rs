@@ -44,6 +44,8 @@ use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
 pub const LIQUIDATION_THRESHOLD_BPS: i128 = 8_000;
 
 /// Denominator used when computing health factors (1.0 HF = 10 000).
+/// A health factor of exactly 1.0 is represented as 10 000 in this fixed-point
+/// scheme, matching the lending crate's `HEALTH_FACTOR_SCALE`.
 pub const HEALTH_FACTOR_SCALE: i128 = 10_000;
 
 // ---------------------------------------------------------------------------
@@ -79,26 +81,39 @@ pub struct WithdrawEvent {
     pub schema_version: u32,
     /// User who performed the withdrawal.
     pub user: Address,
-    /// Amount withdrawn.
+    /// Amount withdrawn (always > 0 because [`withdraw_collateral`] rejects ≤ 0).
     pub amount: i128,
     /// User's collateral balance after the withdrawal.
     pub new_balance: i128,
-    /// Ledger timestamp at the time of withdrawal.
+    /// Ledger timestamp at the time of withdrawal (seconds since Unix epoch).
     pub timestamp: u64,
 }
 
 /// Current event schema version.
+/// Bump this whenever the [`WithdrawEvent`] fields change in a breaking way.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
 
-/// Emit a [`WithdrawEvent`].
+/// Construct and publish a [`WithdrawEvent`] to the Soroban event ledger.
+///
+/// Called only after all state mutations succeed, so indexers can treat the
+/// event as a reliable confirmation that the withdrawal was applied.
+///
+/// # Arguments
+/// * `env`         – Soroban environment (provides ledger timestamp and event emitter).
+/// * `user`        – Address that withdrew; recorded verbatim in the event.
+/// * `amount`      – Amount removed from the balance.
+/// * `new_balance` – Balance remaining after the withdrawal.
 fn emit_withdraw(env: &Env, user: &Address, amount: i128, new_balance: i128) {
     let event = WithdrawEvent {
         schema_version: EVENT_SCHEMA_VERSION,
         user: user.clone(),
         amount,
         new_balance,
+        // Capture the current ledger time so off-chain indexers can order events
+        // without relying on block numbers.
         timestamp: env.ledger().timestamp(),
     };
+    // Publish under a stable topic string so subscribers can filter by event type.
     env.events()
         .publish((Symbol::new(env, "WithdrawEvent"),), event);
 }
@@ -123,7 +138,8 @@ fn emit_withdraw(env: &Env, user: &Address, amount: i128, new_balance: i128) {
 /// # Arguments
 /// * `env`    – Soroban environment.
 /// * `user`   – Account withdrawing collateral (authorization required).
-/// * `asset`  – Asset address (reserved for future multi-asset routing).
+/// * `asset`  – Asset address (reserved for future multi-asset routing; unused in
+///              this single-asset implementation — storage is keyed by user only).
 /// * `amount` – Amount to withdraw; must be > 0.
 ///
 /// # Returns
@@ -139,18 +155,26 @@ fn emit_withdraw(env: &Env, user: &Address, amount: i128, new_balance: i128) {
 pub fn withdraw_collateral(
     env: &Env,
     user: Address,
+    // Reserved for multi-asset routing; not used for storage lookups in this
+    // single-asset implementation. The parameter is kept so the signature is
+    // forward-compatible with the cross-asset path in the lending crate.
     asset: Option<Address>,
     amount: i128,
 ) -> Result<i128, WithdrawError> {
-    // 1. Validate amount.
+    // Suppress unused-variable warning; asset routing is a future concern.
+    let _ = asset;
+
+    // 1. Validate amount — must be strictly positive.
     if amount <= 0 {
         return Err(WithdrawError::InvalidAmount);
     }
 
-    // 2. Require caller authorisation.
+    // 2. Require the transaction to be authorised by `user`.
+    //    Soroban will abort with an auth error if the invoker does not match.
     user.require_auth();
 
     // 3. Load current collateral balance.
+    //    Defaults to 0 for accounts that have never deposited (no entry in storage).
     let balance_key = crate::DataKey::Balance(user.clone());
     let current_balance: i128 = env
         .storage()
@@ -159,38 +183,50 @@ pub fn withdraw_collateral(
         .unwrap_or(0_i128);
 
     if current_balance < amount {
+        // The user is trying to withdraw more than they have deposited.
         return Err(WithdrawError::InsufficientBalance);
     }
 
-    // 4. Compute balance after withdrawal.
+    // 4. Compute tentative post-withdrawal balance.
+    //    checked_sub is used defensively; underflow is logically impossible here
+    //    because we just confirmed current_balance >= amount, but we propagate
+    //    Overflow rather than panicking to keep error handling uniform.
     let new_balance = current_balance
         .checked_sub(amount)
         .ok_or(WithdrawError::Overflow)?;
 
     // 5. Load outstanding debt.
+    //    Defaults to 0 for users with no open borrow positions.
     let debt_key = crate::DataKey::Debt(user.clone());
     let debt: i128 = env.storage().persistent().get(&debt_key).unwrap_or(0_i128);
 
-    // 6. Health-factor check — mirrors assert_borrow_solvent in the lending crate:
-    //    new_balance * LIQUIDATION_THRESHOLD_BPS >= HEALTH_FACTOR_SCALE * debt
+    // 6. Health-factor check — only needed when the user has an open debt position.
+    //    Mirrors assert_borrow_solvent in the lending crate:
+    //      new_balance * LIQUIDATION_THRESHOLD_BPS >= HEALTH_FACTOR_SCALE * debt
+    //    Rearranged from the canonical form (HF = collateral * threshold / debt)
+    //    to avoid division and keep all arithmetic in integer space.
     if debt > 0 {
+        // Scale collateral by the liquidation threshold (80 % = 8 000 bps).
         let weighted_collateral = new_balance
             .checked_mul(LIQUIDATION_THRESHOLD_BPS)
             .ok_or(WithdrawError::Overflow)?;
+        // Scale debt by the health-factor denominator (10 000 = HF of 1.0).
         let required = HEALTH_FACTOR_SCALE
             .checked_mul(debt)
             .ok_or(WithdrawError::Overflow)?;
         if weighted_collateral < required {
+            // Withdrawal would push the health factor below 1.0 — reject it.
             return Err(WithdrawError::InsufficientCollateral);
         }
     }
 
-    // 7. Persist updated balance.
+    // 7. Persist the updated balance now that all checks have passed.
     env.storage().persistent().set(&balance_key, &new_balance);
 
-    // 8. Emit withdrawal event (schema matches lending crate's WithdrawEvent).
+    // 8. Emit the withdrawal event — published after state is committed so that
+    //    the event is only visible to indexers when the transaction succeeds.
     emit_withdraw(env, &user, amount, new_balance);
 
-    // 9. Return new balance.
+    // 9. Return the new balance to the caller for convenience.
     Ok(new_balance)
 }

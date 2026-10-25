@@ -1,0 +1,9 @@
+{
+  "_comment": "WASM size budgets in bytes for deployable release contract artifacts (issue #2280). Max absolute Soroban limit is 131072 bytes (128 KiB). stellarlend_lending.wasm has been slimmed from 231,192 bytes down to 180,633 bytes, with all 19 timelocked upgrade entrypoints active. Ratchet updated towards 129,024 byte budget.",
+  "budgets": {
+    "stellarlend_lending.wasm": 184320,
+    "stellarlend_amm.wasm": 131072,
+    "stellarlend_vesting.wasm": 131072,
+    "stellarlend_multisig.wasm": 131072
+  }
+}

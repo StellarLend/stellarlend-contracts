@@ -16,7 +16,7 @@
 
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, IntoVal};
 
 const INIT_A: i128 = 1_000_000;
 const INIT_B: i128 = 2_000_000;
@@ -46,11 +46,16 @@ fn setup_with_liquidity() -> (
     soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&lp, &INIT_A);
     soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&lp, &INIT_B);
 
-    // `init_pool(a, b, ta, tb)` seeds `(reserve_a, reserve_b) = (a, b)`.
-    client.init_pool(&INIT_A, &INIT_B, &token_a, &token_b);
+    // `init_pool(admin, a, b, ta, tb)` seeds `(reserve_a, reserve_b) = (a, b)`.
+    client.init_pool(&lp, &INIT_A, &INIT_B, &token_a, &token_b);
     // First call into `add_liquidity` uses the proportional path;
     // after this, `reserve_a = 2_000_000`, `reserve_b = 3_000_000`.
-    let _shares = client.add_liquidity(&lp, &INIT_A, &INIT_B);
+    let _shares = client.add_liquidity(&lp, &INIT_A, &INIT_B, &0, &0, &0, &u64::MAX);
+    // `init_pool` seeded virtual reserves; back them with real balances so
+    // swaps (which now settle tokens) can pay out, and fund `lp` as trader.
+    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, INIT_A, INIT_B);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&lp, &100_000_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&lp, &100_000_000);
     (env, client, token_a, token_b, lp)
 }
 
@@ -68,7 +73,7 @@ fn test_default_min_liquidity_is_zero() {
 fn test_floor_zero_allows_full_withdrawal() {
     let (_env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let balance = client.get_lp_balance(&lp);
-    client.remove_liquidity(&lp, &balance);
+    client.remove_liquidity(&lp, &balance, &0, &0, &u64::MAX);
     let (ra, rb) = client.get_reserves();
     assert!(ra < INIT_A * 2, "full burn must shrink reserve A");
     assert!(rb < INIT_B * 2, "full burn must shrink reserve B");
@@ -76,9 +81,9 @@ fn test_floor_zero_allows_full_withdrawal() {
 
 #[test]
 fn test_floor_zero_does_not_reject_swap() {
-    let (_env, client, _token_a, _token_b, _lp) = setup_with_liquidity();
+    let (_env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let (ra0, rb0) = client.get_reserves();
-    assert!(client.swap_a_for_b(&INIT_A) > 0);
+    assert!(client.swap_a_for_b(&lp, &INIT_A, &0) > 0);
     let (ra1, rb1) = client.get_reserves();
     assert!(rb1 < rb0, "swap A→B should have reduced reserve_b");
     assert!(ra1 > ra0, "swap A→B should have grown reserve_a");
@@ -161,8 +166,14 @@ fn test_remove_liquidity_below_floor_a_rejected() {
     }]);
     client.set_min_liquidity(&admin, &2_000_001_i128);
 
+    // `mock_auths` above narrowed authorization to just the
+    // `set_min_liquidity` invocation; restore blanket auth mocking so the
+    // `lp.require_auth()` inside `remove_liquidity` below succeeds and we
+    // actually reach the floor check.
+    env.mock_all_auths();
+
     let balance = client.get_lp_balance(&lp);
-    let err = client.try_remove_liquidity(&lp, &balance);
+    let err = client.try_remove_liquidity(&lp, &balance, &0, &0, &u64::MAX);
     assert!(
         matches!(err, Err(Ok(AmmPoolError::BelowMinLiquidity))),
         "expected BelowMinLiquidity, got {:?}",
@@ -177,7 +188,7 @@ fn test_remove_liquidity_floor_zero_still_works() {
     let (ra0, rb0) = client.get_reserves();
     let k0 = ra0.checked_mul(rb0).unwrap();
     let balance = client.get_lp_balance(&lp);
-    client.remove_liquidity(&lp, &balance);
+    client.remove_liquidity(&lp, &balance, &0, &0, &u64::MAX);
     let (ra1, rb1) = client.get_reserves();
     assert!(
         ra1 < ra0,
@@ -206,7 +217,7 @@ fn test_remove_liquidity_floor_zero_still_works() {
 
 #[test]
 fn test_swap_a_for_b_below_floor_b_rejected() {
-    let (env, client, _token_a, _token_b, _lp) = setup_with_liquidity();
+    let (env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let admin = Address::generate(&env);
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
@@ -218,8 +229,10 @@ fn test_swap_a_for_b_below_floor_b_rejected() {
         },
     }]);
     client.set_min_liquidity(&admin, &2_500_000_i128);
+    // The swap itself needs the trader's auth now.
+    env.mock_all_auths();
 
-    let err = client.try_swap_a_for_b(&2_000_000_i128);
+    let err = client.try_swap_a_for_b(&lp, &2_000_000_i128, &0);
     assert!(
         matches!(err, Err(Ok(AmmPoolError::BelowMinLiquidity))),
         "expected BelowMinLiquidity on A→B, got {:?}",
@@ -229,7 +242,7 @@ fn test_swap_a_for_b_below_floor_b_rejected() {
 
 #[test]
 fn test_swap_a_for_b_above_floor_b_allowed() {
-    let (env, client, _token_a, _token_b, _lp) = setup_with_liquidity();
+    let (env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let admin = Address::generate(&env);
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
@@ -241,9 +254,11 @@ fn test_swap_a_for_b_above_floor_b_allowed() {
         },
     }]);
     client.set_min_liquidity(&admin, &2_500_000_i128);
+    // The swap itself needs the trader's auth now.
+    env.mock_all_auths();
 
     // amount_in = 1_000 → amount_out ≈ 1_500 → new_rb above floor.
-    assert!(client.swap_a_for_b(&1_000_i128) > 0);
+    assert!(client.swap_a_for_b(&lp, &1_000_i128, &0) > 0);
     let (_ra, rb) = client.get_reserves();
     assert!(
         rb >= 2_500_000,
@@ -261,7 +276,7 @@ fn test_swap_a_for_b_above_floor_b_allowed() {
 
 #[test]
 fn test_swap_b_for_a_below_floor_a_rejected() {
-    let (env, client, _token_a, _token_b, _lp) = setup_with_liquidity();
+    let (env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let admin = Address::generate(&env);
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
@@ -273,8 +288,10 @@ fn test_swap_b_for_a_below_floor_a_rejected() {
         },
     }]);
     client.set_min_liquidity(&admin, &1_500_000_i128);
+    // The swap itself needs the trader's auth now.
+    env.mock_all_auths();
 
-    let err = client.try_swap_b_for_a(&3_000_000_i128);
+    let err = client.try_swap_b_for_a(&lp, &3_000_000_i128, &0);
     assert!(
         matches!(err, Err(Ok(AmmPoolError::BelowMinLiquidity))),
         "expected BelowMinLiquidity on B→A, got {:?}",
@@ -284,7 +301,7 @@ fn test_swap_b_for_a_below_floor_a_rejected() {
 
 #[test]
 fn test_swap_b_for_a_above_floor_a_allowed() {
-    let (env, client, _token_a, _token_b, _lp) = setup_with_liquidity();
+    let (env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let admin = Address::generate(&env);
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
@@ -296,9 +313,11 @@ fn test_swap_b_for_a_above_floor_a_allowed() {
         },
     }]);
     client.set_min_liquidity(&admin, &1_500_000_i128);
+    // The swap itself needs the trader's auth now.
+    env.mock_all_auths();
 
     // amount_in = 1_000 → amount_out ≈ 333 → new_ra above floor.
-    assert!(client.swap_b_for_a(&1_000_i128) > 0);
+    assert!(client.swap_b_for_a(&lp, &1_000_i128, &0) > 0);
     let (ra, _rb) = client.get_reserves();
     assert!(
         ra >= 1_500_000,
@@ -313,10 +332,10 @@ fn test_swap_b_for_a_above_floor_a_allowed() {
 
 #[test]
 fn test_k_invariant_non_decreasing_on_swap() {
-    let (_env, client, _token_a, _token_b, _lp) = setup_with_liquidity();
+    let (_env, client, _token_a, _token_b, lp) = setup_with_liquidity();
     let (ra0, rb0) = client.get_reserves();
     let k0 = ra0.checked_mul(rb0).unwrap();
-    let _ = client.swap_a_for_b(&10_000_i128);
+    let _ = client.swap_a_for_b(&lp, &10_000_i128, &0);
     let (ra1, rb1) = client.get_reserves();
     let k1 = ra1.checked_mul(rb1).unwrap();
     assert!(

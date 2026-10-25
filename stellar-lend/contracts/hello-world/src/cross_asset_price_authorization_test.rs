@@ -41,6 +41,7 @@ fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
         can_borrow: true,
         price,
         price_decimals,
+        last_update_ts: 0,
     }
 }
 
@@ -58,7 +59,7 @@ fn test_price_update_rejects_non_admin() {
         let non_admin = Address::generate(&env);
 
         initialize(&env, admin.clone()).unwrap();
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(1_000_000, 6)).unwrap();
 
         // Non-admin cannot update price
         let r = update_asset_price(&env, &non_admin, None, 2_000_000);
@@ -76,16 +77,10 @@ fn test_price_update_rejects_when_no_admin_set() {
     let env = make_env();
     env.mock_all_auths();
     with_contract(&env, || {
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        // No admin set — any update_asset_price call must fail.
         let caller = Address::generate(&env);
-
-        // Any caller should be rejected when no admin is set
         let r = update_asset_price(&env, &caller, None, 2_000_000);
         assert_eq!(r, Err(CrossAssetError::Unauthorized));
-
-        // Price on disk is unchanged
-        let cfg = get_asset_config_by_address(&env, None).unwrap();
-        assert_eq!(cfg.price, 1_000_000);
     });
 }
 
@@ -104,7 +99,7 @@ fn test_price_update_succeeds_with_admin() {
         let new_price = 2_000_000;
 
         initialize(&env, admin.clone()).unwrap();
-        initialize_asset(&env, None, default_config(initial_price, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(initial_price, 6)).unwrap();
 
         // Admin updates price
         let r = update_asset_price(&env, &admin, None, new_price);
@@ -127,8 +122,8 @@ fn test_price_update_multiple_assets() {
         let token_b = Address::generate(&env);
 
         initialize(&env, admin.clone()).unwrap();
-        initialize_asset(&env, Some(token_a.clone()), default_config(100, 6)).unwrap();
-        initialize_asset(&env, Some(token_b.clone()), default_config(50, 6)).unwrap();
+        initialize_asset(&env, &admin, Some(token_a.clone()), default_config(100, 6)).unwrap();
+        initialize_asset(&env, &admin, Some(token_b.clone()), default_config(50, 6)).unwrap();
 
         // Update token A price
         update_asset_price(&env, &admin, Some(token_a.clone()), 200).unwrap();
@@ -153,7 +148,7 @@ fn test_price_update_rejects_zero() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         initialize(&env, admin.clone()).unwrap();
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(1_000_000, 6)).unwrap();
 
         let r = update_asset_price(&env, &admin, None, 0);
         assert_eq!(r, Err(CrossAssetError::InvalidAmount));
@@ -172,7 +167,7 @@ fn test_price_update_rejects_negative() {
     with_contract(&env, || {
         let admin = Address::generate(&env);
         initialize(&env, admin.clone()).unwrap();
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(1_000_000, 6)).unwrap();
 
         let r = update_asset_price(&env, &admin, None, -1_000_000);
         assert_eq!(r, Err(CrossAssetError::InvalidAmount));
@@ -194,7 +189,7 @@ fn test_unauthorized_rejected_before_validation() {
         let non_admin = Address::generate(&env);
 
         initialize(&env, admin).unwrap();
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(1_000_000, 6)).unwrap();
 
         // Non-admin tries to set invalid price (zero)
         // Should get Unauthorized, not InvalidAmount

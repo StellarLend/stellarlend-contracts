@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod rate_smoothing_proof_doctest {
+mod rate_smoothing_proof_tests {
     use crate::rate_model::compute_smoothed_rate;
 
     #[test]

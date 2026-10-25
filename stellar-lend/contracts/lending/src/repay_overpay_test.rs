@@ -1,6 +1,4 @@
-#![cfg(test)]
-
-use crate::debt::{load_debt, repay_amount, DebtError, DebtPosition, DEFAULT_APR_BPS};
+use crate::debt::{repay_amount, DebtError, DebtPosition, DEFAULT_APR_BPS};
 use crate::{LendingContract, LendingContractClient, LendingError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -23,7 +21,6 @@ fn repay_exact_amount_leaves_zero_debt() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -42,7 +39,6 @@ fn repay_overpay_by_one_unit_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -62,7 +58,6 @@ fn repay_overpay_by_2x_returns_error() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -78,13 +73,12 @@ fn repay_overpay_by_2x_returns_error() {
 /// Repaying an amount that exceeds the *settled* total must also error.
 #[test]
 fn repay_overpay_after_interest_accrual_returns_error() {
-    let (env, _client, _admin, _user) = setup();
+    let (_env, _client, _admin, _user) = setup();
 
     let initial_timestamp = 1000u64;
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: initial_timestamp,
     };
 
@@ -108,7 +102,6 @@ fn repay_partial_payment_leaves_remaining_debt() {
     let position = DebtPosition {
         borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: env.ledger().timestamp(),
     };
 
@@ -122,7 +115,7 @@ fn repay_partial_payment_leaves_remaining_debt() {
 /// when the caller supplies more than the outstanding debt.
 #[test]
 fn contract_repay_overpay_returns_lending_error() {
-    let (env, client, _admin, user) = setup();
+    let (_env, client, _admin, user) = setup();
 
     client.deposit(&user, &700);
     client.borrow(&user, &500);
@@ -149,7 +142,7 @@ fn contract_repay_overpay_returns_lending_error() {
 /// Repaying the exact debt via the contract succeeds and zeroes the position.
 #[test]
 fn contract_repay_exact_debt_succeeds() {
-    let (env, client, _admin, user) = setup();
+    let (_env, client, _admin, user) = setup();
 
     client.deposit(&user, &500);
     client.borrow(&user, &300);
@@ -171,12 +164,12 @@ fn contract_repay_exact_debt_succeeds() {
 
 #[test]
 fn repay_exact_debt_after_interest_accrual_with_no_refund() {
-    let (env, _client, _admin, _user) = setup();
+    let (_env, _client, _admin, _user) = setup();
 
     let initial_timestamp = 1000u64;
     let position = DebtPosition {
+        borrow_index_snapshot: crate::debt::INDEX_SCALE,
         principal: 1000,
-        borrow_index_snapshot: 0,
         last_update: initial_timestamp,
     };
 

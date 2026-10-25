@@ -40,10 +40,10 @@ use crate::math::try_sqrt;
 // Strategies
 // ---------------------------------------------------------------------------
 
-/// Generates `(amount_0, amount_1)` for a first deposit.
-///
-/// Values are capped at `10^12` so that `amount_0 × amount_1` never exceeds
-/// `10^24`, which is safely within `i128` range (`~1.7 × 10^38`).
+// Generates `(amount_0, amount_1)` for a first deposit.
+//
+// Values are capped at `10^12` so that `amount_0 x amount_1` never exceeds
+// `10^24`, which is safely within `i128` range (`~1.7 x 10^38`).
 prop_compose! {
     fn first_deposit_strategy()(
         amount_0 in 1i128..=1_000_000_000_000i128,
@@ -53,13 +53,12 @@ prop_compose! {
     }
 }
 
-/// Generates `(total_supply, amount_0, amount_1, reserve_0, reserve_1)` for
-/// a subsequent deposit.
-///
-/// `total_supply` starts at `MINIMUM_LIQUIDITY + 1` (1001) to model a pool
-/// that has already been seeded.  Reserves are at least `1` so the
-/// `ZeroReserve` path is excluded (it is tested
-/// [separately](super::liquidity_math::zero_reserve_test)).
+// Generates `(total_supply, amount_0, amount_1, reserve_0, reserve_1)` for
+// a subsequent deposit.
+//
+// `total_supply` starts at `MINIMUM_LIQUIDITY + 1` (1001) to model a pool
+// that has already been seeded. Reserves are at least `1` so the
+// `ZeroReserve` path is excluded (tested separately elsewhere).
 prop_compose! {
     fn subsequent_deposit_strategy()(
         total_supply in (MINIMUM_LIQUIDITY + 1)..=10_000_000i128,
@@ -164,6 +163,16 @@ proptest! {
             }
             Err(LiquidityMathError::ZeroReserve) => {}
             Err(LiquidityMathError::Overflow) => {}
+            // `calculate_mint_shares` never returns the burn-only variants;
+            // matched here only to keep this exhaustive over the shared
+            // `LiquidityMathError` enum.
+            Err(
+                LiquidityMathError::InvalidBurnAmount
+                | LiquidityMathError::ZeroSupply
+                | LiquidityMathError::BurnExceedsSupply,
+            ) => {
+                unreachable!("calculate_mint_shares does not return burn-only errors")
+            }
         }
     }
 }

@@ -17,13 +17,12 @@ mod supply_rate_split_tests {
         accrue_interest, accrue_interest_split, effective_supply_rate, settle_accrual,
         settle_accrual_split, DebtPosition, DEFAULT_APR_BPS, DEFAULT_RESERVE_FACTOR_BPS,
     };
-    use crate::math::{split_interest_by_reserve_factor, BPS_SCALE};
+    use crate::math::split_interest_by_reserve_factor;
     use crate::rounding_strategy::SECONDS_PER_YEAR;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn position(principal: i128, last_update: u64) -> DebtPosition {
-    borrow_index_snapshot: 0,
         DebtPosition {
             principal,
             borrow_index_snapshot: crate::debt::INDEX_SCALE,

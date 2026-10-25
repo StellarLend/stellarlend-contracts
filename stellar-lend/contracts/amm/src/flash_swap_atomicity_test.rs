@@ -28,10 +28,8 @@
 //! | `test_under_repay_flag_cleared_on_rollback`  | `is_flash_active` false after rollback       |
 //! | `test_reentrant_flash_rejected`              | Re-entrant flash during active one → reject  |
 
-#![cfg(test)]
-
 use crate::{inverse_swap_in, AmmContract, AmmContractClient};
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Bytes, Env};
 
 const FEE_BPS: i128 = 30;
 
@@ -45,7 +43,8 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, soroban_sdk::Address) {
     let id = env.register(AmmContract, ());
     let token_a = soroban_sdk::Address::generate(&env);
     let token_b = soroban_sdk::Address::generate(&env);
-    AmmContractClient::new(&env, &id).init_pool(&ra, &rb, &token_a, &token_b);
+    let admin = soroban_sdk::Address::generate(&env);
+    AmmContractClient::new(&env, &id).init_pool(&admin, &ra, &rb, &token_a, &token_b);
     (env, id)
 }
 

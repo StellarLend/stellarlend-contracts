@@ -1,5 +1,11 @@
 # StellarLend Smart Contracts
 
+[![CI](https://github.com/StellarLend/stellarlend-contracts/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/StellarLend/stellarlend-contracts/actions) ![Network: Stellar testnet](https://img.shields.io/badge/network-stellar%20testnet-blue)
+
+**Live on Stellar testnet:** lending contract [`CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6`](https://stellar.expert/explorer/testnet/contract/CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6) ([all deployments](DEPLOYMENTS.md)) | [Architecture, function reference, deploy guide](docs/LENDING_CONTRACT.md)
+
+Verified on-chain: initialize, deposit, borrow, repay, withdraw (see [DEPLOYMENTS.md](DEPLOYMENTS.md)).
+
 ## Overview
 
 StellarLend is a decentralized finance (DeFi) lending protocol built on the Stellar blockchain using Soroban smart contracts. The protocol enables users to deposit collateral, borrow assets, accrue interest, and participate in a secure, transparent, and risk-managed lending market. Designed for DeFi developers, protocol integrators, and users seeking a robust lending solution on Stellar, StellarLend provides comprehensive features including cross-asset support, flash loans, AMM integration, governance mechanisms, and advanced risk management tools.
@@ -70,7 +76,7 @@ cargo install --locked soroban-cli
 
 2. **Navigate to the contract directory**:
    ```bash
-   cd stellar-lend/contracts/hello-world
+   cd stellar-lend/contracts/lending
    ```
 
 3. **Verify your setup**:
@@ -99,7 +105,7 @@ For deployment to networks, you may need:
 Build the contract using the Soroban CLI:
 
 ```bash
-# From stellar-lend/contracts/hello-world/
+# From stellar-lend/contracts/lending/
 stellar contract build
 
 # Or using Cargo directly
@@ -111,7 +117,7 @@ make build
 
 The compiled WASM file will be located at:
 ```
-target/wasm32-unknown-unknown/release/hello_world.wasm
+target/wasm32-unknown-unknown/release/stellarlend_lending.wasm
 ```
 
 ### Testing
@@ -119,7 +125,7 @@ target/wasm32-unknown-unknown/release/hello_world.wasm
 Run the test suite:
 
 ```bash
-# From stellar-lend/contracts/hello-world/
+# From stellar-lend/contracts/lending/
 cargo test
 
 # Run with verbose output
@@ -160,7 +166,7 @@ stellar contract build
 
 # Deploy to testnet (requires testnet account)
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/hello_world.wasm \
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending.wasm \
   --network testnet \
   --source <your-testnet-keypair>
 
@@ -179,11 +185,11 @@ stellar contract invoke \
 # Build and optimize
 stellar contract build
 stellar contract optimize \
-  --wasm target/wasm32-unknown-unknown/release/hello_world.wasm
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending.wasm
 
 # Deploy (use optimized WASM)
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/hello_world-optimized.wasm \
+  --wasm target/wasm32-unknown-unknown/release/stellarlend_lending-optimized.wasm \
   --network mainnet \
   --source <your-mainnet-keypair>
 ```
@@ -206,29 +212,22 @@ stellarlend-contracts/
 └── stellar-lend/            # Main contract workspace
     ├── Cargo.toml           # Workspace configuration
     └── contracts/
-        ├── lending/         # Main StellarLend contract (Single Canonical Tree)
-        │   ├── Cargo.toml
-        │   ├── Makefile     # Build/test shortcuts
-        │   ├── README.md    # Contract-specific docs
-        │   └── src/
-        │       ├── lib.rs   # Main contract entry point
-        │       ├── rounding_strategy.rs # Mathematical utilities
-        │       └── interest_drift_regression_test.rs # Regression tests
-        └── hello-world/     # Minimal placeholder contract
+        └── lending/         # Canonical StellarLend contract (79 .rs files)
             ├── Cargo.toml
-            ├── Makefile
-            ├── README.md
+            ├── Makefile     # Build/test shortcuts
+            ├── README.md    # Contract-specific docs
             └── src/
-                └── lib.rs
+                ├── lib.rs, debt.rs, cross_asset.rs, rate_model.rs,
+                ├── math.rs, events.rs, upgrade.rs,
+                ├── rounding_strategy.rs,
+                └── 71 test/*_test.rs files
 ```
 
 ---
 
 ## Contract Modules
 
-This workspace contains two separate contract crates whose module layouts should not be
-conflated: the canonical `lending` contract, and the `hello-world` contract, which is a
-larger, mostly-independent parallel implementation, not a "minimal placeholder" for `lending`.
+The canonical contract lives at `stellar-lend/contracts/lending/`. Its module layout:
 
 ### `lending` (`stellar-lend/contracts/lending/src/`) — the canonical contract
 
@@ -246,28 +245,7 @@ files in this crate. The supporting modules that do exist are:
 - **`events.rs`**: Versioned event structs/emitters for deposit/withdraw/borrow/repay/liquidate.
 - **`upgrade.rs`**: Self-contained timelocked multisig upgrade governance (propose/approve/execute).
 
-### `hello-world` (`stellar-lend/contracts/hello-world/src/`) — a separate, parallel contract
-
-Despite its name, this is a large, independently-evolving contract with its own
-deposit/borrow/repay/withdraw/liquidate/oracle/governance/AMM/bridge logic. It shares no
-Cargo dependency and no code with `lending`, and several of its files are still one-line
-stubs rather than real implementations:
-
-- **Implemented**: `oracle.rs` (primary/fallback oracle + AMM-TWAP fallback), `governance.rs`
-  (DAO-style proposal/vote/queue/execute + guardian recovery), `amm.rs` / `amm_twap.rs`
-  (AMM reserve and TWAP bookkeeping), `bridge.rs` (guardian-gated freeze switch),
-  `cross_asset.rs` (multi-asset lending), `risk_management.rs` / `risk_params.rs`
-  (collateral ratio, liquidation threshold, close factor config), `interest_rate.rs`,
-  `admin.rs`, `withdraw.rs`, `repay.rs`, `flash_loan.rs`.
-- **Stubs, not yet implemented**: `deposit.rs`, `borrow.rs`, `liquidate.rs`, `analytics.rs`,
-  `multisig.rs`, `recovery.rs` (one-line `// Stub module` placeholders), plus `reentrancy.rs`
-  and `reserve.rs`, which are currently empty files. The crate's own
-  bare-bones `deposit`/`withdraw`/`borrow`/`repay` demo entrypoints (used by its basic test
-  suite) are implemented directly in `hello-world`'s own `lib.rs`, independently of these stub
-  files.
-
-If you're integrating with StellarLend, `lending` is the contract you want — see its own
-[README](stellar-lend/contracts/lending/README.md) for the full, accurate interface.
+See the contract's own [README](stellar-lend/contracts/lending/README.md) for the full, accurate interface.
 
 ---
 
@@ -303,6 +281,16 @@ If you're integrating with StellarLend, `lending` is the contract you want — s
 | `set_price`                   | Store a signed oracle price update               |
 | `get_price_record`            | Read stored oracle price                         |
 
+### Upgrade Governance
+
+| Function | Description |
+|---|---|
+| `upgrade_cancel` | Cancel a pending upgrade proposal (admin only) |
+| `is_upgrade_proposal_cancelled` | Check whether a proposal was cancelled |
+| `get_upgrade_approval_binding` | Read a proposal approval's domain-separated binding hash |
+| `get_upgrade_proposal_signer_hash` | Read the approver-set fingerprint captured by a proposal |
+| `get_upgrade_approver_set_hash` | Read the current upgrade approver-set fingerprint |
+
 ### Flash Loans
 
 | Function                      | Description                                      |
@@ -318,6 +306,41 @@ If you're integrating with StellarLend, `lending` is the contract you want — s
 | `get_debt_position`           | Query raw debt principal and last update time    |
 | `get_health_factor`           | Query current health factor                      |
 | `get_protocol_metrics`        | Query aggregate debt, supply, utilization, ledger |
+| `get_rate_model_diagnostics`   | Query real-time rate-model utilization, target/applied rates, latency |
+
+### Upgrade System
+
+| Function                            | Description                                                         |
+|-------------------------------------|---------------------------------------------------------------------|
+| `upgrade_init`                      | Initialise upgrade governance with approver set and required count  |
+| `upgrade_propose`                   | Propose a new WASM hash upgrade with a timelocked ETA (admin-only)  |
+| `upgrade_approve`                   | Record an approver's signature on a pending proposal                |
+| `upgrade_cancel`                    | Cancel a pending upgrade proposal before execution (admin-only)     |
+| `upgrade_execute`                   | Execute an approved upgrade after the timelock elapses              |
+| `upgrade_set_required_approvals`    | Change the minimum approval count (admin-only)                      |
+| `upgrade_add_approver`              | Add an address to the upgrade approver set (admin-only)             |
+| `upgrade_remove_approver`           | Remove an address from the upgrade approver set (admin-only)        |
+| `upgrade_status`                    | Query the state and approval count of a proposal                    |
+| `current_version`                   | Read the currently deployed contract version number                 |
+| `current_wasm_hash`                 | Read the SHA-256 hash of the currently deployed WASM                |
+| `get_required_approvals`            | Read the minimum approvals needed to execute an upgrade             |
+| `get_upgrade_approvers`             | List all current upgrade approver addresses                         |
+| `get_proposal_approvals`            | List addresses that have approved a specific proposal               |
+| `is_upgrade_proposal_cancelled`     | Check whether a proposal has been cancelled                         |
+| `get_upgrade_approval_binding`      | Read the binding (WASM hash commitment) an approver signed          |
+| `get_upgrade_approver_set_hash`     | Read the fingerprint of the live approver set                       |
+| `get_upgrade_proposal_signer_hash`  | Read the approver-set fingerprint captured when a proposal was created |
+| `get_min_upgrade_delay_ledgers`     | Read the minimum timelock delay in ledgers                          |
+
+### Upgrade Administration
+
+| Function                      | Description                                      |
+|-------------------------------|--------------------------------------------------|
+| `upgrade_cancel`              | Cancel a pending upgrade proposal (admin-only)   |
+| `is_upgrade_proposal_cancelled` | Query whether a proposal is in the `Cancelled` terminal state |
+| `get_upgrade_approval_binding` | Query the stored per-approver approval binding hash for a proposal |
+| `get_upgrade_proposal_signer_hash` | Query the approver-set fingerprint captured at proposal creation |
+| `get_upgrade_approver_set_hash` | Query the fingerprint of the live upgrade approver set |
 
 For exact signatures and planned-but-not-shipping names, see
 [docs/interface_quick_reference.md](docs/interface_quick_reference.md).
@@ -333,7 +356,7 @@ For exact signatures and planned-but-not-shipping names, see
 - **[Storage Layout and Migration](docs/storage.md)**: Detailed documentation of the contract's persistent storage structure, keys, types, and upgrade/migration strategies
 - **[Cross-Asset Rules](docs/CROSS_ASSET_RULES.md)**: Borrowing/repay rules, view guarantees (G-1..G-10), and invariants for multi-asset positions
 - **[Repay Semantics](stellar-lend/docs/REPAY_SEMANTICS.md)**: Both repay paths (single-asset vs cross-asset), overpay behaviour, interest ordering, and dust prevention
-- **[Contract README](stellar-lend/contracts/hello-world/README.md)**: Contract-specific documentation and entrypoint reference
+- **[Contract README](stellar-lend/contracts/lending/README.md)**: Contract-specific documentation and entrypoint reference
 - **[CI/CD Overview](docs/CI_OVERVIEW.md)**: Continuous integration setup and local reproduction guide
 - **[Example Reports](docs/examples/)**: Example JSON outputs for protocol and user analytics
 

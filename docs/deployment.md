@@ -53,7 +53,7 @@ stellarlend-contracts/
 └── stellar-lend/
     ├── Cargo.toml         # Workspace root
     └── contracts/
-        ├── hello-world/   # Main lending contract  (crate: hello-world)
+        ├── lending/       # Main lending contract  (crate: stellarlend-lending)
         └── amm/           # AMM integration contract (crate: stellarlend-amm)
 ```
 
@@ -61,10 +61,10 @@ Compiled WASM artefacts land in:
 
 ```
 stellar-lend/target/wasm32-unknown-unknown/release/
-  hello_world.wasm
-  hello_world.optimized.wasm        ← deployed to chain
+  stellarlend_lending.wasm
+  stellarlend_lending.optimized.wasm    ← deployed to chain
   stellarlend_amm.wasm
-  stellarlend_amm.optimized.wasm    ← deployed to chain
+  stellarlend_amm.optimized.wasm       ← deployed to chain
 ```
 
 ---
@@ -96,12 +96,12 @@ stellar contract build --verbose
 
 # Optimise
 WASM_DIR=target/wasm32-unknown-unknown/release
-stellar contract optimize --wasm "$WASM_DIR/hello_world.wasm"
+stellar contract optimize --wasm "$WASM_DIR/stellarlend_lending.wasm"
 stellar contract optimize --wasm "$WASM_DIR/stellarlend_amm.wasm"
 
 # Inspect interface
 stellar contract inspect \
-  --wasm "$WASM_DIR/hello_world.optimized.wasm" \
+  --wasm "$WASM_DIR/stellarlend_lending.optimized.wasm" \
   --output json
 
 # Run unit tests
@@ -177,7 +177,7 @@ WASM_DIR=stellar-lend/target/wasm32-unknown-unknown/release
 
 # Lending contract
 stellar contract deploy \
-  --wasm "$WASM_DIR/hello_world.optimized.wasm" \
+  --wasm "$WASM_DIR/stellarlend_lending.optimized.wasm" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet
 
@@ -319,6 +319,21 @@ All values are in **basis points** (bps): 10 000 bps = 100%.
 | `liquidation_threshold_bps` | 8 000 | 80% – below this, position is liquidatable |
 | `close_factor_bps` | 5 000 | 50% – max debt liquidated per transaction |
 | `liquidation_incentive_bps` | 1 000 | 10% – bonus paid to liquidators |
+
+### Single-asset borrow LTV
+
+New deployments default to a 7 500 bps (75%) max LTV and an 8 000 bps (80%)
+liquidation threshold. Single-asset borrows are capped by max LTV, while
+liquidation eligibility and health-factor views use the liquidation threshold.
+Governance may update either value, but the max LTV must remain strictly below
+the liquidation threshold. The setters are bounded and record governance audit
+events and entries.
+
+This default is intentionally more conservative than the pre-LTV contract,
+which allowed single-asset borrows up to the 80% liquidation threshold. Existing
+deployed instances keep their current code and behavior; applying this change
+requires deploying and initializing a fresh contract instance because the
+existing testnet contract has no upgrade entrypoint.
 
 ### Default interest rate parameters (set automatically on `initialize`)
 
@@ -541,6 +556,6 @@ Run targeted tests for faster iteration:
 
 ```bash
 cd stellar-lend
-cargo test -p hello-world deploy_test   # deployment tests only
-cargo test -p hello-world -- --nocapture 2>&1 | head -50
+cargo test -p stellarlend-lending deploy_test   # deployment tests only
+cargo test -p stellarlend-lending -- --nocapture 2>&1 | head -50
 ```

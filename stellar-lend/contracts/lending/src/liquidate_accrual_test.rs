@@ -7,8 +7,6 @@
 //! 3. health-factor-after-settle boundary: verifying that positions which become
 //!    unhealthy due to interest accrual are correctly identified as liquidatable.
 
-#![cfg(test)]
-
 use crate::{
     debt::{save_debt, DebtPosition, DEFAULT_APR_BPS},
     liquidate_transfer_test::{MockToken, MockTokenClient},
@@ -68,7 +66,6 @@ fn advance_ledger_time(env: &Env, seconds: u64) {
 
 /// Calculate expected simple interest.
 fn calculate_expected_interest(principal: i128, elapsed_seconds: u64, rate_bps: i128) -> i128 {
-borrow_index_snapshot: 0,
     let numerator = principal
         .checked_mul(elapsed_seconds as i128)
         .and_then(|v| v.checked_mul(rate_bps))

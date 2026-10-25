@@ -1,7 +1,6 @@
-#![cfg(test)]
-
 use crate::rate_model::{update_and_get_rate, RateParams};
 use crate::{LendingContract, LendingContractClient, RateSmoothingState};
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};
 
@@ -19,10 +18,11 @@ fn setup() -> (Env, LendingContractClient<'static>, Address) {
 }
 
 fn smoothing_params() -> RateParams {
-    let mut params = RateParams::default();
-    params.max_rate_change_per_ledger_bps = 50;
-    params.hysteresis_bps = 0;
-    params
+    RateParams {
+        max_rate_change_per_ledger_bps: 50,
+        hysteresis_bps: 0,
+        ..RateParams::default()
+    }
 }
 
 #[test]

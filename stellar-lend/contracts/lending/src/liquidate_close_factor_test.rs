@@ -9,14 +9,12 @@
 //! and the invariant oracle is exercised under plain `cargo test` (no
 //! cargo-fuzz / nightly required).
 
-#![cfg(test)]
-
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::{
     debt::DebtPosition,
     liquidate_transfer_test::{MockToken, MockTokenClient},
-    DataKey, LendingContract, LendingContractClient, LendingError,
+    DataKey, LendingContract, LendingContractClient, LendingError, PriceRecord,
 };
 
 // Protocol constants mirrored from `LendingContract::liquidate` (lib.rs).
@@ -60,6 +58,16 @@ fn run_case(collateral: i128, debt: i128, amount: i128) -> Outcome {
     MockTokenClient::new(&env, &collateral_asset).mint(&cid, &1_000_000);
 
     let now = env.ledger().timestamp();
+    // Seed fresh oracle price so require_fresh_valuation_prices passes.
+    env.as_contract(&cid, || {
+        env.storage().persistent().set(
+            &DataKey::OraclePrice(collateral_asset.clone()),
+            &PriceRecord {
+                price: 1_000_000_000,
+                timestamp: now,
+            },
+        );
+    });
     env.as_contract(&cid, || {
         env.storage()
             .persistent()

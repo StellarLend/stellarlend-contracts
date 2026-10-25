@@ -191,7 +191,7 @@ mod rate_updated_event_tests {
         assert_eq!(events.len(), 1, "First call must emit exactly one event");
 
         // Event data is non-void (verified below)
-        let _event = events.get(0).unwrap();
+        let _event = events.first().unwrap();
     }
 
     // -----------------------------------------------------------------------
@@ -269,15 +269,14 @@ mod rate_updated_event_tests {
         let events = all.events();
         assert_eq!(events.len(), 1, "Expected exactly one event");
 
-        let event = events.get(0).unwrap();
-        if let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = event.body {
-            assert!(
-                !matches!(v0.data, soroban_sdk::xdr::ScVal::Void),
-                "Event data must not be void"
-            );
-        } else {
-            panic!("Expected ContractEventBody::V0");
-        }
+        let event = events.first().unwrap();
+        // `ContractEventBody` only has the `V0` variant in this SDK version,
+        // so this is a direct destructure rather than an `if let`.
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = event.body;
+        assert!(
+            !matches!(v0.data, soroban_sdk::xdr::ScVal::Void),
+            "Event data must not be void"
+        );
         assert!(applied_rate > 0, "Applied rate must be positive");
     }
 

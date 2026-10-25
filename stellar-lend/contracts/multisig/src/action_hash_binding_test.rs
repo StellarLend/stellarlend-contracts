@@ -53,16 +53,21 @@ fn hashes_differ_for_different_invoke_args() {
 }
 
 #[test]
-fn mismatching_supplied_hash_is_rejected_at_creation() {
+fn action_hash_is_pinned_independently_of_supplied_payload_hash() {
     let (env, contract_id, signers) = setup();
     let client = MultisigContractClient::new(&env, &contract_id);
     let signer = signers.get(0).unwrap();
-    let action = ProposalAction::SetThreshold(3);
-    let wrong = Bytes::from_slice(&env, &[0; 32]);
+    let action = ProposalAction::SetThreshold(2);
+    let opaque = Bytes::from_slice(&env, &[0; 32]);
+    let id = client.create_proposal(&signer, &action, &opaque, &100);
+    // The canonical action hash is computed by the contract, never taken from
+    // the caller, so approvals bind to the real action regardless of
+    // `payload_hash`.
     assert_eq!(
-        client.try_create_proposal(&signer, &action, &wrong, &100),
-        Err(Ok(MultisigError::PayloadHashMismatch)),
+        client.get_action_hash(&id),
+        Some(MultisigContract::action_hash(&env, &action))
     );
+    assert_eq!(client.get_proposal(&id).payload_hash, opaque);
 }
 
 #[test]
@@ -74,9 +79,16 @@ fn auth_for_other_action_is_rejected() {
     let action_x = ProposalAction::SetThreshold(3);
     let action_y = ProposalAction::SetThreshold(4);
     let id = create(&client, &env, &signer, action_y);
-    let binding_for_x = MultisigContract::approval_auth_hash(
-        &env, id, &MultisigContract::action_hash(&env, &action_x), &signer,
-    );
+    let signer_set_hash = client.get_proposal_signer_set_hash(&id).unwrap();
+    let binding_for_x = env.as_contract(&contract_id, || {
+        MultisigContract::approval_auth_hash(
+            &env,
+            id,
+            &signer,
+            &signer_set_hash,
+            &MultisigContract::action_hash(&env, &action_x),
+        )
+    });
     env.mock_auths(&[MockAuth {
         address: &signer,
         invoke: &MockAuthInvoke {

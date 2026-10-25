@@ -50,7 +50,6 @@ Key admin entrypoints (see contract for full list):
 - `register_bridge(caller, network_id, bridge, fee_bps)`
 - `set_bridge_fee(caller, network_id, fee_bps)`
 - `upgrade_propose/approve/execute`
-- `ms_set_admins`, `ms_propose_set_min_cr`, `ms_approve`, `ms_execute`
 
 ## Monitoring & Analytics
 
@@ -96,6 +95,11 @@ Key admin entrypoints (see contract for full list):
 
 - Set guardians per-user and execute timelocked recoveries
 - Multisig supports proposing and executing admin changes with threshold
+
+> **Authoritative multisig:** The canonical multisig implementation is the standalone
+> `stellarlend-multisig` crate at `stellar-lend/contracts/multisig/`. The lending contract
+> also has its own timelocked upgrade governance in `upgrade.rs`, which is independent.
+> The now-deleted `hello-world` contract previously contained a stub; it is not authoritative.
 
 ## Documentation
 

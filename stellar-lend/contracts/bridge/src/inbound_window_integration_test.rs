@@ -12,7 +12,7 @@ use soroban_sdk::Env;
 /// Helper: spin up a fresh bridge contract and return its typed client.
 fn fresh_bridge() -> (Env, BridgeClient<'static>) {
     let env = Env::default();
-    let cid = env.register_contract(None, Bridge);
+    let cid = env.register(Bridge, ());
     let client = BridgeClient::new(&env, &cid);
     (env, client)
 }
@@ -20,7 +20,7 @@ fn fresh_bridge() -> (Env, BridgeClient<'static>) {
 /// 1. Unconfigured bridge rejects every inbound admission (fail-closed default).
 #[test]
 fn unconfigured_bridge_rejects_all_inbound() {
-    let (env, client) = fresh_bridge();
+    let (_env, client) = fresh_bridge();
     let err = client.try_admit_inbound(&1_i128, &0_u64);
     assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
 }
@@ -29,7 +29,7 @@ fn unconfigured_bridge_rejects_all_inbound() {
 ///    any positive amount afterwards.
 #[test]
 fn explicit_zero_cap_rejects_inbound() {
-    let (env, client) = fresh_bridge();
+    let (_env, client) = fresh_bridge();
     client.set_inbound_cap(&0_i128, &100_u64, &0_u64);
     let err = client.try_admit_inbound(&1_i128, &10_u64);
     assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
@@ -38,7 +38,7 @@ fn explicit_zero_cap_rejects_inbound() {
 /// 3 + 4 + 5 + 6 + 7. Full fill → over-cap reject → window roll → refill.
 #[test]
 fn inbound_window_full_lifecycle() {
-    let (env, client) = fresh_bridge();
+    let (_env, client) = fresh_bridge();
     // max_per_window = 1_000, window_size = 100, started at t = 0.
     client.set_inbound_cap(&1_000_i128, &100_u64, &0_u64);
 
@@ -62,7 +62,7 @@ fn inbound_window_full_lifecycle() {
 /// 8. `amount < 0` is rejected even before windows/caps are consulted.
 #[test]
 fn negative_amount_rejected() {
-    let (env, client) = fresh_bridge();
+    let (_env, client) = fresh_bridge();
     client.set_inbound_cap(&1_000_i128, &100_u64, &0_u64);
     let err = client.try_admit_inbound(&-5_i128, &10_u64);
     assert!(matches!(err, Err(Ok(BridgeError::InboundCapExceeded))));
@@ -74,7 +74,7 @@ fn negative_amount_rejected() {
 ///    contract surfaces `WindowTotalOverflow`, not a panic.
 #[test]
 fn overflow_on_window_total_is_caught() {
-    let (env, client) = fresh_bridge();
+    let (_env, client) = fresh_bridge();
     client.set_inbound_cap(&i128::MAX, &100_u64, &0_u64);
     client.admit_inbound(&i128::MAX, &10_u64);
     let err = client.try_admit_inbound(&1_i128, &20_u64);
@@ -89,7 +89,7 @@ fn overflow_on_window_total_is_caught() {
 ///     carrying over the stale total.
 #[test]
 fn long_idle_gap_realigns_window() {
-    let (env, client) = fresh_bridge();
+    let (_env, client) = fresh_bridge();
     client.set_inbound_cap(&1_000_i128, &100_u64, &0_u64);
 
     // Idle-fill a small amount inside the first window.
@@ -112,7 +112,7 @@ fn long_idle_gap_realigns_window() {
 ///     previously-rejected amount becomes admissible in the new window.
 #[test]
 fn roll_resets_total_and_allows_refill() {
-    let (env, client) = fresh_bridge();
+    let (_env, client) = fresh_bridge();
     client.set_inbound_cap(&100_i128, &50_u64, &0_u64);
 
     // Saturate the first window.

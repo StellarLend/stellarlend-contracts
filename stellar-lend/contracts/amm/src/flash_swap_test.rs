@@ -34,8 +34,6 @@
 //! | `test_rollback_full_state_on_under_pay` | `try_` variant captures panic; reserves fully restored.            |
 //! | `test_repay_zero_amount_rejected`       | `repay_flash_swap` rejects `amount_in <= 0`.                       |
 
-#![cfg(test)]
-
 use crate::{inverse_swap_in, AmmContract, AmmContractClient, AmmPoolError};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
@@ -46,7 +44,10 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     env.mock_all_auths();
     let amm_id = env.register(AmmContract, ());
     let amm_client = AmmContractClient::new(&env, &amm_id);
-    amm_client.init_pool(&ra, &rb);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let admin = Address::generate(&env);
+    amm_client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     (env, amm_id)
 }
 
@@ -150,6 +151,7 @@ fn test_over_repay_yields_extra_fee() {
 
 /// Underpaying (one stroop short of the inverse) trips the verify-k check.
 #[test]
+#[should_panic]
 fn test_under_repay_panics_k_violation() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -257,7 +259,7 @@ fn test_reentrancy_blocks_add() {
 
     client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128);
+    let res = client.try_add_liquidity(&caller, &1_i128, &1_i128, &0, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 
@@ -269,21 +271,23 @@ fn test_reentrancy_blocks_remove() {
 
     client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
     let caller = Address::generate(&env);
-    let res = client.try_remove_liquidity(&caller, &1_i128);
+    let res = client.try_remove_liquidity(&caller, &1_i128, &0, &0, &u64::MAX);
     assert_eq!(res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
 }
 
 #[test]
+#[should_panic]
 fn test_reentrancy_blocks_swap() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
     let caller = Address::generate(&env);
 
     client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
-    client.swap_a_for_b(&1_i128);
+    client.swap_a_for_b(&caller, &1_i128, &0);
 }
 
 #[test]
+#[should_panic]
 fn test_reentrancy_blocks_nested() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -298,6 +302,7 @@ fn test_reentrancy_blocks_nested() {
 // =========================================================================
 
 #[test]
+#[should_panic]
 fn test_repay_without_flash_panics() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -307,6 +312,7 @@ fn test_repay_without_flash_panics() {
 }
 
 #[test]
+#[should_panic]
 fn test_repay_zero_amount_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -317,6 +323,7 @@ fn test_repay_zero_amount_rejected() {
 }
 
 #[test]
+#[should_panic]
 fn test_zero_amount_out_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -335,6 +342,7 @@ fn test_invalid_fee_bps_rejected() {
 }
 
 #[test]
+#[should_panic]
 fn test_drain_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -389,6 +397,37 @@ fn test_params_payload_flows_through() {
     let (ra, rb) = client.get_reserves();
     assert_eq!(ra, 1_000);
     assert_eq!(rb, 900);
+}
+
+/// Explicit test validating that `flash_swap_a_for_b` returns
+/// `Result<i128, AmmPoolError>`: `Ok(amount_out)` on success and typed
+/// `AmmPoolError` variants on failure.
+#[test]
+fn test_flash_swap_returns_result_and_typed_errors() {
+    let (env, amm_id) = setup_pool(1_000, 1_000);
+    let client = AmmContractClient::new(&env, &amm_id);
+    let caller = Address::generate(&env);
+
+    // 1. Success returns Ok(amount_out)
+    let amount_out = 200_i128;
+    let res = client.try_flash_swap_a_for_b(&caller, &amount_out, &Bytes::new(&env));
+    assert_eq!(res, Ok(Ok(amount_out)));
+
+    // 2. Re-entrant flash returns ReentrantFlashSwap
+    let reentrant_res = client.try_flash_swap_a_for_b(&caller, &100_i128, &Bytes::new(&env));
+    assert_eq!(reentrant_res, Err(Ok(AmmPoolError::ReentrantFlashSwap)));
+
+    // Repay to reset active status
+    let exact_in = inverse_swap_in(1_000, 1_000, amount_out, 30);
+    client.repay_flash_swap(&caller, &exact_in);
+
+    // 3. NonPositiveAmount error
+    let zero_res = client.try_flash_swap_a_for_b(&caller, &0_i128, &Bytes::new(&env));
+    assert_eq!(zero_res, Err(Ok(AmmPoolError::NonPositiveAmount)));
+
+    // 4. InsufficientReserves error
+    let drain_res = client.try_flash_swap_a_for_b(&caller, &10_000_i128, &Bytes::new(&env));
+    assert_eq!(drain_res, Err(Ok(AmmPoolError::InsufficientReserves)));
 }
 
 // Suppress "unused import" warnings for items only referenced via the

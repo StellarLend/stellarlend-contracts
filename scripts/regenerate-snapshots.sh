@@ -11,7 +11,7 @@ set -euo pipefail
 #   git add stellar-lend/contracts/*/test_snapshots/
 #   git commit -m "chore: regenerate test snapshots"
 
-CRATES=("hello-world" "lending")
+CRATES=("bridge" "lending")
 
 echo "========================================"
 echo "  Regenerating Test Snapshots"

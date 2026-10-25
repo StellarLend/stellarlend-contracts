@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::cross_asset::{normalize_price, normalize_price_ceil, INTERNAL_DECIMALS};
+use stellar_lend_common::{normalize_price, normalize_price_ceil, INTERNAL_DECIMALS};
 
 #[test]
 fn test_zero_raw_price() {

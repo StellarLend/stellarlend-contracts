@@ -13,8 +13,6 @@
 //! | `doc_test_reentrancy_guard`       | Reentrancy Guard §Blocked Operations |
 //! | `doc_test_fee_zero_and_max`       | Edge Cases §fee_bps = 0 / fee_bps = 9 999 |
 
-#![cfg(test)]
-
 use crate::{inverse_swap_in, AmmContract, AmmContractClient};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
@@ -28,7 +26,8 @@ fn make_pool(ra: i128, rb: i128) -> (Env, Address) {
     let id = env.register(AmmContract, ());
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    AmmContractClient::new(&env, &id).init_pool(&ra, &rb, &token_a, &token_b);
+    let admin = Address::generate(&env);
+    AmmContractClient::new(&env, &id).init_pool(&admin, &ra, &rb, &token_a, &token_b);
     (env, id)
 }
 
@@ -183,7 +182,7 @@ fn doc_test_reentrancy_guard() {
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
         let caller = Address::generate(&env);
-        let result = client.try_add_liquidity(&caller, &1, &1);
+        let result = client.try_add_liquidity(&caller, &1, &1, &0, &0, &0, &u64::MAX);
         assert!(
             result.is_err(),
             "add_liquidity must be blocked while FlashActive"
@@ -197,7 +196,7 @@ fn doc_test_reentrancy_guard() {
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
         let caller = Address::generate(&env);
-        let result = client.try_remove_liquidity(&caller, &1_i128);
+        let result = client.try_remove_liquidity(&caller, &1_i128, &0, &0, &u64::MAX);
         assert!(
             result.is_err(),
             "remove_liquidity must be blocked while FlashActive"
@@ -210,7 +209,7 @@ fn doc_test_reentrancy_guard() {
         let client = AmmContractClient::new(&env, &amm_id);
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
-        let result = client.try_swap_a_for_b(&1);
+        let result = client.try_swap_a_for_b(&flash_caller, &1, &0);
         assert!(
             result.is_err(),
             "swap_a_for_b must be blocked while FlashActive"
@@ -224,7 +223,10 @@ fn doc_test_reentrancy_guard() {
         let flash_caller = Address::generate(&env);
         client.flash_swap_a_for_b(&flash_caller, &100, &Bytes::new(&env));
         let result = client.try_flash_swap_a_for_b(&flash_caller, &1, &Bytes::new(&env));
-        assert!(result.is_err(), "nested flash_swap_a_for_b must be blocked while FlashActive");
+        assert!(
+            result.is_err(),
+            "nested flash_swap_a_for_b must be blocked while FlashActive"
+        );
     }
 }
 

@@ -7,11 +7,11 @@
 #![cfg(test)]
 
 use crate::cross_asset::{
-    get_asset_price_age, initialize_asset, update_asset_price, AssetConfig, CrossAssetError,
-    NoOpContract,
+    get_asset_price_age, initialize_asset, set_admin, update_asset_price, AssetConfig,
+    CrossAssetError, NoOpContract,
 };
 use crate::{HelloContract, HelloContractClient};
-use soroban_sdk::{Env, Address};
+use soroban_sdk::{Address, Env};
 
 /// Helper to set up a test Soroban environment and register the test contract execution context.
 fn make_env() -> Env {
@@ -49,11 +49,14 @@ fn default_config(price: i128, price_decimals: u32) -> AssetConfig {
 fn test_get_asset_price_age_equals_now_minus_ts() {
     let env = make_env();
     with_contract(&env, || {
+        let admin = Address::generate(&env);
+        set_admin(&env, &admin);
+
         // Set initial ledger timestamp
         env.ledger().set_timestamp(1_000);
 
         // Register asset (initial timestamp set to 1000)
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(1_000_000, 6)).unwrap();
 
         // Initial age at timestamp 1000 should be 0
         let age_init = get_asset_price_age(&env, None).unwrap();
@@ -61,7 +64,7 @@ fn test_get_asset_price_age_equals_now_minus_ts() {
 
         // Update asset price at timestamp 2_000
         env.ledger().set_timestamp(2_000);
-        update_asset_price(&env, None, 1_050_000).unwrap();
+        update_asset_price(&env, &admin, None, 1_050_000).unwrap();
 
         // Advance ledger timestamp to 2_500
         env.ledger().set_timestamp(2_500);
@@ -77,8 +80,11 @@ fn test_get_asset_price_age_equals_now_minus_ts() {
 fn test_fresh_update_resets_age() {
     let env = make_env();
     with_contract(&env, || {
+        let admin = Address::generate(&env);
+        set_admin(&env, &admin);
+
         env.ledger().set_timestamp(10_000);
-        initialize_asset(&env, None, default_config(1_000_000, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(1_000_000, 6)).unwrap();
 
         // Advance timestamp by 3,600 seconds (1 hour)
         env.ledger().set_timestamp(13_600);
@@ -86,7 +92,7 @@ fn test_fresh_update_resets_age() {
         assert_eq!(age_before, 3_600);
 
         // A fresh price update at timestamp 13_600 resets age to 0
-        update_asset_price(&env, None, 1_100_000).unwrap();
+        update_asset_price(&env, &admin, None, 1_100_000).unwrap();
         let age_after = get_asset_price_age(&env, None).unwrap();
         assert_eq!(age_after, 0);
     });
@@ -108,8 +114,11 @@ fn test_unknown_asset_returns_error_without_panic() {
 fn test_monotonic_age_growth() {
     let env = make_env();
     with_contract(&env, || {
+        let admin = Address::generate(&env);
+        set_admin(&env, &admin);
+
         env.ledger().set_timestamp(5_000);
-        initialize_asset(&env, None, default_config(2_000_000, 6)).unwrap();
+        initialize_asset(&env, &admin, None, default_config(2_000_000, 6)).unwrap();
 
         let mut prev_age = get_asset_price_age(&env, None).unwrap();
         assert_eq!(prev_age, 0);
@@ -133,12 +142,16 @@ fn test_contract_client_get_asset_price_age() {
     let contract_id = env.register(HelloContract, ());
     let client = HelloContractClient::new(&env, &contract_id);
 
+    // Initialize the contract so an admin is stored, then register an asset.
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
     env.ledger().set_timestamp(50_000);
-    client.initialize_asset(&None, &default_config(1_000_000, 6));
+    client.initialize_asset(&admin, &None, &default_config(1_000_000, 6));
 
     // Update price at t=60,000
     env.ledger().set_timestamp(60_000);
-    client.update_asset_price(&None, &1_200_000);
+    client.update_asset_price(&admin, &None, &1_200_000);
 
     // Check age at t=60_300
     env.ledger().set_timestamp(60_300);

@@ -45,7 +45,8 @@ use soroban_sdk::{Address, Env};
 /// - `get_cross_position_value` fetches 1 collateral-list entry.
 /// - `get_cross_debt_value` fetches 1 debt-list entry.
 /// - `compute_aggregate_health_factor` fetches both lists again = 2 more.
-/// Total list reads: **4**.  Ceiling rounded up to **6** to allow for TTL
+///
+/// Total list reads: **4**. Ceiling rounded up to **6** to allow for TTL
 /// bookkeeping and future minor overhead.
 pub const BUDGET_FIXED_OVERHEAD: u32 = 6;
 
@@ -527,24 +528,29 @@ fn bench_expected_reads_empty_portfolio_within_overhead() {
 }
 
 /// Verify the budget formula constants are consistent with each other.
+///
+/// These are compile-time facts about the constants, expressed as `const`
+/// assertions (a runtime `assert!` on a constant expression is optimized
+/// out and flagged by clippy's `assertions_on_constants` lint). Kept as a
+/// `#[test]` so it still shows up in test output/coverage.
 #[test]
 fn bench_constants_are_self_consistent() {
     // BUDGET_PER_COLLATERAL_ASSET must be ≥ the 5 reads the formula predicts
     // (formula constant for N is 5)
-    assert!(
+    const _: () = assert!(
         BUDGET_PER_COLLATERAL_ASSET >= 5,
         "BUDGET_PER_COLLATERAL_ASSET must cover at least the formula's 5 reads per col asset"
     );
 
     // BUDGET_PER_DEBT_ASSET must be ≥ the 4 reads the formula predicts
     // (formula constant for M is 4)
-    assert!(
+    const _: () = assert!(
         BUDGET_PER_DEBT_ASSET >= 4,
         "BUDGET_PER_DEBT_ASSET must cover at least the formula's 4 reads per debt asset"
     );
 
     // BUDGET_FIXED_OVERHEAD must be ≥ 4 (the formula's constant term)
-    assert!(
+    const _: () = assert!(
         BUDGET_FIXED_OVERHEAD >= 4,
         "BUDGET_FIXED_OVERHEAD must cover at least the formula's 4 base reads"
     );

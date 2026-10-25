@@ -1,15 +1,20 @@
 #![no_std]
+mod bounds;
+pub use bounds::*;
+
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes,
-    BytesN, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, xdr::ToXdr,
+    Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
 };
+use stellar_lend_common::ttl;
 
 /// Domain separator for multisig approval-authorization payloads (issue #1278).
 ///
 /// Every approval is cryptographically scoped by hashing:
 ///
 /// ```text
-/// sha256(DOMAIN_SEPARATOR || contract_id_xdr || proposal_id_be64 || approver_xdr)
+/// sha256(DOMAIN_SEPARATOR || contract_id_xdr || proposal_id_be64 ||
+/// signer_set_hash || approver_xdr)
 /// ```
 ///
 /// The resulting hash is what `approve_proposal` requires the signer to authorize
@@ -20,6 +25,9 @@ use soroban_sdk::{
 /// See `APPROVAL_DOMAIN_BINDING.md` for the full layout and threat model.
 pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V2";
 pub const ACTION_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_ACTION_V1";
+
+/// Domain separator for signer-set-bound proposal approvals.
+pub const SIGNER_SET_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_SIGNER_SET_V1";
 
 /// Typed action carried on a Proposal and dispatched at execute_proposal time.
 /// The payload_hash binds the approved action so it cannot be swapped between
@@ -48,7 +56,7 @@ pub enum ProposalStatus {
 
 /// A multisig proposal with an attached typed action.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Proposal {
     pub id: u64,
     pub proposer: Address,
@@ -60,8 +68,29 @@ pub struct Proposal {
     pub expires_at: u64,
 }
 
-/// Event emitted after a proposal has been executed.
+/// Event emitted when a new proposal is created.
 #[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalCreatedEvent {
+    pub id: u64,
+    pub proposer: Address,
+    pub action_kind: Symbol,
+    pub expires_at: u64,
+}
+
+/// Event emitted when a signer approves a proposal.
+/// `passed` is `true` when this approval pushed the proposal to `Passed`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalApprovedEvent {
+    pub id: u64,
+    pub approver: Address,
+    pub approval_count: u32,
+    pub passed: bool,
+}
+
+/// Event emitted after a proposal has been executed.
+#[contractevent]
 #[derive(Clone, Debug)]
 pub struct ProposalExecutedEvent {
     pub id: u64,
@@ -69,8 +98,15 @@ pub struct ProposalExecutedEvent {
     pub ok: bool,
 }
 
+/// Event emitted when an expired proposal is marked expired.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ProposalExpiredEvent {
+    pub id: u64,
+}
+
 /// Event emitted after a batch of proposals has been atomically executed.
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug)]
 pub struct BatchExecutedEvent {
     pub ids: Vec<u64>,
@@ -82,10 +118,20 @@ pub enum MultisigDataKey {
     Signers,
     ProposalCount,
     Proposal(u64),
+    /// Monotonic nonce allocated when a proposal is created.
+    NextNonce,
+    /// Unique execution nonce associated with a proposal.
+    ProposalNonce(u64),
+    /// Marker written only after the proposal action succeeds.
+    ConsumedNonce(u64),
+    /// Current signer-set fingerprint.
+    SignerSetHash,
+    /// Signer-set fingerprint captured when a proposal is created.
+    ProposalSignerSetHash(u64),
     /// Domain-separated approval binding for `(proposal_id, approver)`.
     ///
     /// Stores
-    /// `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || approver)`
+    /// `sha256(DOMAIN_SEPARATOR || contract_id || proposal_id || signer_set_hash || approver)`
     /// at approval time so an approval is cryptographically scoped to exactly
     /// one proposal and can be verified out-of-band (issue #1278;
     /// `APPROVAL_DOMAIN_BINDING.md`).
@@ -115,6 +161,10 @@ pub enum MultisigError {
     DuplicateProposalId = 15,
     AlreadyInitialized = 16,
     ProposalIdOverflow = 17,
+    SignerSetChanged = 18,
+    LegacyProposal = 19,
+    NonceOverflow = 20,
+    ApprovalNotFound = 21,
 }
 
 /// Maximum number of proposals that can be executed in a single
@@ -122,11 +172,70 @@ pub enum MultisigError {
 /// churn in a single contract invocation.
 pub const MAX_BATCH_SIZE: u32 = 32;
 
+/// Maximum `ttl_ledgers` accepted by `create_proposal`. Bounds the
+/// expiry arithmetic so `expires_at` cannot overflow.
+pub const MAX_TTL_LEDGERS: u64 = 3_110_400;
+
+/// Emitted when a signer revokes a previous approval from an open proposal.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalRevokedEvent {
+    pub proposal_id: u64,
+    pub signer: Address,
+}
+
 #[contract]
 pub struct MultisigContract;
 
+#[cfg(test)]
+mod ttl_test;
+
 #[contractimpl]
 impl MultisigContract {
+    /// Refresh the multisig's shared configuration without signer authorization.
+    pub fn bump(env: Env) {
+        ttl::bump_instance(&env);
+        for key in [
+            MultisigDataKey::Threshold,
+            MultisigDataKey::Signers,
+            MultisigDataKey::ProposalCount,
+            MultisigDataKey::NextNonce,
+            MultisigDataKey::SignerSetHash,
+        ] {
+            ttl::bump_persistent(&env, &key);
+        }
+    }
+
+    /// Refresh a proposal, its approval bindings, and its execution marker.
+    pub fn bump_proposal(env: Env, id: u64) {
+        ttl::bump_instance(&env);
+        let proposal_key = MultisigDataKey::Proposal(id);
+        ttl::bump_persistent(&env, &proposal_key);
+        ttl::bump_persistent(&env, &MultisigDataKey::ProposalSignerSetHash(id));
+
+        if let Some(proposal) = env
+            .storage()
+            .persistent()
+            .get::<MultisigDataKey, Proposal>(&proposal_key)
+        {
+            for approver in proposal.approvals.iter() {
+                ttl::bump_persistent(
+                    &env,
+                    &MultisigDataKey::ApprovalBinding(id, approver),
+                );
+            }
+        }
+
+        if let Some(nonce) = env
+            .storage()
+            .persistent()
+            .get::<MultisigDataKey, u64>(&MultisigDataKey::ProposalNonce(id))
+        {
+            ttl::bump_persistent(&env, &MultisigDataKey::ProposalNonce(id));
+            ttl::bump_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce));
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Initialisation
     // -----------------------------------------------------------------------
@@ -145,21 +254,21 @@ impl MultisigContract {
         if env.storage().persistent().has(&MultisigDataKey::Signers) {
             return Err(MultisigError::AlreadyInitialized);
         }
-        if signers.is_empty() {
+        for i in 0..signers.len() {
+            signers.get(i).unwrap().require_auth();
+        }
+        if bounds::validate_signer_set(&signers, threshold).is_err() {
+            if threshold == 0 || threshold as usize > signers.len() as usize {
+                return Err(MultisigError::InvalidThreshold);
+            }
             return Err(MultisigError::InvalidSigners);
         }
-        if threshold == 0 || threshold as usize > signers.len() as usize {
-            return Err(MultisigError::InvalidThreshold);
-        }
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::Signers, &signers);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::Threshold, &threshold);
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ProposalCount, &0u64);
+        ttl::set_persistent(&env, &MultisigDataKey::Signers, &signers);
+        ttl::set_persistent(&env, &MultisigDataKey::Threshold, &threshold);
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalCount, &0u64);
+        ttl::set_persistent(&env, &MultisigDataKey::NextNonce, &0u64);
+        let signer_set_hash = Self::signer_set_hash(&env, &signers);
+        ttl::set_persistent(&env, &MultisigDataKey::SignerSetHash, &signer_set_hash);
         Ok(())
     }
 
@@ -168,6 +277,7 @@ impl MultisigContract {
     // -----------------------------------------------------------------------
 
     fn require_signer(env: &Env, caller: &Address) -> Result<(), MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::Signers);
         let signers: Vec<Address> = env
             .storage()
             .persistent()
@@ -180,6 +290,7 @@ impl MultisigContract {
     }
 
     fn fetch_threshold(env: &Env) -> u32 {
+        ttl::bump_persistent(env, &MultisigDataKey::Threshold);
         env.storage()
             .persistent()
             .get(&MultisigDataKey::Threshold)
@@ -187,19 +298,99 @@ impl MultisigContract {
     }
 
     fn fetch_proposal(env: &Env, id: u64) -> Result<Proposal, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::Proposal(id));
         env.storage()
             .persistent()
             .get(&MultisigDataKey::Proposal(id))
             .ok_or(MultisigError::ProposalNotFound)
     }
 
-    fn save_proposal(env: &Env, proposal: &Proposal) {
+    fn fetch_signers(env: &Env) -> Vec<Address> {
+        ttl::bump_persistent(env, &MultisigDataKey::Signers);
         env.storage()
             .persistent()
-            .set(&MultisigDataKey::Proposal(proposal.id), proposal);
+            .get(&MultisigDataKey::Signers)
+            .unwrap_or_else(|| Vec::new(env))
+    }
+
+    /// Hashes the signer set in its stored canonical order. The hash is
+    /// captured per proposal so approvals cannot survive signer rotation.
+    fn signer_set_hash(env: &Env, signers: &Vec<Address>) -> BytesN<32> {
+        let mut payload = Bytes::new(env);
+        payload.extend_from_slice(SIGNER_SET_DOMAIN_SEPARATOR);
+        for signer in signers.iter() {
+            payload.append(&signer.to_xdr(env));
+        }
+        env.crypto().sha256(&payload).into()
+    }
+
+    fn current_signer_set_hash(env: &Env) -> BytesN<32> {
+        Self::signer_set_hash(env, &Self::fetch_signers(env))
+    }
+
+    fn fetch_proposal_signer_set_hash(env: &Env, id: u64) -> Result<BytesN<32>, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalSignerSetHash(id));
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ProposalSignerSetHash(id))
+            .ok_or(MultisigError::LegacyProposal)
+    }
+
+    fn fetch_proposal_nonce(env: &Env, id: u64) -> Result<u64, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalNonce(id));
+        ttl::bump_persistent(env, &MultisigDataKey::Proposal(id));
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ProposalNonce(id))
+            // Existing proposal records predate nonce metadata. Treating the
+            // immutable proposal id as a legacy nonce lets already-executed
+            // records remain readable without weakening new proposals.
+            .or_else(|| {
+                env.storage()
+                    .persistent()
+                    .get::<MultisigDataKey, Proposal>(&MultisigDataKey::Proposal(id))
+                    .map(|_| id)
+            })
+            .ok_or(MultisigError::ProposalNotFound)
+    }
+
+    fn allocate_proposal_nonce(env: &Env) -> Result<u64, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::NextNonce);
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalCount);
+        let nonce: u64 = env
+            .storage()
+            .persistent()
+            .get(&MultisigDataKey::NextNonce)
+            .unwrap_or_else(|| {
+                // On an older deployment ProposalCount is the only monotonic
+                // counter. Starting from it avoids colliding with legacy ids.
+                env.storage()
+                    .persistent()
+                    .get(&MultisigDataKey::ProposalCount)
+                    .unwrap_or(0)
+            });
+        let next = nonce.checked_add(1).ok_or(MultisigError::NonceOverflow)?;
+        ttl::set_persistent(&env, &MultisigDataKey::NextNonce, &next);
+        Ok(nonce)
+    }
+
+    fn require_current_proposal_signer_set(
+        env: &Env,
+        id: u64,
+    ) -> Result<BytesN<32>, MultisigError> {
+        let captured = Self::fetch_proposal_signer_set_hash(env, id)?;
+        if captured != Self::current_signer_set_hash(env) {
+            return Err(MultisigError::SignerSetChanged);
+        }
+        Ok(captured)
+    }
+
+    fn save_proposal(env: &Env, proposal: &Proposal) {
+        ttl::set_persistent(&env, &MultisigDataKey::Proposal(proposal.id), proposal);
     }
 
     fn next_proposal_id(env: &Env) -> Result<u64, MultisigError> {
+        ttl::bump_persistent(env, &MultisigDataKey::ProposalCount);
         let count: u64 = env
             .storage()
             .persistent()
@@ -208,9 +399,7 @@ impl MultisigContract {
         let new_count = count
             .checked_add(1)
             .ok_or(MultisigError::ProposalIdOverflow)?;
-        env.storage()
-            .persistent()
-            .set(&MultisigDataKey::ProposalCount, &new_count);
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalCount, &new_count);
         Ok(count)
     }
 
@@ -226,7 +415,8 @@ impl MultisigContract {
     /// `(proposal_id, approver)`:
     ///
     /// ```text
-    /// DOMAIN_SEPARATOR || contract_id_xdr || proposal_id (8-byte BE) || approver_xdr
+    /// DOMAIN_SEPARATOR || contract_id_xdr || proposal_id (8-byte BE)
+    /// || signer_set_hash || approver_xdr
     /// ```
     ///
     /// # Arguments
@@ -245,19 +435,29 @@ impl MultisigContract {
         env.crypto().sha256(&payload).into()
     }
 
-    fn signer_set_hash(env: &Env) -> BytesN<32> {
-        let signers: Vec<Address> = env.storage().persistent()
-            .get(&MultisigDataKey::Signers).unwrap_or_else(|| Vec::new(env));
-        env.crypto().sha256(&signers.to_xdr(env)).into()
+    /// Action hash pinned for proposal `id` at creation (or migration),
+    /// falling back to recomputing it from the stored action for legacy
+    /// proposals.
+    fn stored_action_hash(env: &Env, id: u64, proposal: &Proposal) -> BytesN<32> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ActionHash(id))
+            .unwrap_or_else(|| Self::action_hash(env, &proposal.action))
     }
 
-    fn approval_auth_payload(env: &Env, proposal_id: u64, action_hash: &BytesN<32>, approver: &Address) -> Bytes {
+    fn approval_auth_payload(
+        env: &Env,
+        proposal_id: u64,
+        approver: &Address,
+        signer_set_hash: &BytesN<32>,
+        action_hash: &BytesN<32>,
+    ) -> Bytes {
         let mut payload = Bytes::new(env);
         payload.extend_from_slice(APPROVAL_DOMAIN_SEPARATOR);
         payload.append(&env.current_contract_address().to_xdr(env));
         payload.extend_from_slice(&proposal_id.to_be_bytes());
-        payload.append(&Self::signer_set_hash(env).to_xdr(env));
-        payload.append(&action_hash.to_xdr(env));
+        payload.append(&signer_set_hash.to_bytes());
+        payload.append(&action_hash.to_bytes());
         payload.append(&approver.clone().to_xdr(env));
         payload
     }
@@ -275,8 +475,15 @@ impl MultisigContract {
     ///
     /// # Returns
     /// 32-byte domain-separated binding hash.
-    fn approval_auth_hash(env: &Env, proposal_id: u64, action_hash: &BytesN<32>, approver: &Address) -> BytesN<32> {
-        let payload = Self::approval_auth_payload(env, proposal_id, action_hash, approver);
+    fn approval_auth_hash(
+        env: &Env,
+        proposal_id: u64,
+        approver: &Address,
+        signer_set_hash: &BytesN<32>,
+        action_hash: &BytesN<32>,
+    ) -> BytesN<32> {
+        let payload =
+            Self::approval_auth_payload(env, proposal_id, approver, signer_set_hash, action_hash);
         env.crypto().sha256(&payload).into()
     }
 
@@ -304,16 +511,17 @@ impl MultisigContract {
         caller.require_auth();
         Self::require_signer(&env, &caller)?;
 
-        if ttl_ledgers > 3_110_400 {
+        if ttl_ledgers > MAX_TTL_LEDGERS {
             return Err(MultisigError::InvalidTtl);
         }
 
+        // Pin the canonical action hash; approvals and execution are bound to
+        // it. `payload_hash` stays the caller-supplied execution check.
         let computed_hash = Self::action_hash(&env, &action);
-        if payload_hash != computed_hash.to_bytes() {
-            return Err(MultisigError::PayloadHashMismatch);
-        }
         let id = Self::next_proposal_id(&env)?;
+        let nonce = Self::allocate_proposal_nonce(&env)?;
         let expires_at = (env.ledger().sequence() as u64).saturating_add(ttl_ledgers);
+        let signer_set_hash = Self::current_signer_set_hash(&env);
 
         let proposal = Proposal {
             id,
@@ -325,7 +533,24 @@ impl MultisigContract {
             expires_at,
         };
         Self::save_proposal(&env, &proposal);
-        env.storage().persistent().set(&MultisigDataKey::ActionHash(id), &computed_hash);
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalNonce(id), &nonce);
+        ttl::set_persistent(&env, &MultisigDataKey::ActionHash(id), &computed_hash);
+        ttl::set_persistent(&env,
+            &MultisigDataKey::ProposalSignerSetHash(id),
+            &signer_set_hash,
+        );
+
+        let action_kind = Self::action_kind_symbol(&env, &proposal.action);
+        env.events().publish(
+            (symbol_short!("multisig"), Symbol::new(&env, "created")),
+            ProposalCreatedEvent {
+                id,
+                proposer: proposal.proposer,
+                action_kind,
+                expires_at,
+            },
+        );
+
         Ok(id)
     }
 
@@ -345,6 +570,7 @@ impl MultisigContract {
     ///     APPROVAL_DOMAIN_SEPARATOR
     ///     || contract_id_xdr
     ///     || proposal_id (8-byte big-endian)
+    ///     || signer_set_hash
     ///     || approver_xdr
     /// )
     /// ```
@@ -361,6 +587,16 @@ impl MultisigContract {
         Self::require_signer(&env, &caller)?;
 
         let mut proposal = Self::fetch_proposal(&env, id)?;
+        let signer_set_hash = Self::require_current_proposal_signer_set(&env, id)?;
+
+        // Domain-separated binding (issue #1278): instead of a bare
+        // `require_auth()`, require the caller to have authorized this
+        // exact `(contract, proposal_id, signer_set, action, approver)` hash.
+        // See APPROVAL_DOMAIN_BINDING.md for the full threat model.
+        let action_hash = Self::stored_action_hash(&env, id, &proposal);
+        let binding =
+            Self::approval_auth_hash(&env, id, &caller, &signer_set_hash, &action_hash);
+        caller.require_auth_for_args((binding.clone(),).into_val(&env));
 
         if proposal.status == ProposalStatus::Expired
             || env.ledger().sequence() as u64 > proposal.expires_at
@@ -375,36 +611,100 @@ impl MultisigContract {
         if proposal.status == ProposalStatus::Cancelled {
             return Err(MultisigError::AlreadyCancelled);
         }
-        if proposal.status != ProposalStatus::Active {
+        if proposal.status != ProposalStatus::Active
+            && proposal.status != ProposalStatus::Passed
+        {
             return Err(MultisigError::ProposalNotPassed);
         }
         if proposal.approvals.contains(&caller) {
             return Err(MultisigError::AlreadyApproved);
         }
 
-        let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
-            .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
-        let binding = Self::approval_auth_hash(&env, id, &action_hash, &caller);
-        caller.require_auth_for_args((binding.clone(),).into_val(&env));
-
         proposal.approvals.push_back(caller.clone());
 
         // Persist the domain-separated binding for off-chain / indexer checks
         // and for `verify_approval_binding`.
-        env.storage().persistent().set(
+        ttl::set_persistent(&env,
             &MultisigDataKey::ApprovalBinding(id, caller.clone()),
             &binding,
         );
 
         let threshold = Self::fetch_threshold(&env) as usize;
-        if proposal.approvals.len() as usize >= threshold {
-            proposal.status = ProposalStatus::Passed;
-        }
+        let approval_count = proposal.approvals.len();
+        let passed = approval_count as usize >= threshold;
+        proposal.status = if passed {
+            ProposalStatus::Passed
+        } else {
+            ProposalStatus::Active
+        };
         Self::save_proposal(&env, &proposal);
+
+        env.events().publish(
+            (symbol_short!("multisig"), Symbol::new(&env, "approved")),
+            ProposalApprovedEvent {
+                id,
+                approver: caller,
+                approval_count,
+                passed,
+            },
+        );
+
         Ok(())
     }
 
-    /// Execute a passed, non-expired, non-executed proposal.
+    /// Revoke the caller's approval from an active or passed proposal.
+    ///
+    /// Quorum is recalculated against the current threshold after removal.
+    /// Approval revocation does not permit an expired or terminal proposal to
+    /// be changed.
+    pub fn revoke_approval(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
+        caller.require_auth();
+        Self::require_signer(&env, &caller)?;
+
+        let mut proposal = Self::fetch_proposal(&env, id)?;
+        if env.ledger().sequence() as u64 > proposal.expires_at
+            || proposal.status == ProposalStatus::Expired
+        {
+            proposal.status = ProposalStatus::Expired;
+            Self::save_proposal(&env, &proposal);
+            return Err(MultisigError::ProposalExpired);
+        }
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
+        }
+        if proposal.status != ProposalStatus::Active
+            && proposal.status != ProposalStatus::Passed
+        {
+            return Err(MultisigError::ProposalNotPassed);
+        }
+
+        let approval_index = proposal
+            .approvals
+            .first_index_of(caller.clone())
+            .ok_or(MultisigError::ApprovalNotFound)?;
+        proposal.approvals.remove(approval_index);
+        env.storage()
+            .persistent()
+            .remove(&MultisigDataKey::ApprovalBinding(id, caller.clone()));
+
+        proposal.status = if proposal.approvals.len() >= Self::fetch_threshold(&env) {
+            ProposalStatus::Passed
+        } else {
+            ProposalStatus::Active
+        };
+        Self::save_proposal(&env, &proposal);
+        ApprovalRevokedEvent {
+            proposal_id: id,
+            signer: caller,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Execute a proposal whose current approvals meet the live threshold.
     ///
     /// This is the **execution router**: it dispatches the proposal's typed
     /// `ProposalAction` to the matching on-chain handler and emits a
@@ -439,37 +739,44 @@ impl MultisigContract {
         if proposal.status == ProposalStatus::Cancelled {
             return Err(MultisigError::AlreadyCancelled);
         }
-        if proposal.status != ProposalStatus::Passed {
-            return Err(match proposal.status {
-                ProposalStatus::Active => MultisigError::QuorumNotReached,
-                _ => MultisigError::ProposalNotPassed,
-            });
+        if proposal.approvals.len() < Self::fetch_threshold(&env) {
+            return Err(MultisigError::QuorumNotReached);
+        }
+        let _signer_set_hash = Self::require_current_proposal_signer_set(&env, id)?;
+        let nonce = Self::fetch_proposal_nonce(&env, id)?;
+        ttl::bump_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce));
+        if env
+            .storage()
+            .persistent()
+            .has(&MultisigDataKey::ConsumedNonce(nonce))
+        {
+            return Err(MultisigError::AlreadyExecuted);
         }
         // Payload-hash binding: prevents action swap between approval and execution
         if proposal.payload_hash != payload_hash {
             return Err(MultisigError::PayloadHashMismatch);
         }
-        let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
-            .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
-        if action_hash != Self::action_hash(&env, &proposal.action) {
+        if Self::stored_action_hash(&env, id, &proposal) != Self::action_hash(&env, &proposal.action) {
             return Err(MultisigError::PayloadHashMismatch);
         }
 
         let action_kind = Self::action_kind_symbol(&env, &proposal.action);
         Self::dispatch_action(&env, &proposal.action)?;
 
+        // The nonce is consumed only after the action succeeds. Soroban
+        // transaction rollback therefore leaves it available after a failed
+        // cross-contract invocation, while a retry after success is rejected.
+        ttl::set_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce), &true);
         proposal.status = ProposalStatus::Executed;
         Self::save_proposal(&env, &proposal);
 
         // Emit ProposalExecutedEvent
-        env.events().publish(
-            (symbol_short!("multisig"), symbol_short!("executed")),
-            ProposalExecutedEvent {
-                id,
-                action_kind,
-                ok: true,
-            },
-        );
+        ProposalExecutedEvent {
+            id,
+            action_kind,
+            ok: true,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -477,28 +784,25 @@ impl MultisigContract {
     fn dispatch_action(env: &Env, action: &ProposalAction) -> Result<(), MultisigError> {
         match action {
             ProposalAction::SetThreshold(new_threshold) => {
-                if *new_threshold == 0 {
+                let signers: Vec<Address> = env
+                    .storage()
+                    .persistent()
+                    .get(&MultisigDataKey::Signers)
+                    .unwrap_or_else(|| Vec::new(env));
+                if bounds::validate_signer_set(&signers, *new_threshold).is_err() {
                     return Err(MultisigError::InvalidThreshold);
                 }
-                env.storage()
-                    .persistent()
-                    .set(&MultisigDataKey::Threshold, new_threshold);
+                ttl::set_persistent(&env, &MultisigDataKey::Threshold, new_threshold);
                 Ok(())
             }
             ProposalAction::RotateSigners(new_signers) => {
-                if new_signers.is_empty() {
+                let threshold = Self::fetch_threshold(env);
+                if bounds::validate_signer_set(new_signers, threshold).is_err() {
                     return Err(MultisigError::InvalidSigners);
                 }
-                // Signer-shrink guard: the new signer set must be at least as
-                // large as the current threshold, otherwise quorum could never
-                // be reached again and the multisig would be permanently bricked.
-                let threshold = Self::fetch_threshold(env);
-                if (new_signers.len() as u32) < threshold {
-                    return false;
-                }
-                env.storage()
-                    .persistent()
-                    .set(&MultisigDataKey::Signers, new_signers);
+                ttl::set_persistent(&env, &MultisigDataKey::Signers, new_signers);
+                let signer_set_hash = Self::signer_set_hash(env, new_signers);
+                ttl::set_persistent(&env, &MultisigDataKey::SignerSetHash, &signer_set_hash);
                 Ok(())
             }
             ProposalAction::InvokeContract(contract, fn_symbol, args) => {
@@ -506,7 +810,7 @@ impl MultisigContract {
                 // arguments carried on the proposal action. The payload hash
                 // still binds the approved action so it cannot be swapped.
                 let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args.clone());
-                true
+                Ok(())
             }
         }
     }
@@ -521,6 +825,16 @@ impl MultisigContract {
         Self::require_signer(&env, &caller)?;
 
         let mut proposal = Self::fetch_proposal(&env, id)?;
+
+        // Ledger-based expiry guard (consistent with execute_proposal
+        // and approve_proposal): if the current ledger has passed
+        // expires_at the proposal is expired regardless of the stored
+        // status field.
+        if env.ledger().sequence() as u64 > proposal.expires_at {
+            proposal.status = ProposalStatus::Expired;
+            Self::save_proposal(&env, &proposal);
+            return Err(MultisigError::ProposalExpired);
+        }
         if proposal.status == ProposalStatus::Expired {
             return Err(MultisigError::ProposalExpired);
         }
@@ -538,6 +852,35 @@ impl MultisigContract {
         Ok(())
     }
 
+    /// Mark a proposal as expired if the current ledger sequence has passed its `expires_at`.
+    ///
+    /// Persists `ProposalStatus::Expired` and emits `ProposalExpiredEvent`.
+    ///
+    /// # Arguments
+    /// * `caller` – Signer requesting the expiry update.
+    /// * `id`     – ID of the proposal to expire.
+    pub fn expire_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
+        caller.require_auth();
+        Self::require_signer(&env, &caller)?;
+
+        let mut proposal = Self::fetch_proposal(&env, id)?;
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
+        }
+        if env.ledger().sequence() as u64 <= proposal.expires_at {
+            return Err(MultisigError::ProposalNotPassed);
+        }
+
+        proposal.status = ProposalStatus::Expired;
+        Self::save_proposal(&env, &proposal);
+
+        ProposalExpiredEvent { id }.publish(&env);
+        Ok(())
+    }
+
     /// Return the current approval threshold.
     pub fn get_threshold(env: Env) -> u32 {
         Self::fetch_threshold(&env)
@@ -551,6 +894,12 @@ impl MultisigContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Return the fingerprint of the current signer set used in approval
+    /// authorization payloads.
+    pub fn get_signer_set_hash(env: Env) -> BytesN<32> {
+        Self::current_signer_set_hash(&env)
+    }
+
     /// Return the full state of a proposal.
     ///
     /// # Arguments
@@ -559,17 +908,89 @@ impl MultisigContract {
         Self::fetch_proposal(&env, id)
     }
 
+    /// Return the action hash pinned for a proposal, if any.
     pub fn get_action_hash(env: Env, id: u64) -> Option<BytesN<32>> {
         env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
     }
 
-    /// Stamp the action hash on a legacy proposal. A signer must explicitly migrate each id.
-    pub fn migrate_proposal_security(env: Env, caller: Address, id: u64) -> Result<(), MultisigError> {
+    /// Return the nonce allocated to a proposal.
+    pub fn get_proposal_nonce(env: Env, id: u64) -> Result<u64, MultisigError> {
+        Self::fetch_proposal_nonce(&env, id)
+    }
+
+    /// Return whether an execution nonce has been consumed successfully.
+    pub fn is_nonce_consumed(env: Env, nonce: u64) -> bool {
+        env.storage()
+            .persistent()
+            .has(&MultisigDataKey::ConsumedNonce(nonce))
+    }
+
+    /// Return the signer-set fingerprint captured for a proposal.
+    pub fn get_proposal_signer_set_hash(env: Env, id: u64) -> Option<BytesN<32>> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ProposalSignerSetHash(id))
+    }
+
+    /// Add replay-protection metadata to a proposal created before this
+    /// metadata was introduced. Migration is intentionally conservative:
+    /// the proposer and every recorded approver must still be current
+    /// signers. If that cannot be proven, the legacy proposal stays blocked.
+    pub fn migrate_proposal_security(
+        env: Env,
+        caller: Address,
+        id: u64,
+    ) -> Result<(), MultisigError> {
         caller.require_auth();
         Self::require_signer(&env, &caller)?;
         let proposal = Self::fetch_proposal(&env, id)?;
-        let hash = Self::action_hash(&env, &proposal.action);
-        env.storage().persistent().set(&MultisigDataKey::ActionHash(id), &hash);
+        if proposal.status == ProposalStatus::Executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(MultisigError::AlreadyCancelled);
+        }
+        if proposal.status != ProposalStatus::Active && proposal.status != ProposalStatus::Passed {
+            return Err(MultisigError::ProposalNotPassed);
+        }
+
+        let signers = Self::fetch_signers(&env);
+        if !signers.contains(&proposal.proposer)
+            || proposal
+                .approvals
+                .iter()
+                .any(|approver| !signers.contains(&approver))
+        {
+            return Err(MultisigError::SignerSetChanged);
+        }
+
+        // Pin the action hash so approvals and execution are bound to the
+        // exact action recorded on the proposal.
+        if !env
+            .storage()
+            .persistent()
+            .has(&MultisigDataKey::ActionHash(id))
+        {
+            let action_hash = Self::action_hash(&env, &proposal.action);
+            ttl::set_persistent(&env, &MultisigDataKey::ActionHash(id), &action_hash);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .get::<MultisigDataKey, BytesN<32>>(&MultisigDataKey::ProposalSignerSetHash(id))
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        let nonce = Self::fetch_proposal_nonce(&env, id)?;
+        let signer_set_hash = Self::current_signer_set_hash(&env);
+        ttl::set_persistent(&env, &MultisigDataKey::ProposalNonce(id), &nonce);
+        ttl::set_persistent(&env,
+            &MultisigDataKey::ProposalSignerSetHash(id),
+            &signer_set_hash,
+        );
         Ok(())
     }
 
@@ -577,7 +998,7 @@ impl MultisigContract {
     /// `(id, approver)`, if an approval was recorded.
     ///
     /// The hash is
-    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || approver)`.
+    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || signer_set_hash || approver)`.
     ///
     /// # Arguments
     /// * `id`       – Proposal ID the approval was cast for.
@@ -606,17 +1027,27 @@ impl MultisigContract {
     ///
     /// # Returns
     /// `true` iff a binding was stored for `(id, approver)` and it equals
-    /// `approval_auth_hash(id, approver)`.
+    /// `approval_auth_hash(id, approver, captured_signer_set_hash)`.
     ///
     /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
     pub fn verify_approval_binding(env: Env, id: u64, approver: Address) -> bool {
+        let signer_set_hash = match Self::fetch_proposal_signer_set_hash(&env, id) {
+            Ok(hash) => hash,
+            Err(_) => return false,
+        };
         match Self::get_approval_binding(env.clone(), id, approver.clone()) {
             Some(stored) => match Self::fetch_proposal(&env, id) {
                 Ok(proposal) => {
-                    let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
-                        .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
-                    stored == Self::approval_auth_hash(&env, id, &action_hash, &approver)
-                },
+                    let action_hash = Self::stored_action_hash(&env, id, &proposal);
+                    stored
+                        == Self::approval_auth_hash(
+                            &env,
+                            id,
+                            &approver,
+                            &signer_set_hash,
+                            &action_hash,
+                        )
+                }
                 Err(_) => false,
             },
             None => false,
@@ -634,23 +1065,24 @@ impl MultisigContract {
     /// * `approver` – Signer the hash is scoped to.
     ///
     /// # Returns
-    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || approver)`.
+    /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || signer_set_hash || approver)`.
     ///
     /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
     pub fn approval_binding_hash(env: Env, id: u64, approver: Address) -> BytesN<32> {
+        let signer_set_hash = Self::fetch_proposal_signer_set_hash(&env, id)
+            .unwrap_or_else(|_| Self::current_signer_set_hash(&env));
         let proposal = Self::fetch_proposal(&env, id).unwrap();
-        let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
-            .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
-        Self::approval_auth_hash(&env, id, &action_hash, &approver)
+        let action_hash = Self::stored_action_hash(&env, id, &proposal);
+        Self::approval_auth_hash(&env, id, &approver, &signer_set_hash, &action_hash)
     }
 
-    /// Execute a set of passed proposals atomically.
+    /// Execute proposals meeting the live threshold atomically.
     ///
-    /// All proposals are validated first (status, expiry, payload hash,
-    /// duplicates). If every proposal is eligible they are executed in
-    /// order. If **any** proposal fails validation or its action dispatches
-    /// with an error the entire batch is rejected — no proposal is left
-    /// executed (Soroban's panic-based rollback guarantees all-or-nothing).
+    /// All proposals are validated first (terminal status, expiry, payload
+    /// hash, signer set, and duplicates). Quorum is checked immediately before
+    /// each action against the threshold in effect at that point. If any
+    /// proposal lacks quorum or its action dispatches with an error, the
+    /// entire batch is rejected.
     ///
     /// A `BatchExecuted` event listing the applied IDs is emitted on
     /// success.
@@ -669,8 +1101,8 @@ impl MultisigContract {
     /// * `ProposalExpired` if any proposal has expired.
     /// * `AlreadyExecuted` if any proposal has already been executed.
     /// * `AlreadyCancelled` if any proposal has been cancelled.
-    /// * `ProposalNotPassed` if any proposal has not reached the required
-    ///   approval quorum.
+    /// * `QuorumNotReached` if any proposal has fewer current approvals than
+    ///   the current threshold, including after an earlier batch action raises it.
     /// * `PayloadHashMismatch` if a payload hash does not match.
     pub fn batch_execute(
         env: Env,
@@ -717,19 +1149,23 @@ impl MultisigContract {
             if proposal.status == ProposalStatus::Cancelled {
                 return Err(MultisigError::AlreadyCancelled);
             }
-            if proposal.status != ProposalStatus::Passed {
-                return Err(match proposal.status {
-                    ProposalStatus::Active => MultisigError::QuorumNotReached,
-                    _ => MultisigError::ProposalNotPassed,
-                });
+            Self::require_current_proposal_signer_set(&env, id)?;
+            let nonce = Self::fetch_proposal_nonce(&env, id)?;
+            ttl::bump_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce));
+            if env
+                .storage()
+                .persistent()
+                .has(&MultisigDataKey::ConsumedNonce(nonce))
+            {
+                return Err(MultisigError::AlreadyExecuted);
             }
             // Payload-hash binding
             if proposal.payload_hash != payload_hash {
                 return Err(MultisigError::PayloadHashMismatch);
             }
-            let action_hash: BytesN<32> = env.storage().persistent().get(&MultisigDataKey::ActionHash(id))
-                .unwrap_or_else(|| Self::action_hash(&env, &proposal.action));
-            if action_hash != Self::action_hash(&env, &proposal.action) {
+            if Self::stored_action_hash(&env, id, &proposal)
+                != Self::action_hash(&env, &proposal.action)
+            {
                 return Err(MultisigError::PayloadHashMismatch);
             }
 
@@ -740,19 +1176,18 @@ impl MultisigContract {
         // the panic rolls back all prior execution side-effects.
         for i in 0..batch_size {
             let mut proposal = proposals.get(i).unwrap();
+            if proposal.approvals.len() < Self::fetch_threshold(&env) {
+                return Err(MultisigError::QuorumNotReached);
+            }
+            let nonce = Self::fetch_proposal_nonce(&env, proposal.id)?;
             Self::dispatch_action(&env, &proposal.action)?;
+            ttl::set_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce), &true);
             proposal.status = ProposalStatus::Executed;
             Self::save_proposal(&env, &proposal);
         }
 
         // Emit single BatchExecuted event with all applied IDs
-        env.events().publish(
-            (
-                symbol_short!("multisig"),
-                Symbol::new(&env, "batch_executed"),
-            ),
-            BatchExecutedEvent { ids },
-        );
+        BatchExecutedEvent { ids }.publish(&env);
         Ok(())
     }
 }
@@ -761,8 +1196,6 @@ impl MultisigContract {
 // until updated to match the current contract interface.
 // #[cfg(test)]
 // mod quorum_edge_test;
-// #[cfg(test)]
-// mod signer_cooldown_test;
 // #[cfg(test)]
 // mod action_allowlist_test;
 // #[cfg(test)]
@@ -793,6 +1226,19 @@ mod cancel_proposal_test;
 
 #[cfg(test)]
 mod approval_binding_test;
+
+/// Signer set shrink guard tests verifying prevention of quorum bricking.
+#[cfg(test)]
+mod signer_shrink_guard_test;
+
+#[cfg(test)]
+mod replay_protection_test;
+
+#[cfg(test)]
+mod revoke_approval_test;
+
+#[cfg(test)]
+mod live_quorum_test;
 
 #[cfg(test)]
 mod action_hash_binding_test;

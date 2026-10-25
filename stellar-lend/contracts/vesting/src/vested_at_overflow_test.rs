@@ -1,6 +1,4 @@
-#![cfg(test)]
-
-use crate::Grant;
+use crate::{Grant, VestingSchedule};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
@@ -16,6 +14,7 @@ fn test_typical_schedule_exact() {
         cliff_secs: 100,
         duration_secs: 1000,
         revoked: false,
+        schedule: VestingSchedule::Linear,
     };
 
     // Before start
@@ -46,6 +45,7 @@ fn test_overflow_avoided_with_max_values() {
         cliff_secs: 0,
         duration_secs: u64::MAX, // ~1.8e19
         revoked: false,
+        schedule: VestingSchedule::Linear,
     };
 
     // At t = 0
@@ -74,6 +74,7 @@ fn test_never_exceeds_principal() {
         cliff_secs: 0,
         duration_secs: 1000,
         revoked: false,
+        schedule: VestingSchedule::Linear,
     };
 
     // Far past the end
@@ -94,6 +95,7 @@ fn test_no_panic_for_various_combinations() {
         cliff_secs: 0,
         duration_secs: u64::MAX,
         revoked: false,
+        schedule: VestingSchedule::Linear,
     };
 
     // Choose an elapsed time that would cause elapsed * principal to overflow u128.
@@ -101,5 +103,8 @@ fn test_no_panic_for_various_combinations() {
     // Our split quotient-remainder calculation avoids this.
     let elapsed = u64::MAX - 1;
     let vested = grant.vested_at(elapsed);
-    assert!(vested <= i128::MAX);
+    // The real invariant: vested never exceeds the grant's own principal
+    // (checking against `i128::MAX` directly is a tautology since that's
+    // the type's own maximum).
+    assert!(vested <= grant.total_amount);
 }

@@ -42,11 +42,8 @@
 //! They run quickly and exercise no‑core contracts, making them ideal for CI and
 //! edge‑case detection.
 
-#![cfg(test)]
-
 use super::math::split_interest_by_reserve_factor;
 use proptest::prelude::*;
-use proptest::strategy::Just;
 use proptest::test_runner::Config as ProptestConfig;
 
 /// Strategy for total_interest: non‑negative values that are safe to multiply.
@@ -115,7 +112,7 @@ proptest! {
         total_interest in arb_total_interest_safe(),
         reserve_factor_bps in arb_reserve_factor_bps(),
     ) {
-        let (depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
+        let (_depositor_yield, reserve_cut) = split_interest_by_reserve_factor(
             total_interest, reserve_factor_bps,
         ).expect("valid inputs should not fail");
         let scale = 10_000i128;
@@ -161,12 +158,10 @@ proptest! {
         assert_eq!(depositor_yield, 0, "depositor yield should be 0");
         assert_eq!(reserve_cut, 0, "reserve cut should be 0");
     }
-        );
-    }
 }
 
 proptest! {
-    #[proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     /// Zero reserve factor: all interest to depositors.
     ///
@@ -179,12 +174,10 @@ proptest! {
         assert_eq!(depositor_yield, total_interest);
         assert_eq!(reserve_cut, 0);
     }
-        );
-    }
 }
 
 proptest! {
-    #[proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     /// 100% reserve factor: all interest to protocol.
     ///
@@ -197,12 +190,10 @@ proptest! {
         assert_eq!(depositor_yield, 0);
         assert_eq!(reserve_cut, total_interest);
     }
-        );
-    }
 }
 
 proptest! {
-    #[proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     /// Negative interest rejection: MathError::OutOfRange.
     ///
@@ -212,12 +203,10 @@ proptest! {
         let result = split_interest_by_reserve_factor(-1i128, rf_bps);
         assert_eq!(result, Err(super::math::MathError::OutOfRange));
     }
-        );
-    }
 }
 
 proptest! {
-    #[proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     /// Reserve factor >100% rejection: MathError::OutOfRange.
     ///
@@ -226,7 +215,5 @@ proptest! {
     fn prop_split_reserve_factor_above_100pc_rejected(total_interest in 0i128..=i128::MAX/10_000) {
         let result = split_interest_by_reserve_factor(total_interest, 10_001);
         assert_eq!(result, Err(super::math::MathError::OutOfRange));
-    }
-        );
     }
 }
