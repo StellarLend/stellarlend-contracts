@@ -16,7 +16,7 @@
 //! | Per-swap cost does not depend on ring occupancy                  | `swap_cost_is_independent_of_ring_occupancy` |
 //! | Random swaps/gaps match an `f64` reference model                 | `proptest_twap_matches_reference` |
 
-use crate::swap_test_util::{fund_pool, new_trader, register_token};
+use crate::swap_test_util::{bootstrap_pool, fund_pool, new_trader, register_token};
 use crate::{
     AmmContract, AmmContractClient, AmmPoolError, TWAP_OBSERVATION_COUNT, TWAP_PRICE_SCALE,
 };
@@ -52,7 +52,7 @@ fn setup_at(
     let admin = Address::generate(&env);
     let token_a = register_token(&env);
     let token_b = register_token(&env);
-    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
+    bootstrap_pool(&env, &client, &admin, &token_a, &token_b, ra, rb);
     fund_pool(&env, &id, &token_a, &token_b, ra, rb);
     let trader = new_trader(&env, &token_a, &token_b);
     // SAFETY: the env is returned alongside the client and outlives it.
@@ -386,7 +386,7 @@ fn pool_in(env: &Env) -> (AmmContractClient<'static>, Address) {
     let admin = Address::generate(env);
     let token_a = register_token(env);
     let token_b = register_token(env);
-    client.init_pool(&admin, &1_000_000_000, &1_000_000_000, &token_a, &token_b);
+    bootstrap_pool(env, &client, &admin, &token_a, &token_b, 1_000_000_000, 1_000_000_000);
     fund_pool(env, &id, &token_a, &token_b, 1_000_000_000, 1_000_000_000);
     let trader = new_trader(env, &token_a, &token_b);
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };

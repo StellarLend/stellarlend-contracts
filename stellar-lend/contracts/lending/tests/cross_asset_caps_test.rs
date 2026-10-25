@@ -67,7 +67,11 @@ fn set_signed_price(
     payload.copy_into_slice(&mut payload_bytes[..len]);
     let signature = keypair.sign(&payload_bytes[..len]);
     let sig_bytes = BytesN::from_array(env, &signature.to_bytes());
-    client.set_price(asset, &price, &timestamp, &sig_bytes);
+    // `set_price` is relayer-or-admin gated; the test signs as the admin.
+    let admin: Address = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::Admin).unwrap()
+    });
+    client.set_price(&admin, asset, &price, &timestamp, &sig_bytes);
 }
 
 fn read_total_collateral(env: &Env, contract_id: &Address, asset: &Address) -> i128 {
@@ -248,8 +252,9 @@ fn capacity_view_matches_check() {
     client.deposit_collateral_asset(&user, &asset_col, &10_000);
 
     let capacity = client.get_borrow_capacity(&user);
-    // 10,000 units * ONE_USD * 7000 / 10000 = 7,000 * ONE_USD
-    assert_eq!(capacity, 7_000 * ONE_USD);
+    // Capacity is in oracle-normalised value units (price / PRICE_DIVISOR):
+    // 10,000 units * (ONE_USD / PRICE_DIVISOR) * 7000 / 10000 = 7,000.
+    assert_eq!(capacity, 7_000);
 
     // Borrowing exactly 7,000 debt tokens (whose USD value equals capacity) succeeds
     let res = client.try_borrow_asset(&user, &asset_dbt, &7_000);
