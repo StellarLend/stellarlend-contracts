@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 75d25bfd6624b04eee8894994728714a83f3213adebd02f4ed3b52b961ce1502 # shrinks to gaps = [20, 201, 6], amounts = [11083, 18228, 1077], directions = [false, true, false, false, true, true, false, true, true, false, false, false, true, true, false, true, false], window_seed = 1246689323124989868, final_gap = 102

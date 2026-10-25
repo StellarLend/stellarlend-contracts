@@ -250,20 +250,18 @@ fn borrow_against_collateral_without_collateral_is_rejected() {
 
 #[test]
 fn borrow_against_collateral_enforces_collateral_boundary() {
-    // 1_000 collateral at the default 80% liquidation threshold supports
-    // exactly 800 debt: 1_000 * 8_000 == 10_000 * 800.
+    // 1_000 collateral at the default 75% max LTV supports exactly 750 debt:
+    // 1_000 * 7_500 == 10_000 * 750. (Borrows are capped by the governed max
+    // LTV, which sits below the 80% liquidation threshold.)
     let at_boundary = fixture();
     at_boundary.client.deposit(&at_boundary.borrower, &1_000);
     assert!(matches!(
         at_boundary
             .client
-            .try_borrow_against_collateral(&at_boundary.borrower, &800, &at_boundary.collateral_asset),
-        Ok(Ok(principal)) if principal == 800
+            .try_borrow_against_collateral(&at_boundary.borrower, &750, &at_boundary.collateral_asset),
+        Ok(Ok(principal)) if principal == 750
     ));
-    assert_eq!(
-        at_boundary.client.get_health_factor(&at_boundary.borrower),
-        HEALTH_FACTOR_SCALE
-    );
+    assert!(at_boundary.client.get_health_factor(&at_boundary.borrower) >= HEALTH_FACTOR_SCALE);
 
     let over_boundary = fixture();
     over_boundary
@@ -272,7 +270,7 @@ fn borrow_against_collateral_enforces_collateral_boundary() {
     assert!(matches!(
         over_boundary.client.try_borrow_against_collateral(
             &over_boundary.borrower,
-            &801,
+            &751,
             &over_boundary.collateral_asset
         ),
         Err(Ok(LendingError::InsufficientCollateral))

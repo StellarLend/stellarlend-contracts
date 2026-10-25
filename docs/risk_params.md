@@ -14,7 +14,8 @@ This document provides a consolidated view of all protocol risk parameters, incl
 | **Minimum Collateral Ratio** | Minimum ratio of collateral to total debt required for a borrow to succeed, in basis points | **15 000 bps (150 %)** | > 0 | `set_collateral_ratio(admin, ratio)` | Prevents under-collateralised borrowing and protects protocol solvency |
 | Close Factor | Maximum portion of a borrower's debt that can be repaid in a single `liquidate` call, in basis points | **5 000 bps (50 %)** | `(0, 7 500]` | `set_close_factor_bps(close_factor_bps)` | Prevents full liquidation at once, reducing market shock and cascading failures |
 | Liquidation Incentive | Bonus collateral, on top of the repaid debt, paid to the liquidator, in basis points | **1 000 bps (10 %)** | `[0, 5 000]` | `set_liquidation_incentive_bps(incentive_bps)` | Rewards liquidators for clearing bad debt while capping the bonus so it can't be misconfigured into an outsized collateral seizure |
-| Liquidation Threshold | Collateral ratio below which a position becomes eligible for liquidation, in basis points | **8 000 bps (80 %)** | Fixed (`LIQUIDATION_THRESHOLD_BPS` constant) | Not governable — recompile-only | Ensures positions remain sufficiently collateralized and protects lenders |
+| Max LTV (single-asset borrow) | Maximum collateral-to-debt ratio accepted for a single-asset borrow, in basis points | **7 500 bps (75 %)** | `[0, 9 000]` and strictly below liquidation threshold | `set_max_ltv_bps(max_ltv_bps)` | Keeps new borrowing below the liquidation boundary |
+| Liquidation Threshold | Collateral ratio below which a position becomes eligible for liquidation, in basis points | **8 000 bps (80 %)** | `[5 000, 9 500]` and strictly above max LTV | `set_liquidation_threshold_bps(threshold_bps)` | Ensures positions remain sufficiently collateralized and protects lenders |
 | Reserve Factor | Percentage of interest allocated to protocol reserves | Defined in code | 0% – 100% | Admin-controlled setter | Builds reserves for protocol stability and risk mitigation |
 | Supply Cap | Maximum total supply allowed for a specific asset | Defined in code | ≥ 0 | Admin-controlled setter | Limits exposure to any single asset and reduces systemic risk |
 | Borrow Cap | Maximum total borrow allowed for a specific asset | Defined in code | ≥ 0 | Admin-controlled setter | Prevents excessive leverage and liquidity stress |
@@ -65,13 +66,16 @@ where `col_ratio` is stored under the `"col_ratio"` instance-storage key (defaul
 `LendingContract::liquidate` (`stellar-lend/contracts/lending/src/lib.rs`) sources its
 close-factor cap and liquidation incentive from governed storage instead of from inline
 `const` literals, so they can be retuned by the admin without a contract upgrade. The
-liquidation threshold remains the fixed `LIQUIDATION_THRESHOLD_BPS` constant — it is not
-governable.
+liquidation threshold and single-asset maximum LTV are also governed independently, with
+the invariant `max_ltv_bps < liquidation_threshold_bps`. New single-asset borrows use the
+max LTV; liquidation eligibility and health-factor views use the liquidation threshold.
 
 | Parameter | Storage key | Default | Bounds | Setter | Getter |
 |-----------|-------------|---------|--------|--------|--------|
 | Close factor | `DataKey::CloseFactorBps` (instance) | `DEFAULT_CLOSE_FACTOR_BPS` = 5 000 bps (50 %) | `(0, 7 500]` | `set_close_factor_bps(close_factor_bps)` | `get_close_factor_bps()` |
 | Liquidation incentive | `DataKey::LiquidationIncentiveBps` (instance) | `DEFAULT_LIQUIDATION_INCENTIVE_BPS` = 1 000 bps (10 %) | `[0, MAX_LIQUIDATION_INCENTIVE_BPS]` (`MAX_LIQUIDATION_INCENTIVE_BPS` = 5 000 bps / 50 %) | `set_liquidation_incentive_bps(incentive_bps)` | `get_liquidation_incentive_bps()` |
+| Max LTV | `DataKey::MaxLtvBps` (instance) | `DEFAULT_MAX_LTV_BPS` = 7 500 bps (75 %) | `[0, MAX_LTV_BPS]` (`MAX_LTV_BPS` = 9 000 bps), strictly below liquidation threshold | `set_max_ltv_bps(max_ltv_bps)` | `get_max_ltv_bps()` |
+| Liquidation threshold | `DataKey::LiquidationThresholdBps` (instance) | `LIQUIDATION_THRESHOLD_BPS` = 8 000 bps (80 %) | `[MIN_LIQUIDATION_THRESHOLD_BPS, MAX_LIQUIDATION_THRESHOLD_BPS]` (5 000–9 500 bps), strictly above max LTV | `set_liquidation_threshold_bps(threshold_bps)` | `get_liquidation_threshold_bps()` |
 
 **Behaviour:**
 - Both setters call `assert_admin`; a non-admin caller's `liquidate`-affecting setter call
@@ -80,6 +84,12 @@ governable.
   `LendingError::InvalidCloseFactorBps` (code 7001). Storage is left unchanged on rejection.
 - `set_liquidation_incentive_bps` rejects values outside `[0, MAX_LIQUIDATION_INCENTIVE_BPS]`
   with `LendingError::InvalidLiquidationIncentiveBps` (code 7002).
+- `set_max_ltv_bps` rejects values outside `[0, MAX_LTV_BPS]` or values greater than or
+  equal to the liquidation threshold with `LendingError::InvalidMaxLtvBps` (code 7006).
+- `set_liquidation_threshold_bps` rejects values outside its configured bounds or values
+  less than or equal to the max LTV with `LendingError::InvalidLiquidationThresholdBps`
+  (code 7005). Both setters emit governance audit events and append to the bounded
+  on-chain governance audit log.
 - Until an admin calls a setter, the corresponding getter — and `liquidate` itself —
   fall back to the default literal, so behaviour is unchanged for deployments that never
   configure an override (the same 50 % close factor / 10 % incentive as before this change).
