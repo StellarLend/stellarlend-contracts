@@ -20,7 +20,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::{DataKey, LendingContract, LendingContractClient, LendingError};
+    use crate::{
+        DataKey, LendingContract, LendingContractClient, LendingError, HEALTH_FACTOR_SCALE,
+        LIQUIDATION_THRESHOLD_BPS,
+    };
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     // -----------------------------------------------------------------------
@@ -40,6 +43,17 @@ mod tests {
 
     fn asset(env: &Env) -> Address {
         Address::generate(env)
+    }
+
+    /// Collateral required to back a borrow of `debt`.
+    ///
+    /// `borrow_against_collateral` only accepts a borrow that leaves the
+    /// position solvent, so every isolation test funds the borrower first. In
+    /// single-asset mode the health factor is `collateral * threshold_bps /
+    /// (HF_SCALE * debt)`, which stays at or above 1.0 for `collateral >=
+    /// debt * HF_SCALE / threshold`.
+    fn collateral_for(debt: i128) -> i128 {
+        (debt * HEALTH_FACTOR_SCALE) / LIQUIDATION_THRESHOLD_BPS + 1
     }
 
     // -----------------------------------------------------------------------
@@ -133,6 +147,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         // No isolation config at all.
+        client.deposit(&user, &collateral_for(1_000_000));
         let result = client.borrow_against_collateral(&user, &1_000_000i128, &tok);
         assert_eq!(result, 1_000_000);
     }
@@ -141,6 +156,7 @@ mod tests {
     fn test_non_isolated_asset_isolation_debt_not_tracked() {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
+        client.deposit(&user, &collateral_for(500_000));
         client.borrow_against_collateral(&user, &500_000i128, &tok);
         // Isolation debt should remain 0 for a non-isolated asset.
         assert_eq!(client.get_isolation_debt(&tok), 0);
@@ -155,6 +171,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(999));
 
         let result = client.borrow_against_collateral(&user, &999i128, &tok);
         assert_eq!(result, 999);
@@ -165,6 +182,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(1_000));
 
         let result = client.borrow_against_collateral(&user, &1_000i128, &tok);
         assert_eq!(result, 1_000);
@@ -179,6 +197,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(1_001));
 
         let res = client.try_borrow_against_collateral(&user, &1_001i128, &tok);
         assert!(
@@ -197,6 +216,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &10_000i128);
+        client.deposit(&user, &collateral_for(5_000));
 
         client.borrow_against_collateral(&user, &3_000i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 3_000);
@@ -214,6 +234,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(1_001));
 
         client.borrow_against_collateral(&user, &600i128, &tok);
         // 600 used; 400 remaining.
@@ -230,6 +251,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(1_000));
 
         client.borrow_against_collateral(&user, &600i128, &tok);
         let result = client.borrow_against_collateral(&user, &400i128, &tok);
@@ -247,6 +269,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &10_000i128);
+        client.deposit(&user, &collateral_for(5_000));
 
         client.borrow_against_collateral(&user, &5_000i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 5_000);
@@ -264,6 +287,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &5_000i128);
+        client.deposit(&user, &collateral_for(5_000));
 
         client.borrow_against_collateral(&user, &5_000i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 5_000);
@@ -284,6 +308,9 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        // Collateral covers the rejected extra borrow as well, so the
+        // isolation ceiling — not the solvency check — is what rejects it.
+        client.deposit(&user, &collateral_for(1_001));
 
         // Fill to ceiling.
         client.borrow_against_collateral(&user, &1_000i128, &tok);
@@ -313,6 +340,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &10_000i128);
+        client.deposit(&user, &collateral_for(5_001));
 
         client.borrow_against_collateral(&user, &5_000i128, &tok);
         // Admin lowers ceiling to 5_000 (exactly what is already borrowed).
@@ -332,6 +360,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(2_000));
 
         // Fill to ceiling.
         client.borrow_against_collateral(&user, &1_000i128, &tok);
@@ -352,6 +381,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &100i128);
+        client.deposit(&user, &collateral_for(200));
 
         // Would be blocked while isolated.
         let res = client.try_borrow_against_collateral(&user, &200i128, &tok);
@@ -402,6 +432,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(700));
 
         // Borrow 700 — 300 remaining.
         client.borrow_against_collateral(&user, &700i128, &tok);
@@ -428,6 +459,7 @@ mod tests {
 
         client.set_asset_isolation(&tok_a, &true, &2_000i128);
         client.set_asset_isolation(&tok_b, &true, &3_000i128);
+        client.deposit(&user, &collateral_for(5_000));
 
         client.borrow_against_collateral(&user, &2_000i128, &tok_a);
         client.borrow_against_collateral(&user, &1_000i128, &tok_b);
@@ -478,6 +510,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &5_000i128);
+        client.deposit(&user, &collateral_for(1_000));
 
         client.borrow_against_collateral(&user, &1_000i128, &tok);
         // Repaying far more than owed must be rejected outright with
@@ -505,6 +538,7 @@ mod tests {
         let (env, client, _admin, user) = setup();
         let tok = asset(&env);
         client.set_asset_isolation(&tok, &true, &1i128);
+        client.deposit(&user, &collateral_for(2));
 
         client.borrow_against_collateral(&user, &1i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 1);
@@ -535,7 +569,13 @@ mod tests {
         let large_ceiling = i128::MAX / 2;
         client.set_asset_isolation(&tok, &true, &large_ceiling);
 
-        let big_amount = large_ceiling - 1;
+        // The borrow itself stays far below the ceiling: the solvency check
+        // fails closed on `i128` overflow, so an astronomically large borrow
+        // would be rejected before the isolation accounting ever runs. What
+        // matters here is that the isolation ceiling arithmetic itself does
+        // not overflow for a large (but representable) position.
+        let big_amount = 500_000_000_000i128;
+        client.deposit(&user, &collateral_for(big_amount));
         let result = client.borrow_against_collateral(&user, &big_amount, &tok);
         assert_eq!(result, big_amount);
         assert_eq!(client.get_isolation_debt(&tok), big_amount);
@@ -576,6 +616,7 @@ mod tests {
         let _normal_tok = asset(&env);
 
         client.set_asset_isolation(&isolated_tok, &true, &500i128);
+        client.deposit(&user, &collateral_for(501));
 
         // Borrow 500 against the isolated asset — fills the ceiling.
         client.borrow_against_collateral(&user, &500i128, &isolated_tok);

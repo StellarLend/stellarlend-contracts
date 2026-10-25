@@ -1,139 +1,91 @@
-# Approval Domain Binding
-
-This document describes how `approve_proposal` in
-[`src/lib.rs`](src/lib.rs) binds each approval to the exact proposal it was
-intended for, closing the cross-proposal approval-reuse vector discussed in
-issue [#1278](https://github.com/StellarLend/stellarlend-contracts/issues/1278).
-
-## Threat model
+# Multisig Action and Approval Binding
 
 An approval authorizes a signer to count toward quorum for a **specific**
-proposal. If the signed authorization did not uniquely scope the
-`proposal_id` (and a purpose tag), an approval gathered for proposal `A` could
-in principle be replayed to satisfy quorum on a different proposal `B` created
-in the same context (same contract, same signer set).
+proposal, signer set and action. Issue
+[#1278](https://github.com/StellarLend/stellarlend-contracts/issues/1278)
+scoped approvals to `(contract, proposal_id, signer_set_hash, approver)`;
+issue [#2287](https://github.com/StellarLend/stellarlend-contracts/issues/2287)
+additionally binds each approval to the exact action stored on the proposal.
+This changes the off-chain authorization format; clients must use V2.
 
-The fix makes each approval **cryptographically scoped** to exactly one
-`(contract, proposal_id, signer_set_hash, approver)` tuple.
+## Action hash
 
-## Payload layout
-
-Every approval authorization payload is the SHA-256 hash of the following
-concatenated byte string:
+At creation, the contract serializes the typed `ProposalAction` to canonical
+Soroban XDR and computes:
 
 ```text
-sha256(
-    DOMAIN_SEPARATOR
-    || contract_id_xdr
-    || proposal_id (8-byte big-endian)
-    || signer_set_hash (32 bytes)
-    || approver_xdr
+action_hash = SHA256(
+  b"STELLARLEND_MULTISIG_ACTION_V1" || action.to_xdr(env)
 )
 ```
 
-| Field | Source | Purpose |
-|-------|--------|---------|
-| `DOMAIN_SEPARATOR` | `APPROVAL_DOMAIN_SEPARATOR` = `b"STELLARLEND_MULTISIG_APPROVAL_V1"` | Purpose tag. Prevents an approval signature from being reinterpreted for another contract feature. Bump the `_V1` suffix on any breaking layout change. |
-| `contract_id_xdr` | `env.current_contract_address().to_xdr(env)` | Scopes the approval to this multisig instance. |
-| `proposal_id` | `u64` big-endian | Scopes the approval to exactly one proposal (anti-replay across ids). |
-| `signer_set_hash` | `sha256(SIGNER_SET_DOMAIN_SEPARATOR || ordered signer XDR)` | Prevents an approval from surviving signer-set rotation. |
-| `approver_xdr` | `approver.to_xdr(env)` | Binds the hash to the signing address. |
+The action hash is always computed by the contract (never taken from the
+caller) and stored separately from the proposal record under
+`MultisigDataKey::ActionHash(id)`; `get_action_hash(id)` exposes it.
+`create_proposal`'s `payload_hash: Bytes` argument is unchanged and remains the
+caller-supplied value checked again at execution time. Execution (single and
+batch) recomputes the action hash and checks it against the pinned value before
+dispatch.
 
-The constant is exported as:
+## Approval authorization V2 byte layout
 
-```rust
-pub const APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_MULTISIG_APPROVAL_V1";
+The signer authorizes the SHA-256 of this exact concatenation:
+
+```text
+SHA256(
+  DOMAIN_SEPARATOR
+  || contract_id_xdr
+  || proposal_id_be64
+  || signer_set_hash
+  || action_hash
+  || approver_xdr
+)
 ```
+
+| Order | Bytes | Encoding |
+|---|---|---|
+| 1 | `STELLARLEND_MULTISIG_APPROVAL_V2` | ASCII domain separator, no terminator |
+| 2 | Current multisig contract address | Canonical Soroban XDR |
+| 3 | Proposal id | Unsigned 64-bit integer, 8-byte big-endian |
+| 4 | Signer-set hash captured when the proposal was created: `sha256(SIGNER_SET_DOMAIN_SEPARATOR \|\| ordered signer XDR)` | Raw 32 bytes |
+| 5 | Action hash (see above) | Raw 32 bytes |
+| 6 | Approver address | Canonical Soroban XDR |
+
+The V2 format is breaking for off-chain signing clients. They should call
+`approval_binding_hash(id, approver)` (or fetch `get_proposal_signer_set_hash(id)`
+and `get_action_hash(id)`) to construct authorization args.
 
 ## Enforcement
 
-1. **Auth-layer binding (primary).** `approve_proposal` computes the domain-
-   and signer-set-separated hash and calls:
-
-   ```rust
-   caller.require_auth_for_args((binding_hash,).into_val(&env));
-   ```
-
-   The host therefore requires an authorization entry whose args equal the
-   hash for **this** `(contract, proposal_id, signer_set_hash, approver)`. An
-   auth entry built for a different proposal or signer set produces a different
-   hash and is rejected.
-
-2. **Storage binding (audit / off-chain).** On successful approval the same
-   hash is persisted under
+1. **Auth-layer binding.** `approve_proposal` computes the hash above and calls
+   `caller.require_auth_for_args((binding_hash,).into_val(&env))`. An auth
+   entry built for a different proposal, signer set or action produces a
+   different hash and is rejected.
+2. **Storage binding.** On successful approval the same hash is persisted under
    `MultisigDataKey::ApprovalBinding(proposal_id, approver)`.
-
-3. **Views.**
-   - `approval_binding_hash(id, approver)` — pure recompute of the hash
-     (clients can precompute auth args).
-   - `get_approval_binding(id, approver)` — returns the stored hash if any.
-   - `verify_approval_binding(id, approver)` — recomputes and compares;
-     returns `false` when no approval exists or the binding would not match
-     this id (i.e. an approval intended for a different proposal).
-
-4. **Unchanged guards.** Duplicate-approver rejection (`AlreadyApproved`),
-   expiry (`ProposalExpired`), status checks, and the `approvals` list used
-   for quorum counting are all preserved.
-
-## Why this defeats cross-proposal replay
-
-| Scenario | Result |
-|----------|--------|
-| Signer authorizes hash(…, id=1, …) and calls `approve_proposal(id=1)` | **Accepted** — auth args match |
-| Signer reuses the id=1 auth entry to call `approve_proposal(id=2)` | **Rejected** — `require_auth_for_args` expects hash(…, id=2, …) |
-| Approver list for id=1 inspected via `verify_approval_binding(id=2, …)` | **false** — no binding stored under id=2 |
-
-Because the domain separator, contract id, proposal id, and signer-set hash
-are folded in, the same bytes cannot be reinterpreted as an approval for a
-different purpose, proposal, signer set, or multisig deployment.
+3. **Views.** `approval_binding_hash`, `get_approval_binding`,
+   `verify_approval_binding`, `get_action_hash`.
+4. **Unchanged guards.** Duplicate-approver rejection, expiry, status checks
+   and quorum counting are preserved.
 
 ## Execution nonce and migration
 
-Every new proposal receives a monotonic execution nonce. The nonce is marked
-consumed only after its action dispatch succeeds, in the same transaction as
-the proposal status transition. A failed cross-contract execution therefore
-does not burn a nonce, while a successful retry is rejected by both the
-consumed marker and `ProposalStatus::Executed`.
+Every new proposal receives a monotonic execution nonce, marked consumed only
+after its action dispatch succeeds. Replay metadata (nonce, signer-set hash,
+action hash) is stored under separate `MultisigDataKey` variants rather than by
+changing the serialized `Proposal` layout, so older records remain readable.
 
-Replay metadata is stored under new `MultisigDataKey` variants rather than by
-changing the serialized `Proposal` layout. Older records remain readable. A
-legacy active or passed proposal must be explicitly passed through
-`migrate_proposal_security`; migration is accepted only while the proposer and
-all recorded approvers remain current signers. If that cannot be proven, the
-contract blocks the legacy proposal instead of guessing its original signer
-set.
+A legacy active or passed proposal must be explicitly passed through
+`migrate_proposal_security(caller, id)`; migration is accepted only while the
+proposer and all recorded approvers remain current signers, and it stamps the
+action hash from the stored action. Existing legacy approvals do not become V2
+approvals and must be collected again if the proposal needs further approval.
 
 ## Tests
 
-See [`src/approval_binding_test.rs`](src/approval_binding_test.rs):
-
-| Test | Asserts |
-|------|---------|
-| `approve_correct_id_records_verifiable_binding` | Binding stored + verifies; non-approver has none |
-| `normal_approval_still_reaches_quorum` | Existing quorum path still works |
-| `binding_hashes_differ_across_proposal_ids` | Distinct ids → distinct hashes |
-| `binding_is_scoped_to_proposal_id` | Approve id1 does not create binding for id2 |
-| `cross_proposal_auth_payload_rejected` | Auth args for id1 cannot approve id2 |
-| `correct_domain_auth_payload_accepted` | Explicit correct-domain auth succeeds |
-| `duplicate_approval_still_rejected` | `AlreadyApproved` preserved |
-| `approval_after_expiry_rejected` | `ProposalExpired` preserved |
-| `distinct_approvers_have_distinct_bindings` | Per-approver isolation |
-| `domain_separator_constant_is_pinned` | Tag cannot change silently |
-
-Run:
+See `src/approval_binding_test.rs` and `src/action_hash_binding_test.rs`.
 
 ```bash
 cargo test -p stellarlend-multisig approval_binding
+cargo test -p stellarlend-multisig action_hash
 ```
-
-## Client integration notes
-
-When constructing a Soroban authorization entry for `approve_proposal`, set the
-function args in the auth payload to the single domain-bound hash:
-
-```text
-args = [ approval_binding_hash(proposal_id, approver) ]
-```
-
-Do **not** sign the raw invocation args `(caller, id)` alone; the contract
-verifies the domain-separated hash via `require_auth_for_args`.

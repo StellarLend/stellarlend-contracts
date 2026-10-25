@@ -18,6 +18,7 @@ minting, and flash swaps.
 | [FEE_ACCOUNTING.md](./FEE_ACCOUNTING.md) | Per-side fee accumulator model |
 | [MINT_INVARIANTS.md](./MINT_INVARIANTS.md) | LP share minting edge cases and invariants |
 | [SQRT_PRECISION.md](./SQRT_PRECISION.md) | Integer square root precision guarantees |
+| [TWAP.md](./TWAP.md) | On-chain TWAP oracle: ring buffer, `consult`, overflow and manipulation properties |
 
 ---
 

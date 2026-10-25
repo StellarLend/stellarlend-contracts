@@ -25,7 +25,7 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::{Address as _, LedgerInfo},
+    testutils::{Address as _, Ledger, LedgerInfo},
     token::StellarAssetClient,
     Address, Env,
 };

@@ -20,10 +20,15 @@ This document maps the `AmmPoolError` discriminants to their causes. These codes
 | 14 | `InsufficientLpBalance` | Caller has insufficient LP balance for requested burn. |
 | 15 | `ZeroOutput` | Computed swap output floors to zero after fees — dust input rejected. See [DUST_SWAP_GUARD.md](./DUST_SWAP_GUARD.md). |
 | 16 | `AmountBelowMinSwapIn` | Input (or flash `amount_out`) is below the admin-configured `min_swap_in` floor. |
-| 18 | `SlippageExceeded` | `add_liquidity` / `remove_liquidity` result is below `amount_*_min` or `min_shares`. |
+| 17 | `BelowMinLiquidity` | Operation would leave a reserve below the admin-configured `min_liquidity` floor. See [MIN_LIQUIDITY.md](./MIN_LIQUIDITY.md). |
+| 18 | `SlippageExceeded` | `add_liquidity` / `remove_liquidity` result is below `amount_*_min` or `min_shares`, or a swap output is below `min_amount_out`. |
 | 19 | `DeadlineExpired` | Ledger timestamp is past the caller-supplied `deadline`. |
-| 22 | `AlreadyInitialized` | The pool has already been initialized (one-shot initialization). |
-| 23 | `IdenticalTokens` | `token_a` and `token_b` must be distinct token addresses. |
+| 20 | `PriceImpactExceeded` | Swap would move the spot price by more than `max_impact_bps`. See [PRICE_IMPACT_GUARD.md](./PRICE_IMPACT_GUARD.md). |
+| 21 | `InvalidTrader` | The trader is the pool contract itself. |
+| 22 | `TwapInsufficientHistory` | `consult` requested a window longer than the retained TWAP history. See [TWAP.md](./TWAP.md). |
+| 23 | `TwapObservationNotFound` | TWAP ring slot is out of range or has never been written. See [TWAP.md](./TWAP.md). |
+| 24 | `AlreadyInitialized` | The pool has already been initialized (one-shot initialization). |
+| 25 | `IdenticalTokens` | `token_a` and `token_b` must be distinct token addresses. |
 
 ## Example: Invariant Violation
 

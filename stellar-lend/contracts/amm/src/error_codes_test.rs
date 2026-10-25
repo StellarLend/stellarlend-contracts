@@ -24,8 +24,10 @@ fn test_error_codes_stability() {
     assert_eq!(AmmPoolError::DeadlineExpired as u32, 19);
     assert_eq!(AmmPoolError::PriceImpactExceeded as u32, 20);
     assert_eq!(AmmPoolError::InvalidTrader as u32, 21);
-    assert_eq!(AmmPoolError::AlreadyInitialized as u32, 22);
-    assert_eq!(AmmPoolError::IdenticalTokens as u32, 23);
+    assert_eq!(AmmPoolError::TwapInsufficientHistory as u32, 22);
+    assert_eq!(AmmPoolError::TwapObservationNotFound as u32, 23);
+    assert_eq!(AmmPoolError::AlreadyInitialized as u32, 24);
+    assert_eq!(AmmPoolError::IdenticalTokens as u32, 25);
 }
 
 #[test]

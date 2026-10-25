@@ -219,7 +219,9 @@ fn test_batch_execute_timelock_enforcement_and_atomicity() {
     let hash1 = make_payload_hash(&env, b"batch_action_1");
     let hash2 = make_payload_hash(&env, b"batch_action_2");
 
-    let id1 = client.create_proposal(&s1, &ProposalAction::SetThreshold(3), &hash1, &500u64);
+    // SetThreshold(2) keeps the live threshold unchanged so id2 still meets
+    // quorum when it executes after id1 in the same batch.
+    let id1 = client.create_proposal(&s1, &ProposalAction::SetThreshold(2), &hash1, &500u64);
     let id2 = client.create_proposal(&s1, &ProposalAction::SetThreshold(2), &hash2, &500u64);
 
     // Proposal 1 reaches quorum at ledger 1000 -> executable at 1100
