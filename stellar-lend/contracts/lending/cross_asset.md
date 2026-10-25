@@ -19,7 +19,8 @@ The cross‑asset module aggregates collateral and debt across multiple assets t
 - The resulting value is then multiplied by the asset's liquidation threshold expressed in basis points (`params.liquidation_threshold_bps`). This yields the *weighted collateral* contribution.
 
 **Debt Valuation**
-- Effective debt is calculated via `crate::debt::effective_debt`, then multiplied by the oracle price and divided by `PRICE_DIVISOR` to obtain USD debt value.
+- Effective debt is projected from the borrowed asset's **own** borrow index and utilisation (`TotalDebtAsset / TotalCollateralAsset`) via `cross_asset::project_asset_position_debt` — read-only, and identical at the same timestamp to what `repay_asset` would settle. See [`PER_ASSET_ACCRUAL.md`](PER_ASSET_ACCRUAL.md).
+- Each debt value is multiplied by the oracle price and divided by `10^decimals` to obtain USD debt value.
 - All debt values are summed to `total_debt_value`.
 
 **Health Factor Calculation**
@@ -148,12 +149,17 @@ Admin only function to configure an asset's parameters.
 
 ### `deposit_collateral_asset`
 Users can deposit any supported asset as collateral. This increases their total borrowing power based on the asset's USD value and its specific LTV.
+- **Supply Cap**: Enforces `supply_cap > 0 && new_total > supply_cap`, rejecting with `SupplyCapExceeded` if exceeded. A cap of `0` is uncapped.
+- **Total Tracking**: Updates `DataKey::TotalCollateralAsset(asset)` with the new total.
 - **Pause Check**: Blocked if `PauseType::Deposit` or `PauseType::All` is set.
 - **Token Transfer**: Automatically transfers tokens from user to the contract.
 - **Event**: Emits `CrossDepositEvent`.
 
 ### `borrow_asset`
-Users can borrow any supported asset as long as their aggregate Health Factor remains above 1.0 (10000 basis points).
+Users can borrow any supported asset subject to LTV capacity and health factor constraints.
+- **LTV Enforcement**: Computes borrowing capacity via `compute_borrow_capacity`: `Σ (collateral_value_i × ltv_bps_i) / 10_000`. Requires `total_debt_value_after ≤ capacity`, rejecting with `LtvExceeded` if breached.
+- **Health Factor Guard**: As a second guard, verifies aggregate Health Factor remains above 1.0 (10000 basis points), rejecting with `HealthFactorTooLow` if not.
+- **Ceiling & Borrow Cap**: Enforces per-asset `debt_ceiling` and `borrow_cap`.
 - **Pause Check**: Blocked if `PauseType::Borrow` or `PauseType::All` is set.
 - **Token Transfer**: Automatically transfers tokens from the contract to the user.
 - **Event**: Emits `CrossBorrowEvent`.
@@ -166,6 +172,7 @@ Users repay borrowed assets to reduce their total debt and improve their positio
 
 ### `withdraw_asset`
 Collateral withdrawal is allowed only if the remaining position stays healthy (Health Factor > 1.0).
+- **Total Tracking**: Decrements `DataKey::TotalCollateralAsset(asset)` using checked subtraction to prevent underflow.
 - **Pause Check**: Blocked if `PauseType::Withdraw` or `PauseType::All` is set.
 - **Token Transfer**: Automatically transfers tokens from the contract to the user.
 - **Event**: Emits `CrossWithdrawEvent`.
@@ -175,6 +182,11 @@ Returns a summary of the user's position:
 - `total_collateral_usd`: Aggregated value of all collateral.
 - `total_debt_usd`: Aggregated value of all debt.
 - `health_factor`: Unified risk indicator for the entire position.
+
+### `get_borrow_capacity`
+Returns the user's aggregate USD borrowing capacity computed via `compute_borrow_capacity(env, user)`.
+- Sum of `collateral_value × ltv_bps / 10_000` across all supplied collateral legs.
+- Matches the exact capacity value used in `borrow_asset` validation.
 
 ## Valuation and Oracle Requirements
 

@@ -48,6 +48,8 @@ mod fee_accrual_overflow_test;
 #[cfg(test)]
 mod fee_accrual_test;
 #[cfg(test)]
+mod init_once_test;
+#[cfg(test)]
 mod flash_swap_atomicity_test;
 #[cfg(test)]
 mod flash_swap_caller_binding_test;
@@ -73,7 +75,7 @@ mod ttl_test;
 use soroban_sdk::token::Client as TokenClient;
 use stellar_lend_common::ttl;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Vec,
 };
 
 use crate::liquidity_math::{
@@ -85,8 +87,6 @@ pub struct FeeTier {
     pub min_reserve: u128,
     pub fee_bps: u32,
 }
-
-const FEE_TIERS_KEY: &str = "fee_tiers";
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -290,6 +290,7 @@ const KEY_MIN_LIQUIDITY: (&str, &str) = ("pool", "min_liquidity");
 #[derive(Clone)]
 pub enum LpBalanceKey {
     User(Address),
+    Locked,
 }
 
 /// Maximum fee the admin may configure (50 % = 5 000 bps).
@@ -367,6 +368,10 @@ pub enum AmmPoolError {
     TwapInsufficientHistory = 22,
     /// The requested TWAP ring slot is out of range or has never been written.
     TwapObservationNotFound = 23,
+    /// Pool is already initialized (one-shot initialization).
+    AlreadyInitialized = 24,
+    /// Token A and Token B cannot be identical.
+    IdenticalTokens = 25,
 }
 
 /// Return value of [`AmmContract::get_swap_quote`].
@@ -420,7 +425,6 @@ impl AmmContract {
         for slot in 0..TWAP_OBSERVATION_COUNT {
             ttl::bump_persistent(&env, &TwapKey::Obs(slot));
         }
-        ttl::bump_persistent(&env, &FEE_TIERS_KEY);
     }
 
     /// Refresh one user's LP balance after a long period without activity.
@@ -429,22 +433,60 @@ impl AmmContract {
         ttl::bump_persistent(&env, &LpBalanceKey::User(user));
     }
 
-    /// Initialize pool reserves.
+    /// Initialize pool configuration.
     ///
-    /// Admin only. `admin` must authorize the call via `require_auth()` and,
-    /// once a pool admin identity is stored, must match the stored admin —
-    /// mirroring [`set_fee_bps`](AmmContract::set_fee_bps).  The first
-    /// successful `init_pool` call locks in its `admin` argument as the
-    /// pool admin (first-caller-wins); later calls are restricted to that
-    /// same address so a third party cannot reset the reserves.
+    /// One-shot setup: can only be called once on a fresh contract. Subsequent
+    /// calls are rejected with [`AmmPoolError::AlreadyInitialized`].
     ///
-    /// Gated by the `FlashActive` reentrancy guard so that a flash swap
-    /// initiated on a stale pool cannot be silently clobbered by a
-    /// follow-up `init_pool` from the same transaction.
+    /// Sets the pool admin, token contract addresses, and swap fee.
+    /// Rejects `token_a == token_b` with [`AmmPoolError::IdenticalTokens`] and
+    /// invalid fees with [`AmmPoolError::FeeBpsOutOfRange`].
+    /// Does not write virtual reserves or mint unbacked LP tokens; initial
+    /// pool liquidity must be provided through [`add_liquidity`](Self::add_liquidity).
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        token_a: Address,
+        token_b: Address,
+        fee_bps: i128,
+    ) -> Result<(), AmmPoolError> {
+        Self::assert_no_active_flash_swap(&env)?;
+        if env.storage().persistent().has(&KEY_ADMIN) {
+            return Err(AmmPoolError::AlreadyInitialized);
+        }
+        admin.require_auth();
+        if token_a == token_b {
+            return Err(AmmPoolError::IdenticalTokens);
+        }
+        if fee_bps < 0 || fee_bps > MAX_FEE_BPS {
+            return Err(AmmPoolError::FeeBpsOutOfRange);
+        }
+
+        ttl::set_persistent(&env, &KEY_ADMIN, &admin);
+        ttl::set_persistent(&env, &KEY_TOKEN_A, &token_a);
+        ttl::set_persistent(&env, &KEY_TOKEN_B, &token_b);
+        ttl::set_persistent(&env, &KEY_FEE_BPS, &fee_bps);
+        ttl::set_persistent(&env, &KEY_RES_A, &0_i128);
+        ttl::set_persistent(&env, &KEY_RES_B, &0_i128);
+        ttl::set_persistent(&env, &KEY_LP_TOTAL_SUPPLY, &0_i128);
+        ttl::set_persistent(&env, &KEY_FEE_A, &0_i128);
+        ttl::set_persistent(&env, &KEY_FEE_B, &0_i128);
+        Ok(())
+    }
+
+    /// Initialize pool reserves (deprecated).
     ///
-    /// Stores the token contract addresses for A and B so that
-    /// `add_liquidity` and `remove_liquidity` can perform real token
-    /// transfers.  Resets both fee accumulators and LP total supply to zero.
+    /// Deprecated in favor of [`initialize`](Self::initialize) followed by
+    /// [`add_liquidity`](Self::add_liquidity).
+    ///
+    /// One-shot setup: can only be called once on a fresh contract. Subsequent
+    /// calls are rejected with [`AmmPoolError::AlreadyInitialized`].
+    ///
+    /// If `a > 0 && b > 0`, pulls `a` and `b` from `admin` via real token transfers
+    /// and mints LP shares to `admin`, permanently locking [`MINIMUM_LIQUIDITY`]
+    /// to prevent donation attacks. If `a == 0 && b == 0`, initializes pool
+    /// configuration with zero reserves and leaves initial deposit to `add_liquidity`.
+    #[deprecated(note = "Use initialize() and add_liquidity() instead")]
     pub fn init_pool(
         env: Env,
         admin: Address,
@@ -454,50 +496,57 @@ impl AmmContract {
         token_b: Address,
     ) -> Result<(), AmmPoolError> {
         Self::assert_no_active_flash_swap(&env)?;
-        // Admin-gated: authorize the caller, enforce the stored admin
-        // identity, and lock it in on first initialization.
-        Self::require_stored_admin(&env, &admin)?;
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Address>(&KEY_ADMIN)
-            .is_none()
-        {
-            ttl::set_persistent(&env, &KEY_ADMIN, &admin);
+        if env.storage().persistent().has(&KEY_ADMIN) {
+            return Err(AmmPoolError::AlreadyInitialized);
         }
-        // Fold the interval since the previous reserve state into the TWAP
-        // accumulator before overwriting the reserves (pre-update values).
-        let previous_a: i128 = env.storage().persistent().get(&KEY_RES_A).unwrap_or(0);
-        let previous_b: i128 = env.storage().persistent().get(&KEY_RES_B).unwrap_or(0);
-        Self::update_oracle(&env, previous_a, previous_b)?;
-        ttl::set_persistent(&env, &KEY_RES_A, &a);
-        ttl::set_persistent(&env, &KEY_RES_B, &b);
+        admin.require_auth();
+        if token_a == token_b {
+            return Err(AmmPoolError::IdenticalTokens);
+        }
+        if a < 0 || b < 0 {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
+        if (a == 0 && b > 0) || (a > 0 && b == 0) {
+            return Err(AmmPoolError::NonPositiveAmount);
+        }
+
+        // Start the TWAP accumulator from the (empty) pre-init reserve state.
+        Self::update_oracle(&env, 0, 0)?;
+        ttl::set_persistent(&env, &KEY_ADMIN, &admin);
         ttl::set_persistent(&env, &KEY_TOKEN_A, &token_a);
         ttl::set_persistent(&env, &KEY_TOKEN_B, &token_b);
+        ttl::set_persistent(&env, &KEY_FEE_BPS, &DEFAULT_FEE_BPS);
         ttl::set_persistent(&env, &KEY_FEE_A, &0_i128);
         ttl::set_persistent(&env, &KEY_FEE_B, &0_i128);
-        // Seed LP total supply so that subsequent add_liquidity calls use the
-        // proportional path rather than the first-deposit (MINIMUM_LIQUIDITY-gated) path.
-        // When a>0 && b>0, we compute sqrt(a*b) as the initial virtual liquidity and
-        // lock it as total_supply (no owner). This preserves backward-compatibility for
-        // tests that init_pool with non-zero reserves and then swap directly.
-        let initial_supply = if a > 0 && b > 0 {
-            let product = a
-                .checked_mul(b)
-                .expect("init_pool: reserve product overflow");
-            let sqrt_val = crate::math::try_sqrt(product)
-                .expect("init_pool: product is non-negative, sqrt cannot overflow");
-            // Use at least MINIMUM_LIQUIDITY+1 so that subsequent add_liquidity
-            // calls always use the proportional path, not the first-deposit gate.
-            if sqrt_val > MINIMUM_LIQUIDITY {
-                sqrt_val
+
+        if a > 0 && b > 0 {
+            let product = a.checked_mul(b).ok_or(AmmPoolError::Overflow)?;
+            let sqrt_val = math::try_sqrt(product).map_err(|_| AmmPoolError::Overflow)?;
+            let (shares, locked, total_supply) = if sqrt_val > MINIMUM_LIQUIDITY {
+                let shares = sqrt_val - MINIMUM_LIQUIDITY;
+                (shares, MINIMUM_LIQUIDITY, sqrt_val)
             } else {
-                MINIMUM_LIQUIDITY + 1
-            }
+                (1_i128, MINIMUM_LIQUIDITY, MINIMUM_LIQUIDITY + 1)
+            };
+
+            TokenClient::new(&env, &token_a).transfer(&admin, env.current_contract_address(), &a);
+            TokenClient::new(&env, &token_b).transfer(&admin, env.current_contract_address(), &b);
+
+            ttl::set_persistent(&env, &KEY_RES_A, &a);
+            ttl::set_persistent(&env, &KEY_RES_B, &b);
+            ttl::set_persistent(&env, &KEY_LP_TOTAL_SUPPLY, &total_supply);
+
+            let lp_key = LpBalanceKey::User(admin);
+            ttl::set_persistent(&env, &lp_key, &shares);
+
+            let current_locked: i128 = env.storage().persistent().get(&LpBalanceKey::Locked).unwrap_or(0);
+            let new_locked = current_locked.checked_add(locked).ok_or(AmmPoolError::Overflow)?;
+            ttl::set_persistent(&env, &LpBalanceKey::Locked, &new_locked);
         } else {
-            0
-        };
-        ttl::set_persistent(&env, &KEY_LP_TOTAL_SUPPLY, &initial_supply);
+            ttl::set_persistent(&env, &KEY_RES_A, &0_i128);
+            ttl::set_persistent(&env, &KEY_RES_B, &0_i128);
+            ttl::set_persistent(&env, &KEY_LP_TOTAL_SUPPLY, &0_i128);
+        }
         Ok(())
     }
 
@@ -542,6 +591,14 @@ impl AmmContract {
         env.storage()
             .persistent()
             .get(&KEY_LP_TOTAL_SUPPLY)
+            .unwrap_or(0)
+    }
+
+    /// Return the amount of permanently locked minimum liquidity.
+    pub fn get_locked_liquidity(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&LpBalanceKey::Locked)
             .unwrap_or(0)
     }
 
@@ -828,6 +885,13 @@ impl AmmContract {
             .checked_add(shares)
             .ok_or(AmmPoolError::Overflow)?;
         ttl::set_persistent(&env, &lp_key, &new_user_balance);
+
+        // Record locked liquidity to ensure sum(balances) + locked == total_supply holds.
+        if locked > 0 {
+            let current_locked: i128 = env.storage().persistent().get(&LpBalanceKey::Locked).unwrap_or(0);
+            let new_locked = current_locked.checked_add(locked).ok_or(AmmPoolError::Overflow)?;
+            env.storage().persistent().set(&LpBalanceKey::Locked, &new_locked);
+        }
 
         Ok((add_a, add_b, shares))
     }
@@ -2010,8 +2074,9 @@ mod inline_test {
         for &ra in reserve_sizes.iter() {
             for &rb in reserve_sizes.iter() {
                 for &amt in amounts.iter() {
-                    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
-                    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, ra, rb);
+                    let id = env.register(AmmContract, ());
+                    let client = AmmContractClient::new(&env, &id);
+                    crate::swap_test_util::bootstrap_pool(&env, &client, &admin, &token_a, &token_b, ra, rb);
                     // swap using stored fee (default 30 bps)
                     let res = client.try_swap_a_for_b(&trader, &amt, &0);
                     if res == Err(Ok(AmmPoolError::ZeroOutput)) {
@@ -2052,6 +2117,8 @@ mod inline_test {
         let tb = env.register_stellar_asset_contract(b_admin);
         soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&caller, &1_000_i128);
         soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&caller, &2_000_i128);
+        soroban_sdk::token::StellarAssetClient::new(&env, &ta).mint(&pool_admin, &1_000_i128);
+        soroban_sdk::token::StellarAssetClient::new(&env, &tb).mint(&pool_admin, &2_000_i128);
 
         client.init_pool(&pool_admin, &1000, &2000, &ta, &tb);
         client.add_liquidity(&caller, &100, &200, &0, &0, &0, &u64::MAX);
@@ -2165,21 +2232,6 @@ mod inline_test {
 #[cfg(test)]
 mod swap_symmetry_test;
 
-/// Set fee tiers for dynamic scaling
-pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
-    admin.require_auth();
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    ttl::set_persistent(&env, &key, &tiers);
-}
-
-/// Get fee tiers
-pub fn get_fee_tiers(env: Env) -> Vec<u128> {
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage()
-        .persistent()
-        .get::<_, Vec<u128>>(&key)
-        .unwrap_or_else(|| Vec::new(&env))
-}
 #[cfg(test)]
 mod dust_swap_guard_test;
 #[cfg(test)]

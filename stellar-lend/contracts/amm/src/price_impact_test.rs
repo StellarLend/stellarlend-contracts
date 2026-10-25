@@ -38,8 +38,7 @@ mod price_impact_tests {
         let admin = Address::generate(&env);
         let ta = register_token(&env);
         let tb = register_token(&env);
-        client.init_pool(&admin, &ra, &rb, &ta, &tb);
-        fund_pool(&env, &id, &ta, &tb, ra, rb);
+        crate::swap_test_util::bootstrap_pool(&env, &client, &admin, &ta, &tb, ra, rb);
         let trader = new_trader(&env, &ta, &tb);
         // SAFETY: env is returned alongside the client and outlives it.
         let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };

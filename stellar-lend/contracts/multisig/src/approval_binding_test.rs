@@ -40,7 +40,7 @@ fn setup_client(env: &Env) -> (Address, Vec<Address>, MultisigContractClient<'_>
 }
 
 fn dummy_hash(env: &Env) -> Bytes {
-    Bytes::from_slice(env, b"payload-hash-placeholder")
+    MultisigContract::action_hash(env, &make_action()).to_bytes()
 }
 
 fn make_action() -> ProposalAction {
@@ -157,7 +157,27 @@ fn cross_proposal_auth_payload_rejected() {
     signers.push_back(s1.clone());
     signers.push_back(s2.clone());
 
-    // initialize needs no signer auth
+    // initialize requires signer auth
+    env.mock_auths(&[
+        MockAuth {
+            address: &s1,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+        MockAuth {
+            address: &s2,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+    ]);
     client.initialize(&signers, &2u32);
 
     // create_proposal requires caller.require_auth()
@@ -214,6 +234,26 @@ fn correct_domain_auth_payload_accepted() {
     let mut signers = Vec::new(&env);
     signers.push_back(s1.clone());
     signers.push_back(s2.clone());
+    env.mock_auths(&[
+        MockAuth {
+            address: &s1,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+        MockAuth {
+            address: &s2,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "initialize",
+                args: (signers.clone(), 2u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+    ]);
     client.initialize(&signers, &2u32);
 
     env.mock_auths(&[MockAuth {
@@ -316,6 +356,6 @@ fn domain_separator_constant_is_pinned() {
     // deliberate version bump (see APPROVAL_DOMAIN_BINDING.md).
     assert_eq!(
         APPROVAL_DOMAIN_SEPARATOR,
-        b"STELLARLEND_MULTISIG_APPROVAL_V1"
+        b"STELLARLEND_MULTISIG_APPROVAL_V2"
     );
 }

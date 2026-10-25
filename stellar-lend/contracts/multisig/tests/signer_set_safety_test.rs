@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use proptest::prelude::*;
-use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+use soroban_sdk::testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke};
 use soroban_sdk::{Address, Bytes, Env, IntoVal, Vec};
 use stellarlend_multisig::{
     MultisigContract, MultisigContractClient, MultisigError, ProposalAction, ProposalStatus,

@@ -27,6 +27,8 @@ This document maps the `AmmPoolError` discriminants to their causes. These codes
 | 21 | `InvalidTrader` | The trader is the pool contract itself. |
 | 22 | `TwapInsufficientHistory` | `consult` requested a window longer than the retained TWAP history. See [TWAP.md](./TWAP.md). |
 | 23 | `TwapObservationNotFound` | TWAP ring slot is out of range or has never been written. See [TWAP.md](./TWAP.md). |
+| 24 | `AlreadyInitialized` | The pool has already been initialized (one-shot initialization). |
+| 25 | `IdenticalTokens` | `token_a` and `token_b` must be distinct token addresses. |
 
 ## Example: Invariant Violation
 
