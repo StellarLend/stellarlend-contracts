@@ -143,6 +143,8 @@ pub enum LendingError {
     SupplyCapExceeded = 2018,
     /// Borrow would exceed the user's maximum loan-to-value (LTV) capacity.
     LtvExceeded = 2019,
+    /// Position is within the liquidation grace period and cannot be liquidated yet.
+    LiquidationGracePeriodActive = 2020,
     /// The upgrade proposal has been cancelled and cannot be acted on.
     UpgradeProposalCancelled = 4012,
     /// The upgrade proposal is not in a cancellable (pending) state.
@@ -462,6 +464,7 @@ mod tests {
         assert_eq!(LendingError::IsolationDebtInvariant as u32, 2013);
         assert_eq!(LendingError::SupplyCapExceeded as u32, 2018);
         assert_eq!(LendingError::LtvExceeded as u32, 2019);
+        assert_eq!(LendingError::LiquidationGracePeriodActive as u32, 2020);
         assert_eq!(LendingError::AssetNotConfigured as u32, 3001);
         assert_eq!(LendingError::PriceFeedNotFound as u32, 3002);
         assert_eq!(LendingError::HealthFactorTooLow as u32, 3003);
