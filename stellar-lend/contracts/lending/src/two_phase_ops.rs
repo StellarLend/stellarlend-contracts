@@ -171,7 +171,7 @@ pub fn prepare_borrow(
     require_initialized(env)?;
     check_pause_status(env, ProtocolAction::Borrow);
     check_emergency_status(env, ProtocolAction::Borrow);
-    require_no_active_flash_loan(env);
+    require_no_active_flash_loan(env)?;
 
     if amount <= 0 {
         return Err(LendingError::InvalidAmount);
@@ -300,7 +300,7 @@ pub fn prepare_withdraw(
     require_initialized(env)?;
     check_pause_status(env, ProtocolAction::Withdraw);
     check_emergency_status(env, ProtocolAction::Withdraw);
-    require_no_active_flash_loan(env);
+    require_no_active_flash_loan(env)?;
 
     if amount <= 0 {
         return Err(LendingError::InvalidAmount);

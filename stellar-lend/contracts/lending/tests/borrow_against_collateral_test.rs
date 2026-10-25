@@ -35,7 +35,7 @@ const SECONDS_PER_YEAR: u64 = 365 * 24 * 60 * 60;
 const ORACLE_MAX_AGE_SECS: u64 = 3_600;
 
 /// Schema version stamped into every contract event.
-const EVENT_SCHEMA_VERSION: u32 = 1;
+const EVENT_SCHEMA_VERSION: u32 = 2;
 
 struct Fixture {
     env: Env,
@@ -112,7 +112,6 @@ struct BorrowEventPayload {
     user: Address,
     amount: i128,
     new_debt: i128,
-    timestamp: u64,
 }
 
 /// Build a fixture with the collateral asset registered as the valuation
@@ -171,19 +170,22 @@ fn borrow_events(f: &Fixture) -> Vec<BorrowEventPayload> {
         let val: Val = Symbol::new(&f.env, name).into_val(&f.env);
         ScVal::try_from_val(&f.env, &val).unwrap()
     };
-    let event_name = symbol("BorrowEvent");
+    // Schema v2: `#[contractevent(topics = ["Borrow"])]` with `user` as an
+    // indexed topic; the ledger timestamp is carried by the event itself.
+    let event_name = symbol("Borrow");
     let key_amount = symbol("amount");
     let key_new_debt = symbol("new_debt");
     let key_schema_version = symbol("schema_version");
-    let key_timestamp = symbol("timestamp");
-    let key_user = symbol("user");
 
     let mut decoded = Vec::new();
     for event in f.env.events().all().events() {
         let ContractEventBody::V0(body) = &event.body;
-        if !body.topics.contains(&event_name) {
+        if body.topics.first() != Some(&event_name) {
             continue;
         }
+        let Some(user) = body.topics.get(1).cloned() else {
+            continue;
+        };
         let ScVal::Map(Some(entries)) = &body.data else {
             continue;
         };
@@ -200,14 +202,10 @@ fn borrow_events(f: &Fixture) -> Vec<BorrowEventPayload> {
             Some(ScVal::U32(schema_version)),
             Some(ScVal::I128(amount)),
             Some(ScVal::I128(new_debt)),
-            Some(ScVal::U64(timestamp)),
-            Some(user),
         ) = (
             field(&key_schema_version),
             field(&key_amount),
             field(&key_new_debt),
-            field(&key_timestamp),
-            field(&key_user),
         )
         else {
             continue;
@@ -218,7 +216,6 @@ fn borrow_events(f: &Fixture) -> Vec<BorrowEventPayload> {
             user: Address::try_from_val(&f.env, &user).unwrap(),
             amount: i128::from(&amount),
             new_debt: i128::from(&new_debt),
-            timestamp,
         });
     }
 
@@ -412,7 +409,6 @@ fn borrow_against_collateral_emits_borrow_event() {
     assert_eq!(event.user, f.borrower);
     assert_eq!(event.amount, 1_000);
     assert_eq!(event.new_debt, 1_000);
-    assert_eq!(event.timestamp, f.env.ledger().timestamp());
 }
 
 #[test]

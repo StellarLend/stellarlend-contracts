@@ -110,7 +110,8 @@ fn setters_emit_events_and_audit() {
     client.set_max_ltv_bps(&7_000);
     assert_eq!(env.events().all().events().len(), 1);
     client.set_liquidation_threshold_bps(&7_500);
-    assert_eq!(env.events().all().events().len(), 1);
+    // GovernanceAuditEvent + LiquidationThresholdSetEvent.
+    assert_eq!(env.events().all().events().len(), 2);
 
     assert_eq!(client.get_governance_audit_count(), before + 2);
     let entries = client.get_governance_audit_entries(&2);

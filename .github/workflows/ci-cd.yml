@@ -34,6 +34,10 @@ jobs:
         working-directory: stellar-lend
         run: cargo test -p stellarlend-vesting
 
+      - name: Run multisig tests
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-multisig
+
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
 

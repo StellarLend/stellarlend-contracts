@@ -1324,15 +1324,6 @@ impl MultisigContract {
     }
 }
 
-// Pre-existing test modules from an older API version – commented out
-// until updated to match the current contract interface.
-// #[cfg(test)]
-// mod quorum_edge_test;
-// #[cfg(test)]
-// mod action_allowlist_test;
-// #[cfg(test)]
-// mod upgrade_e2e_test;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1366,6 +1357,14 @@ mod signer_shrink_guard_test;
 
 #[cfg(test)]
 mod replay_protection_test;
+
+// Pre-existing test modules from an older API version - not wired until
+// updated to match the current contract interface:
+// quorum_edge_test, upgrade_e2e_test, cross_contract_error_test,
+// invoke_contract_with_args_test.
+// Note: boundary_conditions_test.rs contains placeholder code and is not yet wired.
+// Note: action_allowlist_test.rs tests removed functionality and is not wired.
+// Note: bounds.rs is not a test file (enforcing its limits tracked separately).
 
 #[cfg(test)]
 mod revoke_approval_test;

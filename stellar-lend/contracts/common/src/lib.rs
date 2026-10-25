@@ -154,6 +154,14 @@ pub enum LendingError {
     ApprovalBindingMismatch = 4016,
     /// A prepared operation expired before commit.
     OperationExpired = 4017,
+    /// Flash loan cannot proceed: insufficient token liquidity available.
+    InsufficientLiquidity = 2014,
+    /// Flash loan amount exceeds the utilization cap (max_flash_bps).
+    FlashLoanUtilizationExceeded = 2015,
+    /// Flash loan repayment (amount + fee) was not received in full.
+    InsufficientRepayment = 2016,
+    /// A flash loan is already active; reentrant calls are forbidden.
+    FlashLoanReentrancy = 2017,
 }
 
 /// Multiply `value` by `rate_bps` and divide by [`BPS_DENOM`].
