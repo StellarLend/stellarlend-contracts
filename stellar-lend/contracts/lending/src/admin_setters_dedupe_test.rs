@@ -82,21 +82,21 @@ fn test_set_flash_fee_over_1000_rejected() {
 #[test]
 fn test_set_emergency_state_shutdown() {
     let (_env, client, _admin, _user) = setup();
-    client.set_emergency_state(&crate::EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Shutdown);
     // Should not panic — verifies the guardian-or-admin fallback works
 }
 
 #[test]
 fn test_set_emergency_state_recovery() {
     let (_env, client, _admin, _user) = setup();
-    client.set_emergency_state(&crate::EmergencyState::Recovery);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Recovery);
 }
 
 #[test]
 fn test_set_emergency_state_normal() {
     let (_env, client, _admin, _user) = setup();
-    client.set_emergency_state(&crate::EmergencyState::Shutdown);
-    client.set_emergency_state(&crate::EmergencyState::Normal);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Normal);
 }
 
 // -----------------------------------------------------------------------
@@ -171,7 +171,7 @@ fn test_all_admin_setters_chain() {
     client.set_debt_ceiling(&5_000_000);
     client.set_min_borrow(&50);
     client.set_oracle_pubkey(&pubkey);
-    client.set_emergency_state(&crate::EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Shutdown);
 
     assert_eq!(client.get_guardian().unwrap(), guardian);
     assert_eq!(client.get_min_borrow(), 50);

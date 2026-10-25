@@ -49,7 +49,7 @@ fn set_flash_pause(
     paused: bool,
 ) {
     let expires_at = env.ledger().sequence().saturating_add(5);
-    client.set_pause(&PauseType::FlashLoan, &paused, &expires_at);
+    client.set_pause(&client.get_admin().unwrap(), &PauseType::FlashLoan, &paused, &expires_at);
 }
 
 fn advance_ledger(env: &Env, by: u32) {
@@ -87,7 +87,7 @@ fn repay_flash_loan_rejected_when_granular_flash_pause_active() {
 #[should_panic(expected = "OperationDisabledDuringShutdown")]
 fn flash_loan_rejected_during_emergency_shutdown() {
     let (env, client, _admin, initiator, receiver) = setup();
-    client.set_emergency_state(&crate::EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Shutdown);
 
     let asset = Address::generate(&env);
     client.flash_loan(&initiator, &receiver, &asset, &10, &Bytes::new(&env));
@@ -101,7 +101,7 @@ fn repay_flash_loan_rejected_during_emergency_shutdown() {
         (env, client, admin, user, receiver)
     };
 
-    client.set_emergency_state(&crate::EmergencyState::Shutdown);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Shutdown);
 
     let asset = Address::generate(&env);
     client.repay_flash_loan(&payer, &asset, &1);
@@ -113,7 +113,7 @@ fn flash_loan_allowed_when_unpaused_and_normal_emergency_state() {
 
     // Explicitly ensure flash pause is inactive.
     set_flash_pause(&env, &client, &client.get_admin().unwrap(), false);
-    client.set_emergency_state(&crate::EmergencyState::Normal);
+    client.set_emergency_state(&client.get_admin().unwrap(), &crate::EmergencyState::Normal);
 
     // We need a receiver contract that implements `on_flash_loan`.
     // Reuse the receiver pattern from existing flash tests by registering

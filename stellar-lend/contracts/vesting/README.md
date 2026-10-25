@@ -13,6 +13,26 @@ This contract implements on-ledger vesting for tokens with a configurable cliff,
 - `claimable_total(grantee, now)` view function returning the sum of claimable amounts across all grants without mutating state.
 - `revoke(grantee)` callable only by admin; it advances that grantee's schedules to `now`, transfers any still-locked amount to the treasury sink, and removes the revoked schedules from the aggregate locked supply.
 
+## Authorization Model
+
+Every privileged entrypoint enforces signature checks via `require_auth()` on the stored admin address.
+
+| Entrypoint | Required Signer | Description |
+| --- | --- | --- |
+| `initialize(admin, treasury, token)` | `admin` | Initial contract configuration |
+| `add_grant(caller, grantee, ...)` | `caller` (must equal stored admin) | Creates linear vesting schedule and deposits tokens |
+| `add_grant_milestone(caller, grantee, ...)` | `caller` (must equal stored admin) | Creates milestone schedule and deposits tokens |
+| `revoke(caller, grantee)` | `caller` (must equal stored admin) | Revokes unvested tokens and transfers them to treasury |
+| `accelerate_grant(caller, grantee)` | `caller` (must equal stored admin) | Immediately vests all unvested tokens |
+| `transfer_grant(caller, from, to)` | `caller` (must equal stored admin) | Transfers grant schedules from one address to another |
+| `pause(caller)` | `caller` (must equal stored admin) | Pauses vesting claims and schedule mutations |
+| `resume(caller)` | `caller` (must equal stored admin) | Resumes contract operations |
+| `set_treasury(caller, new_treasury)` | `caller` (must equal stored admin) | Updates treasury clawback address |
+| `propose_admin(new_admin, ttl_secs)` | Current stored admin | Proposes a new contract administrator |
+| `accept_admin()` | `pending_admin` | Accepts pending admin handover |
+| `cancel_admin_proposal()` | Current stored admin | Cancels active admin handover proposal |
+| `claim(grantee)` / `claim_partial` | None (public / grantee recipient) | Claims vested tokens to the grantee |
+
 ## Aggregate Claim Semantics
 
 A grantee may hold multiple grants simultaneously. Both `claim` and `claimable_total` operate on all grants atomically:

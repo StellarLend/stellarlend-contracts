@@ -31,7 +31,7 @@ pub const MAX_PENDING_PROPOSALS: u64 = 10;
 pub const MAX_EVENTS_PER_OPERATION: u32 = 8;
 
 /// Emitted once during contract initialization to anchor the active schema version.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaVersionEvent {
     pub schema_version: u32,
@@ -39,7 +39,7 @@ pub struct SchemaVersionEvent {
 }
 
 /// Emitted when a user deposits collateral.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DepositEvent {
     /// Schema version for safe decoding across upgrades.
@@ -55,7 +55,7 @@ pub struct DepositEvent {
 }
 
 /// Emitted when a user withdraws collateral.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WithdrawEvent {
     /// Schema version for safe decoding across upgrades.
@@ -71,7 +71,7 @@ pub struct WithdrawEvent {
 }
 
 /// Emitted when a user borrows against their collateral.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowEvent {
     /// Schema version for safe decoding across upgrades.
@@ -87,7 +87,7 @@ pub struct BorrowEvent {
 }
 
 /// Emitted when a user repays their debt.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepayEvent {
     /// Schema version for safe decoding across upgrades.
@@ -103,7 +103,7 @@ pub struct RepayEvent {
 }
 
 /// Emitted when a flash loan is initiated.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlashLoanEvent {
     /// Schema version for safe decoding across upgrades.
@@ -123,7 +123,7 @@ pub struct FlashLoanEvent {
 }
 
 /// Emitted when a flash loan is repaid via `repay_flash_loan`.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlashLoanRepaidEvent {
     /// Schema version for safe decoding across upgrades.
@@ -236,7 +236,7 @@ pub fn emit_flash_loan_repaid(env: &Env, payer: &Address, asset: &Address, amoun
 }
 
 /// Emitted when the admin updates the protocol-level debt ceiling.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DebtCeilingUpdatedEvent {
     pub schema_version: u32,
@@ -257,7 +257,7 @@ pub fn emit_debt_ceiling_updated(env: &Env, ceiling: i128) {
 }
 
 /// Emitted when the admin updates the flash-loan fee (basis points).
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlashFeeUpdatedEvent {
     pub schema_version: u32,
@@ -279,7 +279,7 @@ pub fn emit_flash_fee_updated(env: &Env, fee_bps: i128) {
 
 /// Emitted when the admin updates the governed close-factor cap (basis points)
 /// used by `liquidate`.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CloseFactorBpsSetEvent {
     /// Schema version for safe decoding across upgrades.
@@ -304,7 +304,7 @@ pub fn emit_close_factor_bps_set(env: &Env, close_factor_bps: i128) {
 /// Emitted when the admin updates the governed liquidation incentive (basis
 /// points) used by `liquidate` to compute the bonus collateral seized on top of
 /// repaid debt.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidationIncentiveBpsSetEvent {
     /// Schema version for safe decoding across upgrades.
@@ -344,7 +344,7 @@ pub fn emit_liquidation_incentive_bps_set(env: &Env, incentive_bps: i128) {
 /// - `ledger` is the ledger sequence at which the migration executed.
 /// - `memo` is capped at 128 bytes by `emit_migration`; longer strings are
 ///   silently truncated to that length before publishing.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MigrationEvent {
     /// Schema version for safe decoding across upgrades.
@@ -400,8 +400,9 @@ pub fn emit_migration(env: &Env, old_schema_version: u32, new_schema_version: u3
 // ─── Diagnostics event ───────────────────────────────────────────────────────
 
 /// Severity level for a [`DiagnosticsEvent`].
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub enum DiagnosticSeverity {
     /// Purely informational — operation completed normally.
     Info,
@@ -438,8 +439,9 @@ pub enum DiagnosticSeverity {
 ///   resolution on Stellar).
 /// - `retry_count` — `0` when not applicable; otherwise the number of
 ///   retries attempted before this outcome.
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub struct DiagnosticsEvent {
     /// Schema version for safe decoding across upgrades.
     pub schema_version: u32,
@@ -462,6 +464,7 @@ pub struct DiagnosticsEvent {
 }
 
 /// Maximum byte length for `subsystem` and `kind` fields in [`DiagnosticsEvent`].
+#[cfg(test)]
 pub const DIAG_FIELD_MAX_LEN: u32 = 32;
 
 /// Emit a structured diagnostics event.
@@ -474,6 +477,7 @@ pub const DIAG_FIELD_MAX_LEN: u32 = 32;
 /// This function MUST NOT be called with user-identifying or financial data
 /// in `subsystem` or `kind`.  Pass only static subsystem names and opaque
 /// kind labels.
+#[cfg(test)]
 pub fn emit_diagnostics(
     env: &Env,
     subsystem: String,
@@ -514,6 +518,7 @@ pub fn emit_diagnostics(
 /// Emit a `DiagnosticsEvent` for a recoverable oracle staleness failure.
 ///
 /// `error_code` should be the `StaleOracleTimestamp` discriminant (`5002`).
+#[cfg(test)]
 pub fn emit_oracle_staleness_diagnostic(env: &Env, error_code: u32, latency_ms: u64) {
     emit_diagnostics(
         env,
@@ -528,6 +533,7 @@ pub fn emit_oracle_staleness_diagnostic(env: &Env, error_code: u32, latency_ms: 
 
 /// Emit a `DiagnosticsEvent` for a borrow-index accrual operation, recording
 /// elapsed time for latency monitoring.
+#[cfg(test)]
 pub fn emit_index_accrual_diagnostic(env: &Env, latency_ms: u64) {
     emit_diagnostics(
         env,
@@ -541,6 +547,7 @@ pub fn emit_index_accrual_diagnostic(env: &Env, latency_ms: u64) {
 }
 
 /// Emit a `DiagnosticsEvent` for a rate-cache miss (cold computation path).
+#[cfg(test)]
 pub fn emit_rate_cache_miss_diagnostic(env: &Env) {
     emit_diagnostics(
         env,
@@ -557,6 +564,7 @@ pub fn emit_rate_cache_miss_diagnostic(env: &Env) {
 ///
 /// Call this after a successful retry or circuit-breaker reset to allow
 /// monitoring systems to auto-resolve open alerts.
+#[cfg(test)]
 pub fn emit_recovery_diagnostic(env: &Env, subsystem: String, retry_count: u32) {
     emit_diagnostics(
         env,
