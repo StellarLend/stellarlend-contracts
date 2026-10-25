@@ -2862,6 +2862,16 @@ impl LendingContract {
                 cross_asset::extend_collateral_asset_ttl(&env, &borrower, &collateral_asset);
             }
 
+            // Seized collateral leaves the per-asset supplied total. Saturate at
+            // zero like `withdraw_collateral_asset_internal`: legacy deployments
+            // may under-record this counter and must not brick liquidations.
+            let total_col_asset = cross_asset::load_total_collateral_asset(&env, &collateral_asset);
+            let new_total_col_asset = total_col_asset.saturating_sub(final_seized);
+            env.storage().persistent().set(
+                &DataKey::TotalCollateralAsset(collateral_asset.clone()),
+                &new_total_col_asset,
+            );
+
             // ── 12. Release isolation bucket if applicable ────────────────
             if should_release_isolation_debt(&env, &collateral_asset) {
                 decrement_isolation_debt(&env, &collateral_asset, actual_repay)?;
@@ -4385,6 +4395,12 @@ impl LendingContract {
     // Return the per-asset collateral balance for a user.
     pub fn get_collateral_asset_balance(env: Env, user: Address, asset: Address) -> i128 {
         cross_asset::load_collateral_asset(&env, &user, &asset)
+    }
+
+    // Return the user's aggregate cross-asset borrowing capacity:
+    // `sum(collateral_value_i * ltv_bps_i) / 10_000` in oracle-valued units.
+    pub fn get_borrow_capacity(env: Env, user: Address) -> Result<i128, LendingError> {
+        cross_asset::compute_borrow_capacity(&env, &user)
     }
 
     // Return the per-asset debt principal for a user.

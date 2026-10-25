@@ -139,6 +139,10 @@ pub enum LendingError {
     IsolationCeilingBelowDebt = 2012,
     /// Isolation-mode debt tracking invariant violation detected.
     IsolationDebtInvariant = 2013,
+    /// Asset supply cap would be exceeded.
+    SupplyCapExceeded = 2018,
+    /// Borrow would exceed the user's maximum loan-to-value (LTV) capacity.
+    LtvExceeded = 2019,
     /// The upgrade proposal has been cancelled and cannot be acted on.
     UpgradeProposalCancelled = 4012,
     /// The upgrade proposal is not in a cancellable (pending) state.
@@ -456,6 +460,8 @@ mod tests {
         assert_eq!(LendingError::InvalidLiquidationParams as u32, 2011);
         assert_eq!(LendingError::IsolationCeilingBelowDebt as u32, 2012);
         assert_eq!(LendingError::IsolationDebtInvariant as u32, 2013);
+        assert_eq!(LendingError::SupplyCapExceeded as u32, 2018);
+        assert_eq!(LendingError::LtvExceeded as u32, 2019);
         assert_eq!(LendingError::AssetNotConfigured as u32, 3001);
         assert_eq!(LendingError::PriceFeedNotFound as u32, 3002);
         assert_eq!(LendingError::HealthFactorTooLow as u32, 3003);
