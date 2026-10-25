@@ -43,19 +43,14 @@ fn setup_with_liquidity() -> (
     let token_b = env.register_stellar_asset_contract(token_b_admin);
     let lp = Address::generate(&env);
 
-    soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&lp, &INIT_A);
-    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&lp, &INIT_B);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&lp, &100_000_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&lp, &100_000_000);
 
     // `init_pool(admin, a, b, ta, tb)` seeds `(reserve_a, reserve_b) = (a, b)`.
     client.init_pool(&lp, &INIT_A, &INIT_B, &token_a, &token_b);
     // First call into `add_liquidity` uses the proportional path;
     // after this, `reserve_a = 2_000_000`, `reserve_b = 3_000_000`.
     let _shares = client.add_liquidity(&lp, &INIT_A, &INIT_B, &0, &0, &0, &u64::MAX);
-    // `init_pool` seeded virtual reserves; back them with real balances so
-    // swaps (which now settle tokens) can pay out, and fund `lp` as trader.
-    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, INIT_A, INIT_B);
-    soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&lp, &100_000_000);
-    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&lp, &100_000_000);
     (env, client, token_a, token_b, lp)
 }
 

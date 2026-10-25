@@ -265,6 +265,8 @@ fn test_liquidity_ops_preserve_fees() {
 
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_a_addr).mint(&token_a_admin, &10_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_b_addr).mint(&token_a_admin, &10_000);
     client.init_pool(
         &token_a_admin,
         &10_000,
@@ -304,27 +306,25 @@ fn test_liquidity_ops_preserve_fees() {
 }
 
 // ---------------------------------------------------------------------------
-// Re-init resets accumulators
+// Re-init rejected (one-shot initialization prevents clobbering fees)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_reinit_resets_fees() {
+fn test_reinit_rejected_preserves_fees() {
     let (env, client, _admin) = setup_pool(10_000, 10_000);
     client
         .try_swap_a_for_b(&_admin, &500, &0)
         .expect("contract invocation failed")
         .expect("swap_a_for_b must succeed on a funded pool");
-    assert!(
-        client.get_accrued_fees().0 > 0,
-        "fee_a should be positive after swap"
-    );
+    let (fee_a_before, _) = client.get_accrued_fees();
+    assert!(fee_a_before > 0, "fee_a should be positive after swap");
 
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
-    client.init_pool(&_admin, &20_000, &20_000, &token_a, &token_b);
-    let (fee_a, fee_b) = client.get_accrued_fees();
-    assert_eq!(fee_a, 0, "re-init must reset fee_a");
-    assert_eq!(fee_b, 0, "re-init must reset fee_b");
+    let res = client.try_init_pool(&_admin, &20_000, &20_000, &token_a, &token_b);
+    assert_eq!(res, Err(Ok(crate::AmmPoolError::AlreadyInitialized)));
+    let (fee_a, _fee_b) = client.get_accrued_fees();
+    assert_eq!(fee_a, fee_a_before, "rejected re-init must not alter fee_a");
 }
 
 // ---------------------------------------------------------------------------

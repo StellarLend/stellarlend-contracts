@@ -42,8 +42,8 @@ fn non_admin_caller_rejected_on_init_pool_and_set_max_impact_bps() {
             fn_name: "init_pool",
             args: (
                 real_admin.clone(),
-                1_000i128,
-                1_000i128,
+                0i128,
+                0i128,
                 token_a.clone(),
                 token_b.clone(),
             )
@@ -52,7 +52,7 @@ fn non_admin_caller_rejected_on_init_pool_and_set_max_impact_bps() {
         },
     }]);
     client
-        .try_init_pool(&real_admin, &1_000, &1_000, &token_a, &token_b)
+        .try_init_pool(&real_admin, &0, &0, &token_a, &token_b)
         .expect("admin init_pool invoke must not error")
         .expect("admin init_pool must succeed");
 
@@ -63,10 +63,7 @@ fn non_admin_caller_rejected_on_init_pool_and_set_max_impact_bps() {
         "first init_pool call must lock in the pool admin identity"
     );
 
-    // The attacker can always authorize their own transaction — that is not
-    // the same as being the stored admin. Scope auth to the attacker's own
-    // call so `require_auth` succeeds and the rejection comes from the
-    // stored-admin comparison, not from a missing signature.
+    // The attacker cannot call init_pool again; second initialization is rejected.
     let attacker_tokens = (Address::generate(&env), Address::generate(&env));
     env.mock_auths(&[MockAuth {
         address: &attacker,
@@ -93,8 +90,8 @@ fn non_admin_caller_rejected_on_init_pool_and_set_max_impact_bps() {
     );
     assert_eq!(
         res,
-        Err(Ok(AmmPoolError::UnauthorizedCaller)),
-        "self-authorized non-admin init_pool call must be rejected"
+        Err(Ok(AmmPoolError::AlreadyInitialized)),
+        "subsequent init_pool call must be rejected with AlreadyInitialized"
     );
 
     // Same for the price-impact guard: the attacker must not be able to
@@ -117,8 +114,8 @@ fn non_admin_caller_rejected_on_init_pool_and_set_max_impact_bps() {
 
     // The real admin's writes were never clobbered by the rejected calls.
     let (ra, rb) = client.get_reserves();
-    assert_eq!(ra, 1_000, "reserve_a untouched by rejected attacker calls");
-    assert_eq!(rb, 1_000, "reserve_b untouched by rejected attacker calls");
+    assert_eq!(ra, 0, "reserve_a untouched by rejected attacker calls");
+    assert_eq!(rb, 0, "reserve_b untouched by rejected attacker calls");
     assert_eq!(
         client.get_max_impact_bps(),
         IMPACT_GUARD_DISABLED,
@@ -126,28 +123,27 @@ fn non_admin_caller_rejected_on_init_pool_and_set_max_impact_bps() {
     );
 }
 
-/// The stored admin can still re-initialize the pool (e.g. to reset
-/// reserves) — the identity check must not lock the admin out.
+/// The stored admin cannot re-initialize the pool once it has been initialized.
 #[test]
-fn stored_admin_can_reinitialize_pool() {
+fn stored_admin_cannot_reinitialize_pool() {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
     let client = AmmContractClient::new(&env, &id);
 
     let admin = Address::generate(&env);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
+    let token_a = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    let token_b = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&admin, &1_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&admin, &1_000);
 
     client.init_pool(&admin, &1_000, &1_000, &token_a, &token_b);
-    client
-        .try_init_pool(&admin, &2_000, &2_000, &token_a, &token_b)
-        .expect("stored-admin re-init invoke must not error")
-        .expect("stored admin must be able to re-initialize the pool");
+    let res = client.try_init_pool(&admin, &2_000, &2_000, &token_a, &token_b);
+    assert_eq!(res, Err(Ok(AmmPoolError::AlreadyInitialized)));
 
     let (ra, rb) = client.get_reserves();
-    assert_eq!(ra, 2_000);
-    assert_eq!(rb, 2_000);
+    assert_eq!(ra, 1_000);
+    assert_eq!(rb, 1_000);
 }
 
 /// `set_max_impact_bps` works for the stored admin and writes the value.
@@ -162,7 +158,7 @@ fn admin_can_set_max_impact_bps() {
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
 
-    client.init_pool(&admin, &1_000, &1_000, &token_a, &token_b);
+    client.init_pool(&admin, &0, &0, &token_a, &token_b);
     client.set_max_impact_bps(&admin, &500);
     assert_eq!(client.get_max_impact_bps(), 500);
 }

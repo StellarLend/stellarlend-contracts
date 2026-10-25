@@ -36,6 +36,8 @@ fn setup(ra: i128, rb: i128) -> (Env, Address, AmmContractClient<'static>, Addre
     let token_b = crate::swap_test_util::register_token(&env);
     // The admin doubles as the funded trader in these tests.
     let admin = crate::swap_test_util::new_trader(&env, &token_a, &token_b);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&admin, &ra);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&admin, &rb);
     client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
     crate::swap_test_util::fund_pool(&env, &amm_id, &token_a, &token_b, ra, rb);
     // SAFETY: env outlives the returned client via the tuple
@@ -241,35 +243,25 @@ fn test_saturate_never_exceeds_max() {
 }
 
 // ---------------------------------------------------------------------------
-// Re-init resets saturated counter
+// Re-init rejected (one-shot initialization prevents clobbering state)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_reinit_resets_saturated_fees() {
+fn test_reinit_rejected_on_saturated_fees() {
     let (env, amm_id, client, _admin) = setup(BIG_RESERVE, BIG_RESERVE);
 
     seed_fee_a(&env, &amm_id, i128::MAX);
     seed_fee_b(&env, &amm_id, i128::MAX);
 
-    // Re-initialize the pool with new reserves
+    // Re-initialization attempt is rejected because pool is one-shot
     let token_a = crate::swap_test_util::register_token(&env);
     let token_b = crate::swap_test_util::register_token(&env);
-    client.init_pool(&_admin, &50_000, &50_000, &token_a, &token_b);
-    crate::swap_test_util::fund_pool(&env, &amm_id, &token_a, &token_b, 50_000, 50_000);
-    soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&_admin, &1_000_000);
-    soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&_admin, &1_000_000);
+    let res = client.try_init_pool(&_admin, &50_000, &50_000, &token_a, &token_b);
+    assert_eq!(res, Err(Ok(crate::AmmPoolError::AlreadyInitialized)));
 
     let (fee_a, fee_b) = client.get_accrued_fees();
-    assert_eq!(fee_a, 0, "re-init must reset fee_a to zero");
-    assert_eq!(fee_b, 0, "re-init must reset fee_b to zero");
-
-    // After re-init, fee accrual should work normally
-    client
-        .try_swap_a_for_b(&_admin, &1_000, &0)
-        .expect("contract invocation failed")
-        .expect("swap_a_for_b must succeed on a funded pool");
-    let (fee_a, _) = client.get_accrued_fees();
-    assert_eq!(fee_a, 3, "fee accrual works normally after re-init");
+    assert_eq!(fee_a, i128::MAX, "rejected re-init must leave fee_a unchanged");
+    assert_eq!(fee_b, i128::MAX, "rejected re-init must leave fee_b unchanged");
 }
 
 // ---------------------------------------------------------------------------

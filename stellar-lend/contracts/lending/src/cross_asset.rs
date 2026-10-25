@@ -1,10 +1,10 @@
 use soroban_sdk::{Address, Env, Map, Vec};
-use stellar_lend_common::pow10_checked;
+use stellar_lend_common::{pow10_checked, BPS_DENOM};
 
-use crate::debt::{DebtPosition, DEFAULT_APR_BPS};
+use crate::debt::{self, DebtPosition};
 use crate::{
-    check_emergency_status, check_pause_status, AssetParams, AssetParamsV2, DataKey, LendingError,
-    PriceRecord, ProtocolAction, DEFAULT_ASSET_DECIMALS, DEFAULT_ORACLE_MAX_AGE_SECS,
+    check_emergency_status, check_pause_status, max_age_for, AssetParams, AssetParamsV2, DataKey,
+    LendingError, PriceRecord, ProtocolAction, DEFAULT_ASSET_DECIMALS,
 };
 
 /// Fixed-point divisor defining the oracle price scale, and the conversion of a
@@ -16,7 +16,7 @@ use crate::{
 /// `price` is:
 ///
 /// ```text
-/// value = amount × price / 10^decimals      (7-decimal USD scale)
+/// value = amount × price.checked_div(10).unwrap_or(0)^decimals      (7-decimal USD scale)
 /// ```
 ///
 /// `PRICE_DIVISOR` == `10^7` is that conversion for a 7-decimal asset: it is the
@@ -65,6 +65,19 @@ pub fn save_collateral_asset(env: &Env, user: &Address, asset: &Address, amount:
     env.storage().persistent().set(&key, &amount);
 }
 
+/// Load the total collateral supplied for `asset`.
+///
+/// Issues **1 persistent-storage read** per call.
+///
+/// # Returns
+/// The stored total collateral amount, or `0` if no entry exists.
+pub fn load_total_collateral_asset(env: &Env, asset: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TotalCollateralAsset(asset.clone()))
+        .unwrap_or(0)
+}
+
 /// Load the debt position for a single `(user, asset)` pair.
 ///
 /// Issues **1 persistent-storage read** per call.
@@ -90,6 +103,78 @@ pub fn load_debt_asset(env: &Env, user: &Address, asset: &Address) -> DebtPositi
 pub fn save_debt_asset(env: &Env, user: &Address, asset: &Address, position: &DebtPosition) {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     env.storage().persistent().set(&key, position);
+}
+
+/// Current borrow rate for `asset`'s cross-asset debt.
+///
+/// The rate is derived from that asset's own utilisation
+/// (`TotalDebtAsset(asset) / TotalCollateralAsset(asset)`), so unrelated
+/// single-asset or cross-asset activity never moves it. Read-only.
+pub(crate) fn asset_rate(env: &Env, asset: &Address) -> Result<i128, LendingError> {
+    debt::asset_borrow_rate(env, asset).map_err(|_| LendingError::Overflow)
+}
+
+/// Read-only debt of `position` at `now`, including un-settled interest.
+///
+/// Projects the per-asset borrow index forward without writing it, using the
+/// same rate and index arithmetic as [`settle_asset_position`]. A view at
+/// timestamp `T` therefore reports exactly the principal a repayment at `T`
+/// would settle.
+pub(crate) fn project_asset_position_debt(
+    env: &Env,
+    asset: &Address,
+    position: &DebtPosition,
+    now: u64,
+) -> Result<i128, LendingError> {
+    if position.principal <= 0 {
+        return Ok(0);
+    }
+    let rate = asset_rate(env, asset)?;
+    if position.borrow_index_snapshot > 0 {
+        let index = debt::project_borrow_index_asset(env, asset, now, rate);
+        Ok(debt::compute_debt(position, index))
+    } else {
+        // Pre-migration position: same elapsed-time fallback the mutating
+        // settlement uses, so views and writes agree here too.
+        debt::effective_debt(position, now, rate).map_err(|_| LendingError::Overflow)
+    }
+}
+
+/// Settle a cross-asset debt position against its per-asset borrow index.
+///
+/// Advances and persists the per-asset index to `now` (mutating callers only),
+/// folds accrued interest into `principal`, refreshes the position's index
+/// snapshot, and credits the insurance fund its configured share of the
+/// interest. It never reads or writes the global `TotalDebt` or `BorrowIndex`.
+///
+/// Pre-migration positions with `borrow_index_snapshot == 0` accrue by elapsed
+/// time at the asset's live rate and then adopt the current per-asset index as
+/// their baseline. Because the per-asset index is seeded from the global index,
+/// positions that *do* carry a global-index snapshot continue on the same
+/// accrual timeline (see `PER_ASSET_ACCRUAL.md`).
+pub(crate) fn settle_asset_position(
+    env: &Env,
+    asset: &Address,
+    position: &DebtPosition,
+    now: u64,
+) -> Result<DebtPosition, LendingError> {
+    let rate = asset_rate(env, asset)?;
+    let current_index = debt::touch_borrow_index_asset(env, asset, now, rate);
+
+    let settled = if position.borrow_index_snapshot > 0 {
+        debt::settle_position(position, current_index, now).map_err(|_| LendingError::Overflow)?
+    } else {
+        let mut settled =
+            debt::settle_accrual(position, now, rate).map_err(|_| LendingError::Overflow)?;
+        settled.borrow_index_snapshot = current_index;
+        settled.last_update = now;
+        settled
+    };
+
+    let interest = settled.principal.saturating_sub(position.principal);
+    crate::credit_insurance_share(env, interest)?;
+
+    Ok(settled)
 }
 
 /// Load the risk parameters configured for `asset`.
@@ -145,12 +230,12 @@ pub fn load_asset_decimals(env: &Env, asset: &Address) -> u32 {
 /// # Formula
 ///
 /// ```text
-/// value = amount × price / 10^decimals      (floor)
+/// value = amount × price.checked_div(10).unwrap_or(0)^decimals      (floor)
 /// ```
 ///
 /// `price` is the oracle price on the protocol's uniform 7-decimal scale
 /// (`10_000_000` = \$1.00). For `decimals == 7` this reduces to the historical
-/// `amount × price / PRICE_DIVISOR`.
+/// `amount × price.checked_div(PRICE_DIVISOR).unwrap_or(0)`.
 ///
 /// # Rounding
 /// Rounds **down** (floor), which is conservative for collateral values — it
@@ -192,7 +277,7 @@ fn value_in_base_rounded(
     let denom = pow10_checked(decimals).ok_or(LendingError::Overflow)?;
     let product = amount.checked_mul(price).ok_or(LendingError::Overflow)?;
     let value = product.checked_div(denom).ok_or(LendingError::Overflow)?;
-    if round_up && product % denom != 0 {
+    if round_up && product.checked_rem(denom).unwrap_or(0) != 0 {
         return value.checked_add(1).ok_or(LendingError::Overflow);
     }
     Ok(value)
@@ -223,8 +308,8 @@ pub fn get_price_for_asset(env: &Env, asset: &Address) -> Result<PriceRecord, Le
         return Err(LendingError::PriceFeedNotFound);
     }
     let now = env.ledger().timestamp();
-    if record.timestamp > now || now.saturating_sub(record.timestamp) > DEFAULT_ORACLE_MAX_AGE_SECS
-    {
+    let max_age = max_age_for(env, asset);
+    if record.timestamp > now || now.saturating_sub(record.timestamp) > max_age {
         return Err(LendingError::StaleOracleTimestamp);
     }
     // A non-positive price is never valid; treat as missing feed.
@@ -311,7 +396,7 @@ fn get_user_debt_assets(env: &Env, user: &Address) -> Vec<Address> {
 pub(crate) fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::CollateralAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
-    let threshold = extend_to / 2 + 1;
+    let threshold = extend_to.checked_div(2).unwrap_or(0) + 1;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -322,7 +407,7 @@ pub(crate) fn extend_collateral_asset_ttl(env: &Env, user: &Address, asset: &Add
 pub(crate) fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) {
     let key = DataKey::DebtAsset(user.clone(), asset.clone());
     let extend_to = env.storage().max_ttl().min(crate::PERSISTENT_TTL_LEDGERS);
-    let threshold = extend_to / 2 + 1;
+    let threshold = extend_to.checked_div(2).unwrap_or(0) + 1;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -371,9 +456,9 @@ pub(crate) fn extend_debt_asset_ttl(env: &Env, user: &Address, asset: &Address) 
 /// ceiling) using the asset's configured decimals:
 ///
 /// ```text
-/// collateral_value_i  = floor(amount_i × price_i / 10^decimals_i)
+/// collateral_value_i  = floor(amount_i × price_i.checked_div(10).unwrap_or(0)^decimals_i)
 /// weighted_collateral = Σ  collateral_value_i × liquidation_threshold_bps_i
-/// debt_value_j        = ceil(effective_debt_j × price_j / 10^decimals_j)
+/// debt_value_j        = ceil(effective_debt_j × price_j.checked_div(10).unwrap_or(0)^decimals_j)
 /// total_debt_value    = Σ  debt_value_j
 /// health_factor       = weighted_collateral / total_debt_value
 /// ```
@@ -450,9 +535,7 @@ pub fn compute_aggregate_health_factor(env: &Env, user: &Address) -> Result<i128
         };
         // Persistent read: DebtAsset position (1 per asset)
         let position = load_debt_asset(env, user, &asset);
-        let debt =
-            crate::debt::effective_debt(&position, env.ledger().timestamp(), DEFAULT_APR_BPS)
-                .map_err(|_| LendingError::Overflow)?;
+        let debt = project_asset_position_debt(env, &asset, &position, env.ledger().timestamp())?;
         if debt == 0 {
             continue;
         }
@@ -536,9 +619,7 @@ pub fn get_cross_debt_value(env: &Env, user: &Address) -> Result<i128, LendingEr
         let decimals = load_asset_decimals(env, &asset);
         let price_record = get_price_for_asset(env, &asset)?;
         let position = load_debt_asset(env, user, &asset);
-        let debt =
-            crate::debt::effective_debt(&position, env.ledger().timestamp(), DEFAULT_APR_BPS)
-                .map_err(|_| LendingError::Overflow)?;
+        let debt = project_asset_position_debt(env, &asset, &position, env.ledger().timestamp())?;
         if debt == 0 {
             continue;
         }
@@ -550,6 +631,60 @@ pub fn get_cross_debt_value(env: &Env, user: &Address) -> Result<i128, LendingEr
     }
 
     Ok(total_debt_value)
+}
+
+/// Compute the aggregate cross-asset borrowing capacity for `user`.
+///
+/// Sums each collateral leg's USD value multiplied by its configured `ltv_bps`,
+/// then divides by [`BPS_DENOM`] (`10_000`). Uses the exact same price and
+/// freshness path as [`compute_aggregate_health_factor`].
+///
+/// # Formula
+///
+/// ```text
+/// collateral_value_i = floor(amount_i × price_i / 10^decimals_i)
+/// capacity           = (Σ collateral_value_i × ltv_bps_i) / 10_000
+/// ```
+///
+/// # Edge cases
+/// - Assets with `ltv_bps == 0` contribute zero to capacity.
+/// - If a user has zero collateral, returns `Ok(0)`.
+/// - Stale prices fail closed with [`LendingError::StaleOracleTimestamp`].
+/// - Missing prices fail closed with [`LendingError::PriceFeedNotFound`].
+///
+/// # Errors
+/// Returns [`LendingError`] on unconfigured asset, stale price, missing price,
+/// or arithmetic overflow.
+pub fn compute_borrow_capacity(env: &Env, user: &Address) -> Result<i128, LendingError> {
+    let collateral_assets = get_user_collateral_assets(env, user);
+    let mut weighted_ltv_collateral: i128 = 0;
+
+    for i in 0..collateral_assets.len() {
+        let asset = collateral_assets.get(i).unwrap();
+        let amount = load_collateral_asset(env, user, &asset);
+        if amount == 0 {
+            continue;
+        }
+        let params = load_asset_params(env, &asset).ok_or(LendingError::AssetNotConfigured)?;
+        let decimals = load_asset_decimals(env, &asset);
+        let price_record = get_price_for_asset(env, &asset)?;
+        if params.ltv_bps == 0 {
+            continue;
+        }
+        let value = value_in_base(amount, price_record.price, decimals)?;
+        let weighted = value
+            .checked_mul(params.ltv_bps)
+            .ok_or(LendingError::Overflow)?;
+        weighted_ltv_collateral = weighted_ltv_collateral
+            .checked_add(weighted)
+            .ok_or(LendingError::Overflow)?;
+    }
+
+    let capacity = weighted_ltv_collateral
+        .checked_div(BPS_DENOM)
+        .ok_or(LendingError::Overflow)?;
+
+    Ok(capacity)
 }
 
 /// Validate that `asset` has been configured and return its [`AssetParams`].
@@ -590,6 +725,7 @@ pub fn set_asset_params_v2_internal(env: &Env, asset: &Address, params: &AssetPa
 /// # Errors
 /// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
 /// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
+/// - [`LendingError::SupplyCapExceeded`] if deposit would exceed the per-asset supply cap.
 pub fn deposit_collateral_asset_internal(
     env: &Env,
     user: &Address,
@@ -603,14 +739,38 @@ pub fn deposit_collateral_asset_internal(
         return Err(LendingError::InvalidAmount);
     }
 
-    validate_asset_params_configured(env, asset)?;
+    let params = validate_asset_params_configured(env, asset)?;
 
     user.require_auth();
+
+    let total_col = load_total_collateral_asset(env, asset);
+    let new_total_col = total_col.checked_add(amount).ok_or(LendingError::Overflow)?;
+    if params.supply_cap > 0 && new_total_col > params.supply_cap {
+        return Err(LendingError::SupplyCapExceeded);
+    }
 
     let current = load_collateral_asset(env, user, asset);
     let new_balance = current.checked_add(amount).ok_or(LendingError::Overflow)?;
     save_collateral_asset(env, user, asset, new_balance);
     add_to_user_collateral_list(env, user, asset);
+
+    // Track per-asset supplied collateral. This is the denominator of the
+    // asset's utilisation, and therefore of its borrow rate.
+    let total_supplied: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalCollateralAsset(asset.clone()))
+        .unwrap_or(0);
+    let new_total_supplied = total_supplied
+        .checked_add(amount)
+        .ok_or(LendingError::Overflow)?;
+    env.storage().persistent().set(
+        &DataKey::TotalCollateralAsset(asset.clone()),
+        &new_total_supplied,
+    );
+    crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(asset.clone()));
+
+    debug_assert_eq!(new_total_supplied, new_total_col);
     extend_collateral_asset_ttl(env, user, asset);
 
     Ok(new_balance)
@@ -678,6 +838,23 @@ pub fn withdraw_asset_internal(
         return Err(LendingError::HealthFactorTooLow);
     }
 
+    // Reduce the per-asset supplied total only once the withdrawal is known to
+    // be safe, so a rejected withdrawal leaves utilisation untouched. Saturate
+    // at zero: pre-existing deployments predate this counter, and an
+    // under-recorded total must not brick withdrawals (it only pins the
+    // asset's utilisation at zero until new deposits are recorded).
+    let total_supplied: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalCollateralAsset(asset.clone()))
+        .unwrap_or(0);
+    let new_total_supplied = total_supplied.saturating_sub(amount);
+    env.storage().persistent().set(
+        &DataKey::TotalCollateralAsset(asset.clone()),
+        &new_total_supplied,
+    );
+    crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(asset.clone()));
+
     extend_collateral_asset_ttl(env, user, asset);
 
     Ok(new_balance)
@@ -688,10 +865,14 @@ pub fn withdraw_asset_internal(
 /// Checks pause state, validates params, enforces the minimum-borrow floor,
 /// **fail-closes on partial oracle staleness** (every collateral and debt leg
 /// already on the position, plus the asset being borrowed, must have a fresh
-/// price — see [`ensure_position_prices_fresh`]), accrues interest on any
-/// existing debt position, creates or updates the debt entry, verifies the
-/// health factor post-borrow, enforces the per-asset and protocol debt
-/// ceilings, and extends the debt entry's TTL.
+/// price — see [`ensure_position_prices_fresh`]), settles any existing debt
+/// position against the asset's own borrow index, creates or updates the debt
+/// entry, verifies the health factor post-borrow, enforces the per-asset debt
+/// ceiling and borrow cap, and extends the debt entry's TTL.
+///
+/// The global `TotalDebt` and `BorrowIndex` are deliberately left untouched:
+/// cross-asset debt is denominated in the borrowed asset's units and accrues
+/// on the per-asset index instead.
 ///
 /// # Partial-staleness policy
 ///
@@ -704,6 +885,23 @@ pub fn withdraw_asset_internal(
 /// Repay is intentionally *not* gated by this check (see
 /// `PARTIAL_STALENESS_POLICY.md`): reducing risk must remain allowed.
 ///
+fn rollback_borrow(
+    env: &Env,
+    user: &Address,
+    asset: &Address,
+    position: &DebtPosition,
+    prev_principal: i128,
+) {
+    if prev_principal == 0 {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
+        remove_from_user_debt_list(env, user, asset);
+    } else {
+        save_debt_asset(env, user, asset, position);
+    }
+}
+
 /// # Errors
 /// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
 /// - [`LendingError::AssetNotConfigured`] if `asset` has no params entry.
@@ -711,6 +909,7 @@ pub fn withdraw_asset_internal(
 /// - [`LendingError::StaleOracleTimestamp`] if any collateral, existing debt,
 ///   or the borrowed asset has a price older than `DEFAULT_ORACLE_MAX_AGE_SECS`.
 /// - [`LendingError::PriceFeedNotFound`] if a required oracle price is missing.
+/// - [`LendingError::LtvExceeded`] if borrow would exceed the user's borrowing capacity.
 /// - [`LendingError::HealthFactorTooLow`] if borrow would under-collateralise the position.
 /// - [`LendingError::DebtCeilingExceeded`] if borrow would exceed the per-asset ceiling.
 /// - [`LendingError::BorrowCapExceeded`] if borrow would exceed the per-asset borrow cap.
@@ -748,48 +947,48 @@ pub fn borrow_asset_internal(
 
     let now = env.ledger().timestamp();
 
-    let rate = crate::current_borrow_rate(env);
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
-    let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
-    let updated = crate::debt::borrow_amount(settled_position, now, amount, rate)
+    let settled_position = settle_asset_position(env, asset, &position, now)?;
+    let current_index = settled_position.borrow_index_snapshot;
+    let updated = debt::borrow_amount_indexed(&settled_position, current_index, now, amount)
         .map_err(|_| LendingError::Overflow)?;
     save_debt_asset(env, user, asset, &updated);
     add_to_user_debt_list(env, user, asset);
 
+    // Enforce borrow capacity (LTV): require total_debt_value_after <= capacity.
+    let capacity = match compute_borrow_capacity(env, user) {
+        Ok(c) => c,
+        Err(err) => {
+            rollback_borrow(env, user, asset, &position, prev_principal);
+            return Err(err);
+        }
+    };
+
+    let total_debt_value_after = match get_cross_debt_value(env, user) {
+        Ok(v) => v,
+        Err(err) => {
+            rollback_borrow(env, user, asset, &position, prev_principal);
+            return Err(err);
+        }
+    };
+
+    if total_debt_value_after > capacity {
+        rollback_borrow(env, user, asset, &position, prev_principal);
+        return Err(LendingError::LtvExceeded);
+    }
+
+    // Health factor check (second guard): require hf >= HEALTH_FACTOR_SCALE (1.0).
     let hf = match compute_aggregate_health_factor(env, user) {
         Ok(hf) => hf,
         Err(err) => {
-            // Roll back the provisional debt write if the health check itself
-            // fails. The borrow is rejected, so the user's debt position must
-            // be restored to its original state.
-            save_debt_asset(env, user, asset, &position);
-            if prev_principal == 0 {
-                remove_from_user_debt_list(env, user, asset);
-            }
+            rollback_borrow(env, user, asset, &position, prev_principal);
             return Err(err);
         }
     };
 
     if hf < HEALTH_FACTOR_SCALE {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
-        if prev_principal == 0 {
-            env.storage()
-                .persistent()
-                .remove(&DataKey::DebtAsset(user.clone(), asset.clone()));
-            remove_from_user_debt_list(env, user, asset);
-        } else {
-            save_debt_asset(env, user, asset, &position);
-        }
+        rollback_borrow(env, user, asset, &position, prev_principal);
         return Err(LendingError::HealthFactorTooLow);
     }
 
@@ -806,53 +1005,18 @@ pub fn borrow_asset_internal(
         .checked_add(delta)
         .ok_or(LendingError::Overflow)?;
     if new_total_debt > params.debt_ceiling {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
-        if prev_principal == 0 {
-            remove_from_user_debt_list(env, user, asset);
-        }
+        rollback_borrow(env, user, asset, &position, prev_principal);
         return Err(LendingError::DebtCeilingExceeded);
     }
     // Enforce optional per-asset borrow cap: 0 means uncapped.
     if params.borrow_cap != 0 && new_total_debt > params.borrow_cap {
-        save_debt_asset(
-            env,
-            user,
-            asset,
-            &DebtPosition {
-                principal: prev_principal,
-                borrow_index_snapshot: 0,
-                last_update: now,
-            },
-        );
-        if prev_principal == 0 {
-            remove_from_user_debt_list(env, user, asset);
-        }
+        rollback_borrow(env, user, asset, &position, prev_principal);
         return Err(LendingError::BorrowCapExceeded);
     }
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebtAsset(asset.clone()), &new_total_debt);
-
-    let total_debt_protocol: i128 = env
-        .storage()
-        .persistent()
-        .get(&DataKey::TotalDebt)
-        .unwrap_or(0);
-    let new_total_protocol = total_debt_protocol
-        .checked_add(delta)
-        .ok_or(LendingError::Overflow)?;
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDebt, &new_total_protocol);
+    crate::ttl::bump_global(&env, &DataKey::TotalDebtAsset(asset.clone()));
 
     extend_debt_asset_ttl(env, user, asset);
 
@@ -939,10 +1103,11 @@ pub(crate) fn ensure_position_prices_fresh_for_liquidation(
 
 /// Repay `amount` of debt `asset` for `user`.
 ///
-/// Checks pause state, validates params, requires authorisation, accrues
-/// interest on the existing position, applies the repayment, removes the asset
-/// from the user's debt list when the position reaches zero, and updates both
-/// per-asset and protocol-level total-debt accumulators.
+/// Checks pause state, validates params, requires authorisation, settles the
+/// position against its per-asset borrow index, applies the repayment, removes
+/// the asset from the user's debt list when the position reaches zero, and
+/// updates the per-asset total-debt accumulator. The global `TotalDebt` /
+/// `BorrowIndex` are deliberately left untouched.
 ///
 /// # Errors
 /// - [`LendingError::InvalidAmount`] if `amount ≤ 0`.
@@ -966,10 +1131,9 @@ pub fn repay_asset_internal(
     user.require_auth();
 
     let now = env.ledger().timestamp();
-    let rate = crate::current_borrow_rate(env);
     let position = load_debt_asset(env, user, asset);
     let prev_principal = position.principal;
-    let settled_position = crate::settle_and_accrue_insurance(env, &position, now, rate)?;
+    let settled_position = settle_asset_position(env, asset, &position, now)?;
     // Cross-asset repay silently clamps to the outstanding balance so callers
     // can safely pass an amount larger than the debt (see REPAY_SEMANTICS.md).
     // When the position is already zero, return early — nothing to repay.
@@ -977,7 +1141,8 @@ pub fn repay_asset_internal(
     if clamped_amount <= 0 {
         return Ok(settled_position.principal);
     }
-    let updated = crate::debt::repay_amount(settled_position, now, clamped_amount, rate)
+    let current_index = settled_position.borrow_index_snapshot;
+    let updated = debt::repay_amount_indexed(&settled_position, current_index, now, clamped_amount)
         .map_err(|_| LendingError::Overflow)?;
     save_debt_asset(env, user, asset, &updated);
     if updated.principal == 0 {
@@ -1004,21 +1169,7 @@ pub fn repay_asset_internal(
         &DataKey::TotalDebtAsset(asset.clone()),
         &new_total_debt_asset,
     );
-
-    let total_debt_protocol: i128 = env
-        .storage()
-        .persistent()
-        .get(&DataKey::TotalDebt)
-        .unwrap_or(0);
-    let new_total_protocol = total_debt_protocol
-        .checked_add(principal_delta)
-        .ok_or(LendingError::Overflow)?;
-    if new_total_protocol < 0 {
-        return Err(LendingError::Overflow);
-    }
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDebt, &new_total_protocol);
+    crate::ttl::bump_global(&env, &DataKey::TotalDebtAsset(asset.clone()));
 
     extend_debt_asset_ttl(env, user, asset);
 
@@ -1047,6 +1198,7 @@ mod tests {
                 &DataKey::OraclePrice(asset.clone()),
                 &PriceRecord { price, timestamp },
             );
+            crate::ttl::bump_global(&env, &DataKey::OraclePrice(asset.clone()));
         });
     }
 
