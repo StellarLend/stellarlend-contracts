@@ -264,6 +264,7 @@ pub fn time_until_upgrade_ready(current_ledger: u64, eta_ledger: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::testutils::Address as TestAddress;
 
     #[test]
     fn test_batch_size_validation() {

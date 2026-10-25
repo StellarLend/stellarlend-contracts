@@ -1,75 +1,54 @@
-# Pause-Aware Vesting Time Offset
+# Per-Grant Pause Offsets
 
-## Overview
+The contract's cumulative pause duration is applied only to pauses that overlap
+a grant's lifetime. Each grant's pause snapshot is recorded separately from the
+`Grant` record, keyed by grantee and grant index.
 
-The vesting contract tracks cumulative paused duration and subtracts it from the
-current ledger timestamp before feeding it into `Grant::vested_at`. This means a
-pause truly freezes vesting accrual — it does not merely block claiming.
+For a grant created with snapshot `S`, schedule time at wall-clock timestamp `t`
+is:
 
-## State variables
+`t - (cumulative_paused_at(t) - S)`
 
-| Key                | Type  | Purpose                                                         |
-|--------------------|-------|-----------------------------------------------------------------|
-| `Paused`           | bool  | Whether the contract is currently paused                        |
-| `PausedAt`         | u64   | Ledger timestamp at which the current pause began              |
-| `TotalPausedSecs`  | u64   | Cumulative seconds the contract has spent in a paused state    |
+`cumulative_paused_at(t)` includes the elapsed portion of the current pause, so
+schedule time remains fixed throughout an ongoing pause. Subtracting `S` also
+means pauses completed before a grant was created do not delay it.
 
-## Timeline diagram
+## Worked example
 
-```
-Wall clock ────────────────────────────────────────────────────────────────►
-           0    100   200   300   400   500   600   700   800   900  1000
-           │     │     │     │     │     │     │     │     │     │     │
-Ledger:    ├────▶│pause│◄────200s────►│resume│─────────────────────────────
-                             (paused interval = 200 s)
+An existing grant is created at day 0. The contract pauses at day 10 and resumes
+at day 30, a 20-day pause. At day 70, the existing grant's effective schedule
+time is day 50, so a 100-day linear grant has vested 50%. If a second grant is
+created at day 30 after resuming, its snapshot includes the completed 20-day
+pause. At day 70 its effective schedule time is day 70, so it has vested 40%
+(40 of its 100 days). The earlier pause does not delay this later cohort.
 
-Effective: ├──────────────────────────────────────────────────────────────►
-           0    100   200   200   200   300   400   500   600   700   800
-           (clock frozen during pause; resumes from where it left off)
-```
+During a pause, an early grant created before the pause has the same effective
+schedule time at every timestamp in the paused interval. A grant created during
+the pause snapshots the elapsed paused time on creation; it remains frozen at
+its creation-time schedule position until resume.
 
-After resuming, `effective_now = ledger_now - total_paused_secs`, so a grant
-with a 1 000 s linear schedule will have vested `800/1000 × total_amount` at
-ledger second 1 000 (i.e. 800 effective seconds, not 1 000).
+## Milestone schedules
 
-## Worked example: pause then resume, then claim
+Milestones remain stored as absolute timestamps. The same per-grant
+pause-adjusted schedule time is compared with those timestamps, so a milestone
+on an existing grant is delayed by pauses overlapping that grant. Pauses before
+a newly created milestone grant do not affect it.
 
-```
-Grant:  total_amount = 10_000 tokens
-        start_ts     = 0
-        cliff_secs   = 0
-        duration     = 1_000 s
+## Storage compatibility
 
-Timeline:
-  t =   0  — initialize & create_grant
-  t = 300  — pause()          (PausedAt = 300)
-  t = 600  — resume()         (interval = 300 s → TotalPausedSecs = 300)
-  t = 800  — claim()
+`Grant`'s XDR layout is unchanged. Pause snapshots use the additional persistent
+key `GrantPauseSnapshots(grantee)`, a vector aligned with the grantee's grant
+vector. This avoids making old `Grant` records unreadable. When the sidecar key
+or an individual index is absent, its snapshot defaults to zero. Such legacy
+grants therefore retain the previous global-offset behavior for pauses that
+occurred before this upgrade; newly created grants receive the current
+cumulative pause total. When old grants are followed by new grants, missing
+legacy indices are initialized to zero.
 
-At t = 800:
-  effective_now = 800 − 300 = 500 s
-  vested        = 10_000 × 500 / 1_000 = 5_000 tokens
+## Pause state and edge cases
 
-Without the offset, vested would have been 10_000 × 800 / 1_000 = 8_000 tokens —
-the 300-second pause interval would have accrued 3_000 extra tokens incorrectly.
-```
-
-## Multiple pause/resume cycles
-
-Each `resume()` call adds `now - paused_at` to `TotalPausedSecs`:
-
-```
-pause at t=100, resume at t=200  → total_paused = 100
-pause at t=400, resume at t=500  → total_paused = 200
-claim at t=600  → effective_now = 600 − 200 = 400
-```
-
-## Edge cases
-
-| Scenario                        | Behaviour                                              |
-|---------------------------------|--------------------------------------------------------|
-| Zero-length pause (pause+resume at same timestamp) | Adds 0 s — no effect   |
-| Pause spanning the cliff        | Cliff is evaluated against `effective_now`, not wall clock |
-| `claim` while paused            | Returns `VestingError::ContractPaused`                 |
-| `revoke` while paused           | Returns `VestingError::ContractPaused`                 |
-| Arithmetic overflow in accumulation | `saturating_add` / `saturating_sub` prevent panics |
+`TotalPausedSecs` accumulates completed pause intervals. While paused,
+`PausedAt` supplies the current interval for schedule-time calculations.
+`pause` while already paused and `resume` while not paused remain idempotent.
+Zero-length pauses add no time. Claim and revoke remain unavailable while
+paused.

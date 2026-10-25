@@ -72,9 +72,10 @@ fn test_batch_execute_all_eligible_success() {
         &env,
         &client,
         &signers,
-        &ProposalAction::SetThreshold(4),
+        &ProposalAction::SetThreshold(2),
         &hash_b,
     );
+    client.approve_proposal(&signers.get(2).unwrap(), &id_b);
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -92,7 +93,7 @@ fn test_batch_execute_all_eligible_success() {
     let p_b = client.get_proposal(&id_b);
     assert_eq!(p_b.status, ProposalStatus::Executed);
 
-    assert_eq!(client.get_threshold(), 4);
+    assert_eq!(client.get_threshold(), 2);
 }
 
 #[test]
@@ -132,6 +133,7 @@ fn test_batch_execute_mixed_actions_success() {
         &ProposalAction::RotateSigners(new_signers.clone()),
         &hash_b,
     );
+    client.approve_proposal(&signers.get(2).unwrap(), &id_b);
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -259,7 +261,7 @@ fn test_batch_execute_one_already_executed_rejected() {
         &env,
         &client,
         &signers,
-        &ProposalAction::SetThreshold(4),
+        &ProposalAction::SetThreshold(2),
         &hash_b,
     );
 
@@ -457,6 +459,7 @@ fn test_batch_execute_dispatch_failure_rolls_back() {
         &ProposalAction::SetThreshold(0),
         &hash_b,
     );
+    client.approve_proposal(&signers.get(2).unwrap(), &id_b);
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -516,9 +519,10 @@ fn test_batch_execute_emits_event() {
         &env,
         &client,
         &signers,
-        &ProposalAction::SetThreshold(4),
+        &ProposalAction::SetThreshold(2),
         &hash_b,
     );
+    client.approve_proposal(&signers.get(2).unwrap(), &id_b);
 
     let mut ids = Vec::new(&env);
     ids.push_back(id_a);
@@ -563,7 +567,7 @@ fn test_batch_execute_atomicity_on_validation_failure() {
         &env,
         &client,
         &signers,
-        &ProposalAction::SetThreshold(4),
+        &ProposalAction::SetThreshold(2),
         &hash_b,
     );
 
