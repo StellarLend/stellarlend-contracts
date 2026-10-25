@@ -39,13 +39,28 @@ Two new storage entries are introduced:
 3. **If unhealthy (HF < 1.0)**:
    a. Look up `FirstUnhealthyTimestamp(borrower)`.
    b. **If not recorded**: set it to the current ledger timestamp `now`.
-   If `grace_secs > 0`, reject with `Err(LiquidationGracePeriodNotMet)`.
+   If `grace_secs > 0`, reject with `Err(LiquidationGracePeriodActive)`.
+   *Note*: In Soroban, an invocation returning an `Err` rolls back all storage
+   mutations made within it. Therefore, keepers must call `mark_unhealthy(borrower)`
+   first to ensure the timestamp is committed to storage.
    c. **If recorded**: check `now - first_unhealthy_ts >= grace_secs`.
-   - If insufficient time elapsed → reject.
+   - If insufficient time elapsed → reject with `Err(LiquidationGracePeriodActive)`.
    - If sufficient time elapsed → proceed with liquidation.
 4. After a successful liquidation, recompute the post-liquidation health factor.
    If the position becomes healthy (e.g. enough debt was extinguished), clear
    the stored timestamp.
+
+### Permissionless `mark_unhealthy` Entrypoint
+
+```rust
+pub fn mark_unhealthy(env: Env, borrower: Address) -> Result<(), LendingError>
+```
+
+To establish the start of the grace period on-chain, keepers call `mark_unhealthy(borrower)`:
+- If `HF < 1.0` and no timestamp is recorded, stores `now` in `FirstUnhealthyTimestamp(borrower)`
+  and extends its TTL. Returns `Ok(())`, committing the write.
+- If `HF < 1.0` and a timestamp is already recorded, preserves the existing timestamp and extends TTL.
+- If `HF >= 1.0`, does not record a timestamp (no-op, or clears any stale timestamp).
 
 ### Grace reset on health recovery
 
@@ -56,7 +71,8 @@ Whenever a user performs an action that might improve their health
 - If a `FirstUnhealthyTimestamp` exists **and** HF ≥ 1.0, the timestamp is
   deleted.
 - If the position is still unhealthy, the timestamp is **preserved** — the
-  clock does not restart until health actually recovers.
+  clock does not restart until health actually recovers. Dust deposits that
+  do not restore HF ≥ 1.0 cannot reset the grace timer.
 
 ## Worked Example
 
@@ -74,15 +90,17 @@ Step 1 — Healthy state
 Step 2 — Oracle blip: collateral drops to $0.80
   Collateral value = 800
   HF = (800 × 0.80) / 700 ≈ 0.914   (< 1.0, unhealthy)
+  Keeper calls mark_unhealthy:
+    - FirstUnhealthyTimestamp set to T=1000 (committed)
   Liquidate called:
-    - FirstUnhealthyTimestamp = None → set to T=1000
-    - Reject with LiquidationGracePeriodNotMet
+    - Elapsed = 0 < 3600
+    - Reject with LiquidationGracePeriodActive
 
 Step 3 — 30 minutes later (T=2800)
   Liquidate called:
     - FirstUnhealthyTimestamp = 1000
     - Elapsed = 2800 - 1000 = 1800 < 3600
-    - Reject with LiquidationGracePeriodNotMet
+    - Reject with LiquidationGracePeriodActive
 
 Step 4 — Borrower deposits 200 USDC (T=2800)
   Collateral = 1000 + 200 = 1200
@@ -97,9 +115,11 @@ Step 5 — Another blip: collateral drops to $0.80 (T=3000)
 Step 6 — Collateral drops to $0.70 (T=3500)
   Collateral value = 1200 × 0.70 = 840
   HF = (840 × 0.80) / 700 ≈ 0.96    (< 1.0, unhealthy)
+  Keeper calls mark_unhealthy:
+    - FirstUnhealthyTimestamp set to T=3500
   Liquidate called:
-    - FirstUnhealthyTimestamp = None → set to T=3500
-    - Reject with LiquidationGracePeriodNotMet
+    - Elapsed = 0 < 3600
+    - Reject with LiquidationGracePeriodActive
 
 Step 7 — 1 hour later (T=7100)
   Liquidate called:

@@ -3,7 +3,7 @@
 /// This module enforces explicit bounds defined in BOUNDS.md to prevent
 /// resource exhaustion and ensure bounded performance.
 
-use soroban_sdk::{Env, Vec, Address};
+use soroban_sdk::{Address, Vec};
 
 // =========================================================================
 // Storage Bounds (B1-B4)
@@ -43,6 +43,10 @@ pub const APPROVAL_COUNT_THRESHOLD: u32 = 100;
 /// Approximately 12 years worth of ledgers (5 second/ledger assumption).
 /// Prevents indefinitely stale proposals.
 pub const MAX_TTL_LEDGERS: u32 = 3_110_400;
+
+/// Maximum execution delay in ledgers.
+/// Approximately 180 days: 3,110,400 ledgers × 5 sec/ledger ≈ 180 days.
+pub const MAX_EXECUTION_DELAY_LEDGERS: u32 = 3_110_400;
 
 /// Minimum time-to-live (minimum useful proposal duration).
 pub const MIN_TTL_LEDGERS: u32 = 1;
@@ -173,6 +177,21 @@ pub fn validate_ttl(ttl_ledgers: u32) -> Result<(), ()> {
     Ok(())
 }
 
+/// Validate execution delay does not exceed the maximum bound.
+///
+/// # Arguments
+/// * `delay` - Proposed execution delay in ledgers
+///
+/// # Returns
+/// * `Ok(())` if valid (delay <= MAX_EXECUTION_DELAY_LEDGERS)
+/// * `Err(())` if delay > MAX_EXECUTION_DELAY_LEDGERS
+pub fn validate_execution_delay(delay: u32) -> Result<(), ()> {
+    if delay > MAX_EXECUTION_DELAY_LEDGERS {
+        return Err(());
+    }
+    Ok(())
+}
+
 /// Validate upgrade approver count does not exceed maximum.
 ///
 /// # Arguments
@@ -215,7 +234,7 @@ pub fn validate_signer_shrink_guard(
 /// # Returns
 /// `true` if signer count is approaching MAX_SIGNERS (within 80%)
 pub fn is_signer_count_high(signer_count: usize) -> bool {
-    signer_count > (MAX_SIGNERS as usize * 4 / 5)  // 80% threshold
+    signer_count >= (MAX_SIGNERS as usize * 4 / 5)  // 80% threshold
 }
 
 /// Check if approval count is approaching practical limits.
@@ -264,6 +283,8 @@ pub fn time_until_upgrade_ready(current_ledger: u64, eta_ledger: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
 
     #[test]
     fn test_batch_size_validation() {
@@ -297,7 +318,7 @@ mod tests {
         let env = Env::default();
         let a1 = Address::generate(&env);
         let a2 = Address::generate(&env);
-        let a3 = Address::generate(&env);
+        let _a3 = Address::generate(&env);
 
         let mut signers = Vec::new(&env);
         assert!(validate_signer_set(&signers, 1).is_err()); // empty
@@ -369,5 +390,14 @@ mod tests {
         assert_eq!(time_until_upgrade_ready(100, 200), 100);
         assert_eq!(time_until_upgrade_ready(200, 200), 0);
         assert_eq!(time_until_upgrade_ready(201, 200), 0);
+    }
+
+    #[test]
+    fn test_execution_delay_validation() {
+        assert!(validate_execution_delay(0).is_ok());
+        assert!(validate_execution_delay(1).is_ok());
+        assert!(validate_execution_delay(1_000_000).is_ok());
+        assert!(validate_execution_delay(3_110_400).is_ok());
+        assert!(validate_execution_delay(3_110_401).is_err());
     }
 }

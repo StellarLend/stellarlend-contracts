@@ -28,7 +28,15 @@ jobs:
 
       - name: Check workspace
         working-directory: stellar-lend
-        run: cargo check --workspace --lib --exclude stellarlend-bridge --keep-going
+        run: cargo check --workspace --lib  --keep-going
+
+      - name: Run vesting contract tests
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-vesting
+
+      - name: Run multisig tests
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-multisig
 
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
@@ -43,6 +51,13 @@ jobs:
             -p stellarlend-amm \
             -p stellarlend-vesting \
             -p stellarlend-multisig
+
+      - name: Optimize WASMs
+        run: |
+          sudo apt-get update && sudo apt-get install -y binaryen
+          for f in stellar-lend/target/wasm32v1-none/release/stellarlend_*.wasm; do
+            wasm-opt -Oz --strip-debug --strip-producers "$f" -o "$f.tmp" && mv "$f.tmp" "$f"
+          done
 
       - name: Enforce WASM size budgets
         run: bash scripts/check_wasm_sizes.sh
@@ -71,7 +86,7 @@ jobs:
   # regression. The table is written to the job summary.
   budget-bench:
     name: Budget benchmarks (lending)
-    runs-on: ubunte-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +102,7 @@ jobs:
       - name: Run budget benchmarks
         working-directory: stellar-lend
         run: |
-          set -piped
+          set -o pipefail
           cargo test -p stellarlend-lending --test budget_bench -- --nocapture 2>&1 | tee budget_bench.log
           exit "${PIPESTATUS[0]}"
 
@@ -98,9 +113,9 @@ jobs:
           {
             echo '## Soroban budget benchmarks (lending)'
             echo ''
-            echo '| Scenario | CPU |
+            echo '| Scenario | CPU |'
             echo '| --- | --- |'
-            grep -E '^\[budge_bench\]' budget_bench.log || true
+            grep -E '^\[budget_bench\]' budget_bench.log || true
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload budget bench log
@@ -161,14 +176,20 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         continue-on-error: true
         working-directory: stellar-lend/contracts/lending/fuzz
-        run: cargo +nightly fuzz run fuzz_entrypoints - -max_total_time=60
+        run: cargo +nightly fuzz run fuzz_entrypoints -- -max_total_time=60
       - name: Smoke run fuzz_liquidate_close_factor (60s)
         if: steps.changes.outputs.changed == 'true'
         continue-on-error: true
         working-directory: stellar-lend/contracts/lending/fuzz
-        run: cargo +nightly fuzz run fuzz_liquidate_close_factor - -max_total_time=60
+        run: cargo +nightly fuzz run fuzz_liquidate_close_factor -- -max_total_time=60
       - name: Smoke run fuzz_borrow_rate (60s)
         if: steps.changes.outputs.changed == 'true'
         continue-on-error: true
         working-directory: stellar-lend/contracts/lending/fuzz
-        run: cargo +nightly fuzz run fuzz_borrow_rate - -max_total_time=60
+        run: cargo +nightly fuzz run fuzz_borrow_rate -- -max_total_time=60
+
+      - name: Test bridge crate
+        run: cargo test -p stellarlend-bridge
+
+      - name: Build bridge WASM
+        run: cargo build -p stellarlend-bridge --target wasm32v1-none --release

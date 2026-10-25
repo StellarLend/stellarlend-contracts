@@ -54,7 +54,7 @@ pub const UPGRADE_APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_UPGRADE_APPRO
 /// Domain separator used to fingerprint the upgrade approver set (issue #1940).
 pub const UPGRADE_APPROVER_SET_SEPARATOR: &[u8] = b"STELLARLEND_UPGRADE_APPROVER_SET_V1";
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpgradeKey {
     Initialized,
@@ -81,7 +81,7 @@ pub enum UpgradeKey {
     ProposalCancelled(u64),
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpgradeProposalStatus {
     Pending,
@@ -90,7 +90,7 @@ pub enum UpgradeProposalStatus {
     Cancelled,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeProposal {
     pub id: u64,
@@ -102,7 +102,7 @@ pub struct UpgradeProposal {
     pub executed: bool,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeStatus {
     pub proposal: UpgradeProposal,
