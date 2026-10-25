@@ -10,7 +10,10 @@
 
 #[cfg(test)]
 mod borrow_isolation_tier_tests {
-    use crate::{LendingContract, LendingContractClient, LendingError};
+    use crate::{
+        LendingContract, LendingContractClient, LendingError, HEALTH_FACTOR_SCALE,
+        LIQUIDATION_THRESHOLD_BPS,
+    };
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     fn setup() -> (Env, LendingContractClient<'static>, Address, Address) {
@@ -26,6 +29,17 @@ mod borrow_isolation_tier_tests {
 
     fn make_asset(env: &Env) -> Address {
         Address::generate(env)
+    }
+
+    /// Collateral required to back a borrow of `debt`.
+    ///
+    /// A borrow is only accepted when the position stays solvent, so every
+    /// isolation test has to fund the borrower first. In single-asset mode
+    /// the health factor is `collateral * threshold_bps / (HF_SCALE * debt)`,
+    /// which stays at or above 1.0 for `collateral >= debt * HF_SCALE /
+    /// threshold`.
+    fn collateral_for(debt: i128) -> i128 {
+        (debt * HEALTH_FACTOR_SCALE) / LIQUIDATION_THRESHOLD_BPS + 1
     }
 
     #[test]
@@ -56,6 +70,7 @@ mod borrow_isolation_tier_tests {
         let (env, client, _admin, user) = setup();
         let tok = make_asset(&env);
         client.set_asset_isolation(&tok, &true, &10_000i128);
+        client.deposit(&user, &collateral_for(5_000));
 
         let result = client.borrow_against_collateral(&user, &5_000i128, &tok);
         assert_eq!(result, 5_000);
@@ -67,6 +82,7 @@ mod borrow_isolation_tier_tests {
         let (env, client, _admin, user) = setup();
         let tok = make_asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(1_001));
 
         let res = client.try_borrow_against_collateral(&user, &1_001i128, &tok);
         assert!(matches!(
@@ -80,6 +96,7 @@ mod borrow_isolation_tier_tests {
         let (env, client, _admin, user) = setup();
         let tok = make_asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(1_001));
 
         client.borrow_against_collateral(&user, &600i128, &tok);
         let res = client.try_borrow_against_collateral(&user, &401i128, &tok);
@@ -99,6 +116,7 @@ mod borrow_isolation_tier_tests {
         let (env, client, _admin, user) = setup();
         let tok = make_asset(&env);
         client.set_asset_isolation(&tok, &true, &1_000i128);
+        client.deposit(&user, &collateral_for(1_000));
 
         client.borrow_against_collateral(&user, &1_000i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 1_000);
@@ -115,6 +133,7 @@ mod borrow_isolation_tier_tests {
         let (env, client, _admin, user) = setup();
         let tok = make_asset(&env);
         client.set_asset_isolation(&tok, &true, &2_000i128);
+        client.deposit(&user, &collateral_for(1_500));
 
         client.borrow_against_collateral(&user, &1_500i128, &tok);
         assert_eq!(client.get_isolation_debt(&tok), 1_500);
@@ -128,6 +147,7 @@ mod borrow_isolation_tier_tests {
         let (env, client, _admin, user) = setup();
         let tok = make_asset(&env);
         client.set_asset_isolation(&tok, &true, &100i128);
+        client.deposit(&user, &collateral_for(200));
 
         let res = client.try_borrow_against_collateral(&user, &200i128, &tok);
         assert!(matches!(

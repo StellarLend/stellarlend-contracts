@@ -27,6 +27,17 @@ fn asset(env: &Env) -> Address {
     Address::generate(env)
 }
 
+/// Collateral required to back a borrow of `debt`.
+///
+/// `borrow_against_collateral` only accepts a borrow that leaves the position
+/// solvent, so every isolation test funds the borrower first. In single-asset
+/// mode the health factor is `collateral * threshold_bps / (HF_SCALE * debt)`,
+/// which stays at or above 1.0 for `collateral >= debt * HF_SCALE /
+/// threshold`.
+fn collateral_for(debt: i128) -> i128 {
+    (debt * HEALTH_FACTOR_SCALE) / LIQUIDATION_THRESHOLD_BPS + 1
+}
+
 fn enable_isolation(client: &LendingContractClient, token: &Address, ceiling: i128) {
     client.set_asset_isolation(token, &true, &ceiling);
 }
@@ -36,6 +47,7 @@ fn ceiling_update_cannot_drop_below_outstanding_isolated_debt() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 1_000);
+    client.deposit(&user, &collateral_for(700));
     client.borrow_against_collateral(&user, &700, &token);
 
     assert_eq!(
@@ -57,6 +69,7 @@ fn ceiling_update_at_current_debt_is_valid_and_leaves_no_capacity() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 1_000);
+    client.deposit(&user, &collateral_for(1_001));
     client.borrow_against_collateral(&user, &1_000, &token);
 
     client.set_asset_isolation(&token, &true, &1_000);
@@ -71,6 +84,7 @@ fn disabling_isolation_preserves_debt_but_explicitly_removes_the_ceiling() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 100);
+    client.deposit(&user, &collateral_for(600));
     client.borrow_against_collateral(&user, &100, &token);
 
     client.set_asset_isolation(&token, &false, &0);
@@ -86,6 +100,7 @@ fn repayments_release_tracker_retained_when_isolation_is_disabled() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 1_000);
+    client.deposit(&user, &collateral_for(600));
     client.borrow_against_collateral(&user, &600, &token);
 
     client.set_asset_isolation(&token, &false, &0);
@@ -128,6 +143,7 @@ fn partial_repayments_release_exact_capacity_for_repeated_borrow_cycles() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 10_000);
+    client.deposit(&user, &collateral_for(5_250));
 
     let operations = [
         ("borrow", 2_500i128),
@@ -160,6 +176,7 @@ fn exact_capacity_can_be_reused_after_full_repayment() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 2_000);
+    client.deposit(&user, &collateral_for(2_000));
 
     client.borrow_against_collateral(&user, &2_000, &token);
     assert_eq!(client.get_isolation_debt(&token), 2_000);
@@ -174,6 +191,7 @@ fn rejected_borrow_leaves_both_debt_and_isolation_tracker_unchanged() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 500);
+    client.deposit(&user, &collateral_for(501));
     client.borrow_against_collateral(&user, &400, &token);
     let before_position = client.get_debt_position(&user);
     let before_tracker = client.get_isolation_debt(&token);
@@ -193,6 +211,7 @@ fn isolated_assets_have_independent_capacity_buckets() {
     let second = asset(&env);
     enable_isolation(&client, &first, 1_000);
     enable_isolation(&client, &second, 2_000);
+    client.deposit(&user, &collateral_for(3_001));
 
     client.borrow_against_collateral(&user, &1_000, &first);
     client.borrow_against_collateral(&user, &2_000, &second);
@@ -213,6 +232,7 @@ fn isolated_assets_have_independent_capacity_buckets() {
 fn non_isolated_borrow_does_not_create_or_mutate_isolation_capacity() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
+    client.deposit(&user, &collateral_for(5_000));
 
     client.borrow_against_collateral(&user, &5_000, &token);
 
@@ -255,6 +275,9 @@ fn ledger_advance_does_not_change_capacity_without_a_state_transition() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 1_000);
+    // Collateral covers the rejected borrow as well, so the isolation ceiling
+    // — not the solvency check — is what rejects it.
+    client.deposit(&user, &collateral_for(1_001));
     client.borrow_against_collateral(&user, &400, &token);
     let original_ledger = env.ledger().sequence();
     env.ledger().set_sequence_number(original_ledger + 10_000);
@@ -271,6 +294,7 @@ fn ceiling_increase_restores_only_the_newly_added_capacity() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 1_000);
+    client.deposit(&user, &collateral_for(1_501));
     client.borrow_against_collateral(&user, &700, &token);
 
     client.set_asset_isolation(&token, &true, &1_500);
@@ -287,6 +311,7 @@ fn failed_ceiling_update_does_not_disable_an_existing_isolated_asset() {
     let (env, client, _admin, user) = setup();
     let token = asset(&env);
     enable_isolation(&client, &token, 1_000);
+    client.deposit(&user, &collateral_for(600));
     client.borrow_against_collateral(&user, &600, &token);
 
     assert_eq!(

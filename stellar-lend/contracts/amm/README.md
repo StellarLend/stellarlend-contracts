@@ -18,14 +18,28 @@ minting, and flash swaps.
 | [FEE_ACCOUNTING.md](./FEE_ACCOUNTING.md) | Per-side fee accumulator model |
 | [MINT_INVARIANTS.md](./MINT_INVARIANTS.md) | LP share minting edge cases and invariants |
 | [SQRT_PRECISION.md](./SQRT_PRECISION.md) | Integer square root precision guarantees |
+| [TWAP.md](./TWAP.md) | On-chain TWAP oracle: ring buffer, `consult`, overflow and manipulation properties |
 
 ---
 
 ## Quick Start
 
 ```rust
-// Initialize pool
-client.init_pool(&1_000_i128, &1_000_i128);
+// Recommended: Initialize pool configuration (one-shot, fee in basis points e.g. 30 = 0.3%)
+client.initialize(&admin, &token_a, &token_b, &30);
+
+// Bootstrap reserves with real token deposits via add_liquidity
+client.add_liquidity(
+    &admin,
+    &1_000_000, &1_000_000,
+    &1_000_000, &1_000_000,
+    &0,
+    &deadline,
+);
+
+// Deprecated: init_pool(admin, a, b, token_a, token_b) is one-shot and pulls
+// a and b from admin via real token transfers. Subsequent calls return AlreadyInitialized.
+// client.init_pool(&admin, &1_000_i128, &1_000_i128, &token_a, &token_b);
 
 // Regular swap A → B: `trader` authorizes, `amount_in` of token A is pulled
 // from the trader and the output of token B is paid back. Fails with

@@ -19,7 +19,8 @@ The cross‑asset module aggregates collateral and debt across multiple assets t
 - The resulting value is then multiplied by the asset's liquidation threshold expressed in basis points (`params.liquidation_threshold_bps`). This yields the *weighted collateral* contribution.
 
 **Debt Valuation**
-- Effective debt is calculated via `crate::debt::effective_debt`, then multiplied by the oracle price and divided by `PRICE_DIVISOR` to obtain USD debt value.
+- Effective debt is projected from the borrowed asset's **own** borrow index and utilisation (`TotalDebtAsset / TotalCollateralAsset`) via `cross_asset::project_asset_position_debt` — read-only, and identical at the same timestamp to what `repay_asset` would settle. See [`PER_ASSET_ACCRUAL.md`](PER_ASSET_ACCRUAL.md).
+- Each debt value is multiplied by the oracle price and divided by `10^decimals` to obtain USD debt value.
 - All debt values are summed to `total_debt_value`.
 
 **Health Factor Calculation**
