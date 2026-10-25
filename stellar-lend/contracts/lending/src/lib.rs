@@ -416,6 +416,16 @@ pub enum DataKey {
     ReserveFactorBps,
     /// Persistent accounting balance of protocol reserves, excluded from depositor supply.
     ProtocolReserves,
+    /// Per-asset borrow index for cross-asset debt (scaled by
+    /// [`debt::INDEX_SCALE`]). Seeded from [`DataKey::BorrowIndex`] the
+    /// first time the asset is touched so pre-existing snapshots stay on a
+    /// continuous accrual timeline. See `PER_ASSET_ACCRUAL.md`.
+    ///
+    /// Declared after every pre-existing variant so the encoded discriminant
+    /// of existing storage keys never changes.
+    BorrowIndexAsset(Address),
+    /// Ledger timestamp of the last per-asset borrow-index update.
+    LastIndexUpdateAsset(Address),
 }
 
 #[contracttype]
@@ -2764,10 +2774,9 @@ impl LendingContract {
 
             // ── 6. Accrue interest on the debt leg ────────────────────────
             let now = env.ledger().timestamp();
-            let rate = current_borrow_rate(&env);
             let position = cross_asset::load_debt_asset(&env, &borrower, &debt_asset);
-            let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)
-                .map_err(|_| LendingError::Overflow)?;
+            let settled_position =
+                cross_asset::settle_asset_position(&env, &debt_asset, &position, now)?;
 
             let debt = settled_position.principal;
             if debt <= 0 {
@@ -2853,26 +2862,29 @@ impl LendingContract {
                 cross_asset::remove_from_user_debt_list(&env, &borrower, &debt_asset);
             }
 
-            // Update per-asset and protocol-level total debt accumulators.
+            // Update the per-asset total debt accumulator by the full change in
+            // the borrower's stored principal (settled interest plus repayment),
+            // so `Σ user debt(asset) == TotalDebtAsset(asset)` keeps holding.
+            // The global `TotalDebt` is deliberately not touched: this debt is
+            // denominated in `debt_asset`'s own units.
             let total_debt_asset: i128 = env
                 .storage()
                 .persistent()
                 .get(&DataKey::TotalDebtAsset(debt_asset.clone()))
                 .unwrap_or(0);
-            let new_total_debt_asset = total_debt_asset.saturating_sub(actual_repay);
+            let principal_delta = updated_debt_position
+                .principal
+                .checked_sub(position.principal)
+                .ok_or(LendingError::Overflow)?;
+            let new_total_debt_asset = total_debt_asset
+                .checked_add(principal_delta)
+                .ok_or(LendingError::Overflow)?;
+            if new_total_debt_asset < 0 {
+                return Err(LendingError::Overflow);
+            }
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebtAsset(debt_asset.clone()), &new_total_debt_asset);
-
-            let total_debt_protocol: i128 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::TotalDebt)
-                .unwrap_or(0);
-            let new_total_debt_protocol = total_debt_protocol.saturating_sub(actual_repay);
-            env.storage()
-                .persistent()
-                .set(&DataKey::TotalDebt, &new_total_debt_protocol);
 
             cross_asset::extend_debt_asset_ttl(&env, &borrower, &debt_asset);
 
@@ -2881,6 +2893,18 @@ impl LendingContract {
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
             cross_asset::save_collateral_asset(&env, &borrower, &collateral_asset, new_col);
+            // Seized collateral leaves the borrower, so reduce the per-asset
+            // supplied total that feeds utilisation. Saturate for legacy state
+            // where the counter was never populated.
+            let total_supplied: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalCollateralAsset(collateral_asset.clone()))
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &DataKey::TotalCollateralAsset(collateral_asset.clone()),
+                &total_supplied.saturating_sub(final_seized),
+            );
             if new_col == 0 {
                 cross_asset::remove_from_user_collateral_list(
                     &env,
@@ -4323,6 +4347,49 @@ impl LendingContract {
         cross_asset::load_debt_asset(&env, &user, &asset)
     }
 
+    // Return the outstanding cross-asset debt total tracked for `asset`.
+    //
+    // Denominated in `asset`'s raw units and maintained by the cross-asset
+    // borrow, repay and liquidation paths only. Read-only.
+    pub fn get_total_debt_asset(env: Env, asset: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalDebtAsset(asset))
+            .unwrap_or(0)
+    }
+
+    // Return `asset`'s cross-asset utilisation in basis points.
+    //
+    // `TotalDebtAsset(asset) / TotalCollateralAsset(asset)`, bounded to
+    // `[0, 10_000]`. A zero-supply asset reports `0` instead of dividing by
+    // zero. Read-only.
+    pub fn get_asset_utilization_bps(env: Env, asset: Address) -> i128 {
+        let snapshot = debt::load_asset_rate_snapshot(&env, &asset);
+        debt::compute_utilization_bps_from_totals(snapshot.total_debt, snapshot.total_supply)
+            .unwrap_or(0)
+    }
+
+    // Return `asset`'s current cross-asset borrow rate in basis points.
+    //
+    // Derived from the asset's own utilisation and the global rate parameters.
+    // Falls back to [`debt::DEFAULT_APR_BPS`] when no rate model is configured.
+    // Read-only.
+    pub fn get_asset_borrow_rate(env: Env, asset: Address) -> i128 {
+        debt::asset_borrow_rate(&env, &asset).unwrap_or(debt::DEFAULT_APR_BPS)
+    }
+
+    // Return a user's debt in `asset`, including interest accrued since the
+    // position was last settled.
+    //
+    // Uses the same per-asset index projection and rate as `repay_asset`, so a
+    // repayment of this amount at the same ledger timestamp settles the
+    // position in full. Read-only.
+    pub fn get_asset_debt_view(env: Env, user: Address, asset: Address) -> i128 {
+        let position = cross_asset::load_debt_asset(&env, &user, &asset);
+        cross_asset::project_asset_position_debt(&env, &asset, &position, env.ledger().timestamp())
+            .unwrap_or(0)
+    }
+
     // Initialize timelocked multisig upgrade governance (admin-only, once).
     pub fn upgrade_init(
         env: Env,
@@ -4596,65 +4663,78 @@ pub(crate) fn settle_and_accrue_insurance(
         (interest, settled)
     };
 
-    if interest > 0 {
-        let reserve_factor_bps: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReserveFactorBps)
-            .unwrap_or(0);
-        let reserve_factor_bps =
-            u32::try_from(reserve_factor_bps).map_err(|_| LendingError::Overflow)?;
-        let (_, reserve_cut) =
-            math::split_interest_by_reserve_factor(interest, reserve_factor_bps)
-                .map_err(|_| LendingError::Overflow)?;
-        if reserve_cut > 0 {
-            let reserves: i128 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::ProtocolReserves)
-                .unwrap_or(0);
-            let new_reserves = reserves
-                .checked_add(reserve_cut)
-                .ok_or(LendingError::Overflow)?;
-            env.storage()
-                .persistent()
-                .set(&DataKey::ProtocolReserves, &new_reserves);
-        }
-
-        let share_bps: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::InsuranceShareBps)
-            .unwrap_or(0);
-        if share_bps > 0 {
-            // The reserve cut is taken first; insurance receives its configured
-            // share of the remaining interest, so the two protocol cuts cannot
-            // exceed gross interest.
-            let insurance_base = interest
-                .checked_sub(reserve_cut)
-                .ok_or(LendingError::Overflow)?;
-            let share = insurance_base
-                .checked_mul(share_bps)
-                .ok_or(LendingError::Overflow)?
-                .checked_div(BPS_DENOM)
-                .ok_or(LendingError::Overflow)?;
-            if share > 0 {
-                let current_fund: i128 = env
-                    .storage()
-                    .instance()
-                    .get(&DataKey::InsuranceFund)
-                    .unwrap_or(0);
-                let new_fund = current_fund
-                    .checked_add(share)
-                    .ok_or(LendingError::Overflow)?;
-                env.storage()
-                    .instance()
-                    .set(&DataKey::InsuranceFund, &new_fund);
-            }
-        }
-    }
+    credit_insurance_share(env, interest)?;
 
     Ok(settled)
+}
+
+// Credit protocol revenue from `interest`: the reserve-factor cut goes to
+// `ProtocolReserves` first, then the insurance fund receives its configured
+// share of the remainder, so the two cuts can never exceed gross interest.
+//
+// Shared by the single-asset settlement path ([`settle_and_accrue_insurance`])
+// and the per-asset cross-asset settlement path so both routes accrue
+// protocol revenue identically.
+pub(crate) fn credit_insurance_share(env: &Env, interest: i128) -> Result<(), LendingError> {
+    if interest <= 0 {
+        return Ok(());
+    }
+    let reserve_factor_bps: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ReserveFactorBps)
+        .unwrap_or(0);
+    let reserve_factor_bps =
+        u32::try_from(reserve_factor_bps).map_err(|_| LendingError::Overflow)?;
+    let (_, reserve_cut) =
+        math::split_interest_by_reserve_factor(interest, reserve_factor_bps)
+            .map_err(|_| LendingError::Overflow)?;
+    if reserve_cut > 0 {
+        let reserves: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolReserves)
+            .unwrap_or(0);
+        let new_reserves = reserves
+            .checked_add(reserve_cut)
+            .ok_or(LendingError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolReserves, &new_reserves);
+    }
+
+    let share_bps: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::InsuranceShareBps)
+        .unwrap_or(0);
+    if share_bps > 0 {
+        // The reserve cut is taken first; insurance receives its configured
+        // share of the remaining interest, so the two protocol cuts cannot
+        // exceed gross interest.
+        let insurance_base = interest
+            .checked_sub(reserve_cut)
+            .ok_or(LendingError::Overflow)?;
+        let share = insurance_base
+            .checked_mul(share_bps)
+            .ok_or(LendingError::Overflow)?
+            .checked_div(BPS_DENOM)
+            .ok_or(LendingError::Overflow)?;
+        if share > 0 {
+            let current_fund: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::InsuranceFund)
+                .unwrap_or(0);
+            let new_fund = current_fund
+                .checked_add(share)
+                .ok_or(LendingError::Overflow)?;
+            env.storage()
+                .instance()
+                .set(&DataKey::InsuranceFund, &new_fund);
+        }
+    }
+    Ok(())
 }
 
 fn checkpoint_reserve_factor(env: &Env) -> Result<(), LendingError> {
