@@ -17,6 +17,7 @@ pub mod math;
 pub mod operation_tracker;
 pub mod rate_model;
 pub mod rounding_strategy;
+pub mod ttl;
 #[cfg(test)]
 pub mod two_phase_ops;
 pub mod upgrade;
@@ -954,6 +955,7 @@ impl LendingContract {
             return Err(LendingError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
+        ttl::extend_instance_ttl(&env);
         set_emergency_state_internal(&env, EmergencyState::Normal);
         debt::save_borrow_index(&env, debt::INDEX_SCALE);
         debt::save_last_index_update(&env, env.ledger().timestamp());
@@ -968,6 +970,26 @@ impl LendingContract {
 
     pub fn has_admin(env: Env) -> bool {
         env.storage().instance().has(&DataKey::Admin)
+    }
+
+    // Admin-free, permissionless keeper entrypoint to extend instance and global storage TTLs.
+    //
+    // Extends instance storage TTL and all core global persistent keys (TotalDebt,
+    // TotalDeposits, BadDebt, DepositCap, UtilizationHistory, and configured asset keys).
+    pub fn bump_ttl(env: Env) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        ttl::extend_instance_ttl(&env);
+        ttl::bump_all_globals(&env);
+        Ok(())
+    }
+
+    // Admin-free, permissionless keeper entrypoint to extend instance TTL and persistent keys
+    // for a specific asset.
+    pub fn bump_asset_ttl(env: Env, asset: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        ttl::extend_instance_ttl(&env);
+        ttl::bump_asset_globals(&env, &asset);
+        Ok(())
     }
 
     // Returns the accumulated protocol bad debt.
@@ -1165,9 +1187,10 @@ impl LendingContract {
             .ed25519_verify(&oracle_pubkey, &payload, &signature);
 
         env.storage().persistent().set(
-            &DataKey::OraclePrice(asset),
+            &DataKey::OraclePrice(asset.clone()),
             &PriceRecord { price, timestamp },
         );
+        crate::ttl::bump_global(&env, &DataKey::OraclePrice(asset.clone()));
         Ok(())
     }
 
@@ -1462,9 +1485,11 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::PriceMin(asset.clone()), &min_price);
+        crate::ttl::bump_global(&env, &DataKey::PriceMin(asset.clone()));
         env.storage()
             .persistent()
             .set(&DataKey::PriceMax(asset.clone()), &max_price);
+        crate::ttl::bump_global(&env, &DataKey::PriceMax(asset.clone()));
         PriceBoundsSetEvent {
             asset,
             min_price,
@@ -1785,6 +1810,7 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::AssetIsolation(asset.clone()), &config);
+        crate::ttl::bump_global(&env, &DataKey::AssetIsolation(asset.clone()));
 
         // Record audit entry
         audit_log::record_audit_entry(
@@ -2004,6 +2030,8 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
+        crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
+        crate::ttl::bump_global(&env, &DataKey::DepositCap);
         extend_collateral_ttl(&env, &user);
 
         // Emit deposit event
@@ -2054,6 +2082,7 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
+        crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
         extend_collateral_ttl(&env, &user);
 
         // Emit withdraw event
@@ -2262,6 +2291,7 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
+        crate::ttl::bump_global(&env, &DataKey::TotalDebt);
         extend_debt_ttl(&env, &user);
 
         // Emit repay event
@@ -2515,6 +2545,7 @@ impl LendingContract {
                     env.storage()
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
+                    crate::ttl::bump_global(&env, &DataKey::BadDebt);
                     BadDebtEvent {
                         borrower: borrower.clone(),
                         amount: residual,
@@ -2826,6 +2857,7 @@ impl LendingContract {
                     env.storage()
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
+                    crate::ttl::bump_global(&env, &DataKey::BadDebt);
                     emit_bad_debt_increased(&env, &borrower, residual, new_bad_debt);
                 }
                 final_seized = available_collateral;
@@ -2868,6 +2900,7 @@ impl LendingContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebtAsset(debt_asset.clone()), &new_total_debt_asset);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebtAsset(debt_asset.clone()));
 
             cross_asset::extend_debt_asset_ttl(&env, &borrower, &debt_asset);
 
@@ -2888,6 +2921,7 @@ impl LendingContract {
                 &DataKey::TotalCollateralAsset(collateral_asset.clone()),
                 &total_supplied.saturating_sub(final_seized),
             );
+            crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(collateral_asset.clone()));
             if new_col == 0 {
                 cross_asset::remove_from_user_collateral_list(
                     &env,
@@ -2907,6 +2941,7 @@ impl LendingContract {
                 &DataKey::TotalCollateralAsset(collateral_asset.clone()),
                 &new_total_col_asset,
             );
+            crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(collateral_asset.clone()));
 
             // ── 12. Release isolation bucket if applicable ────────────────
             if should_release_isolation_debt(&env, &collateral_asset) {
@@ -3187,6 +3222,7 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
+        crate::ttl::bump_global(&env, &DataKey::TotalDebt);
         extend_debt_ttl(&env, &user);
 
         // Emit repay event
@@ -3334,6 +3370,7 @@ impl LendingContract {
         }
         let old_cap = Self::get_deposit_cap(env.clone());
         env.storage().persistent().set(&DataKey::DepositCap, &cap);
+        crate::ttl::bump_global(&env, &DataKey::DepositCap);
 
         // Record audit entry
         audit_log::record_audit_entry(&env, String::from_str(&env, "set_deposit_cap"), admin, None);
@@ -4248,9 +4285,11 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &final_total_deposits);
+        crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
         env.storage()
             .persistent()
             .set(&DataKey::BadDebt, &new_bad_debt);
+        crate::ttl::bump_global(&env, &DataKey::BadDebt);
 
         // --- Emit auditable event ---
         BadDebtWrittenOffEvent {
@@ -4939,6 +4978,7 @@ fn checkpoint_reserve_factor(env: &Env) -> Result<(), LendingError> {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
+        crate::ttl::bump_global(&env, &DataKey::TotalDebt);
     }
     Ok(())
 }
@@ -5069,6 +5109,7 @@ fn increment_isolation_debt(
         .checked_add(delta)
         .ok_or(LendingError::IsolationDebtInvariant)?;
     env.storage().persistent().set(&key, &updated);
+    ttl::bump_global(env, &key);
     Ok(())
 }
 
@@ -5090,6 +5131,7 @@ fn decrement_isolation_debt(
         .checked_sub(amount)
         .ok_or(LendingError::IsolationDebtInvariant)?;
     env.storage().persistent().set(&key, &updated);
+    ttl::bump_global(env, &key);
     Ok(())
 }
 
@@ -5219,6 +5261,7 @@ fn check_emergency_status(env: &Env, action: ProtocolAction) {
 // ```
 pub(crate) fn require_initialized(env: &Env) -> Result<(), LendingError> {
     if env.storage().instance().has(&DataKey::Admin) {
+        ttl::extend_instance_ttl(env);
         Ok(())
     } else {
         Err(LendingError::NotInitialized)
@@ -5532,6 +5575,7 @@ fn commit_borrow(
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebt, &new_total_debt);
+    crate::ttl::bump_global(&env, &DataKey::TotalDebt);
 
     save_debt(env, user, updated);
     register_borrower(env, user);
@@ -5623,6 +5667,7 @@ pub(crate) fn write_utilization_sample(env: &Env, utilization_bps: i128) {
     env.storage()
         .persistent()
         .set(&DataKey::UtilizationHistory, &samples);
+    crate::ttl::bump_global(&env, &DataKey::UtilizationHistory);
 }
 
 // Load utilization samples in their storage order, oldest-first.
@@ -5833,9 +5878,11 @@ mod borrow_rate_snapshot_test {
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebt, &8_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebt);
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDeposits, &10_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
 
             assert_eq!(current_borrow_rate(&env), DEFAULT_APR_BPS);
         });
@@ -5851,6 +5898,7 @@ mod borrow_rate_snapshot_test {
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebt, &5_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebt);
 
             assert_eq!(current_borrow_rate(&env), 100);
         });
@@ -5866,9 +5914,11 @@ mod borrow_rate_snapshot_test {
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebt, &8_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebt);
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDeposits, &10_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
 
             let snapshot = load_rate_snapshot(&env);
             assert_eq!(snapshot.total_debt, 8_000);

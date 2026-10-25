@@ -768,6 +768,7 @@ pub fn deposit_collateral_asset_internal(
         &DataKey::TotalCollateralAsset(asset.clone()),
         &new_total_supplied,
     );
+    crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(asset.clone()));
 
     debug_assert_eq!(new_total_supplied, new_total_col);
     extend_collateral_asset_ttl(env, user, asset);
@@ -852,6 +853,7 @@ pub fn withdraw_asset_internal(
         &DataKey::TotalCollateralAsset(asset.clone()),
         &new_total_supplied,
     );
+    crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(asset.clone()));
 
     extend_collateral_asset_ttl(env, user, asset);
 
@@ -1014,6 +1016,7 @@ pub fn borrow_asset_internal(
     env.storage()
         .persistent()
         .set(&DataKey::TotalDebtAsset(asset.clone()), &new_total_debt);
+    crate::ttl::bump_global(&env, &DataKey::TotalDebtAsset(asset.clone()));
 
     extend_debt_asset_ttl(env, user, asset);
 
@@ -1166,6 +1169,7 @@ pub fn repay_asset_internal(
         &DataKey::TotalDebtAsset(asset.clone()),
         &new_total_debt_asset,
     );
+    crate::ttl::bump_global(&env, &DataKey::TotalDebtAsset(asset.clone()));
 
     extend_debt_asset_ttl(env, user, asset);
 
@@ -1194,6 +1198,7 @@ mod tests {
                 &DataKey::OraclePrice(asset.clone()),
                 &PriceRecord { price, timestamp },
             );
+            crate::ttl::bump_global(&env, &DataKey::OraclePrice(asset.clone()));
         });
     }
 
