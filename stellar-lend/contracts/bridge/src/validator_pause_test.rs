@@ -40,7 +40,7 @@ test_guardian_pause_unpause_happy_path() {
 
     // Pause validator
     let expires_at = u64::MAX;
-    let payload = client.guardian_action_payload(&1u8, &validator.clone(), &expires_at);
+    let payload = client.guardian_action_payload(&1u32, &validator.clone(), &expires_at);
     let sig = sign_payload(&guardian_signing_key, &payload);
 
     client.pause_validator(&validator, &sig, &expires_at);
@@ -48,7 +48,7 @@ test_guardian_pause_unpause_happy_path() {
     assert_eq!(client.get_guardian_nonce(), 1);
 
     // Unpause validator
-    let payload_unpause = client.guardian_action_payload(&2u8, &validator.clone(), &expires_at);
+    let payload_unpause = client.guardian_action_payload(&2u32, &validator.clone(), &expires_at);
     let sig_unpause = sign_payload(&guardian_signing_key, &payload_unpause);
 
     client.unpause_validator(&validator, &sig_unpause, &expires_at);
@@ -81,7 +81,7 @@ test_guardian_replay_and_cross_bridge() {
     client_b.set_guardian(&guardian_pk);
 
     let expires = u64::MAX;
-    let payload_a = client_a.guardian_action_payload(&1u8, &val, &expires);
+    let payload_a = client_a.guardian_action_payload(&1u32, &val, &expires);
     let sig_a = sign_payload(&guardian_key, &payload_a);
 
     // Successful pause on A

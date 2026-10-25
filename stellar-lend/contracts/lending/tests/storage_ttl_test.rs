@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::{storage::{Instance as _, Persistent as _}, Address as _, Ledger as _},
     Address, Env,
 };
 use stellarlend_lending::{
@@ -83,7 +83,7 @@ fn set_price_bounds_extends_price_bound_ttls() {
     let (env, client, id, _admin, _user) = setup();
     let asset = Address::generate(&env);
 
-    client.set_price_bounds(&asset, &100, &10_000);
+    client.set_price_bounds(&asset, &100, &10_000, &false);
 
     let min_ttl = get_persistent_ttl(&env, &id, &DataKey::PriceMin(asset.clone()));
     let max_ttl = get_persistent_ttl(&env, &id, &DataKey::PriceMax(asset.clone()));
@@ -106,7 +106,7 @@ fn set_price_bounds_extends_price_bound_ttls() {
     let decayed_min_ttl = get_persistent_ttl(&env, &id, &DataKey::PriceMin(asset.clone()));
     assert!(decayed_min_ttl < GLOBAL_BUMP_THRESHOLD);
 
-    client.set_price_bounds(&asset, &200, &20_000);
+    client.set_price_bounds(&asset, &200, &20_000, &false);
     let refreshed_min_ttl = get_persistent_ttl(&env, &id, &DataKey::PriceMin(asset.clone()));
     assert!(refreshed_min_ttl >= GLOBAL_BUMP_THRESHOLD);
 }

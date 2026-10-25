@@ -24,9 +24,15 @@ fn make_pool(ra: i128, rb: i128) -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(AmmContract, ());
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
+    let token_a = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    let token_b = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
     let admin = Address::generate(&env);
+    if ra > 0 {
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_a).mint(&admin, &ra);
+    }
+    if rb > 0 {
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_b).mint(&admin, &rb);
+    }
     AmmContractClient::new(&env, &id).init_pool(&admin, &ra, &rb, &token_a, &token_b);
     (env, id)
 }

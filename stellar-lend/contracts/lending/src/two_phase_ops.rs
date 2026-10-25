@@ -51,15 +51,13 @@
 
 use crate::cross_asset::{
     add_to_user_debt_list, compute_aggregate_health_factor, ensure_position_prices_fresh,
-    extend_debt_asset_ttl, load_debt_asset, save_debt_asset, validate_asset_params_configured,
+    extend_debt_asset_ttl, load_debt_asset, save_debt_asset, settle_asset_position,
+    validate_asset_params_configured,
 };
-use crate::debt::{
-    borrow_amount_indexed, repay_amount_indexed, settle_position, touch_borrow_index, DebtPosition,
-};
+use crate::debt::{borrow_amount_indexed, repay_amount_indexed, DebtPosition};
 use crate::{
-    check_emergency_status, check_pause_status, current_borrow_rate, require_initialized,
-    require_no_active_flash_loan, settle_and_accrue_insurance, DataKey, LendingError,
-    ProtocolAction, BPS_DENOM, HEALTH_FACTOR_SCALE,
+    check_emergency_status, check_pause_status, require_initialized, require_no_active_flash_loan,
+    DataKey, LendingError, ProtocolAction, HEALTH_FACTOR_SCALE,
 };
 use soroban_sdk::{contracttype, Address, Env};
 
@@ -173,7 +171,7 @@ pub fn prepare_borrow(
     require_initialized(env)?;
     check_pause_status(env, ProtocolAction::Borrow);
     check_emergency_status(env, ProtocolAction::Borrow);
-    require_no_active_flash_loan(env);
+    require_no_active_flash_loan(env)?;
 
     if amount <= 0 {
         return Err(LendingError::InvalidAmount);
@@ -190,16 +188,16 @@ pub fn prepare_borrow(
     ensure_position_prices_fresh(env, user, asset)?;
 
     let now = env.ledger().timestamp();
-    let rate = current_borrow_rate(env);
 
     // Load current position
     let position_before = load_debt_asset(env, user, asset);
     let prev_principal = position_before.principal;
 
-    // Settle interest and compute new position (speculative, not yet written)
-    let settled_position = settle_and_accrue_insurance(env, &position_before, now, rate)?;
+    // Settle interest against the asset's own index and compute the new
+    // position (speculative; the debt entry is written only by `commit_borrow`).
+    let settled_position = settle_asset_position(env, asset, &position_before, now)?;
 
-    let current_index = touch_borrow_index(env, now, rate);
+    let current_index = settled_position.borrow_index_snapshot;
 
     // Compute speculative new position (with amount added)
     let position_after = borrow_amount_indexed(&settled_position, current_index, now, amount)
@@ -302,7 +300,7 @@ pub fn prepare_withdraw(
     require_initialized(env)?;
     check_pause_status(env, ProtocolAction::Withdraw);
     check_emergency_status(env, ProtocolAction::Withdraw);
-    require_no_active_flash_loan(env);
+    require_no_active_flash_loan(env)?;
 
     if amount <= 0 {
         return Err(LendingError::InvalidAmount);
@@ -384,12 +382,11 @@ pub fn prepare_repay(
     validate_asset_params_configured(env, asset)?;
 
     let now = env.ledger().timestamp();
-    let rate = current_borrow_rate(env);
 
     let position_before = load_debt_asset(env, user, asset);
     let prev_principal = position_before.principal;
 
-    let settled_position = settle_and_accrue_insurance(env, &position_before, now, rate)?;
+    let settled_position = settle_asset_position(env, asset, &position_before, now)?;
 
     // Clamp amount to outstanding balance (cross-asset repay semantic)
     let clamped_amount = amount.min(settled_position.principal);
@@ -404,12 +401,12 @@ pub fn prepare_repay(
             position_after: settled_position.clone(),
             principal_reduction: 0,
             removes_asset_from_list: false,
-            current_index: crate::debt::load_borrow_index(env),
+            current_index: settled_position.borrow_index_snapshot,
             prepared_at: now,
         });
     }
 
-    let current_index = touch_borrow_index(env, now, rate);
+    let current_index = settled_position.borrow_index_snapshot;
 
     let position_after =
         repay_amount_indexed(&settled_position, current_index, now, clamped_amount)
@@ -490,18 +487,6 @@ pub fn commit_borrow(env: &Env, prepared: PreparedBorrow) -> Result<i128, Lendin
         &DataKey::TotalDebtAsset(prepared.asset.clone()),
         &new_total_debt_asset,
     );
-
-    let total_debt_protocol: i128 = env
-        .storage()
-        .persistent()
-        .get(&DataKey::TotalDebt)
-        .unwrap_or(0);
-    let new_total_protocol = total_debt_protocol
-        .checked_add(prepared.principal_delta)
-        .ok_or(LendingError::Overflow)?;
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDebt, &new_total_protocol);
 
     // 4. Update isolation debt if applicable
     if crate::is_asset_isolated(env, &prepared.asset) {
@@ -605,7 +590,9 @@ pub fn commit_repay(env: &Env, prepared: PreparedRepay) -> Result<i128, LendingE
         crate::cross_asset::remove_from_user_debt_list(env, &prepared.user, &prepared.asset);
     }
 
-    // 3. Update total debt counters
+    // 3. Update the per-asset total debt counter. The global `TotalDebt` is
+    // deliberately not touched: cross-asset debt is denominated in the asset's
+    // own units and tracked per asset.
     let total_debt_asset: i128 = env
         .storage()
         .persistent()
@@ -616,16 +603,6 @@ pub fn commit_repay(env: &Env, prepared: PreparedRepay) -> Result<i128, LendingE
         &DataKey::TotalDebtAsset(prepared.asset.clone()),
         &new_total_asset,
     );
-
-    let total_debt_protocol: i128 = env
-        .storage()
-        .persistent()
-        .get(&DataKey::TotalDebt)
-        .unwrap_or(0);
-    let new_total_protocol = total_debt_protocol.saturating_sub(prepared.principal_reduction);
-    env.storage()
-        .persistent()
-        .set(&DataKey::TotalDebt, &new_total_protocol);
 
     // 4. Update isolation debt if applicable
     if crate::should_release_isolation_debt(env, &prepared.asset) {

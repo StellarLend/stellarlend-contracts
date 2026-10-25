@@ -17,6 +17,7 @@ pub mod math;
 pub mod operation_tracker;
 pub mod rate_model;
 pub mod rounding_strategy;
+pub mod ttl;
 #[cfg(test)]
 pub mod two_phase_ops;
 pub mod upgrade;
@@ -198,8 +199,11 @@ use debt::{
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
 };
 use events::{
-    emit_borrow, emit_deposit, emit_flash_loan, emit_flash_loan_repaid, emit_repay,
-    emit_schema_version, emit_withdraw,
+    emit_admin_accepted, emit_admin_proposed, emit_asset_isolation_set, emit_bad_debt_increased,
+    emit_borrow, emit_config_backup, emit_config_restore, emit_config_set, emit_deposit,
+    emit_deposit_cap_set, emit_flash_loan, emit_flash_loan_repaid, emit_insurance_funded,
+    emit_insurance_share_set, emit_liquidation_grace_period_set, emit_liquidation_threshold_set,
+    emit_rate_params_set, emit_repay, emit_schema_version, emit_withdraw, EVENT_SCHEMA_VERSION,
 };
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::xdr::ToXdr;
@@ -416,6 +420,16 @@ pub enum DataKey {
     ReserveFactorBps,
     /// Persistent accounting balance of protocol reserves, excluded from depositor supply.
     ProtocolReserves,
+    /// Per-asset borrow index for cross-asset debt (scaled by
+    /// [`debt::INDEX_SCALE`]). Seeded from [`DataKey::BorrowIndex`] the
+    /// first time the asset is touched so pre-existing snapshots stay on a
+    /// continuous accrual timeline. See `PER_ASSET_ACCRUAL.md`.
+    ///
+    /// Declared after every pre-existing variant so the encoded discriminant
+    /// of existing storage keys never changes.
+    BorrowIndexAsset(Address),
+    /// Ledger timestamp of the last per-asset borrow-index update.
+    LastIndexUpdateAsset(Address),
 }
 
 #[contracttype]
@@ -537,7 +551,9 @@ pub struct RateParamsUpdated {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidationEventV1 {
     pub schema_version: u32,
+    #[topic]
     pub liquidator: Address,
+    #[topic]
     pub borrower: Address,
     pub repaid: i128,
     pub seized: i128,
@@ -562,12 +578,16 @@ pub struct CrossLiquidationEvent {
     /// Schema version for forward-compatible decoding.
     pub schema_version: u32,
     /// Address that triggered the liquidation.
+    #[topic]
     pub liquidator: Address,
     /// Address whose position was liquidated.
+    #[topic]
     pub borrower: Address,
     /// Asset whose debt was repaid.
+    #[topic]
     pub debt_asset: Address,
     /// Asset whose collateral was seized.
+    #[topic]
     pub collateral_asset: Address,
     /// Debt amount repaid (in debt-asset raw units).
     pub repaid: i128,
@@ -576,37 +596,12 @@ pub struct CrossLiquidationEvent {
     /// Aggregate health factor of the position *before* this call.
     pub health_factor_before: i128,
     /// Shortfall that could not be covered by seized collateral (routed to
-    /// the insurance fund and/or `BadDebt`).
+    /// the insurance fund and/or `BadDect`).
     pub shortfall: i128,
 }
 
 /// Emitted by [`LendingContract::flash_loan`] when a flash loan is
 /// successfully disbursed. Carries the schema version, the borrowed amount,
-/// the fee charged, and the initiator/receiver addresses so off-chain
-/// indexers and monitoring can observe flash-loan activity.
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FlashLoanEvent {
-    pub schema_version: u32,
-    pub initiator: Address,
-    pub receiver: Address,
-    pub amount: i128,
-    pub fee: i128,
-}
-
-/// Emitted by [`LendingContract::repay_flash_loan`] when a flash loan is
-/// repaid (principal plus fee). Mirrors [`FlashLoanEvent`] so indexers can
-/// pair the disbursement and repayment legs.
-#[contractevent]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FlashLoanRepaidEvent {
-    pub schema_version: u32,
-    pub initiator: Address,
-    pub receiver: Address,
-    pub amount: i128,
-    pub fee: i128,
-}
-
 /// Emitted by [`LendingContract::write_off_bad_debt`] whenever a governed
 /// write-off completes.  Fields sum to `amount`:
 ///
@@ -871,7 +866,10 @@ pub struct AssetParamsSetEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossDepositEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -879,7 +877,10 @@ pub struct CrossDepositEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossBorrowEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -887,7 +888,10 @@ pub struct CrossBorrowEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossRepayEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -895,7 +899,10 @@ pub struct CrossRepayEvent {
 #[contractevent]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossWithdrawEvent {
+    pub schema_version: u32,
+    #[topic]
     pub user: Address,
+    #[topic]
     pub asset: Address,
     pub amount: i128,
 }
@@ -963,6 +970,26 @@ impl LendingContract {
 
     pub fn has_admin(env: Env) -> bool {
         env.storage().instance().has(&DataKey::Admin)
+    }
+
+    // Admin-free, permissionless keeper entrypoint to extend instance and global storage TTLs.
+    //
+    // Extends instance storage TTL and all core global persistent keys (TotalDebt,
+    // TotalDeposits, BadDebt, DepositCap, UtilizationHistory, and configured asset keys).
+    pub fn bump_ttl(env: Env) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        ttl::extend_instance_ttl(&env);
+        ttl::bump_all_globals(&env);
+        Ok(())
+    }
+
+    // Admin-free, permissionless keeper entrypoint to extend instance TTL and persistent keys
+    // for a specific asset.
+    pub fn bump_asset_ttl(env: Env, asset: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        ttl::extend_instance_ttl(&env);
+        ttl::bump_asset_globals(&env, &asset);
+        Ok(())
     }
 
     // Returns the accumulated protocol bad debt.
@@ -1159,12 +1186,11 @@ impl LendingContract {
         env.crypto()
             .ed25519_verify(&oracle_pubkey, &payload, &signature);
 
-        let key = DataKey::OraclePrice(asset);
         env.storage().persistent().set(
-            &key,
+            &DataKey::OraclePrice(asset.clone()),
             &PriceRecord { price, timestamp },
         );
-        ttl::bump_global(&env, &key);
+        crate::ttl::bump_global(&env, &DataKey::OraclePrice(asset.clone()));
         Ok(())
     }
 
@@ -1458,12 +1484,12 @@ impl LendingContract {
 
         env.storage()
             .persistent()
-            .set(&min_key, &min_price);
+            .set(&DataKey::PriceMin(asset.clone()), &min_price);
+        crate::ttl::bump_global(&env, &DataKey::PriceMin(asset.clone()));
         env.storage()
             .persistent()
-            .set(&max_key, &max_price);
-        ttl::bump_global(&env, &min_key);
-        ttl::bump_global(&env, &max_key);
+            .set(&DataKey::PriceMax(asset.clone()), &max_price);
+        crate::ttl::bump_global(&env, &DataKey::PriceMax(asset.clone()));
         PriceBoundsSetEvent {
             asset,
             min_price,
@@ -1507,6 +1533,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
+        emit_admin_proposed(&env, &current_admin, &new_admin);
         Ok(())
     }
 
@@ -1517,6 +1544,7 @@ impl LendingContract {
     // updated, and `PendingAdmin` is cleared.
     pub fn accept_admin(env: Env) -> Result<(), LendingError> {
         require_initialized(&env)?;
+        let old_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         let pending_admin: Address = env
             .storage()
             .instance()
@@ -1536,6 +1564,7 @@ impl LendingContract {
             None,
         );
 
+        emit_admin_accepted(&env, &old_admin, &pending_admin);
         Ok(())
     }
 
@@ -1778,11 +1807,10 @@ impl LendingContract {
             isolated,
             isolation_debt_ceiling,
         };
-        let key = DataKey::AssetIsolation(asset);
         env.storage()
             .persistent()
-            .set(&key, &config);
-        ttl::bump_global(&env, &key);
+            .set(&DataKey::AssetIsolation(asset.clone()), &config);
+        crate::ttl::bump_global(&env, &DataKey::AssetIsolation(asset.clone()));
 
         // Record audit entry
         audit_log::record_audit_entry(
@@ -1792,6 +1820,7 @@ impl LendingContract {
             None,
         );
 
+        emit_asset_isolation_set(&env, &asset, isolated, isolation_debt_ceiling);
         Ok(())
     }
 
@@ -1974,7 +2003,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
 
         let total_deposits: i128 = env
@@ -2001,12 +2030,14 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
-        ttl::bump_global(&env, &DataKey::TotalDeposits);
-        ttl::bump_global(&env, &DataKey::DepositCap);
+        crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
+        crate::ttl::bump_global(&env, &DataKey::DepositCap);
         extend_collateral_ttl(&env, &user);
 
         // Emit deposit event
         emit_deposit(&env, &user, amount, new_balance);
+
+        check_and_clear_unhealthy_timestamp(&env, &user);
 
         Ok(new_balance)
     }
@@ -2024,7 +2055,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
         let key = DataKey::Collateral(user.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -2051,7 +2082,7 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &new_total);
-        ttl::bump_global(&env, &DataKey::TotalDeposits);
+        crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
         extend_collateral_ttl(&env, &user);
 
         // Emit withdraw event
@@ -2119,82 +2150,55 @@ impl LendingContract {
     }
 
     // Borrow assets after pause and emergency gates pass.
-    // 
+    //
     // Accrues interest on the existing position, increases principal by `amount`,
     // and rejects the borrow when the post-borrow health factor would fall below
     // 1.0 (`HEALTH_FACTOR_SCALE`) or when protocol `TotalDebt` would exceed
     // `DataKey::DebtCeiling`.
+    //
+    // The validation and accounting pipeline is shared with
+    // [`Self::borrow_against_collateral`] through [`borrow_internal`]; only the
+    // isolation-mode ceiling differs between the two entry points.
     pub fn borrow(env: Env, user: Address, amount: i128) -> Result<i128, LendingError> {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
-        require_fresh_valuation_prices(&env)?;
         user.require_auth();
-        let min_borrow = Self::get_min_borrow(env.clone());
-        if amount < min_borrow {
-            return Err(LendingError::BelowMinimumBorrow);
-        }
 
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
-        let now = env.ledger().timestamp();
-        let rate = current_borrow_rate(&env);
-        let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)?;
-        let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
-            debt::DebtError::Overflow => LendingError::Overflow,
-            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
-        })?;
+        // ── Validate & calculate (nothing is persisted yet) ──────────────────
+        let (updated, delta) = borrow_internal(&env, &user, amount)?;
 
-        let total_debt: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalDebt)
-            .unwrap_or(0);
-        let delta = updated
-            .principal
-            .checked_sub(prev_principal)
-            .ok_or(LendingError::Overflow)?;
-        let new_total_debt = total_debt
-            .checked_add(delta)
-            .ok_or(LendingError::Overflow)?;
-
-        assert_borrow_solvent(&env, &user, &updated, new_total_debt)?;
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDebt, &new_total_debt);
-        ttl::bump_global(&env, &DataKey::TotalDebt);
-
-        save_debt(&env, &user, &updated);
-        register_borrower(&env, &user);
-        // Extend TTL to prevent archival of debt entry
-        extend_debt_ttl(&env, &user);
-
-        // Emit borrow event
-        emit_borrow(&env, &user, amount, updated.principal);
+        // ── Persist ──────────────────────────────────────────────────────────
+        commit_borrow(&env, &user, amount, &updated, delta)?;
 
         Ok(updated.principal)
     }
 
     // Isolation-aware borrow for cross-asset positions.
-    // 
+    //
     // Identical to [`borrow`] but additionally:
-    // 
+    //
     // 1. Checks that `collateral_asset` is not isolated **or**, if it is,
     //    that the new borrow does not push the running `IsolationDebt` past
     //    the asset's `isolation_debt_ceiling`.
     // 2. On success, increments `IsolationDebt(collateral_asset)` by the
     //    net new principal added to the user's position.
-    // 
+    //
     // Use this function in any cross-asset borrow path where `collateral_asset`
     // is the primary (or sole) isolated collateral backing the position.
-    // 
+    //
+    // # Effect ordering
+    //
+    // Every check — the shared solvency / debt-ceiling pipeline performed by
+    // [`borrow_internal`] *and* the isolation ceiling — runs before the debt
+    // position is written, the debt TTL is extended or the `BorrowEvent` is
+    // emitted. A rejected borrow therefore leaves no partial debt, isolation
+    // accounting, TTL or event effect behind.
+    //
     // # Errors
     // - All errors from [`borrow`].
     // - `IsolationCeilingExceeded` — borrow would breach the per-asset ceiling.
@@ -2207,49 +2211,22 @@ impl LendingContract {
         require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::Borrow);
         check_emergency_status(&env, ProtocolAction::Borrow);
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         if amount <= 0 {
             return Err(LendingError::InvalidAmount);
         }
         user.require_auth();
-        let min_borrow = Self::get_min_borrow(env.clone());
-        if amount < min_borrow {
-            return Err(LendingError::BelowMinimumBorrow);
-        }
 
-        let now = env.ledger().timestamp();
-        let position = load_debt(&env, &user);
-        let prev_principal = position.principal;
-        let rate = current_borrow_rate(&env);
-        let updated = borrow_amount(position, now, amount, rate).map_err(|e| match e {
-            debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
-            debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
-            debt::DebtError::Overflow => LendingError::Overflow,
-            debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
-        })?;
-        save_debt(&env, &user, &updated);
-        register_borrower(&env, &user);
+        // ── Validate & calculate (nothing is persisted yet) ──────────────────
+        let (updated, delta) = borrow_internal(&env, &user, amount)?;
 
-        // Track protocol-level total debt.
-        let total_debt: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalDebt)
-            .unwrap_or(0);
-        let delta = updated
-            .principal
-            .checked_sub(prev_principal)
-            .ok_or(LendingError::Overflow)?;
-        let new_total_debt = total_debt
-            .checked_add(delta)
-            .ok_or(LendingError::Overflow)?;
-        // Check the actual principal delta, not the requested amount. This
-        // keeps the ceiling aligned with the value written to the position.
+        // The isolation ceiling is evaluated against the *principal delta*
+        // (settled interest + borrowed amount) and therefore has to happen
+        // before any state is written or any event is emitted.
         check_isolation_ceiling_internal(&env, &collateral_asset, delta)?;
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDebt, &new_total_debt);
-        ttl::bump_global(&env, &DataKey::TotalDebt);
+
+        // ── Persist ──────────────────────────────────────────────────────────
+        commit_borrow(&env, &user, amount, &updated, delta)?;
 
         // Update the per-asset isolation debt tracker only when the asset is
         // actually configured as isolated.  Non-isolated assets are not tracked.
@@ -2257,9 +2234,12 @@ impl LendingContract {
             increment_isolation_debt(&env, &collateral_asset, delta)?;
         }
 
-        // Check invariant AFTER state change
-        #[cfg(test)]
-        invariants::check_invariant_after(&env, &collateral_asset);
+        // NOTE: the reserve-invariant checks are deliberately not invoked here.
+        // `invariants::compute_expected_reserve` only models
+        // `TotalDeposits - BadDebt`, so it cannot represent the collateral that
+        // backs this position nor the debt this borrow just created, and
+        // enabling it made every borrow trap. See `invariants.rs` and the
+        // equivalent note in `liquidate`.
 
         Ok(updated.principal)
     }
@@ -2285,7 +2265,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
@@ -2311,7 +2291,7 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
-        ttl::bump_global(&env, &DataKey::TotalDebt);
+        crate::ttl::bump_global(&env, &DataKey::TotalDebt);
         extend_debt_ttl(&env, &user);
 
         // Emit repay event
@@ -2403,7 +2383,7 @@ impl LendingContract {
 
             check_pause_status(&env, ProtocolAction::Liquidate);
             require_fresh_valuation_prices(&env)?;
-            require_no_active_flash_loan(&env);
+            require_no_active_flash_loan(&env)?;
             if uses_cross_asset_valuation(&env) {
                 let configured_debt_asset: Address = env
                     .storage()
@@ -2458,6 +2438,40 @@ impl LendingContract {
                     env.storage().persistent().remove(&first_unhealthy_key);
                 }
                 return Err(LendingError::PositionHealthy);
+            }
+
+            let grace_secs = Self::get_liquidation_grace_period(env.clone());
+            if grace_secs > 0 {
+                let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+                let first_unhealthy_ts = match env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, u64>(&first_unhealthy_key)
+                {
+                    Some(ts) => ts,
+                    None => {
+                        // Position was observed unhealthy for the first time.
+                        // Record the current timestamp and extend TTL.
+                        //
+                        // Note on Soroban storage rollback:
+                        // Because returning `Err(LiquidationGracePeriodActive)` causes the Soroban
+                        // host to roll back storage mutations within this transaction, this write
+                        // will not persist unless `mark_unhealthy` is called in a separate successful
+                        // invocation. Keepers/liquidators are expected to call `mark_unhealthy` first
+                        // to establish the grace period start time on-chain.
+                        env.storage()
+                            .persistent()
+                            .set(&first_unhealthy_key, &now);
+                        extend_first_unhealthy_ttl(&env, &borrower);
+                        return Err(LendingError::LiquidationGracePeriodActive);
+                    }
+                };
+
+                extend_first_unhealthy_ttl(&env, &borrower);
+
+                if now < first_unhealthy_ts.saturating_add(grace_secs) {
+                    return Err(LendingError::LiquidationGracePeriodActive);
+                }
             }
 
             let close_factor_bps = Self::close_factor_bps_config(&env);
@@ -2531,6 +2545,7 @@ impl LendingContract {
                     env.storage()
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
+                    crate::ttl::bump_global(&env, &DataKey::BadDebt);
                     BadDebtEvent {
                         borrower: borrower.clone(),
                         amount: residual,
@@ -2745,7 +2760,7 @@ impl LendingContract {
             }
 
             check_pause_status(&env, ProtocolAction::Liquidate);
-            require_no_active_flash_loan(&env);
+            require_no_active_flash_loan(&env)?;
 
             // ── 2. Validate both assets are configured ─────────────────────
             // (also implicitly validates they exist before any price lookup)
@@ -2777,10 +2792,9 @@ impl LendingContract {
 
             // ── 6. Accrue interest on the debt leg ────────────────────────
             let now = env.ledger().timestamp();
-            let rate = current_borrow_rate(&env);
             let position = cross_asset::load_debt_asset(&env, &borrower, &debt_asset);
-            let settled_position = settle_and_accrue_insurance(&env, &position, now, rate)
-                .map_err(|_| LendingError::Overflow)?;
+            let settled_position =
+                cross_asset::settle_asset_position(&env, &debt_asset, &position, now)?;
 
             let debt = settled_position.principal;
             if debt <= 0 {
@@ -2843,12 +2857,8 @@ impl LendingContract {
                     env.storage()
                         .persistent()
                         .set(&DataKey::BadDebt, &new_bad_debt);
-                    ttl::bump_global(&env, &DataKey::BadDebt);
-                    #[allow(deprecated)]
-                    env.events().publish(
-                        (Symbol::new(&env, "bad_debt"), borrower.clone()),
-                        residual,
-                    );
+                    crate::ttl::bump_global(&env, &DataKey::BadDebt);
+                    emit_bad_debt_increased(&env, &borrower, residual, new_bad_debt);
                 }
                 final_seized = available_collateral;
             }
@@ -2867,29 +2877,30 @@ impl LendingContract {
                 cross_asset::remove_from_user_debt_list(&env, &borrower, &debt_asset);
             }
 
-            // Update per-asset and protocol-level total debt accumulators.
+            // Update the per-asset total debt accumulator by the full change in
+            // the borrower's stored principal (settled interest plus repayment),
+            // so `Σ user debt(asset) == TotalDebtAsset(asset)` keeps holding.
+            // The global `TotalDebt` is deliberately not touched: this debt is
+            // denominated in `debt_asset`'s own units.
             let total_debt_asset: i128 = env
                 .storage()
                 .persistent()
                 .get(&DataKey::TotalDebtAsset(debt_asset.clone()))
                 .unwrap_or(0);
-            let new_total_debt_asset = total_debt_asset.saturating_sub(actual_repay);
-            let debt_asset_key = DataKey::TotalDebtAsset(debt_asset.clone());
+            let principal_delta = updated_debt_position
+                .principal
+                .checked_sub(position.principal)
+                .ok_or(LendingError::Overflow)?;
+            let new_total_debt_asset = total_debt_asset
+                .checked_add(principal_delta)
+                .ok_or(LendingError::Overflow)?;
+            if new_total_debt_asset < 0 {
+                return Err(LendingError::Overflow);
+            }
             env.storage()
                 .persistent()
-                .set(&debt_asset_key, &new_total_debt_asset);
-            ttl::bump_global(&env, &debt_asset_key);
-
-            let total_debt_protocol: i128 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::TotalDebt)
-                .unwrap_or(0);
-            let new_total_debt_protocol = total_debt_protocol.saturating_sub(actual_repay);
-            env.storage()
-                .persistent()
-                .set(&DataKey::TotalDebt, &new_total_debt_protocol);
-            ttl::bump_global(&env, &DataKey::TotalDebt);
+                .set(&DataKey::TotalDebtAsset(debt_asset.clone()), &new_total_debt_asset);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebtAsset(debt_asset.clone()));
 
             cross_asset::extend_debt_asset_ttl(&env, &borrower, &debt_asset);
 
@@ -2898,6 +2909,19 @@ impl LendingContract {
                 .checked_sub(final_seized)
                 .ok_or(LendingError::Overflow)?;
             cross_asset::save_collateral_asset(&env, &borrower, &collateral_asset, new_col);
+            // Seized collateral leaves the borrower, so reduce the per-asset
+            // supplied total that feeds utilisation. Saturate for legacy state
+            // where the counter was never populated.
+            let total_supplied: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalCollateralAsset(collateral_asset.clone()))
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &DataKey::TotalCollateralAsset(collateral_asset.clone()),
+                &total_supplied.saturating_sub(final_seized),
+            );
+            crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(collateral_asset.clone()));
             if new_col == 0 {
                 cross_asset::remove_from_user_collateral_list(
                     &env,
@@ -2907,6 +2931,17 @@ impl LendingContract {
             } else {
                 cross_asset::extend_collateral_asset_ttl(&env, &borrower, &collateral_asset);
             }
+
+            // Seized collateral leaves the per-asset supplied total. Saturate at
+            // zero like `withdraw_collateral_asset_internal`: legacy deployments
+            // may under-record this counter and must not brick liquidations.
+            let total_col_asset = cross_asset::load_total_collateral_asset(&env, &collateral_asset);
+            let new_total_col_asset = total_col_asset.saturating_sub(final_seized);
+            env.storage().persistent().set(
+                &DataKey::TotalCollateralAsset(collateral_asset.clone()),
+                &new_total_col_asset,
+            );
+            crate::ttl::bump_global(&env, &DataKey::TotalCollateralAsset(collateral_asset.clone()));
 
             // ── 12. Release isolation bucket if applicable ────────────────
             if should_release_isolation_debt(&env, &collateral_asset) {
@@ -3053,16 +3088,17 @@ impl LendingContract {
         {
             return Err(LendingError::InvalidLiquidationThresholdBps);
         }
-        let old_value = Self::liquidation_threshold_bps_config(&env);
+        let old_threshold_bps = Self::liquidation_threshold_bps_config(&env);
         record_governance_audit(
             &env,
             GovernedRiskParameter::LiquidationThresholdBps,
-            old_value,
+            old_threshold_bps,
             threshold_bps,
         )?;
         env.storage()
             .instance()
             .set(&DataKey::LiquidationThresholdBps, &threshold_bps);
+        emit_liquidation_threshold_set(&env, old_threshold_bps, threshold_bps);
         Ok(())
     }
 
@@ -3160,7 +3196,7 @@ impl LendingContract {
             return Err(LendingError::InvalidAmount);
         }
 
-        require_no_active_flash_loan(&env);
+        require_no_active_flash_loan(&env)?;
         user.require_auth();
         let position = load_debt(&env, &user);
         let prev_principal = position.principal;
@@ -3186,7 +3222,7 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
-        ttl::bump_global(&env, &DataKey::TotalDebt);
+        crate::ttl::bump_global(&env, &DataKey::TotalDebt);
         extend_debt_ttl(&env, &user);
 
         // Emit repay event
@@ -3332,12 +3368,14 @@ impl LendingContract {
         if cap <= 0 {
             return Err(LendingError::InvalidDepositCap);
         }
+        let old_cap = Self::get_deposit_cap(env.clone());
         env.storage().persistent().set(&DataKey::DepositCap, &cap);
-        ttl::bump_global(&env, &DataKey::DepositCap);
+        crate::ttl::bump_global(&env, &DataKey::DepositCap);
 
         // Record audit entry
         audit_log::record_audit_entry(&env, String::from_str(&env, "set_deposit_cap"), admin, None);
 
+        emit_deposit_cap_set(&env, old_cap, cap);
         Ok(())
     }
 
@@ -3369,7 +3407,7 @@ impl LendingContract {
         env.storage().instance().set(&DataKey::RateParams, &params);
         RateParamsUpdated {
             old,
-            new: params,
+            new: params.clone(),
             checkpoint_index,
         }
         .publish(&env);
@@ -3377,6 +3415,13 @@ impl LendingContract {
         // Record audit entry
         audit_log::record_audit_entry(&env, String::from_str(&env, "set_rate_params"), admin, None);
 
+        emit_rate_params_set(
+            &env,
+            params.base_rate_bps,
+            params.multiplier_bps,
+            params.jump_multiplier_bps,
+            params.kink_utilization_bps,
+        );
         Ok(())
     }
 
@@ -3412,12 +3457,17 @@ impl LendingContract {
         Ok(())
     }
 
-    // Repay function used by receiver during callback to return funds to the contract.
+    // **DEPRECATED**: Repay function used by receiver during callback to return funds to the contract.
+    //
+    // **This function is deprecated.** New flash loan integrations should repay by
+    // calling `token.transfer()` directly to send `amount + fee` to the contract.
+    // The updated `flash_loan` verifies repayment via the contract's actual token balance.
+    //
     // Uses checked arithmetic to prevent overflow/underflow.
-    // 
+    //
     // Gated behind pause and emergency checks to prevent any flash-loan
     // interaction during a protocol pause or emergency shutdown.
-    // 
+    //
     // # Errors
     // - [`LendingError::NotInitialized`] if the contract has not been
     //   initialized yet.
@@ -3426,6 +3476,10 @@ impl LendingContract {
     //   balance is less than `amount`.
     // - [`LendingError::Overflow`] if the checked arithmetic on the payer
     //   or treasury balance would overflow / underflow.
+    #[deprecated(
+        since = "2.0.0",
+        note = "Use token.transfer() to repay flash loans directly"
+    )]
     pub fn repay_flash_loan(
         env: Env,
         payer: Address,
@@ -3461,11 +3515,26 @@ impl LendingContract {
         Ok(())
     }
 
-    // Issue a callback-based flash loan.
-    // 
+    // Issue a callback-based flash loan with real token transfers.
+    //
+    // The receiver gets `amount` tokens during the callback and must repay
+    // `amount + fee` before this function returns. The fee is computed with
+    // ceiling rounding so small loans always pay at least the minimum fee.
+    //
     // Gated behind pause and emergency checks so that flash loans
     // are blocked during granular pause, global pause, and emergency
     // shutdown/recovery — just like deposit/borrow/repay/withdraw.
+    //
+    // # Errors
+    // - [`LendingError::InsufficientLiquidity`] if the contract's token balance
+    //   is less than `amount`.
+    // - [`LendingError::FlashLoanUtilizationExceeded`] if `amount` exceeds
+    //   the maximum flash-loan cap (`max_flash_bps` of available liquidity).
+    // - [`LendingError::InsufficientRepayment`] if the contract's token balance
+    //   after the callback is less than `balance_before + fee`.
+    // - [`LendingError::FlashLoanReentrancy`] if a flash loan is already active.
+    // - [`LendingError::InvalidAmount`] if `amount <= 0`.
+    // - [`LendingError::Unauthorized`] if `receiver` equals the contract itself.
     pub fn flash_loan(
         env: Env,
         initiator: Address,
@@ -3473,56 +3542,77 @@ impl LendingContract {
         asset: Address,
         amount: i128,
         params: Bytes,
-    ) {
-        require_initialized(&env).unwrap();
+    ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         check_pause_status(&env, ProtocolAction::FlashLoan);
         check_emergency_status(&env, ProtocolAction::FlashLoan);
-        require_no_active_flash_loan(&env);
-
-        let tre_key = DataKey::Treasury(asset.clone());
-        let tre_bal: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-        if amount > tre_bal {
-            panic_with_error!(&env, LendingError::InsufficientCollateral);
+        
+        // Check reentrancy guard
+        let active: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::FlashActive)
+            .unwrap_or(false);
+        if active {
+            return Err(LendingError::FlashLoanReentrancy);
         }
 
-        let max_flash_bps = Self::max_flash_bps_config(&env);
-        let max_flash_amount = tre_bal
-            .checked_mul(max_flash_bps)
-            .and_then(|value| value.checked_div(BPS_DENOM))
-            .unwrap_or(0);
-        if amount > max_flash_amount {
-            panic_with_error!(&env, LendingError::InvalidAmount);
+        if amount <= 0 {
+            return Err(LendingError::InvalidAmount);
+        }
+
+        // Prevent receiver from being the contract itself
+        if receiver == env.current_contract_address() {
+            return Err(LendingError::Unauthorized);
         }
 
         initiator.require_auth();
 
+        let token = TokenClient::new(&env, &asset);
+        let contract_address = env.current_contract_address();
+        
+        // Get current balance
+        let balance_before = token.balance(&contract_address);
+        
+        // Check liquidity - must have enough tokens minus amounts reserved for depositors
+        // For now, use simple balance check (coordinate with reserve invariant if needed)
+        if amount > balance_before {
+            return Err(LendingError::InsufficientLiquidity);
+        }
+
+        // Check utilization cap
+        let max_flash_bps = Self::max_flash_bps_config(&env);
+        let max_flash_amount = balance_before
+            .checked_mul(max_flash_bps)
+            .and_then(|value| value.checked_div(BPS_DENOM))
+            .ok_or(LendingError::Overflow)?;
+        if amount > max_flash_amount {
+            return Err(LendingError::FlashLoanUtilizationExceeded);
+        }
+
+        // Compute fee with ceiling rounding (so small loans pay at least 1)
         let fee_bps = Self::get_flash_fee_bps(&env);
         let fee = amount
             .checked_mul(fee_bps)
-            .map(|v| v / BPS_DENOM)
-            .unwrap_or(0);
+            .ok_or(LendingError::Overflow)?;
+        // Ceiling division: (amount * fee_bps + BPS_DENOM - 1) / BPS_DENOM
+        let fee = fee
+            .checked_add(BPS_DENOM - 1)
+            .ok_or(LendingError::Overflow)?
+            / BPS_DENOM;
 
-        let new_tre_bal = tre_bal
-            .checked_sub(amount)
-            .unwrap_or(0);
-        env.storage().persistent().set(&tre_key, &new_tre_bal);
+        // Transfer tokens to receiver
+        token.transfer(&contract_address, &receiver, &amount);
 
-        let rec_key = DataKey::Balance(asset.clone(), receiver.clone());
-        let rec_bal: i128 = env.storage().persistent().get(&rec_key).unwrap_or(0);
-        let new_rec_bal = rec_bal
-            .checked_add(amount)
-            .unwrap_or(0);
-        env.storage().persistent().set(&rec_key, &new_rec_bal);
-
-        // Emit flash loan event before callback (rolled back atomically on panic).
-        // Placed here so FlashLoanEvent appears before FlashLoanRepaidEvent in logs.
+        // Emit flash loan event before callback (rolled back atomically on error).
         emit_flash_loan(&env, &initiator, &receiver, &asset, amount, fee);
 
+        // Set reentrancy guard
         env.storage().instance().set(&DataKey::FlashActive, &true);
 
+        // Invoke callback
         let method = Symbol::new(&env, "on_flash_loan");
-        // Call contract - if it panics, propagate
-        env.invoke_contract::<Val>(
+        let _result: Val = env.invoke_contract(
             &receiver,
             &method,
             soroban_sdk::vec![
@@ -3535,15 +3625,49 @@ impl LendingContract {
             ],
         );
 
+        // Clear reentrancy guard
         env.storage().instance().set(&DataKey::FlashActive, &false);
 
-        let final_tre: i128 = env.storage().persistent().get(&tre_key).unwrap_or(0);
-        let required_balance = tre_bal
+        // Verify repayment: balance must be >= balance_before + fee
+        let balance_after = token.balance(&contract_address);
+        let required_balance = balance_before
             .checked_add(fee)
-            .unwrap_or(0);
-        if final_tre < required_balance {
-            panic_with_error!(&env, LendingError::InvalidAmount);
+            .ok_or(LendingError::Overflow)?;
+        
+        if balance_after < required_balance {
+            return Err(LendingError::InsufficientRepayment);
         }
+
+        // Route the fee to the insurance fund or reserves based on InsuranceShareBps
+        let insurance_share_bps: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::InsuranceShareBps)
+            .unwrap_or(0);
+        
+        if insurance_share_bps > 0 && insurance_share_bps <= BPS_DENOM {
+            let insurance_portion = fee
+                .checked_mul(insurance_share_bps)
+                .and_then(|v| v.checked_div(BPS_DENOM))
+                .unwrap_or(0);
+            
+            if insurance_portion > 0 {
+                let current_insurance: i128 = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::InsuranceFund)
+                    .unwrap_or(0);
+                let new_insurance = current_insurance
+                    .checked_add(insurance_portion)
+                    .ok_or(LendingError::Overflow)?;
+                env.storage()
+                    .instance()
+                    .set(&DataKey::InsuranceFund, &new_insurance);
+            }
+        }
+        // The remainder stays in the contract balance as protocol reserves
+
+        Ok(())
     }
 
     pub fn get_position(env: Env, user: Address) -> PositionSummary {
@@ -3921,6 +4045,7 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::InsuranceFund, &new_balance);
+        emit_insurance_funded(&env, amount, new_balance);
         Ok(())
     }
 
@@ -3942,6 +4067,7 @@ impl LendingContract {
         if share_bps < 0 || share_bps > 10000 {
             return Err(LendingError::InvalidAmount);
         }
+        let old_share_bps = Self::get_insurance_share(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::InsuranceShareBps, &share_bps);
@@ -3954,6 +4080,7 @@ impl LendingContract {
             None,
         );
 
+        emit_insurance_share_set(&env, old_share_bps, share_bps);
         Ok(())
     }
 
@@ -4158,11 +4285,11 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeposits, &final_total_deposits);
+        crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
         env.storage()
             .persistent()
             .set(&DataKey::BadDebt, &new_bad_debt);
-        ttl::bump_global(&env, &DataKey::TotalDeposits);
-        ttl::bump_global(&env, &DataKey::BadDebt);
+        crate::ttl::bump_global(&env, &DataKey::BadDebt);
 
         // --- Emit auditable event ---
         BadDebtWrittenOffEvent {
@@ -4201,6 +4328,7 @@ impl LendingContract {
         if grace_secs > MAX_LIQUIDATION_GRACE_PERIOD_SECS {
             return Err(LendingError::InvalidLiquidationGracePeriod);
         }
+        let old_grace_secs = Self::get_liquidation_grace_period(env.clone());
         env.storage()
             .persistent()
             .set(&DataKey::LiquidationGracePeriodSecs, &grace_secs);
@@ -4213,6 +4341,7 @@ impl LendingContract {
             None,
         );
 
+        emit_liquidation_grace_period_set(&env, old_grace_secs, grace_secs);
         Ok(())
     }
 
@@ -4222,6 +4351,59 @@ impl LendingContract {
             .persistent()
             .get(&DataKey::LiquidationGracePeriodSecs)
             .unwrap_or(0)
+    }
+
+    // Record the timestamp when a borrower's position first became unhealthy.
+    //
+    // Permissionless entrypoint. If the position is unhealthy (`HF < 1.0`) and no
+    // `FirstUnhealthyTimestamp` is recorded, stores the current ledger timestamp and
+    // extends its TTL. If the position is healthy (`HF >= 1.0`), any stale marker is
+    // cleared.
+    //
+    // Rollback note: `liquidate` must fail with `LiquidationGracePeriodActive` while
+    // a grace period is active, and Soroban rolls back writes made by a failing call,
+    // so keepers call this entrypoint to start the grace-period countdown on-chain.
+    pub fn mark_unhealthy(env: Env, borrower: Address) -> Result<(), LendingError> {
+        require_initialized(&env)?;
+        let first_unhealthy_key = DataKey::FirstUnhealthyTimestamp(borrower.clone());
+
+        let position = load_debt(&env, &borrower);
+        let debt = position.principal;
+        if debt <= 0 {
+            if env.storage().persistent().has(&first_unhealthy_key) {
+                env.storage().persistent().remove(&first_unhealthy_key);
+            }
+            return Ok(());
+        }
+
+        let col_key = DataKey::Collateral(borrower.clone());
+        let collateral: i128 = env.storage().persistent().get(&col_key).unwrap_or(0);
+        let threshold_bps = Self::get_liquidation_threshold_bps(env.clone());
+        let collateral_value = value_collateral(&env, collateral)?;
+        let debt_value = value_debt(&env, debt)?;
+        let hf = math::checked_mul_div_floor(collateral_value, threshold_bps, debt_value)
+            .map_err(|_| LendingError::Overflow)?;
+
+        if hf >= HEALTH_FACTOR_SCALE {
+            if env.storage().persistent().has(&first_unhealthy_key) {
+                env.storage().persistent().remove(&first_unhealthy_key);
+            }
+            return Ok(());
+        }
+
+        if !env.storage().persistent().has(&first_unhealthy_key) {
+            let now = env.ledger().timestamp();
+            env.storage().persistent().set(&first_unhealthy_key, &now);
+        }
+        extend_first_unhealthy_ttl(&env, &borrower);
+        Ok(())
+    }
+
+    // Return the timestamp when `borrower`'s position first became unhealthy, if recorded.
+    pub fn get_first_unhealthy_timestamp(env: Env, borrower: Address) -> Option<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FirstUnhealthyTimestamp(borrower))
     }
 
     // Return the configured risk parameters for an asset, if any.
@@ -4242,6 +4424,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::deposit_collateral_asset_internal(&env, &user, &asset, amount)?;
         CrossDepositEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user: user.clone(),
             asset,
             amount,
@@ -4263,6 +4446,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::borrow_asset_internal(&env, &user, &asset, amount)?;
         CrossBorrowEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user,
             asset,
             amount: result,
@@ -4283,6 +4467,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::repay_asset_internal(&env, &user, &asset, amount)?;
         CrossRepayEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user: user.clone(),
             asset,
             amount,
@@ -4305,6 +4490,7 @@ impl LendingContract {
         require_initialized(&env)?;
         let result = cross_asset::withdraw_asset_internal(&env, &user, &asset, amount)?;
         CrossWithdrawEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
             user,
             asset,
             amount,
@@ -4339,9 +4525,58 @@ impl LendingContract {
         cross_asset::load_collateral_asset(&env, &user, &asset)
     }
 
+    // Return the user's aggregate cross-asset borrowing capacity:
+    // `sum(collateral_value_i * ltv_bps_i) / 10_000` in oracle-valued units.
+    pub fn get_borrow_capacity(env: Env, user: Address) -> Result<i128, LendingError> {
+        cross_asset::compute_borrow_capacity(&env, &user)
+    }
+
     // Return the per-asset debt principal for a user.
     pub fn get_debt_asset_position(env: Env, user: Address, asset: Address) -> debt::DebtPosition {
         cross_asset::load_debt_asset(&env, &user, &asset)
+    }
+
+    // Return the outstanding cross-asset debt total tracked for `asset`.
+    //
+    // Denominated in `asset`'s raw units and maintained by the cross-asset
+    // borrow, repay and liquidation paths only. Read-only.
+    pub fn get_total_debt_asset(env: Env, asset: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalDebtAsset(asset))
+            .unwrap_or(0)
+    }
+
+    // Return `asset`'s cross-asset utilisation in basis points.
+    //
+    // `TotalDebtAsset(asset) / TotalCollateralAsset(asset)`, bounded to
+    // `[0, 10_000]`. A zero-supply asset reports `0` instead of dividing by
+    // zero. Read-only.
+    pub fn get_asset_utilization_bps(env: Env, asset: Address) -> i128 {
+        let snapshot = debt::load_asset_rate_snapshot(&env, &asset);
+        debt::compute_utilization_bps_from_totals(snapshot.total_debt, snapshot.total_supply)
+            .unwrap_or(0)
+    }
+
+    // Return `asset`'s current cross-asset borrow rate in basis points.
+    //
+    // Derived from the asset's own utilisation and the global rate parameters.
+    // Falls back to [`debt::DEFAULT_APR_BPS`] when no rate model is configured.
+    // Read-only.
+    pub fn get_asset_borrow_rate(env: Env, asset: Address) -> i128 {
+        debt::asset_borrow_rate(&env, &asset).unwrap_or(debt::DEFAULT_APR_BPS)
+    }
+
+    // Return a user's debt in `asset`, including interest accrued since the
+    // position was last settled.
+    //
+    // Uses the same per-asset index projection and rate as `repay_asset`, so a
+    // repayment of this amount at the same ledger timestamp settles the
+    // position in full. Read-only.
+    pub fn get_asset_debt_view(env: Env, user: Address, asset: Address) -> i128 {
+        let position = cross_asset::load_debt_asset(&env, &user, &asset);
+        cross_asset::project_asset_position_debt(&env, &asset, &position, env.ledger().timestamp())
+            .unwrap_or(0)
     }
 
     // Initialize timelocked multisig upgrade governance (admin-only, once).
@@ -4517,11 +4752,15 @@ impl LendingContract {
             }
         }
         if !found {
-            entries.push_back(ConfigEntry { key, value });
+            entries.push_back(ConfigEntry {
+                key: key.clone(),
+                value,
+            });
         }
         env.storage()
             .instance()
             .set(&DataKey::ConfigEntries, &entries);
+        emit_config_set(&env, &key);
         Ok(())
     }
 
@@ -4550,14 +4789,15 @@ impl LendingContract {
             .unwrap_or_else(|| Vec::new(&env));
         env.storage()
             .instance()
-            .set(&DataKey::ConfigBackup(name), &entries);
+            .set(&DataKey::ConfigBackup(name.clone()), &entries);
+        emit_config_backup(&env, &name);
         Ok(())
     }
 
     pub fn config_restore(env: Env, name: Symbol) -> Result<(), LendingError> {
         require_initialized(&env)?;
         assert_admin(&env)?;
-        let backup_key = DataKey::ConfigBackup(name);
+        let backup_key = DataKey::ConfigBackup(name.clone());
         let entries: Vec<ConfigEntry> = env
             .storage()
             .instance()
@@ -4566,29 +4806,31 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::ConfigEntries, &entries);
+        emit_config_restore(&env, &name);
         Ok(())
     }
 }
 
-// Panics if a flash loan is currently in progress.
-// 
+// Returns an error if a flash loan is currently in progress.
+//
 // All state-mutating user operations (`deposit`, `withdraw`, `borrow`,
 // `borrow_against_collateral`, `repay`, `repay_against_collateral`,
 // `liquidate`) call this at entry to prevent reentrancy via the
 // `on_flash_loan` callback.
-// 
+//
 // The `FlashActive` flag is set by [`flash_loan`] before the external
 // callback and cleared after it returns.  On revert, Soroban's atomic
 // transaction rollback restores the flag to `false`.
-fn require_no_active_flash_loan(env: &Env) {
+fn require_no_active_flash_loan(env: &Env) -> Result<(), LendingError> {
     let active: bool = env
         .storage()
         .instance()
         .get(&DataKey::FlashActive)
         .unwrap_or(false);
     if active {
-        panic_with_error!(&env, LendingError::Unauthorized);
+        return Err(LendingError::FlashLoanReentrancy);
     }
+    Ok(())
 }
 
 pub(crate) fn settle_and_accrue_insurance(
@@ -4617,65 +4859,78 @@ pub(crate) fn settle_and_accrue_insurance(
         (interest, settled)
     };
 
-    if interest > 0 {
-        let reserve_factor_bps: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReserveFactorBps)
-            .unwrap_or(0);
-        let reserve_factor_bps =
-            u32::try_from(reserve_factor_bps).map_err(|_| LendingError::Overflow)?;
-        let (_, reserve_cut) =
-            math::split_interest_by_reserve_factor(interest, reserve_factor_bps)
-                .map_err(|_| LendingError::Overflow)?;
-        if reserve_cut > 0 {
-            let reserves: i128 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::ProtocolReserves)
-                .unwrap_or(0);
-            let new_reserves = reserves
-                .checked_add(reserve_cut)
-                .ok_or(LendingError::Overflow)?;
-            env.storage()
-                .persistent()
-                .set(&DataKey::ProtocolReserves, &new_reserves);
-        }
-
-        let share_bps: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::InsuranceShareBps)
-            .unwrap_or(0);
-        if share_bps > 0 {
-            // The reserve cut is taken first; insurance receives its configured
-            // share of the remaining interest, so the two protocol cuts cannot
-            // exceed gross interest.
-            let insurance_base = interest
-                .checked_sub(reserve_cut)
-                .ok_or(LendingError::Overflow)?;
-            let share = insurance_base
-                .checked_mul(share_bps)
-                .ok_or(LendingError::Overflow)?
-                .checked_div(BPS_DENOM)
-                .ok_or(LendingError::Overflow)?;
-            if share > 0 {
-                let current_fund: i128 = env
-                    .storage()
-                    .instance()
-                    .get(&DataKey::InsuranceFund)
-                    .unwrap_or(0);
-                let new_fund = current_fund
-                    .checked_add(share)
-                    .ok_or(LendingError::Overflow)?;
-                env.storage()
-                    .instance()
-                    .set(&DataKey::InsuranceFund, &new_fund);
-            }
-        }
-    }
+    credit_insurance_share(env, interest)?;
 
     Ok(settled)
+}
+
+// Credit protocol revenue from `interest`: the reserve-factor cut goes to
+// `ProtocolReserves` first, then the insurance fund receives its configured
+// share of the remainder, so the two cuts can never exceed gross interest.
+//
+// Shared by the single-asset settlement path ([`settle_and_accrue_insurance`])
+// and the per-asset cross-asset settlement path so both routes accrue
+// protocol revenue identically.
+pub(crate) fn credit_insurance_share(env: &Env, interest: i128) -> Result<(), LendingError> {
+    if interest <= 0 {
+        return Ok(());
+    }
+    let reserve_factor_bps: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ReserveFactorBps)
+        .unwrap_or(0);
+    let reserve_factor_bps =
+        u32::try_from(reserve_factor_bps).map_err(|_| LendingError::Overflow)?;
+    let (_, reserve_cut) =
+        math::split_interest_by_reserve_factor(interest, reserve_factor_bps)
+            .map_err(|_| LendingError::Overflow)?;
+    if reserve_cut > 0 {
+        let reserves: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolReserves)
+            .unwrap_or(0);
+        let new_reserves = reserves
+            .checked_add(reserve_cut)
+            .ok_or(LendingError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolReserves, &new_reserves);
+    }
+
+    let share_bps: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::InsuranceShareBps)
+        .unwrap_or(0);
+    if share_bps > 0 {
+        // The reserve cut is taken first; insurance receives its configured
+        // share of the remaining interest, so the two protocol cuts cannot
+        // exceed gross interest.
+        let insurance_base = interest
+            .checked_sub(reserve_cut)
+            .ok_or(LendingError::Overflow)?;
+        let share = insurance_base
+            .checked_mul(share_bps)
+            .ok_or(LendingError::Overflow)?
+            .checked_div(BPS_DENOM)
+            .ok_or(LendingError::Overflow)?;
+        if share > 0 {
+            let current_fund: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::InsuranceFund)
+                .unwrap_or(0);
+            let new_fund = current_fund
+                .checked_add(share)
+                .ok_or(LendingError::Overflow)?;
+            env.storage()
+                .instance()
+                .set(&DataKey::InsuranceFund, &new_fund);
+        }
+    }
+    Ok(())
 }
 
 fn checkpoint_reserve_factor(env: &Env) -> Result<(), LendingError> {
@@ -4723,6 +4978,7 @@ fn checkpoint_reserve_factor(env: &Env) -> Result<(), LendingError> {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDebt, &new_total_debt);
+        crate::ttl::bump_global(&env, &DataKey::TotalDebt);
     }
     Ok(())
 }
@@ -4881,6 +5137,19 @@ fn decrement_isolation_debt(
 
 fn extend_collateral_ttl(env: &Env, user: &Address) {
     let key = DataKey::Collateral(user.clone());
+    let extend_to = env.storage().max_ttl().min(PERSISTENT_TTL_LEDGERS);
+    let threshold = extend_to / 2 + 1;
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, threshold, extend_to);
+    }
+}
+
+// Keep the `FirstUnhealthyTimestamp(user)` anchor alive for the duration of
+// the liquidation grace period (same policy as `extend_debt_ttl`).
+fn extend_first_unhealthy_ttl(env: &Env, user: &Address) {
+    let key = DataKey::FirstUnhealthyTimestamp(user.clone());
     let extend_to = env.storage().max_ttl().min(PERSISTENT_TTL_LEDGERS);
     let threshold = extend_to / 2 + 1;
     if env.storage().persistent().has(&key) {
@@ -5208,6 +5477,128 @@ fn assert_position_within_bps(
     Ok(())
 }
 
+// Shared borrowing pipeline for [`LendingContract::borrow`] and
+// [`LendingContract::borrow_against_collateral`].
+//
+// The helper performs the complete *validation and calculation* phase of a
+// borrow and returns the post-borrow debt position together with the
+// **principal delta** — the amount by which the stored principal grew.
+//
+// The principal delta is *not* simply the requested amount: it also contains
+// the interest that was settled during this call
+// (`settled_principal + amount - previous_principal`). The protocol
+// `TotalDebt` and the isolation-mode debt tracker are both updated with this
+// delta so that they stay aligned with the value written to the position.
+//
+// # Effect ordering
+//
+// The helper deliberately performs **no** write to `DataKey::Debt` or
+// `DataKey::TotalDebt`, does not extend the debt TTL and emits no event.
+// Callers apply those effects with [`commit_borrow`] only after every check
+// has passed — including the isolation-mode ceiling check that
+// `borrow_against_collateral` performs *after* this helper returns. A
+// rejected borrow therefore leaves no partial debt, isolation accounting,
+// TTL or event effect behind.
+//
+// # Errors
+// - `InvalidAmount` — `amount <= 0`.
+// - `BelowMinimumBorrow` — `amount` is below the configured minimum.
+// - `PriceUnavailable` / `StaleOracleTimestamp` — the valuation price is
+//   missing or stale.
+// - `InsufficientCollateral` — the post-borrow position would be
+//   undercollateralised.
+// - `DebtCeilingExceeded` — protocol `TotalDebt` would exceed the ceiling.
+// - `Overflow` — arithmetic overflow while computing the new position.
+fn borrow_internal(
+    env: &Env,
+    user: &Address,
+    amount: i128,
+) -> Result<(DebtPosition, i128), LendingError> {
+    // 1. Amount and minimum-borrow rules.
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+    let min_borrow = LendingContract::get_min_borrow(env.clone());
+    if amount < min_borrow {
+        return Err(LendingError::BelowMinimumBorrow);
+    }
+
+    // 2. Oracle freshness. A borrow must never be priced against a missing or
+    //    stale oracle record.
+    require_fresh_valuation_prices(env)?;
+
+    // 3. Settle accrued interest (and accrue the insurance share) before the
+    //    new principal is added, so that the delta reflects the true debt
+    //    growth of the position.
+    let now = env.ledger().timestamp();
+    let rate = current_borrow_rate(env);
+    let position = load_debt(env, user);
+    let prev_principal = position.principal;
+    let settled_position = settle_and_accrue_insurance(env, &position, now, rate)?;
+    let updated = borrow_amount(settled_position, now, amount, rate).map_err(|e| match e {
+        debt::DebtError::InvalidAmount => LendingError::InvalidAmount,
+        debt::DebtError::RepayAmountTooHigh => LendingError::RepayAmountTooHigh,
+        debt::DebtError::Overflow => LendingError::Overflow,
+        debt::DebtError::IndexInvariantViolated => LendingError::Overflow,
+    })?;
+
+    // 4. Principal delta = settled interest + newly borrowed amount.
+    let delta = updated
+        .principal
+        .checked_sub(prev_principal)
+        .ok_or(LendingError::Overflow)?;
+
+    // 5. Solvency (collateral coverage) and the protocol-wide debt ceiling.
+    let new_total_debt = total_debt_after(env, delta)?;
+    assert_borrow_solvent(env, user, &updated, new_total_debt)?;
+
+    Ok((updated, delta))
+}
+
+// Apply the persistent effects of a validated borrow.
+//
+// Writes the new protocol `TotalDebt`, stores the borrower's debt position,
+// extends the TTL of the debt entry and emits the standard `BorrowEvent`.
+//
+// Callers must have completed **all** validation (including the
+// isolation-mode ceiling check performed by `borrow_against_collateral`)
+// before calling this helper; it performs no checks of its own.
+fn commit_borrow(
+    env: &Env,
+    user: &Address,
+    amount: i128,
+    updated: &DebtPosition,
+    delta: i128,
+) -> Result<(), LendingError> {
+    // Track protocol-level total debt.
+    let new_total_debt = total_debt_after(env, delta)?;
+    env.storage()
+        .persistent()
+        .set(&DataKey::TotalDebt, &new_total_debt);
+    crate::ttl::bump_global(&env, &DataKey::TotalDebt);
+
+    save_debt(env, user, updated);
+    register_borrower(env, user);
+    // Extend TTL to prevent archival of debt entry
+    extend_debt_ttl(env, user);
+
+    // Emit borrow event
+    emit_borrow(env, user, amount, updated.principal);
+
+    Ok(())
+}
+
+// Return the protocol-wide `TotalDebt` that results from adding `delta` to the
+// currently recorded total.
+fn total_debt_after(env: &Env, delta: i128) -> Result<i128, LendingError> {
+    let total_debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalDebt)
+        .unwrap_or(0);
+    total_debt.checked_add(delta).ok_or(LendingError::Overflow)
+}
+
 // Reject a prospective borrow that would leave the user undercollateralized or
 // push protocol `TotalDebt` past the configured ceiling.
 // 
@@ -5276,7 +5667,7 @@ pub(crate) fn write_utilization_sample(env: &Env, utilization_bps: i128) {
     env.storage()
         .persistent()
         .set(&DataKey::UtilizationHistory, &samples);
-    ttl::bump_global(env, &DataKey::UtilizationHistory);
+    crate::ttl::bump_global(&env, &DataKey::UtilizationHistory);
 }
 
 // Load utilization samples in their storage order, oldest-first.
@@ -5487,9 +5878,11 @@ mod borrow_rate_snapshot_test {
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebt, &8_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebt);
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDeposits, &10_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
 
             assert_eq!(current_borrow_rate(&env), DEFAULT_APR_BPS);
         });
@@ -5505,6 +5898,7 @@ mod borrow_rate_snapshot_test {
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebt, &5_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebt);
 
             assert_eq!(current_borrow_rate(&env), 100);
         });
@@ -5520,9 +5914,11 @@ mod borrow_rate_snapshot_test {
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDebt, &8_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDebt);
             env.storage()
                 .persistent()
                 .set(&DataKey::TotalDeposits, &10_000i128);
+            crate::ttl::bump_global(&env, &DataKey::TotalDeposits);
 
             let snapshot = load_rate_snapshot(&env);
             assert_eq!(snapshot.total_debt, 8_000);
