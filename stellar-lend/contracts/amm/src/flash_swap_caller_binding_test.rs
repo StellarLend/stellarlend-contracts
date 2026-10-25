@@ -1,3 +1,4 @@
+// NOTE: This file is deprecated by the callback-based flash-swap redesign.
 //! Tests for the flash-swap **caller-binding** security fix.
 //!
 //! # Rationale
@@ -22,6 +23,7 @@
 //! | `test_k_invariant_preserved`                  | Verify-k still enforced (under-repay reverts).                      |
 //! | `test_initiator_via_proxy_matches_proxy`      | When a proxy contract calls flash_swap, *that proxy* must repay.    |
 
+#![allow(deprecated)]
 use crate::{inverse_swap_in, AmmContract, AmmContractClient};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
@@ -80,12 +82,14 @@ pub struct FlashProxy;
 
 #[contractimpl]
 impl FlashProxy {
+    #[allow(deprecated)]
     pub fn open_flash(env: Env, amm: Address, amount_out: i128) {
         let client = AmmContractClient::new(&env, &amm);
         let this = env.current_contract_address();
         client.flash_swap_a_for_b(&this, &amount_out, &Bytes::new(&env));
     }
 
+    #[allow(deprecated)]
     pub fn open_and_repay(env: Env, amm: Address, amount_out: i128, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
         let this = env.current_contract_address();
@@ -102,6 +106,7 @@ pub struct InterloperContract;
 
 #[contractimpl]
 impl InterloperContract {
+    #[allow(deprecated)]
     pub fn attempt_repay(env: Env, amm: Address, amount_in: i128) {
         let client = AmmContractClient::new(&env, &amm);
         let this = env.current_contract_address();
@@ -115,6 +120,7 @@ impl InterloperContract {
 
 /// The initiator can always repay their own flash swap.
 #[test]
+#[allow(deprecated)]
 fn test_initiator_can_repay() {
     let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -137,6 +143,7 @@ fn test_initiator_can_repay() {
 /// A different address attempting to repay is rejected with
 /// `UnauthorizedCaller`.
 #[test]
+#[allow(deprecated)]
 fn test_non_initiator_rejected() {
     let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
 
@@ -165,6 +172,7 @@ fn test_non_initiator_rejected() {
 /// After a successful repay the initiator address is cleared from storage
 /// (no stale reference lingers).
 #[test]
+#[allow(deprecated)]
 fn test_initiator_cleared_on_success() {
     let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -195,6 +203,7 @@ fn test_initiator_cleared_on_success() {
 
 /// The reentrancy guard still works -- a nested flash swap is blocked.
 #[test]
+#[allow(deprecated)]
 fn test_reentrancy_blocks_flash() {
     let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
@@ -213,6 +222,7 @@ fn test_reentrancy_blocks_flash() {
 /// top-level client calls are each their own transaction, so an under-repay
 /// in the second call cannot undo storage already committed by the first.
 #[test]
+#[allow(deprecated)]
 #[ignore = "flash-swap rollback behavior changed by Result-ification; see issue #1419 comment on rollback-vs-error semantics"]
 fn test_k_invariant_preserved() {
     let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
@@ -241,6 +251,7 @@ fn test_k_invariant_preserved() {
 /// must be called from *that same proxy* -- not from the human user who
 /// invoked the proxy.
 #[test]
+#[allow(deprecated)]
 #[ignore = "flash-swap rollback behavior changed by Result-ification; see issue #1419 comment on rollback-vs-error semantics"]
 fn test_initiator_via_proxy_matches_proxy() {
     let env = Env::default();
@@ -280,6 +291,7 @@ fn test_initiator_via_proxy_matches_proxy() {
 /// Multiple consecutive flash swaps from the same address all succeed
 /// and the initiator binding holds for each one.
 #[test]
+#[allow(deprecated)]
 fn test_consecutive_swaps_same_initiator() {
     let (env, amm_id, alice, _bob) = setup_two_users(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);

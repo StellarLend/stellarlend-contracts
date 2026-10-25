@@ -1,28 +1,27 @@
-//! Regression coverage for the **typed `Result` contract** of
-//! [`AmmContract::repay_flash_swap`] (issue #1978).
+//! Regression coverage for the **typed `Result` contract** of the
+//! callback-based flash swap (issue #1978 / flash-swap redesign).
 //!
-//! `repay_flash_swap` was changed to return `Result<(), AmmPoolError>`
-//! instead of panicking.  The sibling suites
-//! (`flash_swap_test.rs`, `flash_swap_atomicity_test.rs`,
-//! `flash_swap_caller_binding_test.rs`) exercise the panic-era behaviour and
-//! the happy path, but none of them pin the *exact* error variant delivered
-//! through the `try_*` client surface.  This module closes that gap: every
-//! case asserts the precise `Err(Ok(AmmPoolError::…))` the contract returns.
+//! The old two-step API (`flash_swap_a_for_b` + `repay_flash_swap`) has been
+//! replaced by a single atomic `flash_swap` invocation that moves real tokens
+//! and invokes a receiver callback.  `repay_flash_swap` is retained only as a
+//! deprecated entrypoint that always errors; this module pins the exact error
+//! variant delivered through the `try_*` client surface so callers relying on
+//! the old API get a deterministic, typed failure.
 //!
 //! # Pinned contract
 //!
 //! | Test                                                     | Pinned outcome                          |
 //! |----------------------------------------------------------|-----------------------------------------|
-//! | `test_try_repay_success_returns_ok_and_clears_flag`      | `Ok(Ok(()))`; flag cleared; k holds.    |
+//! | `test_try_repay_success_returns_ok_and_clears_flag`      | `InvariantViolation` (deprecated).      |
 //! | `test_try_repay_non_positive_amount_is_rejected`         | `NonPositiveAmount` (checked first).    |
 //! | `test_try_repay_without_active_flash_is_invariant`       | `InvariantViolation`.                   |
-//! | `test_try_repay_underpayment_is_invariant`               | `InvariantViolation` (verify-k).        |
+//! | `test_try_repay_underpayment_is_invariant`               | `InvariantViolation`.                   |
 //! | `test_try_repay_non_initiator_is_unauthorized`           | `UnauthorizedCaller`.                   |
 //! | `test_try_repay_after_success_is_invariant`              | `InvariantViolation` (already settled). |
 //!
 //! Test-only: no contract source is modified.
 
-use crate::{inverse_swap_in, AmmContract, AmmContractClient, AmmPoolError};
+use crate::{AmmContract, AmmContractClient, AmmPoolError};
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
 const FEE_BPS: i128 = 30;
@@ -45,30 +44,23 @@ fn setup_pool(ra: i128, rb: i128) -> (Env, Address) {
     (env, amm_id)
 }
 
-/// A successful repay through the `try_` surface returns `Ok(Ok(()))`,
-/// clears `is_flash_active`, and leaves k non-decreasing.
+/// The deprecated `repay_flash_swap` always errors with
+/// `InvariantViolation`; the flag is never set by the new `flash_swap`.
 #[test]
 fn test_try_repay_success_returns_ok_and_clears_flag() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
     let caller = Address::generate(&env);
 
-    let amount_out: i128 = 200;
-    client.flash_swap_a_for_b(&caller, &amount_out, &Bytes::new(&env));
-    assert!(client.is_flash_active());
-
-    let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
-    let res = client.try_repay_flash_swap(&caller, &amount_in);
-    assert_eq!(res, Ok(Ok(())), "typed success must be Ok(Ok(()))");
-
+    let _ = Bytes::new(&env);
+    assert_eq!(
+        client.try_repay_flash_swap(&caller, &1_i128),
+        Err(Ok(AmmPoolError::InvariantViolation)),
+        "deprecated repay_flash_swap must always error"
+    );
     assert!(
         !client.is_flash_active(),
-        "is_flash_active must be cleared after a successful repay"
-    );
-    let (ra, rb) = client.get_reserves();
-    assert!(
-        ra * rb >= 1_000_i128 * 1_000_i128,
-        "k must remain non-decreasing"
+        "is_flash_active must never persist after an invocation"
     );
 }
 
@@ -90,13 +82,6 @@ fn test_try_repay_non_positive_amount_is_rejected() {
         client.try_repay_flash_swap(&caller, &-1_i128),
         Err(Ok(AmmPoolError::NonPositiveAmount))
     );
-
-    // Same while a flash swap is active.
-    client.flash_swap_a_for_b(&caller, &100, &Bytes::new(&env));
-    assert_eq!(
-        client.try_repay_flash_swap(&caller, &0_i128),
-        Err(Ok(AmmPoolError::NonPositiveAmount))
-    );
 }
 
 /// Repaying with no flash swap in progress is a sequence invariant
@@ -113,27 +98,23 @@ fn test_try_repay_without_active_flash_is_invariant() {
     );
 }
 
-/// Underpaying by a single stroop trips the verify-k check and returns
-/// `InvariantViolation`.
+/// The deprecated entrypoint returns `InvariantViolation` regardless of the
+/// amount supplied, since no flash swap can ever be active across
+/// invocations.
 #[test]
 fn test_try_repay_underpayment_is_invariant() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
     let caller = Address::generate(&env);
 
-    let amount_out: i128 = 200;
-    client.flash_swap_a_for_b(&caller, &amount_out, &Bytes::new(&env));
-
-    let exact_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
-    let under_in: i128 = exact_in - 1;
     assert_eq!(
-        client.try_repay_flash_swap(&caller, &under_in),
+        client.try_repay_flash_swap(&caller, &1_i128),
         Err(Ok(AmmPoolError::InvariantViolation))
     );
 }
 
-/// Only the recorded flash-swap initiator may repay; any other caller gets
-/// `UnauthorizedCaller`.
+/// Any caller of the deprecated entrypoint gets `InvariantViolation`; there
+/// is no initiator binding to enforce anymore.
 #[test]
 fn test_try_repay_non_initiator_is_unauthorized() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
@@ -141,39 +122,29 @@ fn test_try_repay_non_initiator_is_unauthorized() {
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
-    let amount_out: i128 = 200;
-    client.flash_swap_a_for_b(&alice, &amount_out, &Bytes::new(&env));
-
-    let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
     assert_eq!(
-        client.try_repay_flash_swap(&bob, &amount_in),
-        Err(Ok(AmmPoolError::UnauthorizedCaller))
+        client.try_repay_flash_swap(&bob, &1_i128),
+        Err(Ok(AmmPoolError::InvariantViolation))
     );
+    let _ = alice;
 }
 
-/// Once a repay has settled the flash swap, a second repay attempt finds no
-/// active flash swap and returns `InvariantViolation`.
+/// Repeated calls to the deprecated entrypoint always return
+/// `InvariantViolation`; the flag is never set.
 #[test]
 fn test_try_repay_after_success_is_invariant() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let client = AmmContractClient::new(&env, &amm_id);
     let caller = Address::generate(&env);
 
-    let amount_out: i128 = 100;
-    client.flash_swap_a_for_b(&caller, &amount_out, &Bytes::new(&env));
-
-    let (ra_pre, rb_pre) = client.get_reserves();
-    let rb_before_debit = rb_pre + amount_out;
-    let amount_in: i128 = inverse_swap_in(ra_pre, rb_before_debit, amount_out, FEE_BPS);
-
     assert_eq!(
-        client.try_repay_flash_swap(&caller, &amount_in),
-        Ok(Ok(())),
-        "first repay must settle"
+        client.try_repay_flash_swap(&caller, &1_i128),
+        Err(Ok(AmmPoolError::InvariantViolation)),
+        "deprecated repay_flash_swap must always error"
     );
     assert_eq!(
-        client.try_repay_flash_swap(&caller, &amount_in),
+        client.try_repay_flash_swap(&caller, &1_i128),
         Err(Ok(AmmPoolError::InvariantViolation)),
-        "second repay must observe no active flash swap"
+        "repeated calls must observe no active flash swap"
     );
 }
