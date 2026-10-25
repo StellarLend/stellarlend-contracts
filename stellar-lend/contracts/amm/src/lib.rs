@@ -73,7 +73,7 @@ mod ttl_test;
 use soroban_sdk::token::Client as TokenClient;
 use stellar_lend_common::ttl;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Vec,
 };
 
 use crate::liquidity_math::{
@@ -85,8 +85,6 @@ pub struct FeeTier {
     pub min_reserve: u128,
     pub fee_bps: u32,
 }
-
-const FEE_TIERS_KEY: &str = "fee_tiers";
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -420,7 +418,6 @@ impl AmmContract {
         for slot in 0..TWAP_OBSERVATION_COUNT {
             ttl::bump_persistent(&env, &TwapKey::Obs(slot));
         }
-        ttl::bump_persistent(&env, &FEE_TIERS_KEY);
     }
 
     /// Refresh one user's LP balance after a long period without activity.
@@ -2165,21 +2162,6 @@ mod inline_test {
 #[cfg(test)]
 mod swap_symmetry_test;
 
-/// Set fee tiers for dynamic scaling
-pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<u128>) {
-    admin.require_auth();
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    ttl::set_persistent(&env, &key, &tiers);
-}
-
-/// Get fee tiers
-pub fn get_fee_tiers(env: Env) -> Vec<u128> {
-    let key = Symbol::new(&env, FEE_TIERS_KEY);
-    env.storage()
-        .persistent()
-        .get::<_, Vec<u128>>(&key)
-        .unwrap_or_else(|| Vec::new(&env))
-}
 #[cfg(test)]
 mod dust_swap_guard_test;
 #[cfg(test)]
