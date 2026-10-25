@@ -41,6 +41,8 @@ pub enum ProposalAction {
     RotateSigners(Vec<Address>),
     /// Invoke an arbitrary contract entrypoint via cross-contract call
     InvokeContract(Address, Symbol, Vec<soroban_sdk::Val>),
+    /// Update the minimum execution delay (in ledgers) between quorum and execution
+    SetExecutionDelay(u32),
 }
 
 /// Lifecycle state of a proposal.
@@ -105,6 +107,13 @@ pub struct ProposalExpiredEvent {
     pub id: u64,
 }
 
+/// Event emitted after a proposal has been cancelled.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposalCancelledEvent {
+    pub id: u64,
+}
+
 /// Event emitted after a batch of proposals has been atomically executed.
 #[contractevent]
 #[derive(Clone, Debug)]
@@ -128,6 +137,10 @@ pub enum MultisigDataKey {
     SignerSetHash,
     /// Signer-set fingerprint captured when a proposal is created.
     ProposalSignerSetHash(u64),
+    /// Configured minimum execution delay in ledgers between quorum and execution.
+    ExecutionDelay,
+    /// Ledger sequence when proposal reached quorum (status became Passed).
+    ProposalPassedAt(u64),
     /// Domain-separated approval binding for `(proposal_id, approver)`.
     ///
     /// Stores
@@ -165,6 +178,8 @@ pub enum MultisigError {
     LegacyProposal = 19,
     NonceOverflow = 20,
     ApprovalNotFound = 21,
+    TimelockNotElapsed = 22,
+    InvalidDelay = 23,
 }
 
 /// Maximum number of proposals that can be executed in a single
@@ -251,11 +266,36 @@ impl MultisigContract {
         signers: Vec<Address>,
         threshold: u32,
     ) -> Result<(), MultisigError> {
+        Self::initialize_internal(env, signers, threshold, 0)
+    }
+
+    /// Initialise the multisig with an initial signer set, approval threshold, and execution delay.
+    ///
+    /// # Arguments
+    /// * `env`             – Soroban environment.
+    /// * `signers`         – Initial list of authorised signers.
+    /// * `threshold`       – Minimum number of approvals required to pass a proposal.
+    /// * `execution_delay` – Minimum delay (in ledgers) between quorum and execution.
+    pub fn initialize_with_delay(
+        env: Env,
+        signers: Vec<Address>,
+        threshold: u32,
+        execution_delay: u32,
+    ) -> Result<(), MultisigError> {
+        if bounds::validate_execution_delay(execution_delay).is_err() {
+            return Err(MultisigError::InvalidDelay);
+        }
+        Self::initialize_internal(env, signers, threshold, execution_delay)
+    }
+
+    fn initialize_internal(
+        env: Env,
+        signers: Vec<Address>,
+        threshold: u32,
+        execution_delay: u32,
+    ) -> Result<(), MultisigError> {
         if env.storage().persistent().has(&MultisigDataKey::Signers) {
             return Err(MultisigError::AlreadyInitialized);
-        }
-        for i in 0..signers.len() {
-            signers.get(i).unwrap().require_auth();
         }
         if bounds::validate_signer_set(&signers, threshold).is_err() {
             if threshold == 0 || threshold as usize > signers.len() as usize {
@@ -263,10 +303,14 @@ impl MultisigContract {
             }
             return Err(MultisigError::InvalidSigners);
         }
+        for i in 0..signers.len() {
+            signers.get(i).unwrap().require_auth();
+        }
         ttl::set_persistent(&env, &MultisigDataKey::Signers, &signers);
         ttl::set_persistent(&env, &MultisigDataKey::Threshold, &threshold);
         ttl::set_persistent(&env, &MultisigDataKey::ProposalCount, &0u64);
         ttl::set_persistent(&env, &MultisigDataKey::NextNonce, &0u64);
+        ttl::set_persistent(&env, &MultisigDataKey::ExecutionDelay, &execution_delay);
         let signer_set_hash = Self::signer_set_hash(&env, &signers);
         ttl::set_persistent(&env, &MultisigDataKey::SignerSetHash, &signer_set_hash);
         Ok(())
@@ -275,6 +319,19 @@ impl MultisigContract {
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
+
+    fn fetch_execution_delay(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ExecutionDelay)
+            .unwrap_or(0)
+    }
+
+    fn fetch_proposal_passed_at(env: &Env, id: u64) -> Option<u64> {
+        env.storage()
+            .persistent()
+            .get(&MultisigDataKey::ProposalPassedAt(id))
+    }
 
     fn require_signer(env: &Env, caller: &Address) -> Result<(), MultisigError> {
         ttl::bump_persistent(env, &MultisigDataKey::Signers);
@@ -408,6 +465,7 @@ impl MultisigContract {
             ProposalAction::SetThreshold(..) => Symbol::new(env, "SetThreshold"),
             ProposalAction::RotateSigners(..) => Symbol::new(env, "RotateSigners"),
             ProposalAction::InvokeContract(..) => Symbol::new(env, "InvokeContract"),
+            ProposalAction::SetExecutionDelay(..) => Symbol::new(env, "SetExecutionDelay"),
         }
     }
 
@@ -511,7 +569,8 @@ impl MultisigContract {
         caller.require_auth();
         Self::require_signer(&env, &caller)?;
 
-        if ttl_ledgers > MAX_TTL_LEDGERS {
+        let delay = Self::fetch_execution_delay(&env) as u64;
+        if ttl_ledgers <= delay || ttl_ledgers > MAX_TTL_LEDGERS {
             return Err(MultisigError::InvalidTtl);
         }
 
@@ -637,6 +696,16 @@ impl MultisigContract {
         } else {
             ProposalStatus::Active
         };
+        // Anchor the execution timelock the first time quorum is reached.
+        if passed
+            && !env
+                .storage()
+                .persistent()
+                .has(&MultisigDataKey::ProposalPassedAt(id))
+        {
+            let current_seq = env.ledger().sequence() as u64;
+            ttl::set_persistent(&env, &MultisigDataKey::ProposalPassedAt(id), &current_seq);
+        }
         Self::save_proposal(&env, &proposal);
 
         env.events().publish(
@@ -693,6 +762,11 @@ impl MultisigContract {
         proposal.status = if proposal.approvals.len() >= Self::fetch_threshold(&env) {
             ProposalStatus::Passed
         } else {
+            // Falling below quorum resets the timelock anchor; it restarts
+            // when quorum is reached again.
+            env.storage()
+                .persistent()
+                .remove(&MultisigDataKey::ProposalPassedAt(id));
             ProposalStatus::Active
         };
         Self::save_proposal(&env, &proposal);
@@ -741,6 +815,16 @@ impl MultisigContract {
         }
         if proposal.approvals.len() < Self::fetch_threshold(&env) {
             return Err(MultisigError::QuorumNotReached);
+        }
+
+        // Timelock guard: proposal cannot be executed before passed_at + execution_delay
+        let delay = Self::fetch_execution_delay(&env) as u64;
+        if delay > 0 {
+            let passed_at = Self::fetch_proposal_passed_at(&env, id).unwrap_or(0);
+            let current_seq = env.ledger().sequence() as u64;
+            if current_seq < passed_at.saturating_add(delay) {
+                return Err(MultisigError::TimelockNotElapsed);
+            }
         }
         let _signer_set_hash = Self::require_current_proposal_signer_set(&env, id)?;
         let nonce = Self::fetch_proposal_nonce(&env, id)?;
@@ -812,6 +896,13 @@ impl MultisigContract {
                 let _res: soroban_sdk::Val = env.invoke_contract(contract, fn_symbol, args.clone());
                 Ok(())
             }
+            ProposalAction::SetExecutionDelay(new_delay) => {
+                if bounds::validate_execution_delay(*new_delay).is_err() {
+                    return Err(MultisigError::InvalidDelay);
+                }
+                ttl::set_persistent(env, &MultisigDataKey::ExecutionDelay, new_delay);
+                Ok(())
+            }
         }
     }
 
@@ -845,10 +936,25 @@ impl MultisigContract {
             return Err(MultisigError::AlreadyCancelled);
         }
         if proposal.status != ProposalStatus::Active {
-            return Err(MultisigError::ProposalNotPassed);
+            if proposal.status == ProposalStatus::Passed {
+                let delay = Self::fetch_execution_delay(&env) as u64;
+                if delay > 0 {
+                    let passed_at = Self::fetch_proposal_passed_at(&env, id).unwrap_or(0);
+                    let current_seq = env.ledger().sequence() as u64;
+                    if current_seq >= passed_at.saturating_add(delay) {
+                        return Err(MultisigError::ProposalNotPassed);
+                    }
+                } else {
+                    return Err(MultisigError::ProposalNotPassed);
+                }
+            } else {
+                return Err(MultisigError::ProposalNotPassed);
+            }
         }
         proposal.status = ProposalStatus::Cancelled;
         Self::save_proposal(&env, &proposal);
+
+        ProposalCancelledEvent { id }.publish(&env);
         Ok(())
     }
 
@@ -884,6 +990,23 @@ impl MultisigContract {
     /// Return the current approval threshold.
     pub fn get_threshold(env: Env) -> u32 {
         Self::fetch_threshold(&env)
+    }
+
+    /// Return the current execution delay in ledgers.
+    pub fn get_execution_delay(env: Env) -> u32 {
+        Self::fetch_execution_delay(&env)
+    }
+
+    /// Return the ledger sequence at which a proposal becomes executable.
+    /// Returns None if the proposal is not in Passed status or passed_at is not recorded.
+    pub fn get_executable_at(env: Env, id: u64) -> Option<u64> {
+        let proposal = Self::fetch_proposal(&env, id).ok()?;
+        if proposal.status != ProposalStatus::Passed {
+            return None;
+        }
+        let delay = Self::fetch_execution_delay(&env) as u64;
+        let passed_at = Self::fetch_proposal_passed_at(&env, id)?;
+        Some(passed_at.saturating_add(delay))
     }
 
     /// Return the current registered signer set.
@@ -1149,6 +1272,15 @@ impl MultisigContract {
             if proposal.status == ProposalStatus::Cancelled {
                 return Err(MultisigError::AlreadyCancelled);
             }
+            // Timelock guard: proposal cannot be executed before passed_at + execution_delay
+            let delay = Self::fetch_execution_delay(&env) as u64;
+            if delay > 0 {
+                let passed_at = Self::fetch_proposal_passed_at(&env, id).unwrap_or(0);
+                let current_seq = env.ledger().sequence() as u64;
+                if current_seq < passed_at.saturating_add(delay) {
+                    return Err(MultisigError::TimelockNotElapsed);
+                }
+            }
             Self::require_current_proposal_signer_set(&env, id)?;
             let nonce = Self::fetch_proposal_nonce(&env, id)?;
             ttl::bump_persistent(&env, &MultisigDataKey::ConsumedNonce(nonce));
@@ -1206,6 +1338,7 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
 
+    #[allow(dead_code)]
     fn setup() -> (Env, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
@@ -1242,3 +1375,6 @@ mod live_quorum_test;
 
 #[cfg(test)]
 mod action_hash_binding_test;
+
+#[cfg(test)]
+mod timelock_test;

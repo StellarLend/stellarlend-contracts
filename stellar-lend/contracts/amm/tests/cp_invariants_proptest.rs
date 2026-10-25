@@ -26,6 +26,7 @@ fn fund_trader(env: &Env, trader: &Address, token_a: &Address, token_b: &Address
 }
 
 /// Fund the pool contract directly
+#[allow(dead_code)]
 fn fund_pool(
     env: &Env,
     pool_id: &Address,
@@ -37,6 +38,27 @@ fn fund_pool(
     use soroban_sdk::token::StellarAssetClient;
     StellarAssetClient::new(env, token_a).mint(pool_id, &amount_a);
     StellarAssetClient::new(env, token_b).mint(pool_id, &amount_b);
+}
+
+/// Seed a pool through the one-shot, token-backed `init_pool`: mint the
+/// initial reserves to `admin`, who transfers them into the pool.
+fn seed_pool(
+    env: &Env,
+    client: &AmmContractClient,
+    admin: &Address,
+    token_a: &Address,
+    token_b: &Address,
+    reserve_a: i128,
+    reserve_b: i128,
+) {
+    use soroban_sdk::token::StellarAssetClient;
+    if reserve_a > 0 {
+        StellarAssetClient::new(env, token_a).mint(admin, &reserve_a);
+    }
+    if reserve_b > 0 {
+        StellarAssetClient::new(env, token_b).mint(admin, &reserve_b);
+    }
+    client.init_pool(admin, &reserve_a, &reserve_b, token_a, token_b);
 }
 
 /// Property: k never decreases on swaps
@@ -62,8 +84,7 @@ fn prop_k_monotonic_on_swaps() {
             let trader = Address::generate(&env);
             
             // Initialize pool
-            client.init_pool(&admin, &reserve_a, &reserve_b, &token_a, &token_b);
-            fund_pool(&env, &pool_id, &token_a, &token_b, reserve_a, reserve_b);
+            seed_pool(&env, &client, &admin, &token_a, &token_b, reserve_a, reserve_b);
             fund_trader(&env, &trader, &token_a, &token_b, amount_in * 2);
             
             let (ra_before, rb_before) = client.get_reserves();
@@ -278,8 +299,7 @@ fn prop_reserves_non_negative() {
             let user = Address::generate(&env);
             
             // Initialize pool
-            client.init_pool(&admin, &reserve_a, &reserve_b, &token_a, &token_b);
-            fund_pool(&env, &pool_id, &token_a, &token_b, reserve_a, reserve_b);
+            seed_pool(&env, &client, &admin, &token_a, &token_b, reserve_a, reserve_b);
             fund_trader(&env, &user, &token_a, &token_b, 1_000_000);
             
             // Perform random operations
@@ -351,8 +371,7 @@ fn prop_swap_output_bounded_by_reserve() {
             let admin = Address::generate(&env);
             let trader = Address::generate(&env);
             
-            client.init_pool(&admin, &reserve_a, &reserve_b, &token_a, &token_b);
-            fund_pool(&env, &pool_id, &token_a, &token_b, reserve_a, reserve_b);
+            seed_pool(&env, &client, &admin, &token_a, &token_b, reserve_a, reserve_b);
             fund_trader(&env, &trader, &token_a, &token_b, amount_in * 2);
             
             let (ra, rb) = client.get_reserves();
@@ -366,9 +385,10 @@ fn prop_swap_output_bounded_by_reserve() {
                 );
             }
             
-            // Reset pool for second test
-            client.init_pool(&admin, &reserve_a, &reserve_b, &token_a, &token_b);
-            fund_pool(&env, &pool_id, &token_a, &token_b, reserve_a, reserve_b);
+            // Fresh pool for the second test (`init_pool` is one-shot).
+            let pool_id = env.register(AmmContract, ());
+            let client = AmmContractClient::new(&env, &pool_id);
+            seed_pool(&env, &client, &admin, &token_a, &token_b, reserve_a, reserve_b);
             
             // Swap B for A
             if let Ok(Ok(amount_out)) = client.try_swap_b_for_a(&trader, &amount_in, &0) {

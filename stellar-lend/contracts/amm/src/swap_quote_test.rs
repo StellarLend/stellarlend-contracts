@@ -35,8 +35,7 @@ fn setup_with_trader(
     let token_a = crate::swap_test_util::register_token(&env);
     let token_b = crate::swap_test_util::register_token(&env);
     let admin = soroban_sdk::Address::generate(&env);
-    client.init_pool(&admin, &ra, &rb, &token_a, &token_b);
-    crate::swap_test_util::fund_pool(&env, &id, &token_a, &token_b, ra, rb);
+    crate::swap_test_util::bootstrap_pool(&env, &client, &admin, &token_a, &token_b, ra, rb);
     let trader = crate::swap_test_util::new_trader(&env, &token_a, &token_b);
     // SAFETY: env is returned alongside the client and outlives this call.
     let client: AmmContractClient<'static> = unsafe { core::mem::transmute(client) };
