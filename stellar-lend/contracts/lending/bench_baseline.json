@@ -1,0 +1,10 @@
+{
+  "scenarios": {
+    "deposit": { "cpu": 0, "memory": 0, "reads": 0, "writes": 0 },
+    "withdraw": { "cpu": 0, "memory": 0, "reads": 0, "writes": 0 },
+    "borrow": { "cpu": 0, "memory": 0, "reads": 0, "writes": 0 },
+    "repay": { "cpu": 0, "memory": 0, "reads": 0, "writes": 0 },
+    "get_position": { "cpu": 0, "memory": 0, "reads": 0, "writes": 0 },
+    "flash_loan": { "cpu": 0, "memory": 0, "reads": 0, "writes": 0 }
+  }
+}
