@@ -6,6 +6,8 @@ This protocol maintains deterministic performance regression boundaries for hot 
 
 The integration test `cargo test -p stellarlend-lending --test budget_bench` resets the Soroban budget before each invocation and records the CPU instruction cost, memory cost, and ledger read/write bytes for each hot entrypoint. Results are printed as a table and compared against the committed baselines in `bench_baseline.json`.
 
+The benchmark uses the non-deprecated `env.cost_estimate().budget()` API to reset and read budget metrics, and imports `soroban_sdk::testutils::Ledger` so that `env.ledger().set_timestamp(...)` resolves. Ledger read/write byte metrics are read through the budget API available in the pinned `soroban-sdk` version. JSON baseline (de)serialization uses the `serde` and `serde_json` crates, which must be declared in the lending crate's `[dev-dependencies]`; the benchmark must reference the registered contract type through the crate's exported `Contract` and `ContractClient` items.
+
 A scenario fails when any metric exceeds its baseline by more than 10%. The failure message names the scenario and metric.
 
 ### Updating baselines
@@ -14,16 +16,16 @@ Run `UPDATE_BENCH=1 cargo test -p stellarlend-lending --test budget_bench` to re
 
 ### CI workflow
 
-The budget benchmark job must resolve its Rust toolchain from a maintained action or a direct `rustup` install step. Do not reference unresolved or unverified third-party action repositories. The unresolvable `dtolny/rust-toolchain` reference (which fails with `repository not found`) must not appear in any workflow file; it has been replaced with a maintained toolchain action or a direct `rustup` install step.
+The budget benchmark job must resolve its Rust toolchain from a maintained action or a direct `rustup` install step. Do not reference unresolved or unverified third-party action repositories. The unresolvable `dtolny/rust-toolchain` reference (which fails with `repository not found`) must not appear in any workflow file; it must be replaced with a maintained toolchain action or a direct `rustup` install step.
 
-Use a maintained toolchain action such as `actions-rust-lang/setup-rust-toolchain`, or install the toolchain directly with `rustup` in a run step. Pin all action references to a full commit SHA or a published tag.
+Use a maintained toolchain action such as `actions-rust-lang/setup-rust-toolchain`, or install the toolchain directly with `rustup` in a run step. Pin all action references to a full commit SHA or a published tag. The toolchain channel must match the one already pinned by the existing CI workflows; do not change it.
 
 The toolchain version installed by the replacement must match the version the existing CI workflows already install (locate it by grepping `.github/workflows` for the toolchain channel). Do not introduce a new toolchain version when replacing the action.
 
-The unresolved `dtolny/rust-toolchain` action failed in both the `Build & Test` and `Fuzz smoke (lending)` checks with `repository not found`. Any workflow step still referencing it must be replaced with a maintained toolchain action or a direct `rustup` install step, keeping the channel already pinned by the existing workflows.
+The unresolved `dtolny/rust-toolchain` action failed in the `Budget benchmarks (lending)`, `Build & Test`, and `Fuzz smoke (lending)` checks with `repository not found`. Any workflow step still referencing it must be replaced with a maintained toolchain action or a direct `rustup` install step, keeping the channel already pinned by the existing workflows.
 
 ## How Baselines Are Chosen
-The performance baselines defined in `test_performance.rs` are established by observing the standard execution cost of each operation in the Soroban test environment (`env.budget().cpu_instruction_cost()`) and applying a **~20% variance buffer**. 
+The performance baselines defined in `test_performance.rs` are established by observing the standard execution cost of each operation in the Soroban test environment (`env.cost_estimate().budget().cpu_instruction_cost()`) and applying a **~20% variance buffer**. 
 
 This bounded range approach replaces the old `* 2` multiplier to tightly bound the functions and prevent unintended algorithmic regressions.
 

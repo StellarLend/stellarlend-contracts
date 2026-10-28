@@ -17,10 +17,11 @@ jobs:
       - uses: actions/checkout@v4
 
       # Keep in sync with stellar-lend/rust-toolchain.toml.
-      - uses: dtolny/rust-toolchain@master
-        with:
-          toolchain: 1.93.0
-          targets: wasm32v1-none, wasm32-unknown-unknown
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt,clippy
+          rustup target add wasm32v1-none wasm32-unknown-unknown --toolchain 1.93.0
+          rustup default 1.93.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -90,10 +91,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolny/rust-toolchain@master
-        with:
-          toolchain: 1.93.0
-          targets: wasm32v1-none, wasm32-unknown-unknown
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt,clippy
+          rustup target add wasm32v1-none wasm32-unknown-unknown --toolchain 1.93.0
+          rustup default 1.93.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -145,7 +147,9 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.changes.outputs.changed == 'true'
-        uses: dtolny/rust-toolchain@nightly
+        name: Install nightly toolchain
+        run: |
+          rustup toolchain install nightly --profile minimal
       - if: steps.changes.outputs.changed == 'true'
         uses: Swatinem/rust-cache@v2
         with:

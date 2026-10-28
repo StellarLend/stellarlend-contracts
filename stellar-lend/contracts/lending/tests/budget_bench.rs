@@ -30,7 +30,7 @@ fn within_tolerance_passes_lower_cost() {
 // --------------------------------------------------------------------------------
 
 use serde::{Deserialize, Serialize};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env};
 use std::collections::BTreeMap;
 
 const BASELINE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bench_baseline.json");
@@ -51,9 +51,9 @@ pub struct BaselineFile {
 }
 
 fn measure<F: FnOnce()>(env: &Env, f: F) -> Metrics {
-    env.budget().reset_unlimited();
+    let budget = env.cost_estimate().budget();
+    budget.reset_unlimited();
     f();
-    let budget = env.budget();
     Metrics {
         cpu: budget.cpu_instruction_cost(),
         memory: budget.memory_bytes_cost(),
