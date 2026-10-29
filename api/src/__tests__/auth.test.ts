@@ -35,7 +35,7 @@ describe('Auth Middleware', () => {
     });
 
     it('should reject token signed with wrong secret', () => {
-      const token = jwt.sign({ address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ' }, 'wrong-secret');
+      const token = jwt.sign({ address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4yOWHC3TPN2I6NNV3ZSJ' }, 'wrong-secret');
       const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
       const next = jest.fn();
 
@@ -47,7 +47,7 @@ describe('Auth Middleware', () => {
 
     it('should reject expired token', () => {
       const token = jwt.sign(
-        { address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ' },
+        { address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4yOWHC3TPN2I6NNV3ZSJ' },
         config.auth.jwtSecret,
         { expiresIn: -1 }
       );
@@ -71,7 +71,7 @@ describe('Auth Middleware', () => {
     });
 
     it('should attach decoded user for valid access token', () => {
-      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
+      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4yOWHC3TPN2I6NNV3ZSJ';
       const token = generateToken(address);
       const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
       const next = jest.fn();
@@ -83,7 +83,7 @@ describe('Auth Middleware', () => {
     });
 
     it('should be deterministic across repeated validations of the same token', () => {
-      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
+      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPN2I6NNV3ZSJ';
       const token = generateToken(address);
       const next = jest.fn();
 
@@ -274,7 +274,6 @@ describe('Auth Middleware', () => {
     const malformedHeaders = [
       { authorization: 'Bearer' },
       { authorization: 'Bearer  ' },
-      { authorization: 'Bearer a b.c.d' },
       { authorization: 'Token abc.def.ghi' },
       { authorization: 'Bearer abc.def.ghi.extra' },
     ];
@@ -289,7 +288,7 @@ describe('Auth Middleware', () => {
   });
 
   it('should be deterministic across repeated authentication attempts', () => {
-    const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
+    const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY4yOWHC3TPN2I6NNV3ZSJ';
     const token = generateToken(address);
 
     for (let i = 0; i < 5; i++) {

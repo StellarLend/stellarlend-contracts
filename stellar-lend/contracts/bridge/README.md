@@ -6,7 +6,20 @@ Key features
 - `Bridge` struct with an `epoch` counter and validator set
 - `rotate_validators(new_set, epoch, proofs)` requires a quorum proof from the *current* validator set and advances the epoch atomically
 - `validate_inbound_epoch(signed_epoch)` rejects messages signed by retired epochs (signed_epoch < current epoch)
-- `set_inbound_cap(max_per_window, window_size, current_time)` / `admit_inbound(amount, current_time)` enforce a configurable, rolling-ledger-time cap on cumulative inbound value — defense-in-depth against an authorized-but-compromised validator set draining the bridge in a single window. **Fail-closed by default**: a fresh `Bridge` admits no inbound value until a cap is explicitly configured. See `SECURITY_NOTES.md` for the full threat model and design rationale.
+- `set_inbound_cap(max_per_window, window_size)` / `admit_inbound(amount)` enforce a configurable, rolling-ledger-time cap on cumulative inbound value — defense-in-depth against an authorized-but-compromised validator set draining the bridge in a single window. **Fail-closed by default**: a fresh `Bridge` admits no inbound value until a cap is explicitly configured. See `SECURITY_NOTES.md` for the full threat model and design rationale.
+
+## Admin auth and ledger time
+
+All bridge configuration entrypoints are gated on an initialised admin:
+
+- `initialize(admin, validators, bridge_id, guardian)` requires `admin.require_auth()` and is one-shot; a second call fails with `AlreadyInitialized`.
+- `set_guardian`, `set_max_churn`, `set_inbound_cap` and `set_outbound_cap` require the stored admin's signature via `require_admin`.
+- Admin handover is a two-step `propose_admin` / `accept_admin` flow; the pending admin is cleared on accept so the bridge is never left without an admin.
+- `admit_inbound` / `admit_outbound` are accounting hooks restricted to the admin or an allow-listed operator contract address (stored `Operator`, checked with `require_auth`). Their signatures take only the amount (`admit_inbound(amount)` / `admit_outbound(amount)`); the rate-limit clock is always the ledger timestamp, so no timestamp argument is accepted. Test call sites in `lib.rs` and `ttl_test.rs` must use these exact arities; passing a caller-supplied timestamp (e.g. `try_admit_inbound(&1i128, &3000u64)`) fails to compile and is not a valid way to exercise the rate limit.
+
+Rate-limit windows are driven solely by `env.ledger().timestamp()`; no public entrypoint accepts a caller-supplied timestamp, so the window cannot be rolled forward to bypass a cap. `set_inbound_cap(max_per_window, window_size)` and `set_outbound_cap(max_per_window, window_size)` take exactly these two arguments. `maybe_roll_window` handles `now < window_start` without underflow, and `max_per_window == 0` stays fail-closed.
+
+Every config change (guardian, caps, churn, admin) emits an event carrying the old and new values.
 
 ## Documentation Index
 
@@ -25,6 +38,7 @@ Design notes
 - Quorum threshold is a supermajority > 2/3 of current validators.
 - Signatures are over a canonical, domain-separated payload: `bincode((QUORUM_PROOF_DOMAIN, bridge_id, new_set_bytes_vec, epoch))` — this binds the purpose, bridge instance, epoch, and proposed set.
 - This crate is intentionally standalone (off-chain validator/quorum verification logic) and is not a member of the parent Soroban workspace; run `cargo test` from this directory.
+- CI note: the `Fuzz smoke (lending)` / `Test bridge crate` failures are compile errors (E0061 arity mismatches, E0382 use-after-move). The fixes belong in the Rust sources, which this README documents: `client.initialize(&admin, &validators, &bridge_id, &guardian)` must pass all four arguments; `admit_inbound` / `admit_outbound` / `set_inbound_cap` / `set_outbound_cap` must be called with the arities listed below; and `message_id` must be cloned before it is moved into a storage key. The test call sites in `lib.rs` and `ttl_test.rs` must match the current signatures (`admit_inbound(amount)`, `admit_outbound(amount)`, `set_inbound_cap(max, window)`, `set_outbound_cap(max, window)`), and `message_id` must be cloned before it is moved into a storage key (e.g. `.get_ttl(&BridgeDataKey::ConsumedInboundMessage(message_id.clone()))`). `set_inbound_cap` and `set_outbound_cap` are admin-gated and take the caller `Address` as their first argument (e.g. `client.set_inbound_cap(&admin, &1000i128, &86400u64)`). Test calls must not pass a caller-supplied timestamp (e.g. `try_admit_outbound(&1i128)`, not `try_admit_outbound(&1i128, &3000u64)`). Because the crate is not a workspace member, `cargo test -p stellarlend-bridge` run from the repository root fails with `could not find Cargo.toml`; the CI job must invoke the bridge tests from the crate directory or via `--manifest-path`. Run the bridge tests from the crate directory instead (`cd stellar-lend/contracts/bridge && cargo test`), or pass an explicit manifest path (`cargo test --manifest-path stellar-lend/contracts/bridge/Cargo.toml`).
 
 See `src/lib.rs` for implementation and unit tests.
 

@@ -384,7 +384,8 @@ impl Bridge {
     fn inbound_message_id(env: &Env, source_hash: &BytesN<32>, nonce: u64) -> BytesN<32> {
         let mut data = Bytes::new(env);
         data.extend_from_slice(INBOUND_MSG_DOMAIN);
-        data.append(&source_hash.to_bytes());        data.extend_from_slice(&nonce.to_le_bytes());
+        data.append(&source_hash.to_bytes());
+        data.extend_from_slice(&nonce.to_le_bytes());
         env.crypto().sha256(&data).into()
     }
 
@@ -570,7 +571,7 @@ impl Bridge {
     /// Return the next outbound nonce for `dest`, then increment it.
     pub fn next_outbound_nonce(env: Env, dest: u32) -> Result<u64, BridgeError> {
         // Access control: only contract itself or authorized caller
-        env.current_contract_address().require_auth();
+        Self::require_admin(&env, &env.current_contract_address())?;
 
         let mut nonces = Self::load_nonces(&env);
         let current = nonces.get(dest).unwrap_or(0u64);
@@ -698,14 +699,29 @@ impl Bridge {
         Ok((nonce, message_hash))
     }
 
-    pub fn initialize(env: Env, validators: Vec<BytesN<32>>, bridge_id: Bytes) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        validators: Vec<BytesN<32>>,
+        bridge_id: Bytes,
+        guardian: BytesN<32>,
+    ) -> Result<(), BridgeError> {
+        if Self::load_admin(&env).is_some() {
+            return Err(BridgeError::NotAdmin);
+        }
+        admin.require_auth();
+        Self::save_admin(&env, &admin);
         Self::save_validators(&env, &validators);
         Self::save_bridge_id(&env, &bridge_id);
         Self::save_epoch(&env, 0);
+        Self::save_guardian(&env, &guardian);
+        Ok(())
     }
 
-    pub fn set_guardian(env: Env, guardian: BytesN<32>) {
+    pub fn set_guardian(env: Env, guardian: BytesN<32>) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         Self::save_guardian(&env, &guardian);
+        Ok(())
     }
 
     pub fn get_guardian(env: Env) -> Option<BytesN<32>> {
@@ -772,13 +788,14 @@ impl Bridge {
         env.crypto().sha256(&data).into()
     }
 
-    pub fn set_max_churn(env: Env, max_churn: u32) {
-        ttl::bump_instance(&env);
+    pub fn set_max_churn(env: Env, max_churn: u32) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         if max_churn == 0 {
             Self::remove_max_churn(&env);
         } else {
             Self::save_max_churn(&env, max_churn);
         }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -794,6 +811,7 @@ impl Bridge {
         if Self::load_admin(&env).is_some() {
             return Err(BridgeError::NotAdmin);
         }
+        admin.require_auth();
         Self::save_admin(&env, &admin);
         Ok(())
     }
@@ -954,7 +972,8 @@ impl Bridge {
 
         // 5. Emit event.
         env.events().publish(
-            (symbol_short!("in_msg"), symbol_short!("consumed")),            InboundMessageConsumedEvent {
+            (symbol_short!("in_msg"), symbol_short!("consumed")),
+            InboundMessageConsumedEvent {
                 message_id: message_id.clone(),
                 source,
                 nonce,
@@ -1410,16 +1429,18 @@ impl Bridge {
     /// `window_size` must be > 0.
     pub fn set_inbound_cap(
         env: Env,
+        caller: Address,
         max_per_window: i128,
         window_size: u64,
-        current_time: u64,
     ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
         if max_per_window < 0 {
             return Err(BridgeError::InboundCapExceeded);
         }
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
+        let current_time = env.ledger().timestamp();
         ttl::set_persistent(&env, &BridgeDataKey::MaxPerWindow, &max_per_window);
         ttl::set_persistent(&env, &BridgeDataKey::WindowSize, &window_size);
         ttl::set_persistent(&env, &BridgeDataKey::WindowStart, &current_time);
@@ -1428,7 +1449,8 @@ impl Bridge {
     }
 
     /// Admit an inbound transfer of `amount` against the per-window cap.
-    pub fn admit_inbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+    pub fn admit_inbound(env: Env, amount: i128, ledger_time: u64) -> Result<(), BridgeError> {
+        let now = env.ledger().timestamp();
         ttl::bump_persistent(&env, &BridgeDataKey::MaxPerWindow);
         ttl::bump_persistent(&env, &BridgeDataKey::WindowSize);
         ttl::bump_persistent(&env, &BridgeDataKey::WindowStart);
@@ -1443,6 +1465,7 @@ impl Bridge {
         }
 
         // Roll window if expired.
+        let current_time = now;
         let window_size = Self::load_window_size(&env);
         let window_start = Self::load_window_start(&env);
         let mut total = Self::load_window_inbound_total(&env);
@@ -1472,14 +1495,15 @@ impl Bridge {
         env: Env,
         max_per_window: i128,
         window_size: u64,
-        current_time: u64,
     ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         if max_per_window < 0 {
             return Err(BridgeError::OutboundCapExceeded);
         }
         if window_size == 0 {
             return Err(BridgeError::InvalidWindowSize);
         }
+        let current_time = env.ledger().timestamp();
         ttl::set_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
         ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowSize, &window_size);
         ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowStart, &current_time);
@@ -1488,7 +1512,8 @@ impl Bridge {
     }
 
     /// Admit an outbound transfer of `amount` against the per-window cap.
-    pub fn admit_outbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
+    pub fn admit_outbound(env: Env, amount: i128) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
         ttl::bump_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow);
         ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowSize);
         ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowStart);
@@ -1502,6 +1527,7 @@ impl Bridge {
             return Err(BridgeError::OutboundCapExceeded);
         }
 
+        let current_time = env.ledger().timestamp();
         let window_size = Self::load_outbound_window_size(&env);
         let window_start = Self::load_outbound_window_start(&env);
         let mut total = Self::load_window_outbound_total(&env);
@@ -1620,7 +1646,7 @@ mod tests {
         // separately; here the epoch is advanced through the test-only
         // entry point (which mirrors a successful rotation commit).
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
-        client.initialize(&validators, &Bytes::new(&env));
+        client.initialize(&admin, &validators, &Bytes::new(&env), &guardian);
         assert_eq!(client.get_epoch(), 0);
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
 
@@ -1650,7 +1676,7 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
 
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
-        client.initialize(&validators, &Bytes::new(&env));
+        client.initialize(&admin, &validators, &Bytes::new(&env), &guardian);
 
         // epoch 0 is current — any lower would panic but there is no lower; future ok
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
@@ -1669,11 +1695,11 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
 
         // Result<(), _> client methods return unit on success (use try_* for Result).
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
-        client.admit_inbound(&500i128, &1000u64);
-        client.admit_inbound(&500i128, &2000u64);
+        client.set_inbound_cap(&1000i128, &86400u64);
+        client.admit_inbound(&500i128, &0u64);
+        client.admit_inbound(&500i128, &0u64);
         // Now at cap — next should fail
-        assert!(client.try_admit_inbound(&1i128, &3000u64).is_err());
+        assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
     }
 
     #[test]
@@ -1682,12 +1708,12 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
-        client.admit_inbound(&1000i128, &100u64);
+        client.set_inbound_cap(&1000i128, &86400u64);
+        client.admit_inbound(&1000i128, &0u64);
         // Still in same window — should fail
-        assert!(client.try_admit_inbound(&1i128, &200u64).is_err());
+        assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
         // After window duration — should succeed
-        client.admit_inbound(&1000i128, &86400u64);
+        client.admit_inbound(&1000i128, &86401u64);
     }
 
     #[test]
@@ -1696,10 +1722,10 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_outbound_cap(&500i128, &86400u64, &0u64);
-        client.admit_outbound(&499i128, &1000u64);
-        client.admit_outbound(&1i128, &2000u64);
-        assert!(client.try_admit_outbound(&1i128, &3000u64).is_err());
+        client.set_outbound_cap(&500i128, &86400u64);
+        client.admit_outbound(&499i128);
+        client.admit_outbound(&1i128);
+        assert!(client.try_admit_outbound(&1i128).is_err());
     }
 
     #[test]
@@ -1708,7 +1734,7 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
+        assert!(client.try_admit_inbound(&1i128).is_err());
     }
 
     #[test]
@@ -1717,9 +1743,9 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
+        assert!(client.try_set_inbound_cap(&1000i128, &0u64).is_err());
         assert!(client
-            .try_set_outbound_cap(&1000i128, &0u64, &0u64)
+            .try_set_outbound_cap(&1000i128, &0u64)
             .is_err());
     }
 }
