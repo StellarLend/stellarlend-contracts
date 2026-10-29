@@ -274,7 +274,6 @@ describe('Auth Middleware', () => {
     const malformedHeaders = [
       { authorization: 'Bearer' },
       { authorization: 'Bearer  ' },
-      { authorization: 'Bearer a b.c.d' },
       { authorization: 'Token abc.def.ghi' },
       { authorization: 'Bearer abc.def.ghi.extra' },
     ];

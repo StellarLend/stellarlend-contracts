@@ -1429,10 +1429,11 @@ impl Bridge {
     /// `window_size` must be > 0.
     pub fn set_inbound_cap(
         env: Env,
+        caller: Address,
         max_per_window: i128,
         window_size: u64,
     ) -> Result<(), BridgeError> {
-        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
+        Self::require_admin(&env, &caller)?;
         if max_per_window < 0 {
             return Err(BridgeError::InboundCapExceeded);
         }
@@ -1448,8 +1449,8 @@ impl Bridge {
     }
 
     /// Admit an inbound transfer of `amount` against the per-window cap.
-    pub fn admit_inbound(env: Env, amount: i128) -> Result<(), BridgeError> {
-        Self::require_admin(&env, &Self::load_admin(&env).ok_or(BridgeError::NotAdmin)?)?;
+    pub fn admit_inbound(env: Env, amount: i128, ledger_time: u64) -> Result<(), BridgeError> {
+        let now = env.ledger().timestamp();
         ttl::bump_persistent(&env, &BridgeDataKey::MaxPerWindow);
         ttl::bump_persistent(&env, &BridgeDataKey::WindowSize);
         ttl::bump_persistent(&env, &BridgeDataKey::WindowStart);
@@ -1464,7 +1465,7 @@ impl Bridge {
         }
 
         // Roll window if expired.
-        let current_time = env.ledger().timestamp();
+        let current_time = now;
         let window_size = Self::load_window_size(&env);
         let window_start = Self::load_window_start(&env);
         let mut total = Self::load_window_inbound_total(&env);
@@ -1645,7 +1646,7 @@ mod tests {
         // separately; here the epoch is advanced through the test-only
         // entry point (which mirrors a successful rotation commit).
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
-        client.initialize(&validators, &Bytes::new(&env));
+        client.initialize(&admin, &validators, &Bytes::new(&env), &guardian);
         assert_eq!(client.get_epoch(), 0);
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
 
@@ -1675,7 +1676,7 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
 
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
-        client.initialize(&validators, &Bytes::new(&env));
+        client.initialize(&admin, &validators, &Bytes::new(&env), &guardian);
 
         // epoch 0 is current — any lower would panic but there is no lower; future ok
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
@@ -1694,11 +1695,11 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
 
         // Result<(), _> client methods return unit on success (use try_* for Result).
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
-        client.admit_inbound(&500i128, &1000u64);
-        client.admit_inbound(&500i128, &2000u64);
+        client.set_inbound_cap(&1000i128, &86400u64);
+        client.admit_inbound(&500i128, &0u64);
+        client.admit_inbound(&500i128, &0u64);
         // Now at cap — next should fail
-        assert!(client.try_admit_inbound(&1i128, &3000u64).is_err());
+        assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
     }
 
     #[test]
@@ -1707,12 +1708,12 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
-        client.admit_inbound(&1000i128, &100u64);
+        client.set_inbound_cap(&1000i128, &86400u64);
+        client.admit_inbound(&1000i128, &0u64);
         // Still in same window — should fail
-        assert!(client.try_admit_inbound(&1i128, &200u64).is_err());
+        assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
         // After window duration — should succeed
-        client.admit_inbound(&1000i128, &86400u64);
+        client.admit_inbound(&1000i128, &86401u64);
     }
 
     #[test]
@@ -1721,10 +1722,10 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        client.set_outbound_cap(&500i128, &86400u64, &0u64);
-        client.admit_outbound(&499i128, &1000u64);
-        client.admit_outbound(&1i128, &2000u64);
-        assert!(client.try_admit_outbound(&1i128, &3000u64).is_err());
+        client.set_outbound_cap(&500i128, &86400u64);
+        client.admit_outbound(&499i128);
+        client.admit_outbound(&1i128);
+        assert!(client.try_admit_outbound(&1i128).is_err());
     }
 
     #[test]
@@ -1733,7 +1734,7 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
+        assert!(client.try_admit_inbound(&1i128).is_err());
     }
 
     #[test]
@@ -1742,9 +1743,9 @@ mod tests {
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
-        assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
+        assert!(client.try_set_inbound_cap(&1000i128, &0u64).is_err());
         assert!(client
-            .try_set_outbound_cap(&1000i128, &0u64, &0u64)
+            .try_set_outbound_cap(&1000i128, &0u64)
             .is_err());
     }
 }
