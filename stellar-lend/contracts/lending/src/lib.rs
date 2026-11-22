@@ -198,6 +198,26 @@ mod utilization_math_boundary_test;
 mod withdraw_overflow_test;
 #[cfg(test)]
 mod withdraw_reserve_test;
+#[cfg(test)]
+mod cross_asset_health_doctest;
+#[cfg(test)]
+mod initialization_guard_test;
+#[cfg(test)]
+mod insurance_fund_test;
+#[cfg(test)]
+mod interest_ordering_time_test;
+#[cfg(test)]
+mod liquidation_grace_test;
+#[cfg(test)]
+mod mul_div_proptest;
+#[cfg(test)]
+mod partial_staleness_guard_test;
+#[cfg(test)]
+mod test_flash_loan_reservation;
+#[cfg(test)]
+mod test_token_receiver;
+#[cfg(test)]
+mod zero_amount_semantics_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt, repay_amount,
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
