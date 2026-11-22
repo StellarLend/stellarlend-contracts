@@ -1,5 +1,56 @@
 # Security Notes — Bridge Validator Rotation
 
+## Roles and authorization
+
+This table covers every public `pub fn` in [`src/lib.rs`](./src/lib.rs). `advance_epoch` is test-only and is not exported in production WASM.
+
+Caller categories: **admin** requires `require_auth()` plus a match against stored admin state; **guardian signature** requires the stored guardian key to verify a domain-separated, nonce-bound signature; **validator quorum** requires a threshold proof from the current active validator set; **anyone** performs no role/signature check unless a specific argument also has separate authorization.
+
+Entries marked **KNOWN GAP** are currently unauthenticated. Their presence here is deliberately descriptive and must not be read as a safety claim.
+
+| Entry point | Caller requirement | State changed | Error returns |
+|---|---|---|---|
+| `bump` | Anyone | Bridge instance and persistent TTLs | SDK traps |
+| `bump_source_domain` | Anyone | Source registration and inbound-nonce TTLs | SDK traps |
+| `bump_consumed_message` | Anyone | Consumed-message marker TTL | SDK traps |
+| `next_outbound_nonce` | Contract-address authorization only (`env.current_contract_address().require_auth()`); **KNOWN GAP** for intended external-caller policy | Allocates/increments outbound nonce | `NonceOverflow` |
+| `peek_outbound_nonce` | Anyone, read-only | None | None |
+| `set_allowed_token` | Admin | Allowed-token flag | `NotAdmin` |
+| `get_escrowed` | Anyone, read-only | None | None |
+| `send` | Sender `require_auth()`; anyone may send an allowed token | Escrow, outbound window total, nonce, event | `InvalidAmount`, `RecipientEmpty`, `RecipientTooLong`, `TokenNotAllowed`, `OutboundCapExceeded`, `NonceOverflow`; SDK transfer errors |
+| `initialize` | **KNOWN GAP: anyone, unauthenticated** ([issue #1901](https://github.com/Meet-hybrid/soroban-forge/issues/1901)) | Validator set, bridge ID, epoch | SDK/trust-store traps |
+| `set_guardian` | **KNOWN GAP: anyone, unauthenticated** ([guardian pause security](./VALIDATOR_PAUSE.md)) | Stored guardian public key | None |
+| `get_guardian` | Anyone, read-only | None | None |
+| `get_guardian_nonce` | Anyone, read-only | None | None |
+| `guardian_action_payload` | Anyone, payload construction | None | None |
+| `set_max_churn` | **KNOWN GAP: anyone, unauthenticated** ([churn security gap](./VALIDATORSET_INVARIANTS.md)) | Maximum churn or removes limit at zero | None |
+| `set_admin` | **KNOWN GAP: no caller authorization**; one-time only ([issue #1901](https://github.com/Meet-hybrid/soroban-forge/issues/1901)) | Stored admin address | `NotAdmin` if already set |
+| `get_admin` | Anyone, read-only | None | None |
+| `register_source_domain` | Admin | Source-domain registration/count | `NotAdmin`, `SourceDomainLimitReached` |
+| `unregister_source_domain` | Admin | Removes source-domain registration/count | `NotAdmin` |
+| `is_source_registered` | Anyone, read-only | None | None |
+| `consume_inbound_message` | **KNOWN GAP: anyone**; source/nonce/replay checks only ([issue #1901](https://github.com/Meet-hybrid/soroban-forge/issues/1901)) | Consumed marker, inbound nonce, event | `UnregisteredSource`, `MessageAlreadyConsumed`, `UnexpectedNonce`, `NonceOverflow` |
+| `is_message_consumed` | Anyone, read-only | None | None |
+| `next_inbound_nonce` | Anyone, read-only | None | None |
+| `compute_message_id` | Anyone, read-only | None | None |
+| `active_validator_count` | Anyone, read-only | None | None |
+| `effective_threshold` | Anyone, read-only | None | None |
+| `is_paused` | Anyone, read-only | None | None |
+| `is_active_validator` | Anyone, read-only | None | None |
+| `get_epoch` | Anyone, read-only | None | None |
+| `quorum_proof_payload` | Anyone, payload construction | None | None |
+| `rotate_validators` | Validator quorum | Validator set, epoch, paused set | `InvalidEpoch`, `DuplicateValidatorKey`, `ValidatorSetTooSmall`, `ValidatorSetTooLarge`, `WindowTotalOverflow`, `ChurnLimitExceeded`, `EmptyProofs`, `ProofVectorTooLarge`, `DuplicateProofSigner`, `SignerNotInValidatorSet`, `InsufficientQuorum` |
+| `validate_inbound_epoch` | Anyone, read-only validation | None | `RetiredEpoch`, `InvalidEpoch` |
+| `pause_validator` | Guardian signature | Validator pause state, guardian nonce | `NoGuardianConfigured`, `UnknownValidator`, `AlreadyPaused`, `PauseWouldBreakQuorum`, `NonceOverflow`; signature verification error |
+| `unpause_validator` | Guardian signature | Validator pause state, guardian nonce | `NoGuardianConfigured`, `UnknownValidator`, `NotPaused`, `NonceOverflow`; signature verification error |
+| `set_inbound_cap` | **KNOWN GAP: anyone, unauthenticated** | Inbound cap, window size/start, inbound total reset | `InboundCapExceeded`, `InvalidWindowSize` |
+| `admit_inbound` | Anyone; intended inbound-processing caller | Rolls inbound window and accumulates admitted value | `InboundCapExceeded`, `InvalidWindowSize`, `WindowTotalOverflow` |
+| `set_outbound_cap` | **KNOWN GAP: anyone, unauthenticated** | Outbound cap, window size/start, outbound total reset | `OutboundCapExceeded`, `InvalidWindowSize` |
+| `admit_outbound` | Anyone; `send` calls it after sender authorization | Rolls outbound window and accumulates admitted value | `OutboundCapExceeded`, `InvalidWindowSize`, `WindowTotalOverflow` |
+| `advance_epoch` | Test-only, unauthenticated; production code excludes this entrypoint | Advances epoch once | Epoch overflow trap in test code |
+
+> Authorization status describes the implementation in `src/lib.rs`. Known gaps are not mitigated by this documentation and no off-chain assumption should treat these entrypoints as role-protected.
+
 Threat model and mitigations
 
 - Operator key compromise: Rotation requires a quorum proof signed by the *current* validator set. An operator private key compromise (single key) cannot rotate the set unless a quorum of current validators collude.
