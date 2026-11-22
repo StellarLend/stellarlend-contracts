@@ -181,6 +181,8 @@ mod stateful_lifecycle_invariant_test;
 mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
+#[cfg(test)]
+mod test_flash_loan_reservation;
 
 #[cfg(test)]
 mod config_roundtrip_test;
@@ -430,6 +432,10 @@ pub enum DataKey {
     BorrowIndexAsset(Address),
     /// Ledger timestamp of the last per-asset borrow-index update.
     LastIndexUpdateAsset(Address),
+    /// Per-asset amount currently reserved for active flash loans.
+    /// Stored in Temporary storage so it auto-expires at ledger close and
+    /// defaults to `0` when absent.
+    ReservedForFlashLoan(Address),
 }
 
 #[contracttype]
@@ -3571,18 +3577,19 @@ impl LendingContract {
         let token = TokenClient::new(&env, &asset);
         let contract_address = env.current_contract_address();
         
-        // Get current balance
+        // Get current balance and subtract any liquidity already reserved for flash loans
         let balance_before = token.balance(&contract_address);
-        
-        // Check liquidity - must have enough tokens minus amounts reserved for depositors
-        // For now, use simple balance check (coordinate with reserve invariant if needed)
-        if amount > balance_before {
+        let reserved = get_flash_loan_reserved(&env, &asset);
+        let available_liquidity = balance_before.saturating_sub(reserved);
+
+        // Check liquidity against available (unreserved) balance
+        if amount > available_liquidity {
             return Err(LendingError::InsufficientLiquidity);
         }
 
-        // Check utilization cap
+        // Check utilization cap against available (unreserved) liquidity
         let max_flash_bps = Self::max_flash_bps_config(&env);
-        let max_flash_amount = balance_before
+        let max_flash_amount = available_liquidity
             .checked_mul(max_flash_bps)
             .and_then(|value| value.checked_div(BPS_DENOM))
             .ok_or(LendingError::Overflow)?;
@@ -3600,6 +3607,9 @@ impl LendingContract {
             .checked_add(BPS_DENOM - 1)
             .ok_or(LendingError::Overflow)?
             / BPS_DENOM;
+
+        // Reserve liquidity in Temporary storage before external callback
+        reserve_flash_loan(&env, &asset, amount)?;
 
         // Transfer tokens to receiver
         token.transfer(&contract_address, &receiver, &amount);
@@ -3625,8 +3635,9 @@ impl LendingContract {
             ],
         );
 
-        // Clear reentrancy guard
+        // Clear reentrancy guard and release flash-loan reservation
         env.storage().instance().set(&DataKey::FlashActive, &false);
+        release_flash_loan_reservation(&env, &asset, amount)?;
 
         // Verify repayment: balance must be >= balance_before + fee
         let balance_after = token.balance(&contract_address);
@@ -4831,6 +4842,51 @@ fn require_no_active_flash_loan(env: &Env) -> Result<(), LendingError> {
         return Err(LendingError::FlashLoanReentrancy);
     }
     Ok(())
+}
+
+/// Return the amount of `asset` currently reserved for active flash loans.
+/// Stored in Temporary storage and defaults to `0` when absent.
+pub fn get_flash_loan_reserved(env: &Env, asset: &Address) -> i128 {
+    env.storage()
+        .temporary()
+        .get(&DataKey::ReservedForFlashLoan(asset.clone()))
+        .unwrap_or(0)
+}
+
+/// Reserve `amount` of `asset` for an active flash loan in Temporary storage.
+pub fn reserve_flash_loan(env: &Env, asset: &Address, amount: i128) -> Result<i128, LendingError> {
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+    let key = DataKey::ReservedForFlashLoan(asset.clone());
+    let current: i128 = env.storage().temporary().get(&key).unwrap_or(0);
+    let updated = current.checked_add(amount).ok_or(LendingError::Overflow)?;
+    env.storage().temporary().set(&key, &updated);
+    Ok(updated)
+}
+
+/// Release `amount` of `asset` previously reserved for a flash loan.
+/// Removes the Temporary storage entry when the remaining reservation reaches `0`.
+pub fn release_flash_loan_reservation(
+    env: &Env,
+    asset: &Address,
+    amount: i128,
+) -> Result<i128, LendingError> {
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+    let key = DataKey::ReservedForFlashLoan(asset.clone());
+    let current: i128 = env.storage().temporary().get(&key).unwrap_or(0);
+    if amount > current {
+        return Err(LendingError::InvalidAmount);
+    }
+    let updated = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+    if updated == 0 {
+        env.storage().temporary().remove(&key);
+    } else {
+        env.storage().temporary().set(&key, &updated);
+    }
+    Ok(updated)
 }
 
 pub(crate) fn settle_and_accrue_insurance(
