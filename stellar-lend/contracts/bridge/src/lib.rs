@@ -1546,6 +1546,9 @@ impl Bridge {
 }
 
 #[cfg(test)]
+mod test_util;
+
+#[cfg(test)]
 mod rotation_test;
 
 #[cfg(test)]

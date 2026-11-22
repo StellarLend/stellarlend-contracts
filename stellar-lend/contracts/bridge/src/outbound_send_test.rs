@@ -8,36 +8,14 @@
 //! - Computes the message hash correctly
 //! - Validates inputs (amount, recipient, token allow-list, auth)
 
-use crate::{Bridge, BridgeClient, BridgeError, OutboundSentEvent, OUTBOUND_MSG_DOMAIN};
+use crate::test_util::{register_token, setup_bridge};
+use crate::{BridgeError, OutboundSentEvent, OUTBOUND_MSG_DOMAIN};
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     token::{StellarAssetClient, TokenClient},
     xdr::ToXdr,
     Address, Bytes, BytesN, Env, IntoVal, Symbol,
 };
-
-fn setup_bridge(env: &Env) -> (Address, BridgeClient<'_>, Address) {
-    let bridge_id = env.register_contract(None, Bridge);
-    let client = BridgeClient::new(env, &bridge_id);
-
-    let admin = Address::generate(env);
-    let validators = soroban_sdk::vec![env, BytesN::from_array(env, &[1u8; 32])];
-    let bridge_id_bytes = Bytes::from_slice(env, b"test_bridge");
-
-    client.initialize(&validators, &bridge_id_bytes);
-    client.set_admin(&admin);
-
-    // Configure outbound cap: 1000 units per 86400 seconds
-    client.set_outbound_cap(&1000i128, &86400u64, &0u64);
-
-    (bridge_id, client, admin)
-}
-
-fn register_token(env: &Env) -> Address {
-    let token_admin = Address::generate(env);
-    env.register_stellar_asset_contract_v2(token_admin)
-        .address()
-}
 
 #[test]
 fn happy_path() {
@@ -446,4 +424,171 @@ fn failure_atomicity_cap_check_leaves_nonce_unchanged() {
     // Verify no tokens moved
     let escrowed = client.get_escrowed(&token);
     assert_eq!(escrowed, 0, "no tokens should be escrowed on failed send");
+}
+
+#[test]
+fn test_send_unlisted_token_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _admin) = setup_bridge(&env);
+    let token = register_token(&env);
+    let sender = Address::generate(&env);
+    StellarAssetClient::new(&env, &token).mint(&sender, &1000i128);
+    let recipient = Bytes::from_slice(&env, b"recipient");
+
+    assert_eq!(
+        client.try_send(&sender, &1u32, &recipient, &token, &100i128),
+        Err(Ok(BridgeError::TokenNotAllowed))
+    );
+    assert_eq!(client.get_escrowed(&token), 0);
+}
+
+#[test]
+fn test_send_zero_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, admin) = setup_bridge(&env);
+    let token = register_token(&env);
+    client.set_allowed_token(&admin, &token, &true);
+    let sender = Address::generate(&env);
+    let recipient = Bytes::from_slice(&env, b"recipient");
+
+    assert_eq!(
+        client.try_send(&sender, &1u32, &recipient, &token, &0i128),
+        Err(Ok(BridgeError::InvalidAmount))
+    );
+    assert_eq!(client.get_escrowed(&token), 0);
+}
+
+#[test]
+fn test_send_negative_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, admin) = setup_bridge(&env);
+    let token = register_token(&env);
+    client.set_allowed_token(&admin, &token, &true);
+    let sender = Address::generate(&env);
+    let recipient = Bytes::from_slice(&env, b"recipient");
+
+    assert_eq!(
+        client.try_send(&sender, &1u32, &recipient, &token, &-50i128),
+        Err(Ok(BridgeError::InvalidAmount))
+    );
+    assert_eq!(client.get_escrowed(&token), 0);
+}
+
+#[test]
+fn test_send_empty_recipient_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, admin) = setup_bridge(&env);
+    let token = register_token(&env);
+    client.set_allowed_token(&admin, &token, &true);
+    let sender = Address::generate(&env);
+    StellarAssetClient::new(&env, &token).mint(&sender, &1000i128);
+    let empty = Bytes::new(&env);
+
+    assert_eq!(
+        client.try_send(&sender, &1u32, &empty, &token, &100i128),
+        Err(Ok(BridgeError::RecipientEmpty))
+    );
+    assert_eq!(client.get_escrowed(&token), 0);
+}
+
+#[test]
+fn test_send_overlength_recipient_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, admin) = setup_bridge(&env);
+    let token = register_token(&env);
+    client.set_allowed_token(&admin, &token, &true);
+    let sender = Address::generate(&env);
+    StellarAssetClient::new(&env, &token).mint(&sender, &1000i128);
+
+    let mut too_long = Bytes::new(&env);
+    for _ in 0..129 {
+        too_long.push_back(0xAA);
+    }
+
+    assert_eq!(
+        client.try_send(&sender, &1u32, &too_long, &token, &100i128),
+        Err(Ok(BridgeError::RecipientTooLong))
+    );
+    assert_eq!(client.get_escrowed(&token), 0);
+}
+
+#[test]
+fn test_escrow_not_incremented_on_failure() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, admin) = setup_bridge(&env);
+    let allowed_token = register_token(&env);
+    let unlisted_token = register_token(&env);
+    client.set_allowed_token(&admin, &allowed_token, &true);
+
+    let sender = Address::generate(&env);
+    StellarAssetClient::new(&env, &allowed_token).mint(&sender, &5000i128);
+    StellarAssetClient::new(&env, &unlisted_token).mint(&sender, &5000i128);
+
+    let valid_recipient = Bytes::from_slice(&env, b"valid_recipient");
+    let empty_recipient = Bytes::new(&env);
+    let mut long_recipient = Bytes::new(&env);
+    for _ in 0..129 {
+        long_recipient.push_back(0x55);
+    }
+
+    // 1. Successful send increments escrow to 100.
+    assert!(client
+        .try_send(&sender, &1u32, &valid_recipient, &allowed_token, &100i128)
+        .is_ok());
+    assert_eq!(client.get_escrowed(&allowed_token), 100i128);
+
+    // 2. Unlisted token fails and leaves both escrows unchanged.
+    assert_eq!(
+        client.try_send(&sender, &1u32, &valid_recipient, &unlisted_token, &100i128),
+        Err(Ok(BridgeError::TokenNotAllowed))
+    );
+    assert_eq!(client.get_escrowed(&unlisted_token), 0i128);
+    assert_eq!(client.get_escrowed(&allowed_token), 100i128);
+
+    // 3. Zero and negative amounts fail and leave escrow unchanged.
+    assert_eq!(
+        client.try_send(&sender, &1u32, &valid_recipient, &allowed_token, &0i128),
+        Err(Ok(BridgeError::InvalidAmount))
+    );
+    assert_eq!(
+        client.try_send(&sender, &1u32, &valid_recipient, &allowed_token, &-10i128),
+        Err(Ok(BridgeError::InvalidAmount))
+    );
+    assert_eq!(client.get_escrowed(&allowed_token), 100i128);
+
+    // 4. Empty and overlength recipients fail and leave escrow unchanged.
+    assert_eq!(
+        client.try_send(&sender, &1u32, &empty_recipient, &allowed_token, &50i128),
+        Err(Ok(BridgeError::RecipientEmpty))
+    );
+    assert_eq!(
+        client.try_send(&sender, &1u32, &long_recipient, &allowed_token, &50i128),
+        Err(Ok(BridgeError::RecipientTooLong))
+    );
+    assert_eq!(client.get_escrowed(&allowed_token), 100i128);
+
+    // 5. Outbound cap exceeded fails and leaves escrow unchanged.
+    assert_eq!(
+        client.try_send(&sender, &1u32, &valid_recipient, &allowed_token, &901i128),
+        Err(Ok(BridgeError::OutboundCapExceeded))
+    );
+    assert_eq!(client.get_escrowed(&allowed_token), 100i128);
+
+    // 6. Another valid send increments escrow from 100 to 150.
+    assert!(client
+        .try_send(&sender, &1u32, &valid_recipient, &allowed_token, &50i128)
+        .is_ok());
+    assert_eq!(client.get_escrowed(&allowed_token), 150i128);
 }
