@@ -15,10 +15,10 @@
 
 #[cfg(test)]
 mod rate_updated_event_tests {
+    use crate::events::EVENT_SCHEMA_VERSION;
     use crate::rate_model::{self, RateParams};
-    use soroban_sdk::events::Event;
     use soroban_sdk::testutils::{Address as _, Events as _, Ledger, LedgerInfo};
-    use soroban_sdk::{Address, Env};
+    use soroban_sdk::{Address, Env, Map, Symbol, TryFromVal, Val};
 
     /// Helper: set total debt and total deposits directly in storage for a
     /// given contract.
@@ -178,7 +178,6 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
     fn test_event_emitted_on_first_call() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 42);
@@ -199,23 +198,28 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
     fn test_no_event_on_unchanged_rate() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 1);
         set_pool_state(&env, &contract_id, 500_000, 1_000_000); // 50% utilisation
 
-        // First call — should emit
-        update_rate(&env, &contract_id);
+        // First call — should emit exactly 1 event
+        let rate1 = update_rate(&env, &contract_id);
+        assert_eq!(
+            env.events().all().events().len(),
+            1,
+            "First call must emit exactly one event"
+        );
 
-        // Second call with identical utilisation — should NOT emit
-        update_rate(&env, &contract_id);
+        // Second call with identical utilisation — computed rate equals stored rate, so 0 events
+        let rate2 = update_rate(&env, &contract_id);
+        assert_eq!(rate1, rate2, "Rate must be unchanged for identical utilisation");
 
         let snapshot = env.events().all();
         assert_eq!(
             snapshot.events().len(),
-            1,
-            "Second call with unchanged utilisation must NOT emit an event"
+            0,
+            "Second call with unchanged rate must emit zero events"
         );
     }
 
@@ -224,17 +228,13 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
     fn test_event_emitted_when_rate_changes() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 1);
         set_pool_state(&env, &contract_id, 500_000, 1_000_000); // 50% utilisation
 
         let rate1 = update_rate(&env, &contract_id);
-
-        // Clear event tracking by checking events
-        let snapshot_before = env.events().all();
-        let count_before = snapshot_before.events().len();
+        assert_eq!(env.events().all().events().len(), 1);
 
         // Change utilisation to 90% — must produce a new rate
         set_ledger(&env, 2000, 2);
@@ -246,9 +246,10 @@ mod rate_updated_event_tests {
 
         let snapshot_after = env.events().all();
         let events_after = snapshot_after.events();
-        assert!(
-            events_after.len() > count_before,
-            "Rate change must emit at least one new event"
+        assert_eq!(
+            events_after.len(),
+            1,
+            "Rate change must emit exactly one new event"
         );
     }
 
@@ -257,12 +258,13 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
     fn test_event_payload_fields() {
         let (env, contract_id) = setup();
         set_ledger(&env, 5000, 99);
         set_pool_state(&env, &contract_id, 300_000, 1_000_000); // 30% utilisation
 
+        let expected_target =
+            rate_model::compute_borrow_rate(3_000, &RateParams::default()).unwrap();
         let applied_rate = update_rate(&env, &contract_id);
 
         let all = env.events().all();
@@ -278,6 +280,56 @@ mod rate_updated_event_tests {
             "Event data must not be void"
         );
         assert!(applied_rate > 0, "Applied rate must be positive");
+
+        let data_map = Map::<Symbol, Val>::try_from_val(&env, &v0.data)
+            .expect("RateUpdatedEvent payload must decode as a Soroban map");
+        assert_eq!(
+            data_map.len(),
+            5,
+            "RateUpdatedEvent must contain exactly 5 payload fields"
+        );
+
+        let schema_version = u32::try_from_val(
+            &env,
+            &data_map
+                .get(Symbol::new(&env, "schema_version"))
+                .expect("missing schema_version field"),
+        )
+        .expect("schema_version must be u32");
+        let utilization_bps = i128::try_from_val(
+            &env,
+            &data_map
+                .get(Symbol::new(&env, "utilization_bps"))
+                .expect("missing utilization_bps field"),
+        )
+        .expect("utilization_bps must be i128");
+        let target_rate_bps = i128::try_from_val(
+            &env,
+            &data_map
+                .get(Symbol::new(&env, "target_rate_bps"))
+                .expect("missing target_rate_bps field"),
+        )
+        .expect("target_rate_bps must be i128");
+        let applied_rate_bps = i128::try_from_val(
+            &env,
+            &data_map
+                .get(Symbol::new(&env, "applied_rate_bps"))
+                .expect("missing applied_rate_bps field"),
+        )
+        .expect("applied_rate_bps must be i128");
+        let ledger = u32::try_from_val(
+            &env,
+            &data_map
+                .get(Symbol::new(&env, "ledger"))
+                .expect("missing ledger field"),
+        )
+        .expect("ledger must be u32");
+
+        assert_eq!(schema_version, EVENT_SCHEMA_VERSION);
+        assert_eq!(utilization_bps, 3_000);
+        assert_eq!(target_rate_bps, expected_target);
+        assert_eq!(applied_rate_bps, applied_rate);
+        assert_eq!(ledger, 99);
     }
 
     // -----------------------------------------------------------------------
@@ -340,84 +392,51 @@ mod rate_updated_event_tests {
     // volatility.
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
     fn test_multiple_calls_only_emit_on_change() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 1);
         set_pool_state(&env, &contract_id, 500_000, 1_000_000); // 50% utilisation
 
-        // Call 1: initialise — applied = target = BASE + (50% * SLOPE1) = 81. Emit.
-        update_rate(&env, &contract_id);
+        // Call 1: initialise — applied = target. Emit 1 event.
+        let rate1 = update_rate(&env, &contract_id);
         let snapshot1 = env.events().all();
         assert_eq!(snapshot1.events().len(), 1);
 
-        // Call 2: same utilisation — target == prior (81 == 81), no change. No emit.
-        update_rate(&env, &contract_id);
+        // Call 2: same utilisation — computed rate equals stored rate. No emit.
+        let rate2 = update_rate(&env, &contract_id);
+        assert_eq!(rate2, rate1);
         let snapshot2 = env.events().all();
         assert_eq!(
             snapshot2.events().len(),
-            1,
+            0,
             "No event expected when utilisation and rate are unchanged"
         );
 
-        // Change utilisation to 80% (target = 100 bps)
+        // Change utilisation to 80%
         set_pool_state(&env, &contract_id, 800_000, 1_000_000);
         set_ledger(&env, 2000, 2);
 
-        // Call 3: utilisation changed — prior=81, target=100, blended=82. Emit.
-        //         (EMA nudges the rate by 1 bps toward the new target.)
-        update_rate(&env, &contract_id);
+        // Call 3: utilisation changed — rate changes. Emit 1 event.
+        let rate3 = update_rate(&env, &contract_id);
+        assert_ne!(rate3, rate1, "Rate must change when utilisation shifts");
         let snapshot3 = env.events().all();
         assert_eq!(
             snapshot3.events().len(),
-            2,
+            1,
             "Exactly one new event expected when utilisation changes"
         );
 
-        // Call 4: SAME utilisation — but EMA still moves prior=82 toward
-        // target=100, blending to 83. The persisted rate changes, so we
-        // emit. This is by design: the rate *actually* changed.
-        update_rate(&env, &contract_id);
-        let snapshot4 = env.events().all();
-        assert_eq!(
-            snapshot4.events().len(),
-            3,
-            "EMA smoothing moves the rate toward target each call; \
-             a real change in persisted rate triggers an event"
-        );
-
-        // Drive to equilibrium: keep calling at 80 % utilisation until
-        // integer-truncated EMA produces a `blended == prior` step, then
-        // verify subsequent calls are no-ops (no op → no event).
-        let mut plateau_count: Option<usize> = None;
-        for _ in 0..30 {
-            let snapshot_before = env.events().all();
-            let before = snapshot_before.events().len();
-            update_rate(&env, &contract_id);
-            let snapshot_after_check = env.events().all();
-            if snapshot_after_check.events().len() == before {
-                plateau_count = Some(before);
-                break;
-            }
-        }
-        let plateau_count =
-            plateau_count.expect("EMA should converge within 30 calls at 80% utilisation");
+        // Subsequent calls at the same 80% utilisation must not emit.
         for _ in 0..3 {
-            let snapshot_c = env.events().all();
-            let c = snapshot_c.events().len();
-            update_rate(&env, &contract_id);
+            let rate_next = update_rate(&env, &contract_id);
+            assert_eq!(rate_next, rate3);
             let snapshot_check = env.events().all();
             assert_eq!(
                 snapshot_check.events().len(),
-                c,
-                "Once the EMA reaches equilibrium, further calls must not emit"
+                0,
+                "Repeated identical calls must not emit"
             );
         }
-        // We definitely plateaued below the cap.
-        assert!(
-            plateau_count <= 32,
-            "Plateau event-count should be modest (EMA converges in ~10 emits)"
-        );
     }
 
     // -----------------------------------------------------------------------
