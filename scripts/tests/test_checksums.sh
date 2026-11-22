@@ -22,7 +22,7 @@ rm -rf "$WASM_DIR" "$DEPLOYED_DIR"
 mkdir -p "$WASM_DIR"
 
 # Create fake WASM artefacts
-echo "hello world" > "$WASM_DIR/hello_world.optimized.wasm"
+echo "lending fixture" > "$WASM_DIR/lending.optimized.wasm"
 echo "amm" > "$WASM_DIR/stellarlend_amm.optimized.wasm"
 
 # Provide fake admin creds to bypass derivation
@@ -51,7 +51,7 @@ echo "OK"
 baseline1="$(cat "$CHECKSUM_FILE")"
 
 echo "Test 3: modify artifact -> mismatch detected"
-echo "modified" >> "$WASM_DIR/hello_world.optimized.wasm"
+echo "modified" >> "$WASM_DIR/lending.optimized.wasm"
 set +e
 bash "$DEPLOY_SCRIPT" --network testnet --dry-run
 rc=$?

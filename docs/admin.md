@@ -117,9 +117,9 @@ wins, which lets the current admin correct a bad nomination before acceptance.
 
 ---
 
-## Handover safety guards (hello-world contract)
+## Handover safety guards
 
-The `hello-world` contract's `transfer_admin` entrypoint validates the
+The lending contract's admin handover entrypoint validates the
 incoming admin address before accepting the transfer, preventing accidental
 protocol lockout.
 

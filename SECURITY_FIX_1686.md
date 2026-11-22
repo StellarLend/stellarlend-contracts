@@ -20,7 +20,7 @@ The functions `update_asset_config()` and `update_asset_price()` in the cross-as
 #### 2. Updated `initialize()` Function
 **Files Modified:**
 - `stellar-lend/cross_asset_test/src/cross_asset.rs`
-- `stellar-lend/contracts/hello-world/src/cross_asset.rs`
+- the retired prototype cross-asset module
 
 **Changes:**
 - Now actually calls `set_admin(env, &admin)` during initialization instead of being a no-op
@@ -44,7 +44,7 @@ pub fn initialize(env: &Env, admin: Address) -> Result<(), CrossAssetError> {
 #### 3. Updated `update_asset_price()` Function
 **Files Modified:**
 - `stellar-lend/cross_asset_test/src/cross_asset.rs`
-- `stellar-lend/contracts/hello-world/src/cross_asset.rs`
+- the retired prototype cross-asset module
 
 **Changes:**
 - Added `caller: &Address` parameter
@@ -92,7 +92,7 @@ pub fn update_asset_price(
 
 #### 4. Updated Contract Wrappers
 **File Modified:**
-- `stellar-lend/contracts/hello-world/src/lib.rs`
+- the retired prototype contract wrapper
 
 **Changes:**
 - Updated `update_asset_price()` wrapper to include `caller: Address` parameter
@@ -125,7 +125,7 @@ pub fn update_asset_price(
 #### 5. Updated Test Files
 **Files Modified:**
 - `stellar-lend/cross_asset_test/src/cross_asset_decimals_test.rs`
-- `stellar-lend/contracts/hello-world/src/cross_asset_decimals_test.rs`
+- the retired prototype cross-asset decimals tests
 
 **Changes:**
 - Added `initialize` to imports
@@ -185,10 +185,10 @@ After these changes:
 - `stellar-lend/cross_asset_test/src/cross_asset_decimals_test.rs`
   - `test_price_update_reflected_in_summary()` - Now initializes admin and passes it to `update_asset_price()`
   
-- `stellar-lend/contracts/hello-world/src/cross_asset_decimals_test.rs`
+- the retired prototype cross-asset decimals tests
   - `test_price_update_reflected_in_summary()` - Now initializes admin and passes it to `update_asset_price()`
 
-- `stellar-lend/contracts/hello-world/src/cross_asset_config_bounds_test.rs`
+- the retired prototype cross-asset bounds tests
   - Existing tests for `update_asset_config` authorization remain valid
 
 ### New Test Files Created
@@ -199,8 +199,8 @@ After these changes:
   - Validates successful updates by authorized admin
   - Tests authorization check happens before validation
   
-- `stellar-lend/contracts/hello-world/src/cross_asset_price_authorization_test.rs`
-  - Mirror of cross_asset_test version for hello-world contract
+- the retired prototype cross-asset authorization tests
+  - Mirror of the cross_asset_test version
 
 ## Test Scenarios Covered
 

@@ -4,7 +4,7 @@
 **set_guardian_threshold never validates threshold against guardian count**
 
 Repository: StellarLend/stellarlend-contracts
-File: stellar-lend/contracts/hello-world/src/governance.rs
+File: retired prototype governance module
 
 ---
 

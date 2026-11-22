@@ -94,7 +94,7 @@ Before executing any upgrade, run the preflight upgrade script to validate the n
 
 ```bash
 # Basic usage (compares against last deployed artifact on testnet)
-./scripts/preflight_upgrade.sh stellar-lend/target/wasm32-unknown-unknown/release/hello_world.optimized.wasm --network testnet
+./scripts/preflight_upgrade.sh stellar-lend/target/wasm32-unknown-unknown/release/stellarlend_lending.optimized.wasm --network testnet
 
 # With custom size growth threshold (default is 10%)
 ./scripts/preflight_upgrade.sh <new_wasm_path> --network mainnet --max-size-growth 15

@@ -126,4 +126,4 @@ cargo test -p stellarlend-lending
 
 - Guard implementation: `stellar-lend/contracts/lending/src/lib.rs` — `require_initialized`
 - Guard test suite: `stellar-lend/contracts/lending/src/initialization_guard_test.rs`
-- Security notes: `stellar-lend/contracts/hello-world/INITIALIZATION_SECURITY_NOTES.md`
+- Security notes: see the current lending contract security documentation

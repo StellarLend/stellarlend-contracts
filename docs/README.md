@@ -99,7 +99,7 @@ Key admin entrypoints (see contract for full list):
 > **Authoritative multisig:** The canonical multisig implementation is the standalone
 > `stellarlend-multisig` crate at `stellar-lend/contracts/multisig/`. The lending contract
 > also has its own timelocked upgrade governance in `upgrade.rs`, which is independent.
-> The now-deleted `hello-world` contract previously contained a stub; it is not authoritative.
+> The standalone multisig contract is not authoritative for lending state; use the lending contract's upgrade governance for protocol upgrades.
 
 ## Documentation
 

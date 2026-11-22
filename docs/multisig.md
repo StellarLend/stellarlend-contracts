@@ -8,7 +8,7 @@ It is a standalone Soroban smart contract (`MultisigContract`) that enforces an
 m-of-n signature threshold before any governed action takes effect.
 
 > **Scope note:** This document describes the authoritative `stellarlend-multisig` crate found at
-> `stellar-lend/contracts/multisig/src/lib.rs`. The now-deleted `hello-world` contract previously
+> `stellar-lend/contracts/multisig/src/lib.rs`. A retired prototype previously
 > contained a one-line placeholder stub; the canonical multisig implementation is this crate.
 
 ---

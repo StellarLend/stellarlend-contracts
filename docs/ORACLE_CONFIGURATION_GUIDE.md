@@ -704,8 +704,8 @@ Read-only views remain callable with stale prices. Use `get_position_v2` to insp
 
 | File                   | Location                                      |
 |------------------------|-----------------------------------------------|
-| `amm_twap.rs`          | `stellar-lend/contracts/hello-world/src/`     |
-| `twap_tests.rs`        | `stellar-lend/contracts/hello-world/src/`     |
+| `amm_twap.rs`          | retired prototype source (removed)            |
+| `twap_tests.rs`        | retired prototype source (removed)            |
 | `missing_price_test.rs` | `stellar-lend/contracts/lending/src/`         |
-| Modified: `amm.rs`     | `stellar-lend/contracts/hello-world/src/`     |
-| Modified: `oracle.rs`  | `stellar-lend/contracts/hello-world/src/`     |
+| Modified: `amm.rs`     | retired prototype source (removed)            |
+| Modified: `oracle.rs`  | retired prototype source (removed)            |

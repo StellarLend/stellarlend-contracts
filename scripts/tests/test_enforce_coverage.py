@@ -126,14 +126,13 @@ class TestThresholdConfig(unittest.TestCase):
 
         self.assertEqual(thresholds["flat_threshold"], 70.0)
         self.assertNotIn("contracts/vesting/src", thresholds["per_crate"])
-        self.assertNotIn("contracts/hello-world/src", thresholds["per_crate"])
         self.assertNotIn("contracts/amm/src", thresholds["per_crate"])
 
     def test_committed_cobertura_passes_enforcement(self):
         """The committed stellar-lend/cobertura.xml must pass enforce_coverage.py.
 
         This catches stale cobertura.xml artifacts that contain packages excluded
-        by .tarpaulin.toml (e.g. contracts/hello-world/src at 0%) which would fail
+        by .tarpaulin.toml (e.g. an excluded crate at 0%) which would fail
         the flat_threshold check and break local enforcement runs. Fixes #2046.
         """
         import subprocess

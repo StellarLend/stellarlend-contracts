@@ -8,14 +8,12 @@ It is the source of truth for deciding which crate is deployed as the protocol, 
 `contracts/lending` is the canonical deployment crate for the lending protocol.
 
 Why this is the source of truth:
-- `stellar-lend/Cargo.toml` includes `contracts/lending`, `contracts/amm`, `contracts/bridge`, and `contracts/common` in the active workspace, but does not include `contracts/hello-world`.
+- `stellar-lend/Cargo.toml` includes `contracts/lending`, `contracts/amm`, `contracts/bridge`, and `contracts/common` in the active workspace.
 - `contracts/lending` has the current production-focused surface for lending, pause, recovery, flash loans, views, token receiver hooks, upgrades, and data store helpers.
-- `contracts/hello-world` is a legacy monolith with a much larger mixed surface area and is not built by the current workspace-level `cargo test` or `stellar contract build` flow.
 
 Operationally:
 - Deploy `stellarlend-lending` for the lending market.
 - Deploy `stellarlend-amm` only if AMM routing/liquidity features are intentionally enabled and separately reviewed.
-- Do not treat `hello-world` as the production deployment target.
 
 ## Boundary Map
 
@@ -23,8 +21,7 @@ Operationally:
 | --- | --- | --- | --- |
 | `lending` | Canonical lending contract | Deploy | Core protocol state, admin/guardian controls, pause/recovery lifecycle, flash loans, upgrade hooks, views |
 | `amm` | Optional companion contract | Deploy only with explicit review | Separate AMM router/integration surface; not the canonical lending market |
-| `hello-world` | Legacy monolith / experimental superset | Do not deploy as canonical protocol | Not in workspace; broader API than current production boundary |
-| `bridge` | Separate helper contract | Out of scope for this note | Not part of the hello-world vs lending vs amm decision |
+| `bridge` | Separate helper contract | Out of scope for this note | Independent bridge functionality |
 | `common` | Shared library code | Not deployable by itself | Upgrade utilities shared by deployable crates |
 
 ## Recommended Deployment Topology
@@ -54,7 +51,7 @@ Users / bots
 ### `contracts/lending`
 
 This crate is the deployable protocol core.
-Its external surface is intentionally narrower than `hello-world` and centers on:
+Its external surface is intentionally focused and centers on:
 - initialization and admin controls
 - collateral, borrow, repay, withdraw, and liquidation flows
 - emergency pause, shutdown, recovery, and guardian support
@@ -74,22 +71,6 @@ Important current boundary:
 - AMM state is independent from lending state.
 - Lending can exist without AMM.
 - AMM failures should not redefine lending balances or admin state.
-
-### `contracts/hello-world`
-
-This crate is best understood as a legacy monolithic contract that aggregates many features into one surface:
-- lending and cross-asset logic
-- governance and multisig
-- oracle and monitoring helpers
-- AMM and bridge adapters
-- recovery and upgrade flows
-
-It is not the canonical deployment target because:
-- it is not part of the active workspace members,
-- its API is much wider than the current deployable boundary,
-- it mixes concerns that are now split across focused crates.
-
-Use it only as historical/reference code unless the team explicitly decides to revive and harden it.
 
 ## Trust Boundaries
 
@@ -160,11 +141,6 @@ Implication:
 `amm` delegates swaps/liquidity operations to external AMM protocol contracts and validates callbacks with per-user nonces.
 The AMM contract is therefore an integration router, not an isolated ledger.
 
-### `hello-world`
-
-`hello-world` contains direct token transfer and transfer-from logic across more modules than `lending`.
-That larger transfer surface is one reason it should not be the default deployment target without a separate full review.
-
 ## External Call Path Review
 
 ### `lending`
@@ -202,11 +178,6 @@ Security conclusion:
 - `amm` should be treated as an optional companion contract that requires separate hardening review before production deployment.
 - it is not an acceptable substitute for the canonical lending deployment boundary.
 
-### `hello-world`
-
-`hello-world` has a much larger set of direct token transfers, governance-driven cross-contract calls, and mixed concerns.
-Given that surface area and its non-workspace status, it should be considered non-canonical until re-scoped and re-reviewed.
-
 ## Parameter Safety Expectations
 
 For production-bound contracts under this directory, prefer:
@@ -218,13 +189,9 @@ For production-bound contracts under this directory, prefer:
 Applied to the current crates:
 - `lending` mostly matches this direction and is the best deployment candidate.
 - `amm` does not yet fully meet this bar because several privileged or user-scoped paths are missing explicit auth and tighter parameter validation.
-- `hello-world` exceeds the desired trusted surface and should remain out of the canonical deploy path.
 
 ## Deployment Guidance
 
 Use this rule set when deciding what to deploy:
 - Deploy `lending` as the protocol contract.
 - Deploy `amm` only when its feature set is needed and only after a dedicated auth/bounds review.
-- Do not deploy `hello-world` as the main market contract.
-
-If documentation elsewhere still points to `hello_world.wasm`, treat that as stale documentation and not as the current contracts source of truth.

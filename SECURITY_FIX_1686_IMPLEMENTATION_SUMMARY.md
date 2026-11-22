@@ -14,14 +14,14 @@ Fixed critical security vulnerability where `update_asset_price()` and `update_a
   - Added `require_admin(env, caller)?` authorization check
   - Updated documentation with access control requirements
 
-#### `stellar-lend/contracts/hello-world/src/cross_asset.rs`
+#### Retired prototype cross-asset module
 - **initialize()**: Now calls `set_admin(env, &admin)` to persist admin during setup
 - **update_asset_price()**: 
   - Added `caller: &Address` parameter
   - Added `require_admin(env, caller)?` authorization check
   - Updated documentation with access control requirements
 
-#### `stellar-lend/contracts/hello-world/src/lib.rs`
+#### Retired prototype contract wrapper
 - **update_asset_price()** wrapper: Updated to accept and pass `caller: Address` parameter
 
 ### 2. Test Files Modified
@@ -33,7 +33,7 @@ Fixed critical security vulnerability where `update_asset_price()` and `update_a
   - Calls `initialize(&env, admin.clone())` to set up admin
   - Passes admin to `update_asset_price()` call
 
-#### `stellar-lend/contracts/hello-world/src/cross_asset_decimals_test.rs`
+#### Retired prototype cross-asset decimals tests
 - Added `initialize` to imports
 - Updated `test_price_update_reflected_in_summary()`:
   - Creates admin address in test setup
@@ -43,7 +43,7 @@ Fixed critical security vulnerability where `update_asset_price()` and `update_a
 #### `stellar-lend/cross_asset_test/src/lib.rs`
 - Added `mod cross_asset_price_authorization_test;` to import new test module
 
-#### `stellar-lend/contracts/hello-world/src/lib.rs`
+#### Retired prototype contract wrapper
 - Added `mod cross_asset_price_authorization_test;` to import new test module
 
 ### 3. New Test Files Created
@@ -58,7 +58,7 @@ Comprehensive test suite with 9 test cases:
 - `test_price_update_rejects_negative()` - Verifies price validation (negative)
 - `test_unauthorized_rejected_before_validation()` - Verifies auth check order
 
-#### `stellar-lend/contracts/hello-world/src/cross_asset_price_authorization_test.rs`
+#### Retired prototype cross-asset authorization tests
 - Identical test suite as cross_asset_test version
 
 ### 4. Documentation Created
@@ -125,16 +125,16 @@ All test suites follow the same pattern:
 
 ### Modified: 7 files
 - stellar-lend/cross_asset_test/src/cross_asset.rs
-- stellar-lend/contracts/hello-world/src/cross_asset.rs
-- stellar-lend/contracts/hello-world/src/lib.rs
+- retired prototype cross-asset module
+- retired prototype contract wrapper
 - stellar-lend/cross_asset_test/src/cross_asset_decimals_test.rs
-- stellar-lend/contracts/hello-world/src/cross_asset_decimals_test.rs
+- retired prototype cross-asset decimals tests
 - stellar-lend/cross_asset_test/src/lib.rs
-- stellar-lend/contracts/hello-world/src/lib.rs
+- retired prototype contract wrapper
 
 ### Created: 3 files
 - stellar-lend/cross_asset_test/src/cross_asset_price_authorization_test.rs
-- stellar-lend/contracts/hello-world/src/cross_asset_price_authorization_test.rs
+- retired prototype cross-asset authorization tests
 - SECURITY_FIX_1686.md
 
 ### Total Changes: 10 files affected

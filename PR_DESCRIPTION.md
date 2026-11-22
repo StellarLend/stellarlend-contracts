@@ -79,7 +79,7 @@ Comprehensive test suite covering all validation scenarios:
 
 ## Implementation Details
 
-**File Modified**: `stellar-lend/contracts/hello-world/src/governance.rs`
+**File Modified**: retired prototype governance module
 
 **Functions Enhanced**:
 - `set_guardian_threshold()` - Added validation (lines 573-575)

@@ -75,7 +75,7 @@ fn test_first_price_exempt_from_move_cap() {
 // ─────────────────────────────────────────────
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+#[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
 fn test_up_move_within_cap_succeeds() {
     let (env, client, admin) = setup();
     let asset = env.register(MockAsset, ());
@@ -93,7 +93,7 @@ fn test_up_move_within_cap_succeeds() {
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+#[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
 fn test_up_move_at_exact_cap_succeeds() {
     let (env, client, admin) = setup();
     let asset = env.register(MockAsset, ());
@@ -136,7 +136,7 @@ fn test_large_up_move_fails() {
 // ─────────────────────────────────────────────
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+#[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
 fn test_down_move_within_cap_succeeds() {
     let (env, client, admin) = setup();
     let asset = env.register(MockAsset, ());
@@ -152,7 +152,7 @@ fn test_down_move_within_cap_succeeds() {
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+#[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
 fn test_down_move_at_exact_cap_succeeds() {
     let (env, client, admin) = setup();
     let asset = env.register(MockAsset, ());
@@ -192,7 +192,7 @@ fn test_large_down_move_fails() {
 // ─────────────────────────────────────────────
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+#[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
 fn test_no_cap_allows_any_move() {
     let (env, client, admin) = setup();
     let asset = env.register(MockAsset, ());

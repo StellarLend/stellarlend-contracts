@@ -43,12 +43,12 @@ sha256_of_file() {
 }
 
 # Create initial WASM artifacts
-OLD_WASM="$WASM_DIR/hello_world.optimized.wasm"
+OLD_WASM="$WASM_DIR/lending.optimized.wasm"
 create_mock_wasm "$OLD_WASM" "old wasm content with exports"
 OLD_HASH="$(sha256_of_file "$OLD_WASM")"
 
 # Create baseline checksums
-printf "%s  %s\n" "$OLD_HASH" "hello_world.optimized.wasm" > "$CHECKSUM_FILE"
+printf "%s  %s\n" "$OLD_HASH" "lending.optimized.wasm" > "$CHECKSUM_FILE"
 
 echo "Test 1: missing WASM file should fail"
 set +e
@@ -94,7 +94,7 @@ echo "Test 5: WASM with size growth within threshold should pass"
 # Create a new WASM with 5% larger size
 OLD_SIZE=$(wc -c < "$OLD_WASM" | tr -d ' ')
 NEW_SIZE=$((OLD_SIZE + OLD_SIZE * 5 / 100))
-NEW_WASM_PATH="$WASM_DIR/hello_world_new.optimized.wasm"
+NEW_WASM_PATH="$WASM_DIR/lending_new.optimized.wasm"
 dd if=/dev/zero bs=1 count="$NEW_SIZE" of="$NEW_WASM_PATH" 2>/dev/null
 # Use --old-wasm to specify the old file for comparison
 bash "$PREFLIGHT_SCRIPT" "$NEW_WASM_PATH" --old-wasm "$OLD_WASM"
@@ -109,7 +109,7 @@ echo "Test 6: WASM with size growth exceeding threshold should fail"
 # Create a new WASM with 15% larger size (exceeds default 10% threshold)
 OLD_SIZE=$(wc -c < "$OLD_WASM" | tr -d ' ')
 NEW_SIZE=$((OLD_SIZE + OLD_SIZE * 15 / 100))
-NEW_WASM_PATH="$WASM_DIR/hello_world_large.optimized.wasm"
+NEW_WASM_PATH="$WASM_DIR/lending_large.optimized.wasm"
 dd if=/dev/zero bs=1 count="$NEW_SIZE" of="$NEW_WASM_PATH" 2>/dev/null
 # Use --old-wasm to specify the old file for comparison
 set +e
@@ -125,7 +125,7 @@ echo "OK"
 
 echo "Test 7: --force should bypass size check failure"
 # Use the same large file from test 6
-NEW_WASM_PATH="$WASM_DIR/hello_world_large.optimized.wasm"
+NEW_WASM_PATH="$WASM_DIR/lending_large.optimized.wasm"
 dd if=/dev/zero bs=1 count="$NEW_SIZE" of="$NEW_WASM_PATH" 2>/dev/null
 bash "$PREFLIGHT_SCRIPT" "$NEW_WASM_PATH" --old-wasm "$OLD_WASM" --force
 if [[ $? -ne 0 ]]; then
@@ -137,7 +137,7 @@ echo "OK"
 
 echo "Test 8: custom max-size-growth threshold should be respected"
 # Use the same 15% larger WASM but with 20% threshold
-NEW_WASM_PATH="$WASM_DIR/hello_world_large.optimized.wasm"
+NEW_WASM_PATH="$WASM_DIR/lending_large.optimized.wasm"
 dd if=/dev/zero bs=1 count="$NEW_SIZE" of="$NEW_WASM_PATH" 2>/dev/null
 bash "$PREFLIGHT_SCRIPT" "$NEW_WASM_PATH" --old-wasm "$OLD_WASM" --max-size-growth 20
 if [[ $? -ne 0 ]]; then
@@ -150,7 +150,7 @@ echo "OK"
 echo "Test 9: missing baseline directory should fail"
 rm -rf "$DEPLOYED_DIR"
 set +e
-bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/hello_world.optimized.wasm"
+bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/lending.optimized.wasm"
 rc=$?
 set -e
 if [[ $rc -eq 0 ]]; then
@@ -162,13 +162,13 @@ echo "OK"
 # Recreate for next tests
 mkdir -p "$DEPLOYED_DIR"
 # Recreate the baseline with the original hash
-printf "%s  %s\n" "$OLD_HASH" "hello_world.optimized.wasm" > "$CHECKSUM_FILE"
+printf "%s  %s\n" "$OLD_HASH" "lending.optimized.wasm" > "$CHECKSUM_FILE"
 
 echo "Test 10: old WASM file not found should fail"
 # Remove the old WASM file
-rm -f "$WASM_DIR/hello_world.optimized.wasm"
+rm -f "$WASM_DIR/lending.optimized.wasm"
 set +e
-bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/hello_world.optimized.wasm"
+bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/lending.optimized.wasm"
 rc=$?
 set -e
 if [[ $rc -eq 0 ]]; then
@@ -178,16 +178,16 @@ fi
 echo "OK"
 
 # Recreate for next tests
-create_mock_wasm "$WASM_DIR/hello_world.optimized.wasm" "test content"
+create_mock_wasm "$WASM_DIR/lending.optimized.wasm" "test content"
 # Update the baseline with the new hash
-NEW_HASH="$(sha256_of_file "$WASM_DIR/hello_world.optimized.wasm")"
-printf "%s  %s\n" "$NEW_HASH" "hello_world.optimized.wasm" > "$CHECKSUM_FILE"
+NEW_HASH="$(sha256_of_file "$WASM_DIR/lending.optimized.wasm")"
+printf "%s  %s\n" "$NEW_HASH" "lending.optimized.wasm" > "$CHECKSUM_FILE"
 
 echo "Test 11: old WASM hash mismatch should fail"
 # Change the baseline hash to something different
-printf "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  hello_world.optimized.wasm" > "$CHECKSUM_FILE"
+printf "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  lending.optimized.wasm" > "$CHECKSUM_FILE"
 set +e
-bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/hello_world.optimized.wasm"
+bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/lending.optimized.wasm"
 rc=$?
 set -e
 if [[ $rc -eq 0 ]]; then
@@ -197,8 +197,8 @@ fi
 echo "OK"
 
 # Restore correct hash
-CORRECT_HASH="$(sha256_of_file "$WASM_DIR/hello_world.optimized.wasm")"
-printf "%s  %s\n" "$CORRECT_HASH" "hello_world.optimized.wasm" > "$CHECKSUM_FILE"
+CORRECT_HASH="$(sha256_of_file "$WASM_DIR/lending.optimized.wasm")"
+printf "%s  %s\n" "$CORRECT_HASH" "lending.optimized.wasm" > "$CHECKSUM_FILE"
 # Update the OLD_HASH variable for subsequent tests
 OLD_HASH="$CORRECT_HASH"
 
@@ -226,7 +226,7 @@ echo "OK"
 
 echo "Test 14: invalid argument should fail"
 set +e
-bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/hello_world.optimized.wasm" --invalid-arg
+bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/lending.optimized.wasm" --invalid-arg
 rc=$?
 set -e
 if [[ $rc -eq 0 ]]; then
@@ -238,8 +238,8 @@ echo "OK"
 echo "Test 15: different network should use different checksum file"
 mkdir -p "$SCRIPTS_DIR/deployed/mainnet"
 MAINNET_CHECKSUM="$SCRIPTS_DIR/deployed/mainnet/checksums.txt"
-printf "%s  %s\n" "$CORRECT_HASH" "hello_world.optimized.wasm" > "$MAINNET_CHECKSUM"
-bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/hello_world.optimized.wasm" --network mainnet
+printf "%s  %s\n" "$CORRECT_HASH" "lending.optimized.wasm" > "$MAINNET_CHECKSUM"
+bash "$PREFLIGHT_SCRIPT" "$WASM_DIR/lending.optimized.wasm" --network mainnet
 if [[ $? -ne 0 ]]; then
   echo "FAIL: expected preflight to pass with different network"
   exit 1
@@ -249,7 +249,7 @@ echo "OK"
 echo "Test 16: zero size growth should pass"
 # Create a WASM with exact same size
 EXACT_SIZE=$(wc -c < "$OLD_WASM" | tr -d ' ')
-NEW_WASM_PATH="$WASM_DIR/hello_world_exact.optimized.wasm"
+NEW_WASM_PATH="$WASM_DIR/lending_exact.optimized.wasm"
 dd if=/dev/zero bs=1 count="$EXACT_SIZE" of="$NEW_WASM_PATH" 2>/dev/null
 bash "$PREFLIGHT_SCRIPT" "$NEW_WASM_PATH" --old-wasm "$OLD_WASM"
 if [[ $? -ne 0 ]]; then
@@ -263,7 +263,7 @@ echo "Test 17: smaller WASM (size reduction) should pass"
 # Create a smaller WASM
 EXACT_SIZE=$(wc -c < "$OLD_WASM" | tr -d ' ')
 SMALLER_SIZE=$((EXACT_SIZE - EXACT_SIZE * 10 / 100))
-NEW_WASM_PATH="$WASM_DIR/hello_world_small.optimized.wasm"
+NEW_WASM_PATH="$WASM_DIR/lending_small.optimized.wasm"
 dd if=/dev/zero bs=1 count="$SMALLER_SIZE" of="$NEW_WASM_PATH" 2>/dev/null
 bash "$PREFLIGHT_SCRIPT" "$NEW_WASM_PATH" --old-wasm "$OLD_WASM"
 if [[ $? -ne 0 ]]; then
@@ -277,7 +277,7 @@ echo "Test 18: threshold of 0 should fail on any growth"
 # Create a WASM that's 1% larger
 EXACT_SIZE=$(wc -c < "$OLD_WASM" | tr -d ' ')
 LARGER_SIZE=$((EXACT_SIZE + EXACT_SIZE * 1 / 100))
-NEW_WASM_PATH="$WASM_DIR/hello_world_tiny_growth.optimized.wasm"
+NEW_WASM_PATH="$WASM_DIR/lending_tiny_growth.optimized.wasm"
 dd if=/dev/zero bs=1 count="$LARGER_SIZE" of="$NEW_WASM_PATH" 2>/dev/null
 set +e
 bash "$PREFLIGHT_SCRIPT" "$NEW_WASM_PATH" --old-wasm "$OLD_WASM" --max-size-growth 0

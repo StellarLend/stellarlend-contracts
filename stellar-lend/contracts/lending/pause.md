@@ -32,7 +32,7 @@ complementary.
 > exit-to-Normal is `set_emergency_state(EmergencyState::Normal)` (admin only),
 > and pause expiry/extension is managed via the TTL parameter on `set_pause`.
 > A separate `start_recovery` / `approve_recovery` / `execute_recovery` flow
-> exists in the `hello-world` crate's `governance` module, but it is unrelated
+> exists in a retired prototype's governance module, but it is unrelated
 > to this lending contract.
 
 ## Auto-Expiry Lifecycle

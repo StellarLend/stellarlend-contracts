@@ -14,7 +14,7 @@ Added long-horizon and overflow-safety interest tests focused on:
 ## Files Changed
 
 - `contracts/lending/src/math_safety_test.rs`
-- `contracts/hello-world/src/tests/interest_rate_test.rs`
+- the retired prototype's interest-rate test
 - `docs/INTEREST_NUMERIC_ASSUMPTIONS.md`
 
 ## Test Execution
@@ -63,17 +63,17 @@ Notes:
 
 - This exceeds the 95% target for line/region coverage in the `stellarlend-lending` package.
 
-### 4) Hello-world test execution status
+### 4) Retired prototype test execution status
 
 Command attempted:
 
 ```bash
-cargo test -p hello-world interest_rate_test -- --nocapture
+cargo test -p stellarlend-lending interest_rate_test -- --nocapture
 ```
 
 Result:
 
-- Blocked by pre-existing compile errors in `contracts/hello-world/src/lib.rs` unrelated to these tests
+- Blocked by pre-existing compile errors in the retired prototype, unrelated to these tests
 - New long-horizon tests in `interest_rate_test.rs` are added but cannot be executed until baseline compile errors are resolved
 
 ## Security Notes

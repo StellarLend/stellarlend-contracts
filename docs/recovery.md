@@ -8,15 +8,9 @@ configured set of guardians can collectively vote to rotate admin
 control to a new address — without requiring the old admin's
 cooperation.
 
-This is implemented in
-[`governance.rs`](../stellar-lend/contracts/hello-world/src/governance.rs)
-as part of the broader governance module. Guardian membership and
-threshold configuration are also documented in
-[`RECOVERY_GUARDIANS.md`](../stellar-lend/contracts/hello-world/RECOVERY_GUARDIANS.md).
-
-> **Note:** `recovery.rs` exists in this crate but is currently empty —
-> the recovery logic described here lives in `governance.rs`, not
-> `recovery.rs`.
+This is implemented by the maintained lending contract's governance and
+recovery entrypoints. Guardian membership and threshold configuration are
+documented in the lending contract documentation.
 
 ## Storage Model
 

@@ -16,11 +16,11 @@ misleading "documentation debt" artifact.
 
 ---
 
-## Current state of `borrow` in `hello-world`
+## Current state of the retired borrow prototype
 
-- `stellar-lend/contracts/hello-world/src/borrow.rs` — **does not exist**. The
+- The retired prototype's `borrow.rs` — **does not exist**. The
   module is not declared in `lib.rs`.
-- The bare-bones `borrow` entry-point used by `hello-world`'s basic test suite is
+- The bare-bones `borrow` entry-point used by the prototype's basic test suite is
   implemented directly in `lib.rs` and is not the full `borrow_asset` function
   described below.
 - There is **no** `src/tests/borrow_test.rs` file.
@@ -37,8 +37,8 @@ specification should be used as the acceptance target.
 ### Planned test file
 
 ```
-stellar-lend/contracts/hello-world/src/borrow.rs          ← implementation
-stellar-lend/contracts/hello-world/src/borrow_test.rs     ← tests (top-level src file)
+stellar-lend/contracts/lending/src/lib.rs                ← implementation
+stellar-lend/contracts/lending/src/*_test.rs              ← tests
 ```
 
 > Note: the original doc referenced `src/tests/borrow_test.rs`. The correct
@@ -94,7 +94,5 @@ interest = principal × rate_bps × elapsed_seconds / (10 000 × SECONDS_PER_YEA
 
 ## Related files (all exist)
 
-- `stellar-lend/contracts/hello-world/src/interest_rate.rs` — borrow rate model
-- `stellar-lend/contracts/hello-world/src/risk_management.rs` — collateral factor config
-- `stellar-lend/contracts/hello-world/src/withdraw.rs` — withdraw implementation (reference)
-- `stellar-lend/contracts/hello-world/src/repay.rs` — repay implementation (reference)
+- `stellar-lend/contracts/lending/src/rate_model.rs` — borrow rate model
+- `stellar-lend/contracts/lending/src/lib.rs` — collateral factor and operation logic

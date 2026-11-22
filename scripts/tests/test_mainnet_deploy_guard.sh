@@ -16,7 +16,7 @@ rm -rf "$WASM_DIR" "$DEPLOYED_TESTNET_DIR" "$DEPLOYED_MAINNET_DIR"
 mkdir -p "$WASM_DIR"
 
 # Create fake WASM artifacts
-echo "hello world" > "$WASM_DIR/hello_world.optimized.wasm"
+echo "lending fixture" > "$WASM_DIR/lending.optimized.wasm"
 echo "amm" > "$WASM_DIR/stellarlend_amm.optimized.wasm"
 
 # Provide fake admin credentials to bypass derivation

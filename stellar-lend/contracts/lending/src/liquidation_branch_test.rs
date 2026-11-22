@@ -7,7 +7,7 @@
 //   4. Healthy rejection  - hf >= 10_000 -> PositionHealthy
 //   5. Zero-debt rejection - debt == 0 -> PositionHealthy
 //
-// Cross-ref: stellar-lend/contracts/hello-world/liquidation_events.md
+// Cross-ref: historical liquidation event design
 //
 // Assertions break if CLOSE_FACTOR (5000 BPS), INCENTIVE_BPS (1000 BPS),
 // or LIQUIDATION_THRESHOLD (8000 BPS) constants change.

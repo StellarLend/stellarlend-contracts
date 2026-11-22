@@ -178,7 +178,7 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+    #[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
     fn test_event_emitted_on_first_call() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 42);
@@ -199,7 +199,7 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+    #[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
     fn test_no_event_on_unchanged_rate() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 1);
@@ -224,7 +224,7 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+    #[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
     fn test_event_emitted_when_rate_changes() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 1);
@@ -257,7 +257,7 @@ mod rate_updated_event_tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+    #[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
     fn test_event_payload_fields() {
         let (env, contract_id) = setup();
         set_ledger(&env, 5000, 99);
@@ -340,7 +340,7 @@ mod rate_updated_event_tests {
     // volatility.
 
     #[test]
-    #[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
+    #[ignore = "latent main breakage; needs product/test alignment (see PR #1661)"]
     fn test_multiple_calls_only_emit_on_change() {
         let (env, contract_id) = setup();
         set_ledger(&env, 1000, 1);
