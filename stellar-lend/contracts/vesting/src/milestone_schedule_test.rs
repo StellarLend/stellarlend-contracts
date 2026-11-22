@@ -201,7 +201,6 @@ fn revoke_after_partial_vest_splits_correctly() {
 }
 
 #[test]
-#[ignore = "bug: linear vested_at returns claimed_amount when revoked, preventing post-revoke claim of retained vested tokens"]
 fn claim_after_revoke_drains_vested() {
     let (env, client, admin, _treasury, user, _token, token_asset) = setup_ms();
     let now = env.ledger().timestamp();

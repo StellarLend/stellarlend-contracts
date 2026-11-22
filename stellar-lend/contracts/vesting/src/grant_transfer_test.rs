@@ -142,7 +142,6 @@ fn transfer_grant_preserves_claimed_amount() {
 }
 
 #[test]
-#[ignore = "bug: transfer_grant allows transferring revoked grants"]
 fn transfer_grant_revoked_source_rejected() {
     let (env, admin, id) = setup();
     let client = VestingContractClient::new(&env, &id);
@@ -152,4 +151,40 @@ fn transfer_grant_revoked_source_rejected() {
     client.revoke(&admin, &alice);
     let res = client.try_transfer_grant(&admin, &alice, &bob);
     assert_eq!(res, Err(Ok(VestingError::AlreadyRevoked)));
+}
+
+#[test]
+fn transfer_grant_revoked_leaves_source_intact() {
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+    let bob = Address::generate(&env);
+
+    client.revoke(&admin, &alice);
+    let res = client.try_transfer_grant(&admin, &alice, &bob);
+    assert_eq!(res, Err(Ok(VestingError::AlreadyRevoked)));
+
+    let alice_grant = client.get_grant(&alice);
+    assert!(alice_grant.is_some());
+    assert!(alice_grant.unwrap().revoked);
+    assert!(client.get_grant(&bob).is_none());
+}
+
+#[test]
+fn transfer_grant_mixed_revoked_and_active_rejected() {
+    let (env, admin, id) = setup();
+    let client = VestingContractClient::new(&env, &id);
+    let alice = create_alice_grant(&env, &client, &admin);
+    let bob = Address::generate(&env);
+
+    // Revoke the first grant, then add a second active grant so Alice holds a
+    // mix of revoked and active grants.
+    client.revoke(&admin, &alice);
+    let start = env.ledger().timestamp();
+    client.add_grant(&admin, &alice, &500, &start, &0, &1_000);
+
+    let res = client.try_transfer_grant(&admin, &alice, &bob);
+    assert_eq!(res, Err(Ok(VestingError::AlreadyRevoked)));
+    assert!(client.get_grant(&alice).is_some());
+    assert!(client.get_grant(&bob).is_none());
 }

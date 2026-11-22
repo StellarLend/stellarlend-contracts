@@ -6,7 +6,6 @@ import { config } from './config';
 import lendingRoutes from './routes/lending.routes';
 import healthRoutes from './routes/health.routes';
 import { errorHandler } from './middleware/errorHandler';
-import logger from './utils/logger';
 
 const app: Application = express();
 
@@ -58,17 +57,6 @@ app.use((_req: Request, res: Response) => {
 
 // Centralized error handling must be last so it can catch downstream failures.
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  logger.error('Unhandled request error', {
-    message: err?.message,
-    path: req.path,
-    method: req.method,
-  });
-
-  if ((err as { type?: string })?.type === 'entity.too.large') {
-    logger.warn('Request body too large', { path: req.path, method: req.method });
-    return res.status(413).json({ error: 'Payload too large' });
-  }
-
   return errorHandler(err, req, res, next);
 });
 

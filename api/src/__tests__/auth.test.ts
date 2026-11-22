@@ -1,11 +1,6 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import {
-  authenticateToken,
-  generateToken,
-  verifyHookHmac,
-  AuthRequest,
-} from '../middleware/auth';
+import { authenticateToken, generateToken, verifyHookHmac, AuthRequest } from '../middleware/auth';
 import { UnauthorizedError } from '../utils/errors';
 import { config } from '../config';
 import { TransactionStatus } from '../types';
@@ -35,7 +30,10 @@ describe('Auth Middleware', () => {
     });
 
     it('should reject token signed with wrong secret', () => {
-      const token = jwt.sign({ address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ' }, 'wrong-secret');
+      const token = jwt.sign(
+        { address: 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ' },
+        'wrong-secret'
+      );
       const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
       const next = jest.fn();
 
@@ -121,16 +119,12 @@ describe('Auth Middleware', () => {
       config.auth.hookSecret = 'test-secret';
       const next = jest.fn();
 
-      expect(() =>
-        verifyHookHmac({ headers: {} } as AuthRequest, response, next)
-      ).toThrow(new UnauthorizedError('Hook signature and timestamp headers are required'));
+      expect(() => verifyHookHmac({ headers: {} } as AuthRequest, response, next)).toThrow(
+        new UnauthorizedError('Hook signature and timestamp headers are required')
+      );
 
       expect(() =>
-        verifyHookHmac(
-          { headers: { 'x-hook-signature': 'abc' } } as AuthRequest,
-          response,
-          next
-        )
+        verifyHookHmac({ headers: { 'x-hook-signature': 'abc' } } as AuthRequest, response, next)
       ).toThrow(new UnauthorizedError('Hook signature and timestamp headers are required'));
 
       expect(next).not.toHaveBeenCalled();
@@ -181,6 +175,43 @@ describe('Auth Middleware', () => {
           'x-hook-timestamp': timestamp,
         },
         rawBody: '{"event":"tampered"}',
+      } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => verifyHookHmac(request, response, next)).toThrow(
+        new UnauthorizedError('Invalid hook signature')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject when the raw body was not captured', () => {
+      config.auth.hookSecret = 'test-secret';
+      const timestamp = String(Date.now());
+      const body = { event: 'test' };
+      const request = {
+        headers: {
+          'x-hook-signature': sign(timestamp, JSON.stringify(body), 'test-secret'),
+          'x-hook-timestamp': timestamp,
+        },
+        body,
+      } as AuthRequest;
+      const next = jest.fn();
+
+      expect(() => verifyHookHmac(request, response, next)).toThrow(
+        new UnauthorizedError('Raw request body is required for hook authentication')
+      );
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should reject a non-hex signature of the expected length', () => {
+      config.auth.hookSecret = 'test-secret';
+      const timestamp = String(Date.now());
+      const request = {
+        headers: {
+          'x-hook-signature': 'zz'.repeat(32),
+          'x-hook-timestamp': timestamp,
+        },
+        rawBody: '{}',
       } as AuthRequest;
       const next = jest.fn();
 

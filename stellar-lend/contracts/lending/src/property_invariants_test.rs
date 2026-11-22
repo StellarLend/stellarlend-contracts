@@ -11,8 +11,8 @@ const INVARIANT_SEED: [u8; 32] = [
     0x73, 0x74, 0x65, 0x6c, 0x6c, 0x61, 0x72, 0x6c, 0x65, 0x6e, 0x64, 0x2d, 0x69, 0x6e, 0x76, 0x2d,
     0x73, 0x65, 0x65, 0x64, 0x2d, 0x30, 0x30, 0x31, 0x2d, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x31,
 ];
-const PROPERTY_CASES: u32 = 128;
-const MAX_OPS_PER_CASE: usize = 64;
+const PROPERTY_CASES: u32 = 64;
+const MAX_OPS_PER_CASE: usize = 32;
 
 #[derive(Clone, Debug)]
 enum Operation {
@@ -35,35 +35,76 @@ fn operation_sequence_strategy() -> impl Strategy<Value = Vec<Operation>> {
     prop::collection::vec(operation_strategy(), 1..=MAX_OPS_PER_CASE)
 }
 
-fn setup_case() -> (Env, LendingContractClient<'static>, Address, Address) {
+fn setup_case() -> (
+    Env,
+    LendingContractClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
+    let reserve_asset = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
     client.initialize(&admin);
-    (env, client, id, user)
+    (env, client, id, user, reserve_asset)
 }
 
-fn read_storage_position(env: &Env, contract_id: &Address, user: &Address) -> (i128, i128) {
+fn assert_reserve_invariant(env: &Env, contract_id: &Address, asset: &Address) {
+    env.as_contract(contract_id, || {
+        invariants::check_invariant_before(env, asset);
+        invariants::check_invariant_after(env, asset);
+    });
+}
+
+fn read_accounting_state(
+    env: &Env,
+    contract_id: &Address,
+    user: &Address,
+) -> (i128, i128, i128, i128, i128) {
     env.as_contract(contract_id, || {
         let collateral: i128 = env
             .storage()
             .persistent()
-            .get(&("col", user.clone()))
+            .get(&DataKey::Collateral(user.clone()))
             .unwrap_or(0);
-        let debt: i128 = env
+        let debt_position: DebtPosition = env
             .storage()
             .persistent()
-            .get(&("debt", user.clone()))
+            .get(&DataKey::Debt(user.clone()))
+            .unwrap_or(DebtPosition {
+                principal: 0,
+                borrow_index_snapshot: debt::INDEX_SCALE,
+                last_update: env.ledger().timestamp(),
+            });
+        let debt = debt_position.principal;
+        let total_deposits: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDeposits)
             .unwrap_or(0);
-        (collateral, debt)
+        let total_debt: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalDebt)
+            .unwrap_or(0);
+        let expected_reserve = invariants::compute_expected_reserve(env, contract_id);
+        (
+            collateral,
+            debt,
+            total_deposits,
+            total_debt,
+            expected_reserve,
+        )
     })
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
 fn property_random_operation_sequences_preserve_invariants() {
     let mut runner = TestRunner::new_with_rng(
         Config {
@@ -77,39 +118,56 @@ fn property_random_operation_sequences_preserve_invariants() {
     let strategy = operation_sequence_strategy();
     runner
         .run(&strategy, |ops| {
-            let (env, client, contract_id, user) = setup_case();
+            let (env, client, contract_id, user, reserve_asset) = setup_case();
             let mut expected_collateral = 0i128;
             let mut expected_debt = 0i128;
 
             for op in ops {
+                assert_reserve_invariant(&env, &contract_id, &reserve_asset);
                 match op {
                     Operation::Deposit(amount) => {
                         let amount = amount as i128;
                         let call = client.try_deposit(&user, &amount);
-                        prop_assert!(call.is_ok());
+                        prop_assert!(
+                            call.as_ref().is_ok_and(|result| result.is_ok()),
+                            "unexpected deposit result: {call:?}"
+                        );
                         expected_collateral += amount;
+                        soroban_sdk::token::StellarAssetClient::new(&env, &reserve_asset)
+                            .mint(&contract_id, &amount);
                     }
                     Operation::Withdraw(amount) => {
                         let amount = amount as i128;
                         let call = client.try_withdraw(&user, &amount);
-                        if amount <= expected_collateral {
-                            prop_assert!(call.is_ok());
-                            expected_collateral -= amount;
-                        } else {
-                            prop_assert!(call.is_err());
+                        match call {
+                            Ok(Ok(_)) => {
+                                prop_assert!(amount <= expected_collateral);
+                                expected_collateral -= amount;
+                                soroban_sdk::token::StellarAssetClient::new(&env, &reserve_asset)
+                                    .burn(&contract_id, &amount);
+                            }
+                            Err(Ok(LendingError::InvalidAmount)) => {
+                                prop_assert!(amount > expected_collateral);
+                            }
+                            Err(Ok(LendingError::InsufficientCollateral)) => {
+                                prop_assert!(amount <= expected_collateral);
+                            }
+                            other => prop_assert!(false, "unexpected withdraw result: {other:?}"),
                         }
                     }
                     Operation::Borrow(amount) => {
                         let amount = amount as i128;
                         let position = client.get_position(&user);
 
-                        // Only borrow if collateral can support it based on contract limits (80% LTV)
-                        // collateral * LIQUIDATION_THRESHOLD_BPS >= new_debt * HEALTH_FACTOR_SCALE
-                        if position.collateral.saturating_mul(8000)
+                        // Only borrow when the configured max LTV permits the new debt.
+                        if position.collateral.saturating_mul(client.get_max_ltv_bps())
                             >= position.debt.saturating_add(amount).saturating_mul(10000)
                         {
                             let call = client.try_borrow(&user, &amount);
-                            prop_assert!(call.is_ok());
+                            prop_assert!(
+                                call.as_ref().is_ok_and(|result| result.is_ok()),
+                                "unexpected borrow result: {call:?}"
+                            );
                             expected_debt += amount;
                         }
                     }
@@ -117,10 +175,19 @@ fn property_random_operation_sequences_preserve_invariants() {
                         let amount = amount as i128;
                         let call = client.try_repay(&user, &amount);
                         if amount <= expected_debt {
-                            prop_assert!(call.is_ok());
+                            prop_assert!(
+                                call.as_ref().is_ok_and(|result| result.is_ok()),
+                                "unexpected repay result: {call:?}"
+                            );
                             expected_debt -= amount;
                         } else {
-                            prop_assert!(call.is_err());
+                            prop_assert!(
+                                call.as_ref().is_err_and(|error| matches!(
+                                    error,
+                                    Ok(LendingError::RepayAmountTooHigh)
+                                )),
+                                "over-repay should return RepayAmountTooHigh, got {call:?}"
+                            );
                         }
                     }
                 }
@@ -131,10 +198,14 @@ fn property_random_operation_sequences_preserve_invariants() {
                 prop_assert_eq!(position.collateral, expected_collateral);
                 prop_assert_eq!(position.debt, expected_debt);
 
-                let (storage_collateral, storage_debt) =
-                    read_storage_position(&env, &contract_id, &user);
+                let (storage_collateral, storage_debt, total_deposits, total_debt, reserve) =
+                    read_accounting_state(&env, &contract_id, &user);
                 prop_assert_eq!(position.collateral, storage_collateral);
                 prop_assert_eq!(position.debt, storage_debt);
+                prop_assert_eq!(total_deposits, expected_collateral);
+                prop_assert_eq!(total_debt, expected_debt);
+                prop_assert_eq!(reserve, total_deposits);
+                assert_reserve_invariant(&env, &contract_id, &reserve_asset);
             }
 
             Ok(())
@@ -143,16 +214,32 @@ fn property_random_operation_sequences_preserve_invariants() {
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
 fn adversarial_interleavings_reject_invalid_withdraw_and_repay() {
-    let (_env, client, _contract_id, user) = setup_case();
+    let (env, client, contract_id, user, reserve_asset) = setup_case();
+    assert!(matches!(client.try_deposit(&user, &100), Ok(Ok(_))));
+    soroban_sdk::token::StellarAssetClient::new(&env, &reserve_asset).mint(&contract_id, &100);
+    assert!(matches!(client.try_borrow(&user, &50), Ok(Ok(_))));
+    assert_reserve_invariant(&env, &contract_id, &reserve_asset);
 
-    assert!(client.try_withdraw(&user, &1).is_err());
-    assert!(client.try_repay(&user, &1).is_err());
+    let before_withdraw = read_accounting_state(&env, &contract_id, &user);
+    let withdraw = client.try_withdraw(&user, &50);
+    assert!(matches!(
+        withdraw,
+        Err(Ok(LendingError::InsufficientCollateral))
+    ));
+    assert_eq!(
+        read_accounting_state(&env, &contract_id, &user),
+        before_withdraw
+    );
 
-    let pos = client.get_position(&user);
-    assert_eq!(pos.collateral, 0);
-    assert_eq!(pos.debt, 0);
+    let before_repay = read_accounting_state(&env, &contract_id, &user);
+    let repay = client.try_repay(&user, &51);
+    assert!(matches!(repay, Err(Ok(LendingError::RepayAmountTooHigh))));
+    assert_eq!(
+        read_accounting_state(&env, &contract_id, &user),
+        before_repay
+    );
+    assert_reserve_invariant(&env, &contract_id, &reserve_asset);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import { StrKey } from '@stellar/stellar-sdk';
 import type { OracleServiceConfig, ProviderConfig, AssetMapping, SupportedAsset } from './types/index.js';
 
 export type { OracleServiceConfig } from './types/index.js';
@@ -41,8 +42,14 @@ const positiveFiniteNumber = (label: string) =>
 const envSchema = z.object({
     STELLAR_NETWORK: z.enum(['testnet', 'mainnet']).default('testnet'),
     STELLAR_RPC_URL: z.string().url().default('https://soroban-testnet.stellar.org'),
-    CONTRACT_ID: z.string().min(1, 'CONTRACT_ID is required'),
-    ADMIN_SECRET_KEY: z.string().min(1, 'ADMIN_SECRET_KEY is required'),
+    CONTRACT_ID: z.string().min(1, 'CONTRACT_ID is required').refine(
+        (value) => StrKey.isValidContract(value),
+        { message: 'CONTRACT_ID must be a valid Stellar contract ID' },
+    ),
+    ADMIN_SECRET_KEY: z.string().min(1, 'ADMIN_SECRET_KEY is required').refine(
+        (value) => StrKey.isValidEd25519SecretSeed(value),
+        { message: 'ADMIN_SECRET_KEY must be a valid Stellar secret seed' },
+    ),
     COINGECKO_API_KEY: z.string().optional(),
     COINMARKETCAP_API_KEY: z.string().optional(),
     REDIS_URL: z.string().url().optional().or(z.literal('')),

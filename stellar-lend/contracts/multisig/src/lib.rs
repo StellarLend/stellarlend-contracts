@@ -303,8 +303,8 @@ impl MultisigContract {
             }
             return Err(MultisigError::InvalidSigners);
         }
-        for i in 0..signers.len() {
-            signers.get(i).unwrap().require_auth();
+        for signer in signers.iter() {
+            signer.require_auth();
         }
         ttl::set_persistent(&env, &MultisigDataKey::Signers, &signers);
         ttl::set_persistent(&env, &MultisigDataKey::Threshold, &threshold);
@@ -1190,13 +1190,26 @@ impl MultisigContract {
     /// # Returns
     /// `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || signer_set_hash || approver)`.
     ///
+    /// # Errors
+    /// * `ProposalNotFound` if proposal with `id` does not exist.
+    ///
     /// See issue #1278 and `APPROVAL_DOMAIN_BINDING.md`.
-    pub fn approval_binding_hash(env: Env, id: u64, approver: Address) -> BytesN<32> {
+    pub fn approval_binding_hash(
+        env: Env,
+        id: u64,
+        approver: Address,
+    ) -> Result<BytesN<32>, MultisigError> {
+        let proposal = Self::fetch_proposal(&env, id)?;
         let signer_set_hash = Self::fetch_proposal_signer_set_hash(&env, id)
             .unwrap_or_else(|_| Self::current_signer_set_hash(&env));
-        let proposal = Self::fetch_proposal(&env, id).unwrap();
         let action_hash = Self::stored_action_hash(&env, id, &proposal);
-        Self::approval_auth_hash(&env, id, &approver, &signer_set_hash, &action_hash)
+        Ok(Self::approval_auth_hash(
+            &env,
+            id,
+            &approver,
+            &signer_set_hash,
+            &action_hash,
+        ))
     }
 
     /// Execute proposals meeting the live threshold atomically.
@@ -1245,17 +1258,14 @@ impl MultisigContract {
         }
 
         // Phase 1 – validate every proposal before touching any state
+        let mut seen_ids: Vec<u64> = Vec::new(&env);
         let mut proposals: Vec<Proposal> = Vec::new(&env);
-        for i in 0..batch_size {
-            let id = ids.get(i).unwrap();
-            let payload_hash = payload_hashes.get(i).unwrap();
-
+        for (id, payload_hash) in ids.iter().zip(payload_hashes.iter()) {
             // Duplicate check against earlier positions
-            for j in 0..i {
-                if ids.get(j).unwrap() == id {
-                    return Err(MultisigError::DuplicateProposalId);
-                }
+            if seen_ids.iter().any(|seen| seen == id) {
+                return Err(MultisigError::DuplicateProposalId);
             }
+            seen_ids.push_back(id);
 
             let mut proposal = Self::fetch_proposal(&env, id)?;
 
@@ -1306,8 +1316,7 @@ impl MultisigContract {
 
         // Phase 2 – execute each proposal in order; if any dispatch fails
         // the panic rolls back all prior execution side-effects.
-        for i in 0..batch_size {
-            let mut proposal = proposals.get(i).unwrap();
+        for mut proposal in proposals.iter() {
             if proposal.approvals.len() < Self::fetch_threshold(&env) {
                 return Err(MultisigError::QuorumNotReached);
             }
