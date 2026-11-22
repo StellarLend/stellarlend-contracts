@@ -75,6 +75,10 @@ pub enum BridgeError {
     RecipientTooLong = 30,
     /// Recipient address is empty.
     RecipientEmpty = 31,
+    /// Epoch counter would overflow `u64::MAX`.
+    EpochOverflow = 32,
+    /// Escrowed token balance would overflow `i128::MAX`.
+    EscrowOverflow = 33,
 }
 
 /// Identifies the origin of an inbound bridge message.
@@ -409,12 +413,15 @@ impl Bridge {
     }
 
     /// Update the escrowed amount for a token.
-    fn add_to_escrowed(env: &Env, token: &Address, amount: i128) {
+    fn add_to_escrowed(env: &Env, token: &Address, amount: i128) -> Result<(), BridgeError> {
         let current = Self::get_escrowed_internal(env, token);
-        let new_total = current.checked_add(amount).expect("escrow overflow");
+        let new_total = current
+            .checked_add(amount)
+            .ok_or(BridgeError::EscrowOverflow)?;
         env.storage()
             .persistent()
             .set(&BridgeDataKey::Escrowed(token.clone()), &new_total);
+        Ok(())
     }
 
     /// Compute the domain-separated outbound message hash.
@@ -659,7 +666,7 @@ impl Bridge {
         token_client.transfer(&sender, &bridge_address, &amount);
 
         // Update escrow accounting
-        Self::add_to_escrowed(&env, &token, amount);
+        Self::add_to_escrowed(&env, &token, amount)?;
 
         // Allocate nonce
         let nonce = Self::allocate_nonce_internal(&env, dest_chain)?;
@@ -1524,24 +1531,28 @@ impl Bridge {
 }
 
 // -----------------------------------------------------------------------
-// Test-only epoch-advance entry point.
+// Test-only epoch helper.
 //
 // Production rotation goes through `rotate_validators` (quorum-proof gated).
-// The epoch-epoch guard tests (`inbound_epoch_test.rs`) only need to move the
-// stored epoch forward, so they use this `#[cfg(test)]`-gated entry point,
-// which is compiled out of the wasm build and never exported on-chain.
+// Tests that need to position the bridge at a specific epoch use this plain
+// `#[cfg(test)]` helper via `env.as_contract(...)`, so no epoch-mutation
+// entry point is ever exported in the contract interface or WASM spec.
 // -----------------------------------------------------------------------
 #[cfg(test)]
-#[contractimpl]
 impl Bridge {
     /// Test-only: advance the stored epoch by one (forward-only, mirroring
     /// what a successful quorum-proof rotation does to the stored epoch).
-    pub fn advance_epoch(env: Env) -> u64 {
+    pub fn advance_epoch(env: Env) -> Result<u64, BridgeError> {
         let next = Self::load_epoch(&env)
             .checked_add(1)
-            .expect("epoch overflow");
+            .ok_or(BridgeError::EpochOverflow)?;
         Self::save_epoch(&env, next);
-        next
+        Ok(next)
+    }
+
+    /// Test-only: directly set the stored epoch (e.g. to `u64::MAX` for overflow tests).
+    pub fn set_epoch_for_test(env: Env, epoch: u64) {
+        Self::save_epoch(&env, epoch);
     }
 }
 
@@ -1624,7 +1635,9 @@ mod tests {
         assert_eq!(client.get_epoch(), 0);
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
 
-        client.advance_epoch();
+        env.as_contract(&contract_id, || {
+            Bridge::test_set_epoch(&env, 1);
+        });
         assert_eq!(client.get_epoch(), 1);
 
         // Messages signed with epoch 0 are rejected (retired validator set).

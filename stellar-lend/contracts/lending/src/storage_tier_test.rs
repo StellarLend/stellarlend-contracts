@@ -247,12 +247,32 @@ fn test_per_address_keys_never_in_instance_storage() {
 // Planned-feature placeholders (ignored until features land)
 // ---------------------------------------------------------------------------
 
-/// `DataKey::ReservedForFlashLoan(asset)` — planned Temporary-storage key for
-/// the flash-loan reservation counter.  Ignored until the feature is
-/// implemented.
+/// `DataKey::ReservedForFlashLoan(asset)` — Temporary-storage key for the
+/// per-asset flash-loan reservation counter.
 #[test]
-#[ignore = "ReservedForFlashLoan DataKey not yet implemented"]
-fn test_flash_loan_reserved_uses_temporary_storage() {}
+fn test_flash_loan_reserved_uses_temporary_storage() {
+    let env = Env::default();
+    let (contract_id, _client) = setup(&env);
+    let asset = Address::generate(&env);
+    let key = DataKey::ReservedForFlashLoan(asset.clone());
+
+    env.as_contract(&contract_id, || {
+        crate::reserve_flash_loan(&env, &asset, 500).unwrap();
+
+        assert!(
+            env.storage().temporary().has(&key),
+            "ReservedForFlashLoan must be in Temporary storage"
+        );
+        assert!(
+            !env.storage().instance().has(&key),
+            "ReservedForFlashLoan must NOT be in Instance storage"
+        );
+        assert!(
+            !env.storage().persistent().has(&key),
+            "ReservedForFlashLoan must NOT be in Persistent storage"
+        );
+    });
+}
 
 /// `DataKey::InterestIndex(asset)` — planned Persistent-storage key for the
 /// per-asset cumulative interest index.  Ignored until the feature lands.

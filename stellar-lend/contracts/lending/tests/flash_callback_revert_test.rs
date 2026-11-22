@@ -106,6 +106,15 @@ fn read_flash_active(env: &Env, contract_id: &Address) -> bool {
     })
 }
 
+fn read_reserved_for_flash_loan(env: &Env, contract_id: &Address, asset: &Address) -> i128 {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .temporary()
+            .get::<DataKey, i128>(&DataKey::ReservedForFlashLoan(asset.clone()))
+            .unwrap_or(0)
+    })
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 /// `try_flash_loan` returns `Err` when the callback panics, and all storage
@@ -130,10 +139,11 @@ fn test_reverting_callback_returns_err_and_rolls_back() {
 
     assert!(result.is_err(), "reverting callback must return Err");
 
-    // Treasury restored, no funds leaked to receiver, guard cleared.
+    // Treasury restored, no funds leaked to receiver, guard and reservation cleared.
     assert_eq!(read_treasury(&env, &contract_id, &asset), 10_000);
     assert_eq!(read_balance(&env, &contract_id, &asset, &receiver), 0);
     assert!(!read_flash_active(&env, &contract_id));
+    assert_eq!(read_reserved_for_flash_loan(&env, &contract_id, &asset), 0);
 }
 
 /// Calling `flash_loan` (non-try variant) when the callback panics must
@@ -181,6 +191,7 @@ fn test_under_repaying_callback_returns_err_and_rolls_back() {
     assert_eq!(read_treasury(&env, &contract_id, &asset), 10_000);
     assert_eq!(read_balance(&env, &contract_id, &asset, &receiver), 0);
     assert!(!read_flash_active(&env, &contract_id));
+    assert_eq!(read_reserved_for_flash_loan(&env, &contract_id, &asset), 0);
 }
 
 /// After two consecutive failed flash loans the `FlashActive` flag must not
