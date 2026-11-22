@@ -13,6 +13,8 @@ import type {
   ContractUpdaterOptions,
 } from "../types/index.js";
 
+import { createHash } from 'node:crypto';
+
 export const MAX_RETRIES = 3;
 export const BASE_MS = 250;
 export const CAP_MS = 8000;
@@ -69,8 +71,9 @@ export function calculateJitterDelay(
   return Math.floor(capped * ratio);
 }
 
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isRetryable = (e) => !NON_RETRYABLE_CODES.includes(e?.code);
+export const idFor = (r) => createHash('sha256').update(`${r.asset}:${r.price}:${r.source}:${r.observedAt}`).digest('hex');
 
 function isRetryable(error: unknown): boolean {
   if (!error || typeof error !== "object" || !("code" in error)) return true;
@@ -106,15 +109,16 @@ function validateInput(input: UpdateRequest): void {
   }
 }
 
-function normalizeRequest(input: UpdateRequest): NormalizedRequest {
-  const { observedAt } = input;
-  if (typeof observedAt !== "number" || !Number.isFinite(observedAt)) {
-    throw new Error("INVALID_OBSERVED_AT");
-  }
-  const idempotencyKey =
-    input.idempotencyKey ??
-    `${input.asset}:${input.price}:${input.source}:${observedAt}`;
-  return { ...input, observedAt, idempotencyKey };
+function normalizeRequest(input) {
+  const observedAt = 'observedAt' in input ? input.observedAt : input.timestamp;
+  if (typeof observedAt !== 'number' || !Number.isFinite(observedAt)) throw new Error('INVALID_OBSERVED_AT');
+  return {
+    asset: input.asset,
+    price: input.price,
+    source: input.source,
+    observedAt,
+    ...(typeof input.idempotencyKey === 'string' ? { idempotencyKey: input.idempotencyKey } : {}),
+  };
 }
 
 export class ContractUpdater {
@@ -218,9 +222,7 @@ export class ContractUpdater {
   ): Promise<UpdateSubmission> {
     const id = request.idempotencyKey || idFor(request);
     const existing = this.subs.get(id);
-    if (existing && !TERMINAL_STATUSES.includes(existing.status)) {
-      return existing;
-    }
+    if (existing && !TERMINAL_STATUSES.includes(existing.status)) return existing;
 
     const last = this.latest.get(request.asset);
     if (

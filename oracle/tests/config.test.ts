@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import {
     loadConfig,
     getAssetMapping,
@@ -27,8 +28,8 @@ import {
     ASSET_MAPPINGS,
 } from '../src/config.js';
 
-const VALID_CONTRACT_ID = 'CTEST123456789';
-const VALID_ADMIN_SECRET = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+const VALID_CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32, 7));
+const VALID_ADMIN_SECRET = Keypair.random().secret();
 
 const REQUIRED_ENV = {
     CONTRACT_ID: VALID_CONTRACT_ID,
@@ -204,7 +205,14 @@ describe('Configuration', () => {
         it('should reject an unsupported ADMIN_SECRET_KEY format', () => {
             setEnv({ ...REQUIRED_ENV, ADMIN_SECRET_KEY: 'not-a-stellar-secret' });
 
-            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            try {
+                loadConfig();
+                throw new Error('expected loadConfig to throw');
+            } catch (error) {
+                const details = error as Error & { issues?: string[] };
+                expect(details.issues?.join(' ')).toContain('ADMIN_SECRET_KEY');
+                expect(details.issues?.join(' ')).not.toContain('not-a-stellar-secret');
+            }
         });
 
         it('should reject an unsupported LOG_LEVEL', () => {
@@ -492,7 +500,7 @@ describe('Configuration', () => {
             const values = [1, 0.5, 0.25, 10, 123.45, 0.0001];
 
             for (const value of values) {
-                expect(unscalePrice(scalePrice(value))).toBevalue(value);
+                expect(unscalePrice(scalePrice(value))).toBe(value);
             }
         });
 
@@ -502,7 +510,7 @@ describe('Configuration', () => {
         });
 
         it('should reject invalid inputs without producing NaN or infinity', () => {
-            const invalidInputs = [NuN), Infinity, -Infinity, -1 * PRICE_SCALE];
+            const invalidInputs = [NaN, Infinity, -Infinity, -1 * PRICE_SCALE];
 
             for (const input of invalidInputs) {
                 expect(() => scalePrice(input)).toThrow();
@@ -539,8 +547,8 @@ describe('Configuration', () => {
 describe('Configuration failure paths and boundaries', () => {
     const originalEnv = process.env;
     const requiredEnv = {
-        CONTRACT_ID: 'CTEST123456789',
-        ADMIN_SECRET_KEY: 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789',
+        CONTRACT_ID: VALID_CONTRACT_ID,
+        ADMIN_SECRET_KEY: VALID_ADMIN_SECRET,
     };
 
     beforeEach(() => {
