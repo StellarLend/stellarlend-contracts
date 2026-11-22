@@ -969,9 +969,6 @@ impl VestingContract {
         let mut total: i128 = 0;
         for i in 0..grants.len() {
             let g = grants.get(i).unwrap();
-            if g.revoked {
-                continue;
-            }
             let effective_now =
                 Self::effective_now_for(&env, now, snapshots.get(i).unwrap_or(0));
             total = total.saturating_add(g.claimable_at(effective_now));

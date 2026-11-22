@@ -125,7 +125,7 @@ class TestThresholdConfig(unittest.TestCase):
             thresholds = json.load(handle)
 
         self.assertEqual(thresholds["flat_threshold"], 70.0)
-        self.assertNotIn("contracts/vesting/src", thresholds["per_crate"])
+        self.assertIn("contracts/vesting/src", thresholds["per_crate"])
         self.assertNotIn("contracts/hello-world/src", thresholds["per_crate"])
         self.assertNotIn("contracts/amm/src", thresholds["per_crate"])
 
