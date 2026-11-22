@@ -32,8 +32,15 @@ returned.  It also tests post-init happy paths and view-function safety.
 | **cross-asset entry points** | 5 | `set_asset_params`, `deposit/borrow/repay/withdraw_asset` return `NotInitialized` before init |
 | **view functions** | 9 | Read-only views return safe defaults (0 / `None`) without panicking |
 | **post-init happy path** | 1 | After `initialize`, the full deposit → borrow → repay → withdraw cycle succeeds |
+| **remaining entrypoint matrix** | 1 | Additional and newer mutating entrypoints, including upgrade, oracle, risk, reserve, and TTL APIs |
 
-Total: **41 tests** in the guard suite.
+Total: **48 tests** in the guard suite.
+
+The separate failure-path suite contains **4 tests** covering authorization,
+config mutation, pull-based receive, and upgrade governance failures. Boundary
+duplicates previously present in this suite were removed; arithmetic, rollback,
+retry, and liquidation boundaries are covered in
+`entrypoint_failure_boundary_test.rs`.
 
 ---
 

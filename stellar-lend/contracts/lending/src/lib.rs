@@ -94,6 +94,10 @@ mod health_factor_edge_test;
 #[cfg(test)]
 mod initialize_auth_test;
 #[cfg(test)]
+mod failure_path_test;
+#[cfg(test)]
+mod initialization_guard_test;
+#[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
 mod interest_rate_regression_test;
@@ -3812,6 +3816,7 @@ impl LendingContract {
         borrow_cap: i128,
         supply_cap: i128,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         admin.require_auth();
         if admin
             != env
@@ -3898,6 +3903,7 @@ impl LendingContract {
         supply_cap: i128,
         decimals: u32,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         admin.require_auth();
         if admin
             != env
@@ -4586,6 +4592,7 @@ impl LendingContract {
         current_wasm_hash: BytesN<32>,
         required_approvals: u32,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_init(&env, &caller, current_wasm_hash, required_approvals)
     }
 
@@ -4596,6 +4603,7 @@ impl LendingContract {
         new_wasm_hash: BytesN<32>,
         new_version: u32,
     ) -> Result<u64, LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_propose(&env, &caller, new_wasm_hash, new_version)
     }
 
@@ -4605,6 +4613,7 @@ impl LendingContract {
         caller: Address,
         proposal_id: u64,
     ) -> Result<u32, LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_approve(&env, &caller, proposal_id)
     }
 
@@ -4614,11 +4623,13 @@ impl LendingContract {
         caller: Address,
         proposal_id: u64,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_execute(&env, &caller, proposal_id)
     }
 
     // Cancel a pending upgrade proposal (admin-only, issue #1940).
     pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_cancel(&env, &caller, proposal_id)
     }
 
@@ -4627,6 +4638,7 @@ impl LendingContract {
         caller: Address,
         required_approvals: u32,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_set_required_approvals(&env, &caller, required_approvals)
     }
 
@@ -4636,6 +4648,7 @@ impl LendingContract {
         caller: Address,
         approver: Address,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_add_approver(&env, &caller, approver)
     }
 
@@ -4645,6 +4658,7 @@ impl LendingContract {
         caller: Address,
         approver: Address,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_remove_approver(&env, &caller, approver)
     }
 
