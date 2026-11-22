@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-[import { ApiError } from '../utils/errors';]
+import { ApiError } from '../utils/errors';
 import logger from '../utils/logger';
 
 /**
@@ -17,9 +17,7 @@ import logger from '../utils/logger';
  *    Express default handler to avoid crashing or double-sending.
  */
 
-const SAFE_ERROR_MESSAGES = new Set([
-  'Internal server error',
-]);
+const SAFE_ERROR_MESSAGES = new Set(['Internal server error']);
 
 function isSafeErrorMessage(message: unknown): message is string {
   return typeof message === 'string' && SAFE_ERROR_MESSAGES.has(message);
@@ -52,7 +50,7 @@ export const errorHandler = (
 
   // Malformed JSON body -> 400. Express attaches `body` to SyntaxError.
   if (err instanceof SyntaxError && 'body' in err) {
-    return res.status(400).jsonf({
+    return res.status(400).json({
       success: false,
       error: 'Malformed request body',
     });
@@ -61,9 +59,7 @@ export const errorHandler = (
   // ApiError -> carries its own status code and safe message.
   if (err instanceof ApiError) {
     const statusCode =
-      Number.isInteger(err.statusCode) &&
-      err.statusCode >= 400 &&
-      err.statusCode <= 599
+      Number.isInteger(err.statusCode) && err.statusCode >= 400 && err.statusCode <= 599
         ? err.statusCode
         : 500;
 
@@ -71,16 +67,15 @@ export const errorHandler = (
       ? err.message
       : err.message || 'Internal server error';
 
-    return res.status(statusCode).jsonf({
+    return res.status(statusCode).json({
       success: false,
       error: message,
     });
   }
 
-  // Fallback -> 500 with generic message (no internal details leaked).
-  return res.status(500).jsonf({
+  return res.status(500).json({
     success: false,
-    error: message,
+    error: 'Internal server error',
   });
 };
 

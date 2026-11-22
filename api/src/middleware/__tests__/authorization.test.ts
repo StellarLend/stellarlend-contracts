@@ -41,9 +41,7 @@ describe('authorization middleware', () => {
       const req = makeReq();
       const next = jest.fn();
 
-      expect(() => authenticateToken(req, makeRes() as Response, next)).toThrow(
-        UnauthorizedError
-      );
+      expect(() => authenticateToken(req, makeRes() as Response, next)).toThrow(UnauthorizedError);
       expect(next).not.toHaveBeenCalled();
     });
 
@@ -51,9 +49,7 @@ describe('authorization middleware', () => {
       const req = makeReq({ headers: { authorization: 'Bearer' } } as any);
       const next = jest.fn();
 
-      expect(() => authenticateToken(req, makeRes() as Response, next)).toThrow(
-        UnauthorizedError
-      );
+      expect(() => authenticateToken(req, makeRes() as Response, next)).toThrow(UnauthorizedError);
     });
 
     it('rejects a token signed with the wrong secret', () => {
@@ -161,13 +157,22 @@ describe('authorization middleware', () => {
 
     it('rejects an XDR built for a different network than declared', async () => {
       // A real transaction XDR is required to reach the network comparison.
-      const { Account, Keypair, Networks, TransactionBuilder, Operation, Asset } = require('@stellar/stellar-sdk');
+      const {
+        Account,
+        Keypair,
+        Networks,
+        TransactionBuilder,
+        Operation,
+        Asset,
+      } = require('@stellar/stellar-sdk');
       const source = new Account(VALID_ADDRESS, '0');
       const tx = new TransactionBuilder(source, {
         fee: '100',
         networkPassphrase: Networks.PUBLIC,
       })
-        .addOperation(Operation.payment({ destination: VALID_ADDRESS, asset: Asset.native(), amount: '1' }))
+        .addOperation(
+          Operation.payment({ destination: VALID_ADDRESS, asset: Asset.native(), amount: '1' })
+        )
         .setTimeout(300)
         .build()
         .toXDR();
@@ -341,8 +346,33 @@ describe('authorization middleware', () => {
         headers: { 'x-hook-timestamp': stale, 'x-hook-signature': signed(stale, rawBody) },
       } as any);
 
+      expect(() => verifyHookHmac(req, makeRes() as Response, jest.fn())).toThrow(/replay attack/i);
+    });
+
+    it('rejects a request whose raw body was not captured', () => {
+      const timestamp = Date.now().toString();
+      const req = makeReq({
+        headers: {
+          'x-hook-timestamp': timestamp,
+          'x-hook-signature': signed(timestamp, rawBody),
+        },
+        body,
+      } as any);
+
       expect(() => verifyHookHmac(req, makeRes() as Response, jest.fn())).toThrow(
-        /replay attack/i
+        'Raw request body is required for hook authentication'
+      );
+    });
+
+    it('rejects a non-hex signature before comparing bytes', () => {
+      const timestamp = Date.now().toString();
+      const req = makeReq({
+        headers: { 'x-hook-timestamp': timestamp, 'x-hook-signature': 'zz'.repeat(32) },
+        rawBody,
+      } as any);
+
+      expect(() => verifyHookHmac(req, makeRes() as Response, jest.fn())).toThrow(
+        /Invalid hook signature/
       );
     });
 
@@ -350,6 +380,7 @@ describe('authorization middleware', () => {
       const timestamp = Date.now().toString();
       const req = makeReq({
         headers: { 'x-hook-timestamp': timestamp, 'x-hook-signature': 'abcd' },
+        rawBody,
       } as any);
 
       // A length mismatch must be rejected, never passed to timingSafeEqual.
@@ -365,6 +396,7 @@ describe('authorization middleware', () => {
           'x-hook-timestamp': timestamp,
           'x-hook-signature': signed(timestamp, rawBody, 'attacker-secret'),
         },
+        rawBody,
       } as any);
 
       expect(() => verifyHookHmac(req, makeRes() as Response, jest.fn())).toThrow(
@@ -485,9 +517,7 @@ describe('authorization middleware', () => {
         user: { address: VALID_ADDRESS, network: 'testnet' },
       } as any);
 
-      expect(() =>
-        validateNetworkConsistency(req, makeRes() as Response, jest.fn())
-      ).not.toThrow();
+      expect(() => validateNetworkConsistency(req, makeRes() as Response, jest.fn())).not.toThrow();
     });
 
     it('maps allowed networks to real Stellar passphrases', () => {
@@ -513,7 +543,9 @@ describe('authorization middleware', () => {
     });
 
     it('rejects an address that does not start with G', () => {
-      const req = makeReq({ user: { address: 'XBO4N5HSFF3XMRRYYFGKNO6QEEIYCMDTFVUJUPNS2F5A7QQTNEQ5NWWK' } } as any);
+      const req = makeReq({
+        user: { address: 'XBO4N5HSFF3XMRRYYFGKNO6QEEIYCMDTFVUJUPNS2F5A7QQTNEQ5NWWK' },
+      } as any);
 
       expect(() => requireAuthenticatedWallet(req, makeRes() as Response, jest.fn())).toThrow(
         'Invalid Stellar address format'
@@ -521,7 +553,9 @@ describe('authorization middleware', () => {
     });
 
     it('rejects a truncated address of the wrong length', () => {
-      const req = makeReq({ user: { address: 'GBO4N5HSFF3XMRRYYFGKNO6QEEIYCMDTFVUJUPNS2F5A7QQ' } } as any);
+      const req = makeReq({
+        user: { address: 'GBO4N5HSFF3XMRRYYFGKNO6QEEIYCMDTFVUJUPNS2F5A7QQ' },
+      } as any);
 
       expect(() => requireAuthenticatedWallet(req, makeRes() as Response, jest.fn())).toThrow(
         'Invalid Stellar address format'
