@@ -19,6 +19,18 @@ The upgrade path is governed by the following contract, which MUST be preserved 
 - `upgrade_approve(approver, proposal_id)`: Records approval from a validated signer. Reverts if the approver is not in the initial signer set, if the proposal is not pending, or if the approval would exceed the required threshold. Each signer can approve only once.
 - `upgrade_execute(approver, proposal_id)`: Enables execution only after the timelock has elapsed and the required approval threshold has been reached. Reverts if called too early, with insufficient approvals, or after the proposal has been executed/rolled back. The current WASM hash and version are atomically updated, and a `up_exec` event is emitted.
 - `upgrade_rollback(admin, proposal_id)`: Reverts state to the pre-proposal version and WASM hash. Only callable by admin and only for proposals that have not been executed. Emits `up_rollback`.
+- `upgrade_add_approver(admin, approver)` / `upgrade_remove_approver(admin, approver)`: Admin-only management of the approver set (up to 32 approvers).
+- `upgrade_set_required_approvals(admin, threshold)`: Admin-only update of the live approval threshold for **future** proposals only (existing pending proposals retain their snapshotted threshold).
+
+Worked example (threshold = 1):
+
+```rust
+client.upgrade_init(&admin, &current_hash, &1);
+let id = client.upgrade_propose(&admin, &new_hash, &1);
+client.upgrade_approve(&admin, &id);
+// advance ledger to proposal.eta_ledger
+client.upgrade_execute(&admin, &id);
+```
 
 ### Invariants
 
@@ -79,6 +91,10 @@ The following behavior MUST be covered by focused tests in `src/upgrade_governan
 - [ ] Document migration requirements
 - [ ] Prepare migration memos and version numbers
 - [ ] Test migration with backup/restore procedures
+
+**Storage Compatibility Reference:**
+- *Safe changes (no migration required)*: Adding new storage keys or data store entries, extending `Vec`/`Map` with new entries, adding optional fields with defaults.
+- *Unsafe changes (require explicit migration)*: Changing storage key types, removing keys still in use, changing struct field types, reordering struct fields, or changing enum variants.
 
 ### 5. Risk Assessment
 - [ ] Review change impact on active operations

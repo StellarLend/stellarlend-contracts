@@ -139,7 +139,9 @@ impl Grant {
             }
             VestingSchedule::Linear => {
                 if self.revoked {
-                    return self.claimed_amount;
+                    // On revoke, `self.total_amount` is clamped to the vested amount at
+                    // revocation time so vested-but-unclaimed tokens remain claimable.
+                    return self.total_amount;
                 }
                 if self.total_amount <= 0 {
                     return 0;
@@ -827,6 +829,9 @@ impl VestingContract {
     /// Transfer all grants from `from` to `to`.
     ///
     /// Admin only. Rejected while paused.
+    /// Rejected with [`VestingError::AlreadyRevoked`] if any grant in `from`
+    /// has been revoked; a mixed set of active and revoked grants is rejected
+    /// in its entirety, leaving `from` storage and pause snapshots untouched.
     pub fn transfer_grant(
         env: Env,
         caller: Address,
@@ -847,6 +852,12 @@ impl VestingContract {
         ttl::bump_persistent(&env, &from_key);
         if from_grants.is_empty() {
             return Err(VestingError::GrantNotFound);
+        }
+
+        for g in from_grants.iter() {
+            if g.revoked {
+                return Err(VestingError::AlreadyRevoked);
+            }
         }
 
         let to_existing: Vec<Grant> = env

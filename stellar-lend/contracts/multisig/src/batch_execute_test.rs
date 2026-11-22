@@ -600,3 +600,74 @@ fn test_batch_execute_atomicity_on_validation_failure() {
         "id_b must remain Executed after failed batch"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Error handling & iterator replacement tests (issue #2401)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn execute_unknown_proposal_returns_error() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(9999u64); // Unknown proposal ID
+
+    let mut hashes = Vec::new(&env);
+    hashes.push_back(make_bytes(&env, b"dummy_hash"));
+
+    let res = client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(res, Err(Ok(MultisigError::ProposalNotFound)));
+}
+
+#[test]
+fn batch_with_duplicate_ids_rejected() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+
+    let hash_a = make_bytes(&env, b"hash_a");
+    let hash_b = make_bytes(&env, b"hash_b");
+
+    let id_a = create_passed_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(2),
+        &hash_a,
+    );
+    let id_b = create_passed_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(2),
+        &hash_b,
+    );
+
+    // Batch with duplicate proposal IDs: [id_a, id_b, id_a]
+    let mut ids = Vec::new(&env);
+    ids.push_back(id_a);
+    ids.push_back(id_b);
+    ids.push_back(id_a);
+
+    let mut hashes = Vec::new(&env);
+    hashes.push_back(hash_a.clone());
+    hashes.push_back(hash_b);
+    hashes.push_back(hash_a);
+
+    let res = client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes);
+    assert_eq!(res, Err(Ok(MultisigError::DuplicateProposalId)));
+}
+
+#[test]
+fn test_approval_binding_hash_unknown_proposal_returns_error() {
+    let env = make_env();
+    let (contract_id, signers) = setup_multisig(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let approver = signers.get(0).unwrap();
+
+    let unknown_id = 8888u64;
+    let res = client.try_approval_binding_hash(&unknown_id, &approver);
+    assert_eq!(res, Err(Ok(MultisigError::ProposalNotFound)));
+}

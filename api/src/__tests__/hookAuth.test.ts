@@ -1,5 +1,20 @@
 import crypto from 'crypto';
 import request from 'supertest';
+import { UnauthorizedError } from '../utils/errors';
+
+jest.mock('../controllers/lending.controller', () => ({
+  processHook: (
+    _req: unknown,
+    res: { status: (code: number) => { json: (body: unknown) => void } }
+  ) => {
+    res.status(200).json({ success: true, message: 'Hook authenticated' });
+  },
+  getActivity: jest.fn(),
+  deposit: jest.fn(),
+  borrow: jest.fn(),
+  repay: jest.fn(),
+  withdraw: jest.fn(),
+}));
 
 let app: any;
 
@@ -17,10 +32,7 @@ describe('Hook HMAC middleware', () => {
   const rawBody = JSON.stringify(payload);
 
   const sign = (timestamp: string, body: string) =>
-    crypto
-      .createHmac('sha256', HOOK_SECRET)
-      .update(`${timestamp}.${body}`)
-      .digest('hex');
+    crypto.createHmac('sha256', HOOK_SECRET).update(`${timestamp}.${body}`).digest('hex');
 
   it('accepts valid hook requests with matching signature and timestamp', async () => {
     const timestamp = Date.now().toString();
@@ -124,20 +136,40 @@ describe('Hook HMAC header handling', () => {
     ).toThrow('Invalid hook signature');
   });
 
-  it('falls back to the JSON-encoded body when no raw body was captured', () => {
+  it('rejects when no raw body was captured', () => {
     const timestamp = Date.now().toString();
     const next = jest.fn();
 
-    hookHmac()(
-      hookReq(
-        { 'x-hook-signature': sign(timestamp, rawBody), 'x-hook-timestamp': timestamp },
-        { rawBody: undefined }
-      ),
-      {} as any,
-      next
-    );
+    expect(() =>
+      hookHmac()(
+        hookReq(
+          { 'x-hook-signature': sign(timestamp, rawBody), 'x-hook-timestamp': timestamp },
+          { rawBody: undefined }
+        ),
+        {} as any,
+        next
+      )
+    ).toThrow(new UnauthorizedError('Raw request body is required for hook authentication'));
 
-    expect(next).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-hex signature before comparing bytes', () => {
+    const timestamp = Date.now().toString();
+    const next = jest.fn();
+
+    expect(() =>
+      hookHmac()(
+        hookReq(
+          { 'x-hook-signature': 'zz'.repeat(32), 'x-hook-timestamp': timestamp },
+          { rawBody }
+        ),
+        {} as any,
+        next
+      )
+    ).toThrow(new UnauthorizedError('Invalid hook signature'));
+
+    expect(next).not.toHaveBeenCalled();
   });
 
   it('rejects a signature computed over a different raw body', () => {
