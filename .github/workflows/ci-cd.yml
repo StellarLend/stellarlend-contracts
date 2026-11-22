@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: ["main"]
 
+# Least-privilege token: read-only by default; individual jobs add write
+# scopes only where the step genuinely needs them (none currently do).
+permissions:
+  contents: read
+
+# Cancel any in-progress run for the same PR branch on a new push.
+# push-to-main runs are never cancelled (group is unique per SHA).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -14,15 +25,15 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Keep in sync with stellar-lend/rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # toolchain: 1.93.0
         with:
           toolchain: 1.93.0
           targets: wasm32v1-none, wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: stellar-lend
 
@@ -69,7 +80,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Upload release WASM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-wasms
           path: |
@@ -86,7 +97,7 @@ jobs:
     # Runs only for PRs that touch the lending contract.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: Detect changes under stellar-lend/contracts/lending
@@ -99,9 +110,9 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.changes.outputs.changed == 'true'
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
       - if: steps.changes.outputs.changed == 'true'
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: stellar-lend/contracts/lending/fuzz
       - name: Install cargo-fuzz
