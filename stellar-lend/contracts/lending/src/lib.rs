@@ -141,6 +141,7 @@ mod migration_event_test;
 mod mul_div_proptest;
 #[cfg(test)]
 mod oracle_staleness_test;
+#[cfg(test)] mod oracle_payload_binding_test;
 #[cfg(test)]
 mod oracle_payload_binding_test;
 #[cfg(test)]

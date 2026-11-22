@@ -75,6 +75,10 @@ pub enum BridgeError {
     RecipientTooLong = 30,
     /// Recipient address is empty.
     RecipientEmpty = 31,
+    /// Epoch counter would overflow `u64::MAX`.
+    EpochOverflow = 32,
+    /// Escrowed token balance would overflow `i128::MAX`.
+    EscrowOverflow = 33,
 }
 
 /// Identifies the origin of an inbound bridge message.
@@ -409,12 +413,15 @@ impl Bridge {
     }
 
     /// Update the escrowed amount for a token.
-    fn add_to_escrowed(env: &Env, token: &Address, amount: i128) {
+    fn add_to_escrowed(env: &Env, token: &Address, amount: i128) -> Result<(), BridgeError> {
         let current = Self::get_escrowed_internal(env, token);
-        let new_total = current.checked_add(amount).expect("escrow overflow");
+        let new_total = current
+            .checked_add(amount)
+            .ok_or(BridgeError::EscrowOverflow)?;
         env.storage()
             .persistent()
             .set(&BridgeDataKey::Escrowed(token.clone()), &new_total);
+        Ok(())
     }
 
     /// Compute the domain-separated outbound message hash.
@@ -659,7 +666,7 @@ impl Bridge {
         token_client.transfer(&sender, &bridge_address, &amount);
 
         // Update escrow accounting
-        Self::add_to_escrowed(&env, &token, amount);
+        Self::add_to_escrowed(&env, &token, amount)?;
 
         // Allocate nonce
         let nonce = Self::allocate_nonce_internal(&env, dest_chain)?;
@@ -1533,9 +1540,19 @@ impl Bridge {
 // -----------------------------------------------------------------------
 #[cfg(test)]
 impl Bridge {
-    /// Test-only: set the stored epoch directly using `save_epoch`.
-    pub(crate) fn test_set_epoch(env: &Env, epoch: u64) {
-        Self::save_epoch(env, epoch);
+    /// Test-only: advance the stored epoch by one (forward-only, mirroring
+    /// what a successful quorum-proof rotation does to the stored epoch).
+    pub fn advance_epoch(env: Env) -> Result<u64, BridgeError> {
+        let next = Self::load_epoch(&env)
+            .checked_add(1)
+            .ok_or(BridgeError::EpochOverflow)?;
+        Self::save_epoch(&env, next);
+        Ok(next)
+    }
+
+    /// Test-only: directly set the stored epoch (e.g. to `u64::MAX` for overflow tests).
+    pub fn set_epoch_for_test(env: Env, epoch: u64) {
+        Self::save_epoch(&env, epoch);
     }
 }
 
