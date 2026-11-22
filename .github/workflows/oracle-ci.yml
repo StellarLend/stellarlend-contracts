@@ -1,0 +1,53 @@
+name: Oracle CI
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "oracle/**"
+      - ".github/workflows/oracle-ci.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "oracle/**"
+      - ".github/workflows/oracle-ci.yml"
+
+jobs:
+  oracle:
+    name: Oracle Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: oracle
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: oracle/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Lint is skipped until an ESLint configuration file is added to oracle/.
+      # - name: Lint
+      #   run: npm run lint
+
+      - name: Typecheck & build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-coverage
+          path: oracle/coverage
+          if-no-files-found: ignore
