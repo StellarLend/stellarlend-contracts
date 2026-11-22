@@ -41,3 +41,4 @@ lerna-debug.log*
 test_snapshots/
 .opencode
 stellar-lend/contracts/lending/target_check/
+/stellar-lend/cobertura.xml
