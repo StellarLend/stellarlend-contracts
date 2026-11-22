@@ -827,6 +827,9 @@ impl VestingContract {
     /// Transfer all grants from `from` to `to`.
     ///
     /// Admin only. Rejected while paused.
+    /// Rejected with [`VestingError::AlreadyRevoked`] if any grant in `from`
+    /// has been revoked; a mixed set of active and revoked grants is rejected
+    /// in its entirety, leaving `from` storage and pause snapshots untouched.
     pub fn transfer_grant(
         env: Env,
         caller: Address,
@@ -847,6 +850,12 @@ impl VestingContract {
         ttl::bump_persistent(&env, &from_key);
         if from_grants.is_empty() {
             return Err(VestingError::GrantNotFound);
+        }
+
+        for g in from_grants.iter() {
+            if g.revoked {
+                return Err(VestingError::AlreadyRevoked);
+            }
         }
 
         let to_existing: Vec<Grant> = env
