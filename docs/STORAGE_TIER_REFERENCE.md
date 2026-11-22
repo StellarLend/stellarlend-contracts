@@ -8,7 +8,7 @@ This reference documents the storage tiers for the lending contract's canonical 
 |------|-------------------|------------------------------|
 | `persistent()` | Independent entries that require rent/TTL management. | User positions, protocol accounting totals, flash-loan balances, treasury liquidity, deposit caps, and oracle price records. |
 | `instance()` | Contract-instance state bumped with the instance. | Admin state, oracle public keys, pause/emergency state, fee and minimum/rate configuration, and transient flash-loan guard state. |
-| `temporary()` | Ledger-scoped or short-lived entries. | No `DataKey` variant uses temporary storage. |
+| `temporary()` | Ledger-scoped or short-lived entries. | Per-asset flash-loan reservation counter (`ReservedForFlashLoan(Address)`). |
 
 ## TTL Policy & Constants
 
@@ -75,6 +75,7 @@ Every current `DataKey` variant appears exactly once in this table.
 | `UtilizationHistory` | `persistent()` | Ring-buffered utilization samples | Extended via `ttl::bump_global` on sample record and by keeper `bump_ttl()`. |
 | `CloseFactorBps` | `instance()` | Governing close-factor cap in basis points | Instance lifetime. |
 | `LiquidationIncentiveBps` | `instance()` | Governing liquidation incentive in basis points | Instance lifetime. |
+| `ReservedForFlashLoan(Address)` | `temporary()` | `i128` per-asset amount reserved for active flash loans | Ledger-scoped temporary storage; defaults to `0` when absent, removed when released to `0`, and auto-expires at ledger close. |
 
 ## TTL Bump Cadence & Keeper API
 
