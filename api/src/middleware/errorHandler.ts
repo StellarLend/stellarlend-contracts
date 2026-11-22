@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-[import { ApiError } from '../utils/errors';]
+import { ApiError } from '../utils/errors';
 import logger from '../utils/logger';
 
 /**
@@ -31,12 +31,17 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ): void | Response => {
+  const errorObject =
+    err && typeof err === 'object'
+      ? (err as Error & { type?: string })
+      : new Error('Internal server error');
+
   // Invariant 1: log exactly once with structured context.
   // Never log request body or headers to avoid leaking secrets.
   const logContext = {
-    errorName: err.name,
-    errorMessage: err.message,
-    stack: err.stack,
+    errorName: errorObject.name,
+    errorMessage: errorObject.message,
+    stack: errorObject.stack,
     path: req.path,
     method: req.method,
     requestId: (req as Request & { id?: string }).id,
@@ -50,37 +55,44 @@ export const errorHandler = (
 
   logger.error('Error occurred:', logContext);
 
+  const errorType = errorObject.type;
+  if (errorType === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'Payload too large',
+    });
+  }
+
   // Malformed JSON body -> 400. Express attaches `body` to SyntaxError.
-  if (err instanceof SyntaxError && 'body' in err) {
-    return res.status(400).jsonf({
+  if (errorObject instanceof SyntaxError && 'body' in errorObject) {
+    return res.status(400).json({
       success: false,
       error: 'Malformed request body',
     });
   }
 
   // ApiError -> carries its own status code and safe message.
-  if (err instanceof ApiError) {
+  if (errorObject instanceof ApiError) {
     const statusCode =
-      Number.isInteger(err.statusCode) &&
-      err.statusCode >= 400 &&
-      err.statusCode <= 599
-        ? err.statusCode
+      Number.isInteger(errorObject.statusCode) &&
+      errorObject.statusCode >= 400 &&
+      errorObject.statusCode <= 599
+        ? errorObject.statusCode
         : 500;
 
-    const message = isSafeErrorMessage(err.message)
-      ? err.message
-      : err.message || 'Internal server error';
+    const message = isSafeErrorMessage(errorObject.message)
+      ? errorObject.message
+      : errorObject.message || 'Internal server error';
 
-    return res.status(statusCode).jsonf({
+    return res.status(statusCode).json({
       success: false,
       error: message,
     });
   }
 
   // Fallback -> 500 with generic message (no internal details leaked).
-  return res.status(500).jsonf({
+  return res.status(500).json({
     success: false,
-    error: message,
+    error: 'Internal server error',
   });
 };
 

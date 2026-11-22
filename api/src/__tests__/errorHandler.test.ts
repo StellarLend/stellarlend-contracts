@@ -10,7 +10,6 @@ import {
   UnauthorizedError,
   ValidationError,
 } from '../utils/errors';
-import logger from '../utils/logger';
 
 // Mock the logger to prevent actual logging during tests
 jest.mock('../utils/logger', () => ({
@@ -51,6 +50,20 @@ describe('Error Handler Middleware', () => {
   });
 
   describe('Success Path - Standard ApiError Handling', () => {
+    it('should handle oversized payload errors with 413', () => {
+      const error = Object.assign(new Error('request entity too large'), {
+        type: 'entity.too.large',
+      });
+
+      errorHandler(error, mockRequest as Request, mockResponse as Response, mockNext);
+
+      expect(mockResponse.status).toHaveBeenCalledWith(413);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        error: 'Payload too large',
+      });
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
     it('should handle ApiError with correct status code', () => {
       const error = new ValidationError('Invalid input');
 

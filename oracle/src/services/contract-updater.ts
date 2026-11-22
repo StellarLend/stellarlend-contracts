@@ -33,6 +33,8 @@
  *  7. Failures never leave a stale CONFIRMED entry in the latest map.
  */
 
+import { createHash } from 'node:crypto';
+
 export const MAX_RETRIES = 3;
 export const BASE_MS = 250;
 export const CAP_MS = 8000;
@@ -52,7 +54,7 @@ export function calculateJitterDelay(attempt, base = BASE_MS, cap = CAP_MS) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isRetryable = (e) => !NON_RETRYABLE_CODES.includes(e?.code);
-const idFor = (r) => createHash('sha256').update(`${r.asset}:${r.price}:${r.source}:${r.observedAt}`).digest('hex');
+export const idFor = (r) => createHash('sha256').update(`${r.asset}:${r.price}:${r.source}:${r.observedAt}`).digest('hex');
 
 function validateInput(input) {
   if (!input || typeof input !== 'object') throw new Error('invalid input');
@@ -67,8 +69,13 @@ function validateInput(input) {
 function normalizeRequest(input) {
   const observedAt = 'observedAt' in input ? input.observedAt : input.timestamp;
   if (typeof observedAt !== 'number' || !Number.isFinite(observedAt)) throw new Error('INVALID_OBSERVED_AT');
-  const idempotencyKey = input.idempotencyKey ?? `${input.asset}:${input.price}:${input.source}:${observedAt}`;
-  return { asset: input.asset, price: input.price, source: input.source, observedAt, idempotencyKey };
+  return {
+    asset: input.asset,
+    price: input.price,
+    source: input.source,
+    observedAt,
+    ...(typeof input.idempotencyKey === 'string' ? { idempotencyKey: input.idempotencyKey } : {}),
+  };
 }
 
 export class ContractUpdater {
@@ -103,7 +110,7 @@ export class ContractUpdater {
   async process(req) {
     const id = req.idempotencyKey ?? idFor(req);
     const existing = this.subs.get(id);
-    if (existing && !TERMINAL_STATU[S.includes(existing.status)) return existing;
+    if (existing && !TERMINAL_STATUSES.includes(existing.status)) return existing;
 
     const last = this.latest.get(req.asset);
     if (last && last.status === 'CONFIRMED' && last.price === req.price) return last;
