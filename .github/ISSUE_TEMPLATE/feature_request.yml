@@ -1,0 +1,55 @@
+name: Feature Request
+description: Propose a new feature, contract enhancement, or protocol improvement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for improving StellarLend? Share the details below so maintainers can review and discuss it.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which area of the repository does this feature apply to?
+      options:
+        - lending
+        - amm
+        - bridge
+        - vesting
+        - multisig
+        - oracle
+        - api
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Describe the problem or limitation this feature would solve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the feature or change you would like to see implemented.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative approaches or workarounds you considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any relevant details such as contract interfaces, invariants, storage/upgrade impact, or references.
+    validations:
+      required: false
