@@ -1,0 +1,147 @@
+# Security audit configuration and accepted-advisory register.
+# Review date: 2026-11-22
+# Maintainer: @StellarLend/core-devs
+#
+# cargo-audit only reads `./.cargo/audit.toml` or `~/.cargo/audit.toml`.
+# `.cargo/audit.toml` is a symlink to this file so the Rust ignores below
+# and the npm accept list further down have a single source of truth.
+# Re-verify every entry periodically with:
+#   cd stellar-lend && cargo audit
+#
+# Every entry must carry a one-line justification explaining why the
+# advisory does not apply to code we actually ship, or why the affected
+# path is out of scope for this repository. Dependency upgrades to clear
+# advisories are deliberately handled outside this PR.
+
+[advisories]
+ignore = [
+    # ── Soroban SDK transitive dependencies (cannot upgrade independently) ──
+    "RUSTSEC-2026-0007",  # bytes - Integer overflow in Bytes::slice; only reachable via attacker-controlled lengths which Soroban host env sanitises — low risk in WASM sandbox
+    "RUSTSEC-2026-0009",  # time - DoS via stack exhaustion parsing large Duration strings; contracts don't parse user-supplied durations at runtime
+    "RUSTSEC-2026-0012",  # keccak - Unsoundness in ARMv8 assembly (aarch64 crypto backend); WASM contracts are architecture-independent, wasm32 backend unaffected
+    "RUSTSEC-2024-0388",  # derivative - Unmaintained; transitive through arkworks (Soroban SDK crypto), no maintained fork available at compatible semver
+    "RUSTSEC-2024-0436",  # paste - Unmaintained; transitive through arkworks (Soroban SDK crypto), no maintained fork available at compatible semver
+
+    # ── Client / oracle dependencies (not deployed on-chain) ──
+    "RUSTSEC-2025-0012",  # backoff - Unmaintained; used only in oracle client (TypeScript/Node), not in on-chain contracts
+    "RUSTSEC-2024-0384",  # instant - Unmaintained; used only in oracle client, not in on-chain contracts
+    "RUSTSEC-2025-0134",  # rustls-pemfile - Unmaintained; used only in oracle client, not in on-chain contracts
+
+    # ── Soroban SDK crypto dependencies ──
+    "RUSTSEC-2025-0009",  # ring - Panics on AES when overflow checks enabled (debug builds only); Soroban SDK transitive dep, contracts don't use AES/QUIC directly
+    "RUSTSEC-2025-0010",  # ring - Unmaintained; Soroban SDK transitive dep, upstream ring continues to receive security patches via the BoringSSL project, no practical alternative available
+    "RUSTSEC-2025-0057",  # fxhash - Unmaintained; used only in indexing_system (ethers-rs dep), not in on-chain contracts
+
+    # ── Contract dev-dependencies (test-only, not in production WASM) ──
+    "RUSTSEC-2022-0093",  # ed25519-dalek v1.0.1 - Double-signature oracle attack on decoupled Keypair API; used only as a test dev-dependency in lending crate to generate test keypairs, never exposed to adversarial oracle inputs
+    "RUSTSEC-2024-0344",  # curve25519-dalek - Timing variability in Scalar::sub via compiler branch insertion; contracts run in WASM interpreter (not native), timing side-channels are not observable
+    "RUSTSEC-2026-0097",  # rand 0.7.3 - Unsound only when a custom logger itself calls rand::rng() and ThreadRng reseeds inside it; rand 0.7 is a dev-dependency of contracts/lending used solely in #[cfg(test)] keypair generation via OsRng, and no custom logger is installed
+
+    # ── No upgrade path available without a breaking SDK bump ──
+    "RUSTSEC-2023-0071",  # rsa v0.9.x - Marvin Attack timing side-channel on RSA decryption; no fixed release in the 0.9.x line, upgrading to 0.10+ is a breaking change blocked by upstream Soroban SDK
+    "RUSTSEC-2022-0054",  # wee_alloc - Unmaintained; legacy WASM allocator pinned by older Soroban SDK contract templates, contracts use the default global allocator at runtime
+
+    # ── Transitive host/off-chain code not reachable from contract paths ──
+    "RUSTSEC-2026-0049",  # rustls-webpki - CRL distributionPoint matching logic bug; contracts do not perform TLS certificate validation, crate is pulled only through Soroban SDK host-facing HTTP client which is not used in contract WASM
+    "RUSTSEC-2024-0363",  # sqlx - PostgreSQL protocol smuggling via oversized values (>4 GiB); Rust database driver used only in off-chain indexing service, not in on-chain WASM contracts, and all values are < 1 MiB in practice
+    "RUSTSEC-2026-0387",  # crypto-bigint 0.5.5 - Constant-time timing variability; reached only through soroban-env-host k256/p256 ECDSA host code, contracts execute in the WASM interpreter and never perform ECDSA signing with secret scalars
+]
+
+[yanked]
+enabled = false
+
+[database]
+fetch = true
+stale = false
+
+# ── Accepted npm advisories (oracle/ and api/) ───────────────────────────────
+# npm audit has no per-advisory ignore file. `scripts/check_npm_audit.py`
+# reads the GHSA IDs in this block and compares them with
+# `npm audit --omit=dev --audit-level=high --json`. Any high or critical
+# advisory not listed here fails the security-audit workflow. IDs are
+# grouped by package with the shared justification for that package.
+#
+# axios: axios 1.x is pinned by the current SDK lockfile; reported proxy/prototype/body-size paths are not reachable with the fixed endpoints and bounded requests used here.
+#
+# GHSA-35jp-ww65-95wh | axios
+# GHSA-3g43-6gmg-66jw | axios
+# GHSA-3p68-rc4w-qgx5 | axios
+# GHSA-3pq3-5fj3-cg6v | axios
+# GHSA-3w6x-2g7m-8v23 | axios
+# GHSA-42h9-826w-cgv3 | axios
+# GHSA-43fc-jf86-j433 | axios
+# GHSA-445q-vr5w-6q77 | axios
+# GHSA-4hqw-qxg8-jxx2 | axios
+# GHSA-542g-h47m-68v8 | axios
+# GHSA-5c9x-8gcm-mpgx | axios
+# GHSA-62hf-57xw-28j9 | axios
+# GHSA-6chq-wfr3-2hj9 | axios
+# GHSA-777c-7fjr-54vf | axios
+# GHSA-7q8q-rj6j-mhjq | axios
+# GHSA-898c-q2cr-xwhg | axios
+# GHSA-9fr6-4gfg-395g | axios
+# GHSA-fvcv-3m26-pcqx | axios
+# GHSA-hfxv-24rg-xrqf | axios
+# GHSA-j5f8-grm9-p9fc | axios
+# GHSA-j8rh-479h-cp32 | axios
+# GHSA-jqh4-m9w3-8hp9 | axios
+# GHSA-m7pr-hjqh-92cm | axios
+# GHSA-mmx7-hfxf-jppx | axios
+# GHSA-mwf2-3pr3-8698 | axios
+# GHSA-p92q-9vqr-4j8v | axios
+# GHSA-pf86-5x62-jrwf | axios
+# GHSA-pmv8-rq9r-6j72 | axios
+# GHSA-pmwg-cvhr-8vh7 | axios
+# GHSA-q8qp-cvcw-x6jj | axios
+# GHSA-vf2m-468p-8v99 | axios
+# GHSA-vh66-26gq-q6x8 | axios
+# GHSA-w9j2-pvgh-6h63 | axios
+# GHSA-xhjh-pmcv-23jw | axios
+# GHSA-xx6v-rp6x-q39c | axios
+#
+# body-parser: Body size limit is static and enforced by express defaults/edge limits; malformed compressed bodies are rejected before use.
+#
+# GHSA-27r3-jxmh-p828 | body-parser
+# GHSA-v422-hmwv-36x6 | body-parser
+#
+# follow-redirects: Transitive through axios; auth headers are never sent to caller-selected cross-domain redirect targets.
+#
+# GHSA-r4q5-vmmm-2653 | follow-redirects
+#
+# form-data: Transitive through axios; neither service builds multipart bodies from unsanitized caller-controlled field names.
+#
+# GHSA-hmw2-7cc7-3qxx | form-data
+#
+# lodash: Transitive dependency only; no attacker-controlled template strings or array paths are passed to lodash.
+#
+# GHSA-f23m-r3pf-42rh | lodash
+# GHSA-r5fr-rjxr-66jc | lodash
+#
+# path-to-regexp: Transitive through express; route patterns are static source constants, never derived from user input.
+#
+# GHSA-37ch-88jc-xwx2 | path-to-regexp
+#
+# proxy-addr: Trust proxy is not enabled, so proxy-derived IP values are not used for authorization or rate-limit identity.
+#
+# GHSA-jqcg-44mw-7w3h | proxy-addr
+#
+# qs: URL-encoded query parsing uses default comma-free formats with bounded pagination values; hostile toString objects cannot reach qs.stringify.
+#
+# GHSA-4mjr-xmp4-gh2g | qs
+# GHSA-6pq8-jhm2-2vcw | qs
+# GHSA-q8mj-m7cp-5q26 | qs
+# GHSA-x5fp-wj9c-mxmx | qs
+#
+# toml: Transitive through @stellar/stellar-sdk; parsed TOML is trusted local configuration, not attacker input.
+#
+# GHSA-4qx8-w7c3-pj3p | toml
+# GHSA-82x6-q7mm-w9cf | toml
+# GHSA-9j65-hcg3-gc64 | toml
+# GHSA-9qmh-m7c6-f92p | toml
+# GHSA-h895-cgqg-jf52 | toml
+# GHSA-v5mp-jgw5-2x6j | toml
+#
+# zod: Schemas validate bounded request bodies only; oversized-collection exhaustion is mitigated by the fixed request size limit.
+#
+# GHSA-mrhx-c7xc-m3w5 | zod
+#

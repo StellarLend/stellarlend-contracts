@@ -1,0 +1,53 @@
+name: Security audit
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+
+      # cargo-audit 0.21 cannot parse the CVSS v4 advisories now in RustSec.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version '^0.23' --locked
+
+      - name: Audit Cargo.lock
+        working-directory: stellar-lend
+        run: cargo audit --file Cargo.lock
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Audit oracle dependencies
+        working-directory: oracle
+        run: |
+          npm audit --omit=dev --audit-level=high --json > "$RUNNER_TEMP/oracle-audit.json" || true
+          python3 "$GITHUB_WORKSPACE/scripts/check_npm_audit.py" \
+            "$GITHUB_WORKSPACE/stellar-lend/audit.toml" \
+            "$RUNNER_TEMP/oracle-audit.json"
+
+      - name: Audit api dependencies
+        working-directory: api
+        run: |
+          npm audit --omit=dev --audit-level=high --json > "$RUNNER_TEMP/api-audit.json" || true
+          python3 "$GITHUB_WORKSPACE/scripts/check_npm_audit.py" \
+            "$GITHUB_WORKSPACE/stellar-lend/audit.toml" \
+            "$RUNNER_TEMP/api-audit.json"
