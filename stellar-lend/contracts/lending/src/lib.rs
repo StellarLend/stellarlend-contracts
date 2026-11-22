@@ -44,6 +44,8 @@ mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
 #[cfg(test)]
+mod boundary_test;
+#[cfg(test)]
 mod borrow_health_factor_test;
 #[cfg(test)]
 mod borrow_index_test;
@@ -131,6 +133,8 @@ mod liquidation_sequence_invariant_test;
 mod max_borrow_proptest;
 #[cfg(test)]
 mod migration_event_test;
+#[cfg(test)]
+mod mul_div_proptest;
 #[cfg(test)]
 mod oracle_staleness_test;
 #[cfg(test)]
