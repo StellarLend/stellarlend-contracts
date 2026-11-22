@@ -407,6 +407,22 @@ pub fn update_and_get_rate(env: &Env, target_rate: i128, params: &RateParams) ->
         env.storage()
             .instance()
             .set(&RateModelKey::LastRate, &clamped_rate);
+        let total_debt: i128 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::TotalDebt)
+            .unwrap_or(0);
+        let total_deposits: i128 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::TotalDeposits)
+            .unwrap_or(0);
+        let utilization_bps = if total_deposits > 0 {
+            total_debt.saturating_mul(BPS_DENOM) / total_deposits
+        } else {
+            0
+        };
+        crate::events::emit_rate_updated(env, utilization_bps, target_rate, clamped_rate);
     }
     env.storage()
         .instance()
