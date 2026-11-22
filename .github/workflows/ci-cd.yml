@@ -50,7 +50,8 @@ jobs:
             -p stellarlend-lending \
             -p stellarlend-amm \
             -p stellarlend-vesting \
-            -p stellarlend-multisig
+            -p stellarlend-multisig \
+            -p stellarlend-bridge
 
       - name: Optimize WASMs
         run: |
