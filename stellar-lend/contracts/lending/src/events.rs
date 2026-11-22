@@ -820,3 +820,36 @@ pub fn emit_bad_debt_increased(env: &Env, borrower: &Address, amount: i128, new_
     };
     event.publish(env);
 }
+
+/// Emitted when the protocol borrow interest rate changes.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateUpdatedEvent {
+    /// Schema version for safe decoding across upgrades.
+    pub schema_version: u32,
+    /// Pool utilization in basis points (0..=10_000).
+    pub utilization_bps: i128,
+    /// Pre-smoothing target borrow rate in basis points.
+    pub target_rate_bps: i128,
+    /// Applied (smoothed and clamped) borrow rate persisted in storage, in basis points.
+    pub applied_rate_bps: i128,
+    /// Ledger sequence number at emission time.
+    pub ledger: u32,
+}
+
+/// Emit a rate-updated event.
+pub fn emit_rate_updated(
+    env: &Env,
+    utilization_bps: i128,
+    target_rate_bps: i128,
+    applied_rate_bps: i128,
+) {
+    let event = RateUpdatedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        utilization_bps,
+        target_rate_bps,
+        applied_rate_bps,
+        ledger: env.ledger().sequence(),
+    };
+    event.publish(env);
+}

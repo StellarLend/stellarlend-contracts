@@ -25,40 +25,39 @@ proptest! {
     #![proptest_config(seeded_config())]
 
     #[test]
-    fn floor_leq_ceil(a: i128, b: i128, c in any::<i128>().prop_filter("c != 0", |&x| x != 0)) {
+    fn prop_ceil_ge_floor(a: i128, b: i128, c in any::<i128>().prop_filter("c != 0", |&x| x != 0)) {
         let floor_res = checked_mul_div_floor(a, b, c);
         let ceil_res = checked_mul_div_ceil(a, b, c);
 
         if let (Ok(floor), Ok(ceil)) = (floor_res, ceil_res) {
             prop_assert!(floor <= ceil, "floor({}) > ceil({})", floor, ceil);
-        }
-    }
-
-    #[test]
-    fn ceil_minus_floor_leq_1(a: i128, b: i128, c in any::<i128>().prop_filter("c != 0", |&x| x != 0)) {
-        let floor_res = checked_mul_div_floor(a, b, c);
-        let ceil_res = checked_mul_div_ceil(a, b, c);
-
-        if let (Ok(floor), Ok(ceil)) = (floor_res, ceil_res) {
             let diff = ceil.checked_sub(floor).unwrap();
             prop_assert!(diff <= 1, "ceil({}) - floor({}) = {} > 1", ceil, floor, diff);
         }
     }
 
     #[test]
-    fn exact_division_floor_eq_ceil(a: i128, b: i128, c in any::<i128>().prop_filter("c != 0", |&x| x != 0)) {
+    fn prop_exact_when_divisible(a: i128, b: i128, c in any::<i128>().prop_filter("c != 0", |&x| x != 0)) {
         // If a*b is divisible by c, then floor and ceil should be equal
         if let Some(product) = a.checked_mul(b) {
-            if product % c == 0 {
-                let floor = checked_mul_div_floor(a, b, c).unwrap();
-                let ceil = checked_mul_div_ceil(a, b, c).unwrap();
-                prop_assert_eq!(floor, ceil);
+            if let Some(rem) = product.checked_rem(c) {
+                if rem == 0 {
+                    let floor = checked_mul_div_floor(a, b, c).unwrap();
+                    let ceil = checked_mul_div_ceil(a, b, c).unwrap();
+                    prop_assert_eq!(floor, ceil);
+                }
             }
         }
     }
 
     #[test]
-    fn same_error_type_on_overflow_or_div_zero(a: i128, b: i128, c: i128) {
+    fn prop_zero_divisor_errors(a: i128, b: i128) {
+        prop_assert_eq!(checked_mul_div_floor(a, b, 0), Err(MathError::DivisionByZero));
+        prop_assert_eq!(checked_mul_div_ceil(a, b, 0), Err(MathError::DivisionByZero));
+    }
+
+    #[test]
+    fn prop_overflow_or_div_zero_errors_match(a: i128, b: i128, c: i128) {
         let floor_res = checked_mul_div_floor(a, b, c);
         let ceil_res = checked_mul_div_ceil(a, b, c);
 
@@ -66,6 +65,11 @@ proptest! {
 
         if let (Err(floor_err), Err(ceil_err)) = (floor_res, ceil_res) {
             prop_assert_eq!(floor_err, ceil_err);
+        }
+
+        if c != 0 && a.checked_mul(b).is_none() {
+            prop_assert_eq!(floor_res, Err(MathError::Overflow));
+            prop_assert_eq!(ceil_res, Err(MathError::Overflow));
         }
     }
 }

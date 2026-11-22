@@ -124,7 +124,6 @@ fn test_full_vesting() {
 }
 
 #[test]
-#[ignore = "bug: linear vested_at returns claimed_amount when revoked, preventing post-revoke claim of retained vested tokens"]
 fn test_revoke_claws_back_unvested() {
     let (env, client, admin, treasury, token, token_asset) = setup_test();
     let grantee = Address::generate(&env);

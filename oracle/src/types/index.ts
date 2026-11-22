@@ -137,6 +137,18 @@ export interface ContractUpdateResult {
 }
 
 /**
+ * Configuration required to create the contract updater.
+ */
+export interface ContractUpdaterOptions {
+  network: "testnet" | "mainnet";
+  rpcUrl: string;
+  contractId: string;
+  adminSecretKey: string;
+  maxRetries?: number;
+  retryDelayMs?: number;
+}
+
+/**
  * Service configuration
  */
 export interface AssetPriceBounds {

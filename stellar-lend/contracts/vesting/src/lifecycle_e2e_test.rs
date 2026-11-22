@@ -122,22 +122,15 @@ mod lifecycle_e2e_tests {
     ///
     /// Vested at t=500 = 500; already claimed = 300; remaining vested (claimable) = 200.
     /// Unvested at t=500 = 500 → clawed back to treasury.
-    /// Conservation: alice=300 + treasury=500 + locked=200 == 1_000.
+    /// Conservation: alice_claimed + contract_remaining + treasury == 1_000.
     ///
-    /// Wait — after partial claim of 300 from 500 vested, releasing means:
-    ///   released = 500, claimed = 300, claimable = 200, locked = 500 (unvested).
+    /// After partial claim of 300 from 500 vested:
+    ///   released = 500, claimed = 300, claimable = 200, unvested = 500.
     /// On revoke at t=500:
-    ///   clawback = locked = 500 → treasury gets 500.
-    ///   remaining claimable = 200 stays for alice.
-    ///
-    /// Conservation: alice_balance=300 + treasury=500 + total_locked=0 = 800 ≠ 1_000.
-    ///
-    /// Note: total_locked tracks unvested tokens. After revoke total_locked=0.
-    /// The 200 still claimable by alice is in "released but not claimed" state,
-    /// which lives in balance_of("contract"). Conservation must account for it:
-    ///   alice_claimed_so_far + contract_remaining + treasury = 1_000
+    ///   clawback = unvested = 500 → treasury gets 500.
+    ///   remaining claimable = 200 stays in the contract vault (and `total_locked`)
+    ///   for alice to claim.
     #[test]
-    #[ignore = "bug: linear vested_at returns claimed_amount when revoked, preventing post-revoke claim of retained vested tokens"]
     fn full_lifecycle_partial_claim_then_revoke() {
         let mut c = setup();
 
@@ -153,7 +146,16 @@ mod lifecycle_e2e_tests {
         assert_eq!(clawback, 500, "treasury should receive 500 unvested tokens");
 
         assert_eq!(c.balance_of("treasury"), 500);
-        assert_eq!(c.total_locked(), 0, "no more locked after revoke");
+        assert_eq!(c.balance_of("contract"), 200);
+        assert_eq!(
+            c.total_locked(),
+            200,
+            "retained vested-but-unclaimed tokens remain locked until claimed"
+        );
+        assert_eq!(
+            c.balance_of("alice") + c.balance_of("contract") + c.balance_of("treasury"),
+            PRINCIPAL
+        );
 
         // Step 3: alice claims her remaining vested 200
         let remaining = c
@@ -161,6 +163,7 @@ mod lifecycle_e2e_tests {
             .expect("post-revoke claim should succeed");
         assert_eq!(remaining, 200);
         assert_eq!(c.balance_of("alice"), 500);
+        assert_eq!(c.total_locked(), 0);
 
         // Final conservation: alice=500 + treasury=500 + locked=0 == 1_000
         assert_eq!(
@@ -207,7 +210,6 @@ mod lifecycle_e2e_tests {
     /// Unvested = 200 → clawed back.
     /// Conservation at each step is checked.
     #[test]
-    #[ignore = "bug: linear vested_at returns claimed_amount when revoked, preventing post-revoke claim of retained vested tokens"]
     fn revoke_after_partial_vest_no_prior_claim() {
         let mut c = setup();
 
@@ -217,7 +219,7 @@ mod lifecycle_e2e_tests {
             .expect("revoke should succeed");
         assert_eq!(clawback, 200, "200 unvested tokens clawed back");
         assert_eq!(c.balance_of("treasury"), 200);
-        assert_eq!(c.total_locked(), 0);
+        assert_eq!(c.total_locked(), 800);
 
         // contract still holds the 800 vested-but-unclaimed tokens
         assert_eq!(c.balance_of("contract"), 800);
@@ -229,6 +231,7 @@ mod lifecycle_e2e_tests {
         assert_eq!(claimed, 800);
         assert_eq!(c.balance_of("alice"), 800);
         assert_eq!(c.balance_of("contract"), 0);
+        assert_eq!(c.total_locked(), 0);
 
         // Final conservation: 800 + 200 + 0 == 1_000
         assert_eq!(
