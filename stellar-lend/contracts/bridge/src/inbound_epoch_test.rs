@@ -30,15 +30,17 @@ mod inbound_epoch_tests {
     use crate::{Bridge, BridgeClient, INBOUND_EPOCH_TOLERANCE};
     use soroban_sdk::{Bytes, BytesN, Env, Vec};
 
-    /// Deploy a fresh bridge and advance it to `target` through the
-    /// contract's own forward-only epoch entry point.
+    /// Deploy a fresh bridge and set its stored epoch to `target` using the
+    /// test-only helper.
     fn bridge_at_epoch(env: &Env, target: u64) -> BridgeClient<'static> {
-        let contract_id = env.register_contract(None, Bridge);
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(env, &contract_id);
         let validators: Vec<BytesN<32>> = Vec::new(env);
         client.initialize(&validators, &Bytes::new(env));
-        for _ in 0..target {
-            client.advance_epoch();
+        if target > 0 {
+            env.as_contract(&contract_id, || {
+                Bridge::test_set_epoch(env, target);
+            });
         }
         assert_eq!(client.get_epoch(), target, "bridge epoch must match target");
         client
@@ -90,6 +92,28 @@ mod inbound_epoch_tests {
         assert!(
             matches!(res, Ok(Ok(()))),
             "epoch 0 must be accepted at the bridge's initial epoch"
+        );
+    }
+
+    /// Without a valid quorum-signed `rotate_validators` call, the stored
+    /// epoch must remain 0 (no unauthenticated epoch-advance entry point).
+    #[test]
+    fn test_epoch_only_advances_via_rotation() {
+        let env = Env::default();
+        let client = bridge_at_epoch(&env, 0);
+        assert_eq!(client.get_epoch(), 0);
+
+        let new_validators: Vec<BytesN<32>> = Vec::new(&env);
+        let empty_proofs: Vec<(BytesN<32>, BytesN<64>)> = Vec::new(&env);
+        let res = client.try_rotate_validators(&new_validators, &1u64, &empty_proofs);
+        assert!(
+            res.is_err(),
+            "rotation without a valid quorum proof must fail"
+        );
+        assert_eq!(
+            client.get_epoch(),
+            0,
+            "epoch must remain 0 without a valid quorum rotation"
         );
     }
 

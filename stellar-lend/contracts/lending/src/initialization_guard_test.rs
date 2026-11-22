@@ -20,7 +20,7 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
-    Bytes, Env,
+    Bytes, BytesN, Env,
 };
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ fn init_client() -> (Env, LendingContractClient<'static>, Address, Address) {
 fn test_initialize_first_call_succeeds() {
     let (_, client, admin) = uninit_client();
     client.initialize(&admin);
-    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_admin(), Some(admin));
 }
 
 /// `initialize` returns `AlreadyInitialized` on a second call; the original
@@ -68,7 +68,7 @@ fn test_initialize_double_call_returns_already_initialized() {
         result
     );
     // Original admin must be unchanged.
-    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_admin(), Some(admin));
 }
 
 /// Second `initialize` with the **same** admin is also rejected.
@@ -290,7 +290,7 @@ fn test_set_max_flash_bps_before_init_returns_not_initialized() {
 fn test_set_price_bounds_before_init_returns_not_initialized() {
     let (env, client, _admin) = uninit_client();
     let asset = Address::generate(&env);
-    let result = client.try_set_price_bounds(&asset, &100, &200);
+    let result = client.try_set_price_bounds(&asset, &100, &200, &false);
     assert!(
         matches!(result, Err(Ok(LendingError::NotInitialized))),
         "expected NotInitialized, got {:?}",
@@ -578,8 +578,103 @@ fn test_normal_operations_succeed_after_initialize() {
     let remaining = client.repay(&user, &20);
     assert_eq!(remaining, 30);
 
-    let after_withdraw = client
-        .withdraw(&user, &10)
-        .expect("withdraw should succeed");
+    let after_withdraw = client.withdraw(&user, &10);
     assert_eq!(after_withdraw, 190);
+}
+
+macro_rules! assert_init_guard {
+    ($result:expr, $name:expr) => {
+        assert!(
+            matches!($result, Err(Ok(LendingError::NotInitialized))),
+            "{}: expected NotInitialized, got {:?}",
+            $name,
+            $result
+        );
+    };
+}
+
+/// Matrix coverage for entrypoints added after the original guard suite.
+#[test]
+fn test_all_remaining_mutating_entrypoints_before_init() {
+    let (env, client, _admin) = uninit_client();
+    let caller = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let pubkey = BytesN::<32>::from_array(&env, &[1; 32]);
+    let signature = BytesN::<64>::from_array(&env, &[2; 64]);
+
+    assert_init_guard!(client.try_bump_ttl(), "bump_ttl");
+    assert_init_guard!(client.try_bump_asset_ttl(&asset), "bump_asset_ttl");
+    assert_init_guard!(
+        client.try_set_oracle_pubkey(&pubkey),
+        "set_oracle_pubkey"
+    );
+    assert_init_guard!(
+        client.try_set_price(&caller, &asset, &1_000, &1, &signature),
+        "set_price"
+    );
+    assert_init_guard!(
+        client.try_set_oracle_max_age(&asset, &3600),
+        "set_oracle_max_age"
+    );
+    assert_init_guard!(
+        client.try_set_move_window_secs(&3600),
+        "set_move_window_secs"
+    );
+    assert_init_guard!(
+        client.try_set_price_relayer(&caller),
+        "set_price_relayer"
+    );
+    assert_init_guard!(client.try_clear_guardian(), "clear_guardian");
+    assert_init_guard!(
+        client.try_set_debt_asset(&asset),
+        "set_debt_asset"
+    );
+    assert_init_guard!(
+        client.try_liquidate_cross_asset(&caller, &borrower, &asset, &asset, &1),
+        "liquidate_cross_asset"
+    );
+    assert_init_guard!(client.try_migrate_positions(), "migrate_positions");
+    assert_init_guard!(
+        client.try_set_liquidation_threshold_bps(&8000),
+        "set_liquidation_threshold_bps"
+    );
+    assert_init_guard!(
+        client.try_set_max_ltv_bps(&7000),
+        "set_max_ltv_bps"
+    );
+    assert_init_guard!(client.try_set_deposit_cap(&1_000_000), "set_deposit_cap");
+    assert_init_guard!(
+        client.try_set_rate_params(&rate_model::RateParams::default()),
+        "set_rate_params"
+    );
+    assert_init_guard!(
+        client.try_set_reserve_factor_bps(&1000),
+        "set_reserve_factor_bps"
+    );
+    assert_init_guard!(
+        client.try_withdraw_reserves(&1, &caller),
+        "withdraw_reserves"
+    );
+    assert_init_guard!(
+        client.try_set_liquidation_grace_period(&3600),
+        "set_liquidation_grace_period"
+    );
+    assert_init_guard!(
+        client.try_mark_unhealthy(&borrower),
+        "mark_unhealthy"
+    );
+    assert_init_guard!(
+        client.try_set_asset_params_v2(
+            &caller,
+            &asset,
+            &7500,
+            &8000,
+            &1_000_000,
+            &0,
+            &0,
+            &7,
+        ),
+        "set_asset_params_v2"
+    );
 }

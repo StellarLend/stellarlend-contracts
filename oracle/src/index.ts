@@ -407,41 +407,10 @@ export class OracleService {
         assets: Array.from(prices.keys()),
       });
 
-      // Submit updates to contract updater with interface compatibility
+      // Submit updates through the typed contract updater API.
       const priceArray = Array.from(prices.values());
-      let results: ContractUpdateResult[] = [];
-
-      if (typeof (this.contractUpdater as any).updatePrices === "function") {
-        results = await (this.contractUpdater as any).updatePrices(priceArray);
-      } else if (
-        typeof (this.contractUpdater as any).submitPriceUpdate === "function"
-      ) {
-        results = await Promise.all(
-          priceArray.map(async (p): Promise<ContractUpdateResult> => {
-            try {
-              await (this.contractUpdater as any).submitPriceUpdate(p);
-              return {
-                success: true,
-                asset: p.asset,
-                price: p.price,
-                timestamp: p.timestamp,
-              };
-            } catch (err) {
-              return {
-                success: false,
-                asset: p.asset,
-                price: p.price,
-                timestamp: p.timestamp,
-                error: err instanceof Error ? err.message : String(err),
-              };
-            }
-          }),
-        );
-      } else {
-        throw new Error(
-          "ContractUpdater does not implement updatePrices or submitPriceUpdate",
-        );
-      }
+      const results: ContractUpdateResult[] =
+        await this.contractUpdater.updatePrices(priceArray);
 
       // Log results
       const successful = results.filter((r) => r.success);

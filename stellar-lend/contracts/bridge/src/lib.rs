@@ -1531,15 +1531,14 @@ impl Bridge {
 }
 
 // -----------------------------------------------------------------------
-// Test-only epoch-advance entry point.
+// Test-only epoch helper.
 //
 // Production rotation goes through `rotate_validators` (quorum-proof gated).
-// The epoch-epoch guard tests (`inbound_epoch_test.rs`) only need to move the
-// stored epoch forward, so they use this `#[cfg(test)]`-gated entry point,
-// which is compiled out of the wasm build and never exported on-chain.
+// Tests that need to position the bridge at a specific epoch use this plain
+// `#[cfg(test)]` helper via `env.as_contract(...)`, so no epoch-mutation
+// entry point is ever exported in the contract interface or WASM spec.
 // -----------------------------------------------------------------------
 #[cfg(test)]
-#[contractimpl]
 impl Bridge {
     /// Test-only: advance the stored epoch by one (forward-only, mirroring
     /// what a successful quorum-proof rotation does to the stored epoch).
@@ -1636,7 +1635,9 @@ mod tests {
         assert_eq!(client.get_epoch(), 0);
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
 
-        client.advance_epoch();
+        env.as_contract(&contract_id, || {
+            Bridge::test_set_epoch(&env, 1);
+        });
         assert_eq!(client.get_epoch(), 1);
 
         // Messages signed with epoch 0 are rejected (retired validator set).

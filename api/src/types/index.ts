@@ -170,7 +170,7 @@ export const HEALTH_STATUS_VALUES: readonly string[] = ['healthy', 'unhealthy'] 
 export const TRANSACTION_STATUS_ENUM_VALUES: readonly string[] = [
   TransactionStatus.PENDING,
   TransactionStatus.SUCCESS,
-  TRANSACTION_STATUS.FAILED,
+  TransactionStatus.FAILED,
   TransactionStatus.NOT_FOUND,
 ] as const;
 
