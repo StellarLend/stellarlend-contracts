@@ -194,6 +194,8 @@ mod utilization_math_boundary_test;
 mod withdraw_overflow_test;
 #[cfg(test)]
 mod withdraw_reserve_test;
+#[cfg(test)]
+mod zero_amount_semantics_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt, repay_amount,
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
