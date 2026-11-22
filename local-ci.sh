@@ -184,10 +184,10 @@ if should_run audit; then
         echo -e "${BLUE}🛠️  Installing cargo-audit...${NC}"
         # --locked here matches the workflow so the local install and the CI
         # install resolve to the same advisory-db revision.
-        cargo install cargo-audit --version '^0.21' --locked
+        cargo install cargo-audit --version '^0.23' --locked
     fi
 
-    # Ignored advisories live in stellar-lend/.cargo/audit.toml.
+    # Ignored advisories live in stellar-lend/audit.toml.
     run_check "Security Audit" "cargo audit"
 fi
 
