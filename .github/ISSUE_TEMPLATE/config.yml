@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Private Security Reporting
+    url: https://github.com/StellarLend/stellarlend-contracts/blob/main/SECURITY.md
+    about: Report security vulnerabilities privately following SECURITY.md — please do not open a public issue.
