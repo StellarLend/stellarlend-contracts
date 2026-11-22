@@ -132,6 +132,8 @@ mod max_borrow_proptest;
 #[cfg(test)]
 mod migration_event_test;
 #[cfg(test)]
+mod missing_price_test;
+#[cfg(test)]
 
 mod oracle_staleness_test;
 #[cfg(test)] mod oracle_payload_binding_test;

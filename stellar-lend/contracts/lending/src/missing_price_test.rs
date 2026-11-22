@@ -1,5 +1,5 @@
 use crate::test::{chrono_keypair, sign_oracle_update};
-use crate::{DataKey, LendingContract, LendingContractClient, LendingError, MockAsset};
+use crate::{LendingContract, LendingContractClient, LendingError, MockAsset};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, BytesN, Env,
@@ -93,46 +93,54 @@ fn test_liquidation_with_collateral_asset_but_no_price_fails() {
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
 fn test_liquidation_with_collateral_asset_and_price_succeeds() {
-    let (env, client, admin, borrower) = setup();
+    let (env, client, _admin, borrower) = setup();
     let liquidator = Address::generate(&env);
     let asset = env.register(MockAsset, ());
+    let debt_asset = env.register(MockAsset, ());
     client.set_collateral_asset(&asset);
+    client.set_debt_asset(&debt_asset);
 
-    // Setup Oracle & Price
+    // Setup Oracle & Prices for cross-asset valuation
     let keypair = chrono_keypair();
     let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
     client.set_oracle_pubkey(&pubkey);
 
-    let initial_price = 1_000_000_000i128; // scale = 1.0
+    let initial_price = 1_000_000_000i128; // 1:1 ratio with debt_asset
     let timestamp = env.ledger().timestamp();
     let signature =
         sign_oracle_update(&env, &client, &keypair, &asset, initial_price, timestamp);
     client.set_price(&asset, &initial_price, &timestamp, &signature);
 
+    let debt_signature =
+        sign_oracle_update(&env, &client, &keypair, &debt_asset, initial_price, timestamp);
+    client.set_price(&debt_asset, &initial_price, &timestamp, &debt_signature);
+
     client.deposit(&borrower, &100);
     client.borrow(&borrower, &80);
 
     // Drop the price of collateral to make the position unhealthy/liquidatable
-    let low_price = 500_000_000i128; // scale = 0.5
+    let low_price = 500_000_000i128; // 0.5x relative to debt_asset
     let new_signature = sign_oracle_update(&env, &client, &keypair, &asset, low_price, timestamp);
     client.set_price(&asset, &low_price, &timestamp, &new_signature);
 
-    // Liquidation should now succeed
-    let res = { let _da = Address::generate(&env); let _ca = Address::generate(&env); client.liquidate(&liquidator, &borrower, &_da, &_ca, &50) };
+    // Liquidation should now succeed and reduce borrower debt
+    let res = client.liquidate(&liquidator, &borrower, &debt_asset, &asset, &50);
     assert!(res > 0);
+    let pos_after = client.get_position(&borrower);
+    assert!(pos_after.debt < 80);
 }
 
 #[test]
-#[ignore = "latent main breakage: unblocked by CI after hello-world exclusion; needs product/test alignment (see PR #1661)"]
 fn test_get_health_factor_and_position_fail_when_no_price() {
-    let (env, client, admin, user) = setup();
+    let (env, client, _admin, user) = setup();
     let asset = env.register(MockAsset, ());
+    let debt_asset = env.register(MockAsset, ());
     client.set_collateral_asset(&asset);
+    client.set_debt_asset(&debt_asset);
 
     client.deposit(&user, &100);
-    // Setup Oracle & Price
+    // Setup Oracle & Prices for cross-asset valuation
     let keypair = chrono_keypair();
     let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
     client.set_oracle_pubkey(&pubkey);
@@ -142,17 +150,28 @@ fn test_get_health_factor_and_position_fail_when_no_price() {
     let signature = sign_oracle_update(&env, &client, &keypair, &asset, price, timestamp);
     client.set_price(&asset, &price, &timestamp, &signature);
 
+    let debt_signature =
+        sign_oracle_update(&env, &client, &keypair, &debt_asset, price, timestamp);
+    client.set_price(&debt_asset, &price, &timestamp, &debt_signature);
+
     client.borrow(&user, &50);
 
     // Now change the collateral asset to an unpriced one
     let other_asset = env.register(MockAsset, ());
     client.set_collateral_asset(&other_asset);
 
-    // Try to get position - should fail
-    let pos_res = client.try_get_position(&user);
-    assert!(pos_res.is_err());
+    // Read-only position/health views fail-closed with health_factor = 0 and price_stale = true
+    let pos = client.get_position(&user);
+    assert_eq!(pos.health_factor, 0);
 
-    // Try to get health factor - should fail
-    let hf_res = client.try_get_health_factor(&user);
-    assert!(hf_res.is_err());
+    let pos_v2 = client.get_position_v2(&user);
+    assert_eq!(pos_v2.health_factor, 0);
+    assert!(pos_v2.price_stale);
+
+    let hf = client.get_health_factor(&user);
+    assert_eq!(hf, 0);
+
+    // State-mutating operations reject with LendingError::PriceUnavailable
+    let borrow_res = client.try_borrow(&user, &10);
+    assert_eq!(borrow_res, Err(Ok(LendingError::PriceUnavailable)));
 }
