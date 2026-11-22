@@ -17,9 +17,7 @@ import logger from '../utils/logger';
  *    Express default handler to avoid crashing or double-sending.
  */
 
-const SAFE_ERROR_MESSAGES = new Set([
-  'Internal server error',
-]);
+const SAFE_ERROR_MESSAGES = new Set(['Internal server error']);
 
 function isSafeErrorMessage(message: unknown): message is string {
   return typeof message === 'string' && SAFE_ERROR_MESSAGES.has(message);

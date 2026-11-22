@@ -1,13 +1,20 @@
-/// Adversarial tests for zero and negative amount rejection across all four
-/// core lending entrypoints: deposit, withdraw, borrow, repay.
+/// Adversarial tests for zero and negative amount rejection across all five
+/// core lending entrypoints: deposit, withdraw, borrow, repay, liquidate.
 ///
 /// Each test verifies:
 ///   1. The call returns `Err(LendingError::InvalidAmount)` — not a panic.
 ///   2. Storage is not mutated (balances and debt are unchanged after rejection).
 ///
 /// See docs/ZERO_AMOUNT_SEMANTICS.md for the design invariants these enforce.
-use crate::{LendingContract, LendingContractClient, LendingError};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::{
+    liquidate_transfer_test::{MockToken, MockTokenClient},
+    rounding_strategy::SECONDS_PER_YEAR,
+    LendingContract, LendingContractClient, LendingError,
+};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 fn setup() -> (Env, LendingContractClient<'static>, Address) {
     let env = Env::default();
@@ -326,4 +333,77 @@ fn get_position_unaffected_after_all_rejected_calls() {
         "collateral corrupted by rejected calls"
     );
     assert_eq!(pos.debt, 200, "debt corrupted by rejected calls");
+}
+
+// ---------------------------------------------------------------------------
+// liquidate
+// ---------------------------------------------------------------------------
+
+fn setup_unhealthy_borrower() -> (
+    Env,
+    LendingContractClient<'static>,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let liquidator = Address::generate(&env);
+    let debt_asset = env.register(MockToken, ());
+    let collateral_asset = env.register(MockToken, ());
+    client.initialize(&admin);
+    MockTokenClient::new(&env, &debt_asset).mint(&liquidator, &1_000_000);
+    MockTokenClient::new(&env, &collateral_asset).mint(&contract_id, &1_000_000);
+
+    // Deposit 100, borrow 75 (within 75% max LTV), then advance 2 years so
+    // accrued interest pushes debt above the 80% liquidation threshold.
+    client.deposit(&borrower, &100);
+    client.borrow(&borrower, &75);
+    let mut info = env.ledger().get();
+    info.timestamp = info.timestamp.saturating_add(2 * SECONDS_PER_YEAR);
+    info.sequence_number = info.sequence_number.saturating_add(1);
+    env.ledger().set(info);
+
+    (env, client, borrower, liquidator, debt_asset, collateral_asset)
+}
+
+#[test]
+fn liquidate_zero_returns_invalid_amount() {
+    let (_env, client, borrower, liquidator, debt_asset, collateral_asset) =
+        setup_unhealthy_borrower();
+    let before = client.get_position(&borrower);
+
+    let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &0);
+    assert!(
+        matches!(res, Err(Ok(LendingError::InvalidAmount))),
+        "zero liquidate must return InvalidAmount, got: {:?}",
+        res
+    );
+
+    let after = client.get_position(&borrower);
+    assert_eq!(before.collateral, after.collateral);
+    assert_eq!(before.debt, after.debt);
+}
+
+#[test]
+fn liquidate_negative_returns_invalid_amount() {
+    let (_env, client, borrower, liquidator, debt_asset, collateral_asset) =
+        setup_unhealthy_borrower();
+    let before = client.get_position(&borrower);
+
+    let res = client.try_liquidate(&liquidator, &borrower, &debt_asset, &collateral_asset, &-1);
+    assert!(
+        matches!(res, Err(Ok(LendingError::InvalidAmount))),
+        "negative liquidate must return InvalidAmount, got: {:?}",
+        res
+    );
+
+    let after = client.get_position(&borrower);
+    assert_eq!(before.collateral, after.collateral);
+    assert_eq!(before.debt, after.debt);
 }

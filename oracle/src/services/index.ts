@@ -15,3 +15,4 @@ export type { AggregatorConfig } from './price-aggregator.js';
 
 export { ContractUpdater, createContractUpdater } from './contract-updater.js';
 export type { ContractUpdaterConfig } from './contract-updater.js';
+export type { ContractUpdaterOptions } from '../types/index.js';
