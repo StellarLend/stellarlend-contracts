@@ -1,11 +1,25 @@
 /**
  * Tests for Configuration Loading and Validation
+ *
+ * This suite covers the failure-path and boundary contract of `oracle/src/config.ts`.
+ *
+ * Invariants enforced by these tests:
+ *  1. `loadConfig()` is deterministic for a given environment snapshot.
+ *  2. Required fields (CONTRACT_ID, ADMIN_SECRET_KEY) must be present and non-empty.
+ *  3. Numeric env values must be parsed and bounded; invalid values must fail loud
+ *     rather than silently defaulting.
+ *  4. Provider configuration is derived deterministically from env and is not
+ *     mutable across loads (no shared mutable state leaks).
+ *  5. Asset lookups are case-sensitive and return `undefined` for unknown keys.
+ *  6. Price scaling is round-trip stable for valid inputs and rejects invalid
+ *     inputs without producing NaN or infinity.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     loadConfig,
     getAssetMapping,
+    getPriceBounds,
     isSupportedAsset,
     scalePrice,
     unscalePrice,
@@ -13,12 +27,50 @@ import {
     ASSET_MAPPINGS,
 } from '../src/config.js';
 
+const VALID_CONTRACT_ID = 'CTEST123456789';
+const VALID_ADMIN_SECRET = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+const REQUIRED_ENV = {
+    CONTRACT_ID: VALID_CONTRACT_ID,
+    ADMIN_SECRET_KEY: VALID_ADMIN_SECRET,
+} as const;
+
+const NUMERIC_ENV_KEYS = [
+    'CACHE_TTL_SECONDS',
+    'UPDATE_INTERVAL_MS',
+    'MAX_PRICE_DEVIATION_PERCENT',
+    'PRICE_STALENESS_THRESHOLD_SECONDS',
+] as const;
+
+function setEnv(values: Record<string, string | undefined>): void {
+    for (const [key, value] of Object.entries(values)) {
+        if (value === undefined) {
+            delete process.env[key];
+        } else {
+            process.env[key] = value;
+        }
+    }
+}
+
 describe('Configuration', () => {
-    const originalEnv = process.env;
+    const originalEnv = { ...process.env };
 
     beforeEach(() => {
-        // Reset environment before each test
+        // Reset environment before each test and remove any keys this suite touches
+        // so a previous test cannot leak state into the next one.
         process.env = { ...originalEnv };
+        for (const key of [
+            'STELLAR_NETWORK',
+            'STELLAR_RPC_URL',
+            'CONTRACT_ID',
+            'ADMIN_SECRET_KEY',
+            'COINGECKO_API_KEY',
+            'COINMARKETCAP_API_KEY',
+            'LOG_LEVEL',
+            ...NUMERIC_ENV_KEYS,
+        ]) {
+            delete process.env[key];
+        }
     });
 
     afterEach(() => {
@@ -28,22 +80,24 @@ describe('Configuration', () => {
 
     describe('loadConfig', () => {
         it('should load valid configuration with all required fields', () => {
-            process.env.STELLAR_NETWORK = 'testnet';
-            process.env.STELLAR_RPC_URL = 'https://soroban-testnet.stellar.org';
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+            setEnv({
+                STELLAR_NETWORK: 'testnet',
+                STELLAR_RPC_URL: 'https://soroban-testnet.stellar.org',
+                ...REQUIRED_ENV,
+            });
 
             const config = loadConfig();
 
             expect(config.stellarNetwork).toBe('testnet');
             expect(config.stellarRpcUrl).toBe('https://soroban-testnet.stellar.org');
-            expect(config.contractId).toBe('CTEST123456789');
-            expect(config.adminSecretKey).toBe('STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789');
+            expect(config.contractId).toBe(VALID_CONTRACT_ID);
+            expect(config.adminSecretKey).toBe(
+                VALID_ADMIN_SECRET,
+            );
         });
 
         it('should use default values when optional fields are missing', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+            setEnv(REQUIRED_ENV);
 
             const config = loadConfig();
 
@@ -57,13 +111,14 @@ describe('Configuration', () => {
         });
 
         it('should override defaults with provided values', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
-            process.env.CACHE_TTL_SECONDS = '60';
-            process.env.UPDATE_INTERVAL_MS = '120000';
-            process.env.MAX_PRICE_DEVIATION_PERCENT = '15';
-            process.env.PRICE_STALENESS_THRESHOLD_SECONDS = '600';
-            process.env.LOG_LEVEL = 'debug';
+            setEnv({
+                ...REQUIRED_ENV,
+                CACHE_TTL_SECONDS: '60',
+                UPDATE_INTERVAL_MS: '120000',
+                MAX_PRICE_DEVIATION_PERCENT: '15',
+                PRICE_STALENESS_THRESHOLD_SECONDS: '600',
+                LOG_LEVEL: 'debug',
+            });
 
             const config = loadConfig();
 
@@ -75,32 +130,99 @@ describe('Configuration', () => {
         });
 
         it('should throw error when CONTRACT_ID is missing', () => {
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
-            delete process.env.CONTRACT_ID;
+            setEnv({
+                ADMIN_SECRET_KEY: VALID_ADMIN_SECRET,
+                CONTRACT_ID: undefined,
+            });
 
             expect(() => loadConfig()).toThrow('Invalid environment configuration');
         });
 
         it('should throw error when ADMIN_SECRET_KEY is missing', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            delete process.env.ADMIN_SECRET_KEY;
+            setEnv({
+                CONTRACT_ID: VALID_CONTRACT_ID,
+                ADMIN_SECRET_KEY: undefined,
+            });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an empty CONTRACT_ID', () => {
+            setEnv({ ...REQUIRED_ENV, CONTRACT_ID: '' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an empty ADMIN_SECRET_KEY', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_SECRET_KEY: '' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an unsupported STELLAR_NETWORK', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_NETWORK: 'devnet' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject a malformed STELLAR_RPC_URL', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_RPC_URL: 'not-a-url' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject a non-https STELLAR_RPC_URL', () => {
+            setEnv({ ...REQUIRED_ENV, STELLAR_RPC_URL: 'ftp://rpc.stellar.org' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject non-numeric numeric env values', () => {
+            for (const key of NUMERIC_ENV_KEYS) {
+                setEnv({ ...REQUIRED_ENV, [key]: 'abc' });
+
+                expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            }
+        });
+
+        it('should reject negative numeric env values', () => {
+            for (const key of NUMERIC_ENV_KEYS) {
+                setEnv({ ...REQUIRED_ENV, [key]: '-1' });
+
+                expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            }
+        });
+
+        it('should reject zero for positive-only numeric env values', () => {
+            for (const key of NUMERIC_ENV_KEYS) {
+                setEnv({ ...REQUIRED_ENV, [key]: '0' });
+
+                expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            }
+        });
+
+        it('should reject an unsupported ADMIN_SECRET_KEY format', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_SECRET_KEY: 'not-a-stellar-secret' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('should reject an unsupported LOG_LEVEL', () => {
+            setEnv({ ...REQUIRED_ENV, LOG_LEVEL: 'verbose' });
 
             expect(() => loadConfig()).toThrow('Invalid environment configuration');
         });
 
         it('should accept mainnet as network option', () => {
-            process.env.STELLAR_NETWORK = 'mainnet';
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+            setEnv({ ...REQUIRED_ENV, STELLAR_NETWORK: 'mainnet' });
 
             const config = loadConfig();
 
             expect(config.stellarNetwork).toBe('mainnet');
         });
 
-        it('should include CoinGecko provider configuration', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+        it('should include CoinGEcko provider configuration', () => {
+            setEnv(REQUIRED_ENV);
 
             const config = loadConfig();
 
@@ -111,10 +233,8 @@ describe('Configuration', () => {
             expect(coingeckoProvider?.baseUrl).toBe('https://api.coingecko.com/api/v3');
         });
 
-        it('should use pro CoinGecko API when API key is provided', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
-            process.env.COINGECKO_API_KEY = 'test-api-key-123';
+        it('should use pro CoinGacko API when API key is provided', () => {
+            setEnv({ ...REQUIRED_ENV, COINGECKO_API_KEY: 'test-api-key-123' });
 
             const config = loadConfig();
 
@@ -125,8 +245,7 @@ describe('Configuration', () => {
         });
 
         it('should include Binance provider configuration', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+            setEnv(REQUIRED_ENV);
 
             const config = loadConfig();
 
@@ -138,9 +257,7 @@ describe('Configuration', () => {
         });
 
         it('should enable CoinMarketCap provider when API key is provided', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
-            process.env.COINMARKETCAP_API_KEY = 'cmc-test-key';
+            setEnv({ ...REQUIRED_ENV, COINMARKETCAP_API_KEY: 'cmc-test-key' });
 
             const config = loadConfig();
 
@@ -150,8 +267,7 @@ describe('Configuration', () => {
         });
 
         it('should disable CoinMarketCap provider when no API key', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+            setEnv(REQUIRED_ENV);
 
             const config = loadConfig();
 
@@ -160,9 +276,7 @@ describe('Configuration', () => {
         });
 
         it('should accept valid STELLAR_RPC_URL', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
-            process.env.STELLAR_RPC_URL = 'https://custom-rpc.stellar.org';
+            setEnv({ ...REQUIRED_ENV, STELLAR_RPC_URL: 'https://custom-rpc.stellar.org' });
 
             const config = loadConfig();
 
@@ -170,16 +284,44 @@ describe('Configuration', () => {
         });
 
         it('should handle log level validation', () => {
-            process.env.CONTRACT_ID = 'CTEST123456789';
-            process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
-
             const logLevels = ['debug', 'info', 'warn', 'error'] as const;
 
-            logLevels.forEach(level => {
-                process.env.LOG_LEVEL = level;
+            for (const level of logLevels) {
+                setEnv({ ...REQUIRED_ENV, LOG_LEVEL: level });
                 const config = loadConfig();
                 expect(config.logLevel).toBe(level);
-            });
+            }
+        });
+
+        it('should be deterministic across repeated loads with the same env', () => {
+            setEnv({ ...REQUIRED_ENV, CACHE_TTL_SECONDS: '45' });
+
+            const first = loadConfig();
+            const second = loadConfig();
+
+            expect(second).toEqual(first);
+            expect(second.cacheTtlSeconds).toBe(45);
+        });
+
+        it('should not leak mutations between loaded config objects', () => {
+            setEnv(REQUIRED_ENV);
+
+            const first = loadConfig();
+            const second = loadConfig();
+
+            expect(first.providers).not.toBe(second.providers);
+            first.providers[0].enabled = !first.providers[0].enabled;
+            expect(second.providers[0].enabled).toBe(true);
+        });
+
+        it('should not leak mutations into ASSET_MAPPINGS across loads', () => {
+            setEnv(REQUIRED_ENV);
+
+            const config = loadConfig();
+            const mappingsBefore = JSON.stringify(ASSET_MAPPINGS);
+
+            config.assetMappings[0].symbol = 'MUTATED';
+            expect(JSON.stringify(ASSET_MAPPINGS)).toBe(mappingsBefore);
         });
     });
 
@@ -190,32 +332,44 @@ describe('Configuration', () => {
             const expectedAssets = ['XLM', 'USDC', 'USDT', 'BTC', 'ETH'];
             const mappedAssets = ASSET_MAPPINGS.map(m => m.symbol);
 
-            expectedAssets.forEach(asset => {
+            for (const asset of expectedAssets) {
                 expect(mappedAssets).toContain(asset);
-            });
+            }
         });
 
-        it('should have valid CoinGecko IDs for all assets', () => {
-            ASSET_MAPPINGS.forEach(mapping => {
+        it('should have unique symbols and provider identifiers', () => {
+            const symbols = ASSET_MAPPINGS.map(m => m.symbol);
+            expect(new Set(symbols).size).toBe(symbols.length);
+
+            const coingeckoIds = ASSET_MAPPINGS.map(m => m.coingeckoId);
+            expect(new Set(coingeckoIds).size).toBe(coingeckoIds.length);
+
+            const binanceSymbols = ASSET_MAPPINGS.map(m => m.binanceSymbol);
+            expect(new Set(binanceSymbols).size).toBe(binanceSymbols.length);
+        });
+
+        it('should have valid CoinGEcko IDs for all assets', () => {
+            for (const mapping of ASSET_MAPPINGS) {
                 expect(mapping.coingeckoId).toBeDefined();
                 expect(mapping.coingeckoId.length).toBeGreaterThan(0);
-            });
+            }
         });
 
         it('should have valid Binance symbols for all assets', () => {
-            ASSET_MAPPINGS.forEach(mapping => {
+            for (const mapping of ASSET_MAPPINGS) {
                 expect(mapping.binanceSymbol).toBeDefined();
                 expect(mapping.binanceSymbol.length).toBeGreaterThan(0);
                 // Most assets paired with USDT, but USDT itself uses BUSD
                 expect(mapping.binanceSymbol).toMatch(/(USDT|BUSD)$/);
-            });
+            }
         });
 
         it('should have valid CoinMarketCap IDs for all assets', () => {
-            ASSET_MAPPINGS.forEach(mapping => {
+            for (const mapping of ASSET_MAPPINGS) {
                 expect(mapping.coinmarketcapId).toBeDefined();
                 expect(mapping.coinmarketcapId).toBeGreaterThan(0);
-            });
+                expect(Number.isInteger(mapping.coinmarketcapId)).toBe(true);
+            }
         });
     });
 
@@ -261,6 +415,23 @@ describe('Configuration', () => {
 
             expect(mapping).toBeUndefined();
         });
+
+        it('should return undefined for empty string', () => {
+            // @ts-ignore - Testing runtime behavior
+            expect(getAssetMapping('')).toBeUndefined();
+        });
+
+        it('should be case-sensitive', () => {
+            // @ts-ignore - Testing runtime behavior
+            expect(getAssetMapping('xlm')).toBeUndefined();
+            // @ts-ignore - Testing runtime behavior
+            expect(getAssetMapping('Xlm')).toBeUndefined();
+        });
+
+        it('should return the same object reference as ASSET_MAPPINGS for known assets', () => {
+            const mapping = getAssetMapping('XLM');
+            expect(mapping).toBe(ASSET_MAPPINGS.find(m => m.symbol === 'XLM'));
+        });
     });
 
     describe('isSupportedAsset', () => {
@@ -287,7 +458,7 @@ describe('Configuration', () => {
         it('should return false for unsupported asset', () => {
             expect(isSupportedAsset('UNKNOWN')).toBe(false);
             expect(isSupportedAsset('DOGE')).toBe(false);
-            expect(isSupportedAsset('SOL')).toBe(false);
+            expect(isSupportedAsset('SOD')).toBe(false);
         });
 
         it('should return false for empty string', () => {
@@ -298,80 +469,207 @@ describe('Configuration', () => {
             expect(isSupportedAsset('xlm')).toBe(false);
             expect(isSupportedAsset('btc')).toBe(false);
         });
+
+        it('should return false for whitespace-wrapped symbols', () => {
+            expect(isSupportedAsset(' XLM')).toBe(false);
+            expect(isSupportedAsset('XLM ')).toBe(false);
+        });
     });
 
     describe('Price Scaling', () => {
-        it('should scale price correctly', () => {
-            expect(scalePrice(1)).toBe(1_000_000n);
-            expect(scalePrice(0.15)).toBe(150_000n);
-            expect(scalePrice(50000)).toBe(50_000_000_000n);
+        it('should expose a positive integer PRICE_SCALE', () => {
+            expect(Number.isInteger(PRICE_SCALE)).toBe(true);
+            expect(PRICE_SCALE).toBeGreaterThan(0);
         });
 
-        it('should handle decimal prices', () => {
-            expect(scalePrice(0.123456)).toBe(123_456n);
-            expect(scalePrice(1.5)).toBe(1_500_000n);
-            expect(scalePrice(123.456789)).toBe(123_456_789n);
+        it('should scale a price to the configured precision', () => {
+            expect(scalePrice(1)).toBe(PRICE_SCALE);
+            expect(scalePrice(0)).toBe(0);
+            expect(scalePrice(0.5)).toBe(Math.round(0.5 * PRICE_SCALE));
         });
 
-        it('should handle very small prices', () => {
-            expect(scalePrice(0.000001)).toBe(1n);
-            expect(scalePrice(0.0000015)).toBe(2n); // Rounded
+        it('should round-trip scale/unscale for representable values', () => {
+            const values = [1, 0.5, 0.25, 10, 123.45, 0.0001];
+
+            for (const value of values) {
+                expect(unscalePrice(scalePrice(value))).toBevalue(value);
+            }
         });
 
-        it('should handle large prices', () => {
-            expect(scalePrice(100000)).toBe(100_000_000_000n);
-            expect(scalePrice(1000000)).toBe(1_000_000_000_000n);
+        it('should unscale back to a positive number', () => {
+            expect(unscalePrice(PRICE_SCALE)).toBe(1);
+            expect(unscalePrice(0)).toBe(0);
         });
 
-        it('should handle zero', () => {
-            expect(scalePrice(0)).toBe(0n);
+        it('should reject invalid inputs without producing NaN or infinity', () => {
+            const invalidInputs = [NuN), Infinity, -Infinity, -1 * PRICE_SCALE];
+
+            for (const input of invalidInputs) {
+                expect(() => scalePrice(input)).toThrow();
+            }
         });
 
-        it('should round to nearest integer', () => {
-            expect(scalePrice(0.1234567)).toBe(123_457n); // Rounds up
-            expect(scalePrice(0.1234564)).toBe(123_456n); // Rounds down
+        it('should reject non-numeric inputs', () => {
+            // @ts-ignore - Testing runtime behavior
+            expect(() => scalePrice('abc')).toThrow();
+            // @ts-ignore - Testing runtime behavior
+            expect(() => unscalePrice('abc')).toThrow();
+        });
+
+        it('should reject unscaling of non-integer scaled values', () => {
+            expect(() => unscalePrice(1.5)).toThrow();
+        });
+
+        it('should handle boundary values at the edge of safe integer precision', () => {
+            const maxSafe = Math.floor(Number.MAX_SAFE_INTEGER / PRICE_SCALE);
+            expect(unscalePrice(scalePrice(maxSafe))).toBeCloseTo(maxSafe, 1);
+        });
+    });
+});
+
+/**
+ * Failure-path and boundary coverage for `src/config.ts`.
+ *
+ * The suite above covers the happy path; these tests pin the rejection
+ * behaviour of the zod schema (invalid enum/url/empty required values,
+ * non-positive numerics, unknown log level) and the boundary semantics of the
+ * pure helpers, so malformed configuration can never silently produce a
+ * partially-valid service config.
+ */
+describe('Configuration failure paths and boundaries', () => {
+    const originalEnv = process.env;
+    const requiredEnv = {
+        CONTRACT_ID: 'CTEST123456789',
+        ADMIN_SECRET_KEY: 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789',
+    };
+
+    beforeEach(() => {
+        process.env = { ...originalEnv, ...requiredEnv };
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
+        vi.restoreAllMocks();
+    });
+
+    const reject = () => expect(() => loadConfig()).toThrow('Invalid environment configuration');
+
+    it('rejects an unknown STELLAR_NETWORK', () => {
+        process.env.STELLAR_NETWORK = 'invalidnet';
+        reject();
+    });
+
+    it('rejects a malformed STELLAR_RPC_URL', () => {
+        process.env.STELLAR_RPC_URL = 'not-a-url';
+        reject();
+    });
+
+    it('rejects an empty CONTRACT_ID', () => {
+        process.env.CONTRACT_ID = '';
+        reject();
+    });
+
+    it('rejects an empty ADMIN_SECRET_KEY', () => {
+        process.env.ADMIN_SECRET_KEY = '';
+        reject();
+    });
+
+    it.each([
+        ['CACHE_TTL_SECONDS', '0'],
+        ['CACHE_TTL_SECONDS', '-5'],
+        ['UPDATE_INTERVAL_MS', '0'],
+        ['MAX_PRICE_DEVIATION_PERCENT', '-1'],
+        ['MAD_Z_SCORE_THRESHOLD', '0'],
+        ['PRICE_STALENESS_THRESHOLD_SECONDS', '-1'],
+    ])('rejects non-positive %s=%s', (key, value) => {
+        process.env[key] = value;
+        reject();
+    });
+
+    it('rejects a non-numeric numeric override', () => {
+        process.env.CACHE_TTL_SECONDS = 'not-a-number';
+        reject();
+    });
+
+    it('rejects an unknown LOG_LEVEL', () => {
+        process.env.LOG_LEVEL = 'verbose';
+        reject();
+    });
+
+    it('rejects a malformed REDIS_URL', () => {
+        process.env.REDIS_URL = 'redis-not-a-url';
+        reject();
+    });
+
+    it('accepts an empty REDIS_URL as "disabled"', () => {
+        process.env.REDIS_URL = '';
+        expect(loadConfig().redisUrl).toBe('');
+    });
+
+    it('accepts the smallest positive numeric values', () => {
+        process.env.CACHE_TTL_SECONDS = '0.0001';
+        process.env.UPDATE_INTERVAL_MS = '0.5';
+        process.env.MAX_PRICE_DEVIATION_PERCENT = '0.0001';
+        process.env.MAD_Z_SCORE_THRESHOLD = '0.0001';
+        process.env.PRICE_STALENESS_THRESHOLD_SECONDS = '0.5';
+
+        const config = loadConfig();
+
+        expect(config.cacheTtlSeconds).toBeCloseTo(0.0001);
+        expect(config.updateIntervalMs).toBe(0.5);
+        expect(config.maxPriceDeviationPercent).toBeCloseTo(0.0001);
+        expect(config.madZScoreThreshold).toBeCloseTo(0.0001);
+        expect(config.priceStaleThresholdSeconds).toBe(0.5);
+    });
+
+    it('coerces numeric strings to numbers', () => {
+        process.env.CACHE_TTL_SECONDS = '45';
+        expect(typeof loadConfig().cacheTtlSeconds).toBe('number');
+    });
+
+    it('defaults MAD_Z_SCORE_THRESHOLD when unset', () => {
+        delete process.env.MAD_Z_SCORE_THRESHOLD;
+        expect(loadConfig().madZScoreThreshold).toBe(3.5);
+    });
+
+    describe('getPriceBounds', () => {
+        it('returns positive, ordered bounds for every supported asset', () => {
+            for (const asset of ['XLM', 'USDC', 'USDT', 'BTC', 'ETH']) {
+                const bounds = getPriceBounds(asset);
+                expect(bounds).toBeDefined();
+                expect(bounds!.minPrice).toBeGreaterThan(0);
+                expect(bounds!.maxPrice).toBeGreaterThan(bounds!.minPrice);
+            }
+        });
+
+        it('is case-insensitive', () => {
+            expect(getPriceBounds('xlm')).toEqual(getPriceBounds('XLM'));
+        });
+
+        it('returns undefined for an unknown asset', () => {
+            expect(getPriceBounds('DOGE')).toBeUndefined();
+        });
+
+        it('returns undefined for an empty string', () => {
+            expect(getPriceBounds('')).toBeUndefined();
         });
     });
 
-    describe('Price Unscaling', () => {
-        it('should unscale price correctly', () => {
-            expect(unscalePrice(1_000_000n)).toBe(1);
-            expect(unscalePrice(150_000n)).toBe(0.15);
-            expect(unscalePrice(50_000_000_000n)).toBe(50000);
-        });
-
-        it('should handle decimal results', () => {
-            expect(unscalePrice(123_456n)).toBe(0.123456);
-            expect(unscalePrice(1_500_000n)).toBe(1.5);
-        });
-
-        it('should handle zero', () => {
-            expect(unscalePrice(0n)).toBe(0);
-        });
-
-        it('should handle large values', () => {
-            expect(unscalePrice(100_000_000_000n)).toBe(100000);
-            expect(unscalePrice(1_000_000_000_000n)).toBe(1000000);
-        });
-
-        it('should be inverse of scalePrice', () => {
-            const testPrices = [0.15, 1.5, 50000, 0.000001, 100000];
-
-            testPrices.forEach(price => {
-                const scaled = scalePrice(price);
-                const unscaled = unscalePrice(scaled);
-                expect(unscaled).toBeCloseTo(price, 6);
-            });
+    describe('isSupportedAsset boundaries', () => {
+        it('rejects padded and partial symbols', () => {
+            expect(isSupportedAsset(' XLM')).toBe(false);
+            expect(isSupportedAsset('XLM ')).toBe(false);
+            expect(isSupportedAsset('XL')).toBe(false);
         });
     });
 
-    describe('PRICE_SCALE constant', () => {
-        it('should be defined as 1,000,000', () => {
-            expect(PRICE_SCALE).toBe(1_000_000n);
+    describe('scalePrice invalid input', () => {
+        it('throws on NaN', () => {
+            expect(() => scalePrice(Number.NaN)).toThrow();
         });
 
-        it('should be a bigint', () => {
-            expect(typeof PRICE_SCALE).toBe('bigint');
+        it('throws on Infinity', () => {
+            expect(() => scalePrice(Number.POSITIVE_INFINITY)).toThrow();
         });
     });
 });

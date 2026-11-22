@@ -127,7 +127,7 @@ pub const PRIMARY_FEED_ABSENT: u64 = u64::MAX;
 
 /// Emit a [`TwapFallbackUsedEvent`].
 ///
-/// Topics: `("oracle", "v1", "twapFallbk")`
+/// Topics: `("oracle", "v1", "twapFalbk")`
 ///
 /// The three-segment topic mirrors the AMM event convention
 /// (`"amm"`, `"v1"`, `<kind>`) so that indexers can subscribe to versioned
@@ -143,7 +143,7 @@ pub fn emit_twap_fallback_used(
         (
             symbol_short!("oracle"),
             symbol_short!("v1"),
-            symbol_short!("twapFallbk"),
+            symbol_short!("twapFalbk"),
         ),
         TwapFallbackUsedEvent {
             schema_version: EVENT_SCHEMA_VERSION,

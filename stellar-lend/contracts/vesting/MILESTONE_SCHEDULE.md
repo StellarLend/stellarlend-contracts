@@ -1,106 +1,142 @@
-# Milestone Vesting Schedule
+# Milestone Vesting Schedule Specification & Validation
 
-## Rationale
+## Overview
 
-The original vesting contract (as described in PR #502) supported only a
-**linear** schedule with a cliff: tokens vest continuously from a start time
-to an end time, with nothing vested before a configurable cliff.
+The StellarLend Vesting contract supports milestone-based vesting schedules alongside traditional linear schedules with cliffs. Milestone grants allow discrete tranches of tokens to unlock at specific future (or past) timestamps.
 
-Many real-world token allocations, however, vest in **discrete tranches** at
-fixed calendar dates — for example 25 % on each of four quarterly
-anniversaries.  The milestone schedule formalises that pattern so the vesting
-contract can express both continuous and discrete unlocks.
+Milestone grants are created by the contract admin via:
 
-## How It Works
+```rust
+pub fn add_grant_milestone(
+    env: Env,
+    caller: Address,
+    grantee: Address,
+    total_amount: i128,
+    milestones: Vec<(u64, i128)>,
+) -> Result<(), VestingError>
+```
 
-A milestone schedule is an ordered list of `(timestamp, cumulative_amount)`
-pairs.
+Each entry in `milestones` is a tuple `(timestamp, cumulative_amount)` representing the total amount of tokens that will have vested once the ledger timestamp reaches `timestamp`.
 
-At any point in time the vested amount is simply the `cumulative_amount` of
-the **latest milestone whose timestamp has passed**.  If no milestone has
-passed yet the vested amount is zero.  There is no interpolation between
-milestones — the vested balance steps up discretely at each milestone
-timestamp.
+---
 
-### Example
+## Validation Rules & Invariants
 
-A grant of `10_000` tokens with four quarterly unlocks:
+To prevent mistyped schedules from locking grantee funds, vesting out of order, or consuming excessive compute/storage gas that could freeze claims, all milestone schedules are strictly validated **up front** in `VestingContract::validate_milestones` before any tokens are transferred or storage is modified.
 
-| Timestamp (unix) | Cumulative | Interpretation            |
-| ---------------- | ---------- | ------------------------- |
-| 1_750_000_000    | 2_500      | 25 % after Q1             |
-| 1_757_884_800    | 5_000      | 50 % after Q2             |
-| 1_765_660_800    | 7_500      | 75 % after Q3             |
-| 1_773_436_800    | 10_000     | 100 % after Q4 (fully vested) |
+### 1. Bounded Schedule Length (`1 ≤ len ≤ MAX_MILESTONES`)
 
-* **Before Q1** (timestamp < 1_750_000_000): vested = 0
-* **At Q1** (timestamp ≥ 1_750_000_000 but < 1_757_884_800): vested = 2_500
-* **At Q2** (timestamp ≥ 1_757_884_800 but < 1_765_660_800): vested = 5_000
-* **At Q3** (timestamp ≥ 1_765_660_800 but < 1_773_436_800): vested = 7_500
-* **At or after Q4** (timestamp ≥ 1_773_436_800): vested = 10_000
+- **Rule**: A milestone schedule must contain at least 1 and at most `MAX_MILESTONES` (64) milestones.
+- **Constant**: `pub const MAX_MILESTONES: u32 = 64;`
+- **Rationale**: Iteration over milestones occurs during `vested_at` calculations for claims, partial claims, revocations, and view calls. Capping the length at 64 bounds CPU instructions, memory footprint, and storage-read costs well within default Soroban transaction limits, while providing sufficient granularity for multi-year vesting schedules (e.g., monthly unlocks over a 5-year grant require 60 milestones).
+- **Error Codes**:
+  - `len == 0`: rejected with `VestingError::InvalidMilestoneOrder`
+  - `len > 64`: rejected with `VestingError::TooManyMilestones`
 
-Claiming works exactly as with the linear schedule: `claimable = vested - claimed`.
+### 2. Strictly Increasing Timestamps (`t_i > t_{i-1}`)
 
-## Validation Rules
+- **Rule**: Timestamps must be sorted in strictly ascending order:
+  $$\forall i > 0, \quad t_i > t_{i-1}$$
+- **Duplicate Timestamps**: Disallowed ($t_i = t_{i-1}$ is rejected).
+- **Past Timestamps**: Timestamps in the past relative to the current ledger timestamp are permitted. Any milestone whose timestamp is already in the past vests immediately upon schedule creation.
+- **Error Code**: Rejected with `VestingError::InvalidMilestoneOrder`.
 
-When a milestone grant is created via `add_grant`, the following checks are
-enforced:
+### 3. Strictly Increasing Cumulative Amounts (`cum_i > cum_{i-1}` and `cum_0 > 0`)
 
-1. **At least one milestone** is required.
-2. **Strictly increasing timestamps** — each milestone's timestamp must be
-   greater than the previous one.
-3. **Strictly increasing cumulative amounts** — each milestone's cumulative
-   must be greater than the previous one.
-4. **Final cumulative equals principal** — the cumulative of the last
-   milestone must exactly match the `principal` of the grant.
-5. **No milestone cumulative exceeds principal** — each individual cumulative
-   is checked against the grant's principal.
+- **Rule**: Cumulative amounts must be strictly positive and strictly ascending:
+  $$cum_0 > 0 \quad \text{and} \quad \forall i > 0, \quad cum_i > cum_{i-1}$$
+- **Zero or Negative Amounts**: Disallowed ($cum \le 0$ is rejected).
+- **Non-Increasing / Decreasing Amounts**: Disallowed ($cum_i \le cum_{i-1}$ is rejected). Every milestone must unlock a strictly positive increment of tokens; a milestone with zero incremental vesting wastes storage and gas.
+- **Error Code**: Rejected with `VestingError::InvalidMilestoneOrder`.
 
-If any rule is violated `add_grant` returns an appropriate `VestingError`
-variant.
+### 4. Final Cumulative Amount Equals Escrowed Total (`cum_{last} == total_amount`)
 
-## Edge Cases & Guarantees
+- **Rule**: The cumulative amount of the final milestone must exactly equal the `total_amount` escrowed for the grant:
+  $$cum_{N-1} = \text{total\_amount}$$
+- **Under-Total Schedules** ($cum_{N-1} < \text{total\_amount}$): Disallowed. Without this check, unallocated tokens would be permanently locked in the contract vault until revoked.
+- **Over-Total Schedules** ($cum_{N-1} > \text{total\_amount}$): Disallowed.
+- **Error Code**: Rejected with `VestingError::MilestoneTotalMismatch`.
 
-### Before first milestone
-The vested amount is `0`.  No tokens are claimable.
+---
 
-### Exactly at a milestone timestamp
-The milestone's full cumulative amount is vested (inclusive boundary).
+## Examples of Rejected Schedules
 
-### Between milestones
-The vested amount remains at the previous milestone's cumulative until the
-next milestone is reached.
+The table below illustrates common schedule misconfigurations and their corresponding typed rejection errors:
 
-### After final milestone
-The vested amount is `principal` (fully vested).  It will never exceed
-`principal`.
+| Schedule & Total Amount | Issue Description | Resulting Error |
+| ----------------------- | ----------------- | --------------- |
+| `[]`, `total = 100` | Empty schedule (length 0) | `VestingError::InvalidMilestoneOrder` |
+| `[(200, 50), (100, 100)]`, `total = 100` | Unsorted timestamps (`200 > 100`) | `VestingError::InvalidMilestoneOrder` |
+| `[(100, 50), (100, 100)]`, `total = 100` | Duplicate timestamp (`100 == 100`) | `VestingError::InvalidMilestoneOrder` |
+| `[(100, 70), (200, 50)]`, `total = 50` | Decreasing cumulative amount (`70 -> 50`) | `VestingError::InvalidMilestoneOrder` |
+| `[(100, 50), (200, 50)]`, `total = 50` | Non-increasing cumulative amount (`50 -> 50`) | `VestingError::InvalidMilestoneOrder` |
+| `[(100, 0), (200, 100)]`, `total = 100` | Zero cumulative amount (`cum = 0`) | `VestingError::InvalidMilestoneOrder` |
+| `[(100, -20), (200, 100)]`, `total = 100` | Negative cumulative amount (`cum = -20`) | `VestingError::InvalidMilestoneOrder` |
+| `65` milestones, `total = 650` | Schedule length exceeds `MAX_MILESTONES` (64) | `VestingError::TooManyMilestones` |
+| `[(100, 40), (200, 80)]`, `total = 100` | Final amount (80) under-totals escrow (100) | `VestingError::MilestoneTotalMismatch` |
+| `[(100, 50), (200, 150)]`, `total = 100` | Final amount (150) over-totals escrow (100) | `VestingError::MilestoneTotalMismatch` |
 
-### Single milestone
-A schedule with a single milestone is valid, provided its cumulative equals
-`principal`.  This models a "cliff-only" grant where all tokens unlock at one
-future date.
+---
 
-### Arithmetic
-All computations use checked `i128` arithmetic.  Overflow conditions return
-a safe sentinel of `0` (which is unreachable with realistic principal values
-given Soroban's 64-bit timestamp range).
+## Atomicity and Call Ordering
 
-## Compatibility With Linear Vesting
+Validation is executed before token transfer and storage mutations:
 
-Existing linear grants are unaffected by the addition of the milestone
-variant.  `add_grant` dispatches validation based on the schedule type, and
-`vested_at` / `claimable` / `claim` / `sync` operate identically on both
-schedule types.
+1. Caller authorization is verified (`require_admin`).
+2. Principal positivity is verified (`total_amount > 0`).
+3. Schedule invariants are verified (`validate_milestones`).
+4. **Token transfer is performed** only after all checks pass:
+   ```rust
+   token::Client::new(&env, &token_address).transfer(
+       &caller,
+       env.current_contract_address(),
+       &total_amount,
+   );
+   ```
+5. Grant is stored and `TotalLocked` is incremented.
 
-## API Reference
+If validation fails on any invariant, the transaction aborts with the specific `VestingError`. **No tokens are transferred, no storage is written, and no events are emitted.**
 
-| Function | Description |
-| -------- | ----------- |
-| `initialize(admin)` | One-time admin setup |
-| `add_grant(admin, recipient, principal, schedule)` | Create a grant (Linear or Milestone) |
-| `vested_at(recipient, timestamp)` | Vested amount at any timestamp |
-| `claimable(recipient)` | Vested minus already claimed |
-| `claim(recipient, amount)` | Claim vested tokens (recipient must auth) |
-| `get_grant(recipient)` | Read stored grant |
-| `sync(recipient)` | Alias for `claimable` |
-| `get_admin()` | Read admin address |
+---
+
+## Vesting Calculation & Monotonicity
+
+Because milestone entries are guaranteed to be sorted by timestamp and have strictly increasing cumulative amounts, `Grant::vested_at(now)` computes:
+
+```rust
+match &self.schedule {
+    VestingSchedule::Milestone(milestones) => {
+        let mut vested: i128 = 0;
+        for i in 0..milestones.len() {
+            let (ts, cum) = milestones.get(i).unwrap();
+            if now >= ts {
+                vested = cum;
+            } else {
+                break;
+            }
+        }
+        vested.min(self.total_amount)
+    }
+    // ...
+}
+```
+
+### Guarantees
+- **Exact Vesting**: At $t = t_i$, exactly $cum_i$ tokens are vested.
+- **Full Vesting**: At or after the final milestone $t \ge t_{N-1}$, exactly `total_amount` is vested.
+- **Monotonicity**: For any $t_1 \le t_2$, $\text{vested\_at}(t_1) \le \text{vested\_at}(t_2)$.
+- **No Overflow**: Milestone evaluation uses comparisons rather than arithmetic additions, ensuring safe execution even when `total_amount` approaches `i128::MAX`.
+
+---
+
+## Interaction with Revoke and Acceleration
+
+1. **Revocation (`revoke`)**:
+   - Computes `vested = grant.vested_at(effective_now)`.
+   - Claws back `total_amount - vested` to the treasury.
+   - Clamps `grant.total_amount = vested` and sets `grant.revoked = true`.
+   - Subsequent calls to `grant.vested_at(t)` remain capped at the clamped `grant.total_amount`, ensuring unvested tokens are never unlocked after revocation.
+
+2. **Acceleration (`accelerate_grant`)**:
+   - Converts the milestone grant into a linear grant (`schedule = VestingSchedule::Linear`, `start_ts = 0`, `cliff_secs = 0`, `duration_secs = 1`).
+   - Immediately makes 100% of unvested tokens claimable by the grantee.

@@ -9,6 +9,8 @@
 // See: stellar-lend/docs/INTEREST_NUMERIC_ASSUMPTIONS.md
 // ════════════════════════════════════════════════════════════════
 
+fn main() {}
+
 #[cfg(test)]
 mod scaling_demo {
     use stellarlend_lending::rounding_strategy::{

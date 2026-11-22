@@ -1,165 +1,320 @@
-# Multisig Two-Phase Change Lifecycle & Timelock
+# Multisig Governance Lifecycle
 
-This document describes the two-phase change lifecycle and timelocks implemented in the Multisig contract (`stellar-lend/contracts/multisig`). These mechanisms protect the protocol against compromise and immediate quorum takeover by requiring all critical governance changes to go through a delayed queue-and-apply process.
+This document describes the proposal-based governance lifecycle implemented in the
+Multisig contract (`stellar-lend/contracts/multisig`). All critical governance
+changes — threshold updates, signer-set rotation, and arbitrary contract
+invocations — flow through a create → approve → execute pipeline with domain-separated
+authorization bindings and proposal expiry.
 
 ---
 
 ## 1. Overview & Threat Model
 
-The primary security invariant of the multisig contract is to prevent a compromised quorum or admin key from taking over governance in a single ledger. 
+The primary security invariant of the multisig contract is to prevent a compromised
+quorum or individual signer from taking over governance in a single ledger.
 
-If an attacker temporarily controls the admin key or a minimum signers quorum, they might attempt to:
+If an attacker temporarily controls enough signers to meet the approval threshold, they
+might attempt to:
+
 1. Lower the threshold to `1` to execute subsequent proposals unilaterally.
 2. Replace the signer set with their own controlled keys.
 
 To mitigate this, the contract enforces:
-- **Mandatory Cooldowns (Timelocks)**: Changes to thresholds or signer sets do not take effect immediately (except via the emergency `set_signers` path, which requires direct admin transaction authorization). They must be queued and can only be applied after a cooldown period has elapsed.
-- **Emergency Cancellation**: Queued signer set changes can be cancelled at any time during the cooldown window.
-- **Allowlist Gates**: Execution of pending proposals can be blocked by disallowing the proposal's action kind.
+
+- **Multi-signature quorum**: Every proposal must receive at least `threshold` distinct
+  signer approvals before it can be executed.
+- **Domain-separated approval binding**: Each approval is cryptographically scoped to
+  `(contract_id, proposal_id, approver)` via `require_auth_for_args`, so an authorization
+  gathered for one proposal cannot satisfy quorum on a different proposal (issue #1278).
+- **Proposal expiry**: Proposals expire after a TTL, preventing stale proposals from
+  being executed indefinitely.
+- **Signer-shrink guard**: A `RotateSigners` action whose new set is smaller than the
+  current threshold is rejected, preventing permanent bricking of the multisig.
+- **Cancellation**: Any signer can cancel an active proposal before it reaches quorum.
 
 ---
 
-## 2. State & Lifecycle Diagrams
+## 2. Proposal Lifecycle
 
-### Threshold Change Lifecycle
-Threshold changes can be updated via two pathways: the admin-direct workflow (queue/apply) or the standard proposal-based workflow (create/approve/execute).
-
-#### Path A: Admin-Direct Workflow
 ```mermaid
-stateDiagram-v2
-    [*] --> Idle: Contract Initialized
-    Idle --> Queued: queue_threshold_change(new_threshold)
-    note right of Queued
-        Stores PendingThresholdChange
-        eta_ledger = current + MIN_THRESHOLD_DELAY_LEDGERS
-    end note
-    Queued --> Queued: queue_threshold_change(newer_threshold) [ETA resets]
-    Queued --> Applied: apply_threshold_change() [current_ledger >= eta_ledger]
-    Applied --> Idle: Pending change cleared, live Threshold updated
-```
-
-#### Path B: Proposal-Based Workflow
-```mermaid
-stateDiagram-v2
-    [*] --> Created: create_proposal(new_threshold, expires_ledger)
+stateDiagram-v-->
+    [*] --> Created: create_proposal(caller, action, payload_hash, ttl_ledgers)
     note right of Created
-        eta_ledger = current + MIN_THRESHOLD_DELAY_LEDGERS
+        id = next_proposal_id()
+        expires_at = current_ledger + ttl_ledgers
+        status = Active
+        approvals = []
     end note
-    Created --> Executed: execute_proposal() after approvals >= current_threshold
+    Created --> Created: approve_proposal(caller, id)
+    note right of Created
+        Adds caller to approvals.
+        If approvals.len() >= threshold:
+            status = Passed
+    end note
+    Created --> Executed: execute_proposal(caller, id, payload_hash)
     note right of Executed
-        Requires current_ledger >= eta_ledger
-        AND current_ledger <= expires_ledger
+        Requires status == Passed
+        Requires payload_hash match
+        Dispatches ProposalAction
+        status = Executed
     end note
-    Created --> Expired: current_ledger > expires_ledger
+    Created --> Expired: current_ledger > expires_at
+    Created --> Cancelled: cancel_proposal(caller, id)
+    Created --> Active: revoke_approval (future)
 ```
 
+### States
+
+| State | Description |
+|---|---|
+| `Active` | Proposal created, awaiting approvals. |
+| `Passed` | Approval count has reached the threshold. |
+| `Executed` | Proposal has been executed; action dispatched. |
+| `Expired` | Ledger sequence has passed `expires_at`. |
+| `Cancelled` | A signer cancelled the proposal. |
+
 ---
 
-### Signers Change Lifecycle
-Signer set changes can also be set immediately by the admin (emergency) or queued (standard two-phase review).
+## 3. Entrypoints
 
-```mermaid
-stateDiagram-v2
-    [*] --> Idle: Contract Initialized
-    Idle --> LiveUpdated: set_signers(new_signers) [Immediate]
-    LiveUpdated --> Idle
+### 3.1 Initialization
 
-    Idle --> Queued: queue_signers_change(new_signers)
-    note right of Queued
-        Stores PendingSignersChange
-        eta_ledger = current + MIN_SIGNERS_DELAY_LEDGERS
-    end note
-    Queued --> Queued: queue_signers_change(newer_signers) [ETA resets]
-    Queued --> Cancelled: cancel_signers_change() [Emergency hatch]
-    Cancelled --> Idle: Pending change cleared, live Signers unchanged
-    Queued --> Applied: apply_signers_change() [current_ledger >= eta_ledger]
-    Applied --> Idle: Pending change cleared, live Signers updated
+```rust
+pub fn initialize(
+    env: Env,
+    signers: Vec<Address>,
+    threshold: u32,
+) -> Result<(), MultisigError>
 ```
 
+- **Auth**: None (deployer trusted).
+- **Action**: Stores the initial signer set and threshold. Sets `ProposalCount` to 0.
+- **Errors**:
+  - `AlreadyInitialized` — contract already has a signer set.
+  - `InvalidSigners` — `signers` is empty.
+  - `InvalidThreshold` — `threshold == 0` or `threshold > signers.len()`.
+
+### 3.2 Create Proposal
+
+```rust
+pub fn create_proposal(
+    env: Env,
+    caller: Address,
+    action: ProposalAction,
+    payload_hash: Bytes,
+    ttl_ledgers: u64,
+) -> Result<u64, MultisigError>
+```
+
+- **Auth**: `caller.require_auth()` — must be a registered signer.
+- **Action**: Allocates a new proposal ID, computes `expires_at = current_ledger + ttl_ledgers`,
+  and stores the proposal in `Active` status.
+- **Errors**:
+  - `Unauthorized` — caller is not in the signer set.
+  - `InvalidTtl` — `ttl_ledgers > 3_110_400`.
+  - `ProposalIdOverflow` — `ProposalCount` has wrapped.
+
+### 3.3 Approve Proposal
+
+```rust
+pub fn approve_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError>
+```
+
+- **Auth**: Domain-separated binding via `require_auth_for_args`. The caller must
+  authorize `sha256(APPROVAL_DOMAIN_SEPARATOR || contract_id || id || caller)`.
+  See [APPROVAL_DOMAIN_BINDING.md](APPROVAL_DOMAIN_BINDING.md) for the full threat model.
+- **Action**: Adds `caller` to the proposal's approvals. If the approval count reaches
+  the threshold, transitions status to `Passed`. Persists the binding hash under
+  `ApprovalBinding(id, caller)`.
+- **Errors**:
+  - `Unauthorized` — caller is not a registered signer.
+  - `ProposalNotFound` — no proposal with this ID.
+  - `ProposalExpired` — ledger has passed `expires_at`.
+  - `AlreadyExecuted` — proposal already executed.
+  - `AlreadyCancelled` — proposal was cancelled.
+  - `ProposalNotPassed` — proposal is in an unexpected state.
+  - `AlreadyApproved` — caller already approved this proposal.
+
+### 3.4 Execute Proposal
+
+```rust
+pub fn execute_proposal(
+    env: Env,
+    caller: Address,
+    id: u64,
+    payload_hash: Bytes,
+) -> Result<(), MultisigError>
+```
+
+- **Auth**: `caller.require_auth()` — must be a registered signer.
+- **Action**: Validates the proposal is `Passed`, non-expired, non-executed, and that
+  `payload_hash` matches the hash recorded at creation. Dispatches the `ProposalAction`
+  via `dispatch_action`. Emits `ProposalExecutedEvent`.
+- **Errors**:
+  - `Unauthorized` — caller is not a registered signer.
+  - `ProposalNotFound`, `ProposalExpired`, `AlreadyExecuted`, `AlreadyCancelled`,
+    `ProposalNotPassed`, `PayloadHashMismatch` — as above.
+  - Action-specific errors from `dispatch_action` (e.g., `InvalidThreshold`,
+    `InvalidSigners`, `InvalidAction`).
+
+### 3.5 Batch Execute
+
+```rust
+pub fn batch_execute(
+    env: Env,
+    caller: Address,
+    ids: Vec<u64>,
+    payload_hashes: Vec<Bytes>,
+) -> Result<(), MultisigError>
+```
+
+- **Auth**: `caller.require_auth()` — must be a registered signer.
+- **Action**: Validates all proposals first (status, expiry, payload hash, duplicates).
+  If every proposal is eligible, executes them in order. If any proposal fails, the
+  entire batch is rejected — Soroban's panic-based rollback guarantees all-or-nothing.
+  Emits `BatchExecutedEvent`.
+- **Errors**:
+  - `BatchSizeExceeded` — `ids.len() > MAX_BATCH_SIZE` (32).
+  - `PayloadHashMismatch` — count mismatch or hash mismatch.
+  - `DuplicateProposalId` — same ID appears more than once.
+  - Plus all `execute_proposal` errors.
+
+### 3.6 Cancel Proposal
+
+```rust
+pub fn cancel_proposal(env: Env, caller: Address, id: u64) -> Result<(), MultisigError>
+```
+
+- **Auth**: `caller.require_auth()` — must be a registered signer.
+- **Action**: Transitions an `Active` proposal to `Cancelled`.
+- **Errors**:
+  - `Unauthorized` — caller is not a registered signer.
+  - `ProposalNotFound`, `ProposalExpired`, `AlreadyExecuted`, `AlreadyCancelled`,
+    `ProposalNotPassed` — as above.
+
+### 3.7 View Functions
+
+| Fn | Returns | Description |
+|---|---|---|
+| `get_threshold(env)` | `u32` | Current approval threshold. |
+| `get_signers(env)` | `Vec<Address>` | Current signer set (empty if uninitialized). |
+| `get_proposal(env, id)` | `Result<Proposal, MultisigError>` | Full proposal state. |
+| `get_approval_binding(env, id, approver)` | `Option<BytesN<32>>` | Stored binding hash for `(id, approver)`. |
+| `verify_approval_binding(env, id, approver)` | `bool` | True iff stored binding matches recomputed hash. |
+| `approval_binding_hash(env, id, approver)` | `BytesN<32>` | Precompute the binding hash for auth args. |
+
 ---
 
-## 3. Cooldown & Timelock Durations
+## 4. ProposalAction Variants
 
-Cooldown durations are defined as ledger-sequence offsets. Assuming an average block time of 5 seconds, the durations are:
+Actions are carried on a proposal and dispatched at execution time.
 
-| Duration Name | Ledger Value | Time Equivalent | Storage/Location |
-| :--- | :--- | :--- | :--- |
-| `MIN_THRESHOLD_DELAY_LEDGERS` | `600_000` | ~7 days | Constant in `src/lib.rs` |
-| `MIN_SIGNERS_DELAY_LEDGERS` | `600_000` | ~7 days | Constant in `src/lib.rs` |
-| `DEFAULT_PROPOSAL_EXPIRY_LEDGERS` | `1_200_000` | ~14 days | Constant in `src/lib.rs` |
+### `SetThreshold(u32)`
 
-### Inspectors
-The contract provides public getter functions to inspect these configurations:
-- `get_min_threshold_delay_ledgers(_env: Env) -> u32`
-- `get_min_signers_delay_ledgers(_env: Env) -> u32`
-- `get_default_expiry_ledgers(_env: Env) -> u32`
+- **Action**: Overwrites `MultisigDataKey::Threshold`.
+- **Guard**: `new_threshold == 0` → `InvalidThreshold`.
 
----
+### `RotateSigners(Vec<Address>)`
 
-## 4. Lifecycle Transitions & Events
+- **Action**: Overwrites `MultisigDataKey::Signers`.
+- **Guards**:
+  - `new_signers.is_empty()` → `InvalidSigners`.
+  - `new_signers.len() < threshold` → `InvalidAction` (signer-shrink bricking guard).
 
-### Threshold Changes
+### `InvokeContract(Address, Symbol, Vec<Val>)`
 
-#### 1. Queue Threshold Change
-- **Fn**: `queue_threshold_change(env: Env, new_threshold: u32)`
-- **Auth**: Admin (`require_auth`)
-- **Action**: Computes `eta_ledger = current_ledger + MIN_THRESHOLD_DELAY_LEDGERS` and saves a `ThresholdChange` struct in `DataKey::PendingThresholdChange`. Overwrites any active queue and resets the ETA.
-- **Events**: `ThresholdChangeQueuedEvent`
-  - `admin`: The admin performing the queue.
-  - `new_threshold`: The proposed threshold value.
-  - `eta_ledger`: The ledger sequence after which it can be applied.
-
-#### 2. Apply Threshold Change
-- **Fn**: `apply_threshold_change(env: Env)`
-- **Auth**: Admin (`require_auth`)
-- **Action**: Asserts that `current_ledger >= eta_ledger`. Sets the live threshold to `new_threshold` and removes `DataKey::PendingThresholdChange`.
-- **Events**: `ThresholdChangeAppliedEvent`
-  - `admin`: The admin applying the change.
-  - `old_threshold`: The previous threshold value.
-  - `new_threshold`: The newly applied threshold.
-  - `ledger`: The applying ledger sequence number.
+- **Action**: Cross-contract call via `env.invoke_contract`.
+- **Guard**: Payload hash still binds the approved action so it cannot be swapped.
 
 ---
 
-### Signers Changes
+## 5. Domain-Separated Approval Binding (Issue #1278)
 
-#### 1. Queue Signers Change
-- **Fn**: `queue_signers_change(env: Env, new_signers: Vec<Address>)`
-- **Auth**: Admin (`require_auth`)
-- **Action**: Computes `eta_ledger = current_ledger + MIN_SIGNERS_DELAY_LEDGERS` and saves a `SignersChange` struct in `DataKey::PendingSignersChange`. Overwrites any active queue and resets the ETA.
-- **Events**: `SignersChangeQueuedEvent`
-  - `admin`: The admin performing the queue.
-  - `eta_ledger`: The ledger sequence after which it can be applied.
+Instead of a bare `require_auth()`, `approve_proposal` requires the caller to authorize
+the domain-separated payload:
 
-#### 2. Apply Signers Change
-- **Fn**: `apply_signers_change(env: Env)`
-- **Auth**: Admin (`require_auth`)
-- **Action**: Asserts that `current_ledger >= eta_ledger`. Overwrites live signers at `DataKey::Signers` and removes `DataKey::PendingSignersChange`.
-- **Events**: `SignersChangeAppliedEvent`
-  - `admin`: The admin applying the change.
-  - `ledger`: The applying ledger sequence.
+```text
+sha256(
+    APPROVAL_DOMAIN_SEPARATOR
+    || contract_id_xdr
+    || proposal_id (8-byte big-endian)
+    || approver_xdr
+)
+```
 
-#### 3. Cancel Signers Change
-- **Fn**: `cancel_signers_change(env: Env)`
-- **Auth**: Admin (`require_auth`)
-- **Action**: Removes `DataKey::PendingSignersChange` immediately. The live signer set remains unchanged.
-- **Events**: `SignersChangeCancelledEvent`
-  - `admin`: The admin cancelling the change.
-  - `ledger`: The cancellation ledger sequence.
+via `require_auth_for_args`. An authorization produced for proposal `A` therefore
+cannot satisfy approval of proposal `B`. The same hash is persisted under
+`MultisigDataKey::ApprovalBinding(id, approver)` for off-chain verification.
 
-#### 4. Direct (Immediate) Signers Update
-- **Fn**: `set_signers(env: Env, signers: Vec<Address>)`
-- **Auth**: Admin (`require_auth`)
-- **Action**: Bypasses the queue and immediately updates the live signer set. Use for emergency rotation.
-- **Events**: None.
+- `APPROVAL_DOMAIN_SEPARATOR` = `"STELLARLEND_MULTISIG_APPROVAL_V1"`
+
+See [APPROVAL_DOMAIN_BINDING.md](APPROVAL_DOMAIN_BINDING.md) for the full layout and
+threat model.
 
 ---
 
-## 5. Storage Layout Reference
+## 6. Signer-Shrink Guard
+
+Applying a `RotateSigners` action whose new set is smaller than the current threshold
+would permanently brick the multisig because quorum could never be reached again. The
+contract rejects such rotations with `InvalidAction` in `dispatch_action`.
+
+To shrink the signer set below the current threshold, first reduce the threshold via a
+`SetThreshold` proposal, then execute the `RotateSigners` proposal.
+
+---
+
+## 7. Storage Layout
 
 | Key | Type | Description |
-| :--- | :--- | :--- |
-| `DataKey::Threshold` | `u32` | The active, live threshold value. |
-| `DataKey::Signers` | `Vec<Address>` | The active, live signer set. |
-| `DataKey::PendingThresholdChange` | `ThresholdChange` | Contains `{ new_threshold: u32, eta_ledger: u32 }` |
-| `DataKey::PendingSignersChange` | `SignersChange` | Contains `{ new_signers: Vec<Address>, eta_ledger: u32 }` |
+|---|---|---|
+| `MultisigDataKey::Threshold` | `u32` | Live approval threshold. |
+| `MultisigDataKey::Signers` | `Vec<Address>` | Live signer set. |
+| `MultisigDataKey::ProposalCount` | `u64` | Monotonic counter for proposal IDs. |
+| `MultisigDataKey::Proposal(u64)` | `Proposal` | Full proposal state by ID. |
+| `MultisigDataKey::ApprovalBinding(u64, Address)` | `BytesN<32>` | Domain-separated binding hash for `(id, approver)`. |
+
+### `Proposal` struct
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `u64` | Unique proposal ID. |
+| `proposer` | `Address` | Signer who created the proposal. |
+| `action` | `ProposalAction` | Typed action to dispatch on execution. |
+| `payload_hash` | `Bytes` | SHA-256 hash of the encoded action payload. |
+| `approvals` | `Vec<Address>` | Distinct signers who approved. |
+| `status` | `ProposalStatus` | `Active`, `Passed`, `Executed`, `Expired`, `Cancelled`. |
+| `expires_at` | `u64` | Ledger sequence after which the proposal expires. |
+
+---
+
+## 8. Constants
+
+| Name | Value | Description |
+|---|---|---|
+| `MAX_BATCH_SIZE` | `32` | Maximum proposals per `batch_execute` call. |
+| `APPROVAL_DOMAIN_SEPARATOR` | `"STELLARLEND_MULTISIG_APPROVAL_V1"` | Domain separator for approval auth bindings. |
+
+---
+
+## 9. Error Reference
+
+| Variant | Code | Description |
+|---|---|---|
+| `Unauthorized` | 1 | Caller is not a registered signer. |
+| `ProposalNotFound` | 2 | No proposal with the given ID. |
+| `ProposalNotPassed` | 3 | Proposal is not in `Passed` status. |
+| `ProposalExpired` | 4 | Ledger has passed `expires_at`. |
+| `AlreadyExecuted` | 5 | Proposal already executed. |
+| `AlreadyApproved` | 6 | Caller already approved this proposal. |
+| `PayloadHashMismatch` | 7 | Presented hash does not match recorded hash. |
+| `QuorumNotReached` | 8 | Proposal is `Active` but not yet `Passed`. |
+| `InvalidAction` | 9 | Action-specific guard failed (e.g., signer-shrink below threshold). |
+| `InvalidThreshold` | 10 | Threshold is 0 or exceeds signer count. |
+| `InvalidSigners` | 11 | Signer set is empty. |
+| `AlreadyCancelled` | 12 | Proposal was already cancelled. |
+| `InvalidTtl` | 13 | `ttl_ledgers` exceeds maximum. |
+| `BatchSizeExceeded` | 14 | `batch_execute` called with too many IDs. |
+| `DuplicateProposalId` | 15 | Same ID appears twice in a batch. |
+| `AlreadyInitialized` | 16 | `initialize` called on an already-initialized contract. |
+| `ProposalIdOverflow` | 17 | `ProposalCount` has wrapped. |

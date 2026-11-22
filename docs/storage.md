@@ -72,10 +72,12 @@ Every current `DataKey` variant appears exactly once in the table below.
 | `Treasury(Address)` | `persistent()` | `i128` | `flash_loan`, `repay_flash_loan` | No explicit TTL helper; persistent entry lifetime is managed through normal Soroban rent/renewal. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L41), [`repay_flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L586-L591), [`flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L602-L619) |
 | `TotalDebt` | `persistent()` | `i128` | `borrow`, `repay`; read by metrics and rate calculation | No explicit TTL helper; protocol aggregate is a persistent accounting key. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L42), [`borrow`](../stellar-lend/contracts/lending/src/lib.rs#L424-L438), [`repay`](../stellar-lend/contracts/lending/src/lib.rs#L526-L535), [`current_borrow_rate`](../stellar-lend/contracts/lending/src/lib.rs#L844-L848) |
 | `TotalDeposits` | `persistent()` | `i128` | `deposit`, `withdraw`; read by metrics and rate calculation | No explicit TTL helper; protocol aggregate is a persistent accounting key. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L43), [`deposit`](../stellar-lend/contracts/lending/src/lib.rs#L338-L361), [`withdraw`](../stellar-lend/contracts/lending/src/lib.rs#L388-L398), [`get_protocol_metrics`](../stellar-lend/contracts/lending/src/lib.rs#L718-L721) |
+| `ProtocolReserves` | `persistent()` | `i128` | Interest accrual and bad-debt write-offs; admin `withdraw_reserves` | No explicit TTL helper; persistent protocol aggregate excluded from `TotalDeposits`. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L370), [`settle_and_accrue_insurance`](../stellar-lend/contracts/lending/src/lib.rs#L4134-L4185), [`write_off_bad_debt`](../stellar-lend/contracts/lending/src/lib.rs#L3619-L3665), [`withdraw_reserves`](../stellar-lend/contracts/lending/src/lib.rs#L3556-L3587) |
 | `DebtCeiling` | `instance()` | `i128` | `set_debt_ceiling`; intended admin-controlled protocol limit | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L44), [`set_debt_ceiling`](../stellar-lend/contracts/lending/src/lib.rs#L548-L558) |
 | `DepositCap` | `persistent()` | `i128` | Read by `deposit`; currently falls back to `DEFAULT_DEPOSIT_CAP` when absent | No explicit TTL helper; protocol safety limit is persistent when written. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L45), [`deposit`](../stellar-lend/contracts/lending/src/lib.rs#L343-L347) |
 | `FlashActive` | `instance()` | `bool` | `flash_loan` sets and clears it; `deposit`, `withdraw`, and `repay` read it | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L46), [`flash_loan`](../stellar-lend/contracts/lending/src/lib.rs#L628-L645), [`deposit`](../stellar-lend/contracts/lending/src/lib.rs#L328-L334) |
 | `FlashFeeBps` | `instance()` | `i128` | `set_flash_fee`; read by `flash_loan` | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L47), [`get_flash_fee_bps`](../stellar-lend/contracts/lending/src/lib.rs#L241-L245), [`set_flash_fee`](../stellar-lend/contracts/lending/src/lib.rs#L561-L569) |
+| `ReserveFactorBps` | `instance()` | `i128` | Admin `set_reserve_factor_bps`; read during interest accrual; defaults to 0 | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L368), [`set_reserve_factor_bps`](../stellar-lend/contracts/lending/src/lib.rs#L3419-L3450), [`settle_and_accrue_insurance`](../stellar-lend/contracts/lending/src/lib.rs#L4134-L4185) |
 | `BorrowMinAmount` | `instance()` | `i128` | `set_min_borrow`; read by `borrow` | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L48), [`set_min_borrow`](../stellar-lend/contracts/lending/src/lib.rs#L305-L311), [`get_min_borrow`](../stellar-lend/contracts/lending/src/lib.rs#L314-L318) |
 | `Admin` | `instance()` | `Address` | `initialize`, `accept_admin`; read by admin-gated functions | Instance storage; no per-key persistent TTL. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L49), [`initialize`](../stellar-lend/contracts/lending/src/lib.rs#L157-L162), [`get_admin`](../stellar-lend/contracts/lending/src/lib.rs#L165-L166), [`accept_admin`](../stellar-lend/contracts/lending/src/lib.rs#L264-L267) |
 | `PendingAdmin` | `instance()` | `Address` | `propose_admin`, `accept_admin` | Instance storage; removed after successful admin acceptance. | [`DataKey`](../stellar-lend/contracts/lending/src/lib.rs#L50), [`propose_admin`](../stellar-lend/contracts/lending/src/lib.rs#L248-L254), [`accept_admin`](../stellar-lend/contracts/lending/src/lib.rs#L257-L267) |
@@ -95,6 +97,26 @@ Notes:
   this table and the setter together.
 - New lending keys must be appended to `DataKey`; never reuse an existing
   variant for a different value type.
+
+### 2. AMM Contract (`stellar-lend/contracts/amm/src/lib.rs`)
+
+The AMM's TWAP oracle introduced the following persistent entries. The rest of
+the AMM's storage map pre-dates this table; see
+[TWAP.md](../stellar-lend/contracts/amm/TWAP.md) for the oracle design.
+
+| Key | Storage tier | Value type | Writers / owners | TTL policy | Source |
+|-----|--------------|------------|------------------|------------|--------|
+| `TwapKey::State` (`("pool", "twap_state")`) | `persistent()` | `TwapState` | `update_oracle`, called from `init_pool`, `add_liquidity`, `remove_liquidity`, both swaps, `flash_swap_a_for_b`, and `repay_flash_swap` | No explicit TTL bump; persistent entry lifetime is managed through normal Soroban rent/renewal. | [`TwapKey`](../stellar-lend/contracts/amm/src/lib.rs), [`update_oracle`](../stellar-lend/contracts/amm/src/lib.rs) |
+| `TwapKey::Obs(u32)` (`("pool", "twap_obs", slot)`) | `persistent()` | `TwapObservation` | `update_oracle`; at most `TWAP_OBSERVATION_COUNT = 48` slots exist and the oldest is overwritten in place | No explicit TTL bump; fixed-size ring, so the entry count never grows with swap activity. | [`TwapKey`](../stellar-lend/contracts/amm/src/lib.rs), [`write_observation`](../stellar-lend/contracts/amm/src/lib.rs) |
+| `("pool", "flash_pre_reserves")` | `persistent()` | `(i128, i128)` | `flash_swap_a_for_b` writes, `repay_flash_swap` reads then removes | No explicit TTL bump; lives only for the duration of a flash swap. | [`KEY_FLASH_PRE_RESERVES`](../stellar-lend/contracts/amm/src/lib.rs) |
+
+Notes:
+
+- The removed `("pool", "twap_last_ts")` and `("pool", "twap_obs")` keys are no
+  longer read or written. The old observation recorder was private and never
+  called, so no migration is required; any stale entries are inert.
+- `("pool", "flash_pre_reserves")` is removed on successful repayment. A
+  reverted flash swap reverts the write with the rest of the transaction.
 
 ## Upgrade and Migration Strategy
 

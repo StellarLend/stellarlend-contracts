@@ -38,12 +38,12 @@ Actually, the cliff is 200 seconds after start (1000 + 200 = 1200). At t=1500, e
 If alice calls `claim_partial("alice", 300, 1500)`:
 1. Sync runs, setting `released = 6250`
 2. Check: `amount (300) <= claimable (6250)` ✓
-3. Update: `claimed += 300`, `balance_of("alice") += 300`
+3. Update: `claimed += 300`
 
 If alice then calls `claim_partial("alice", 500, 1500)`:
 1. Sync runs, but no change (already synced)
 2. Check: `amount (500) <= claimable (5950)` ✓
-3. Update: `claimed += 500`, `balance_of("alice") += 500`
+3. Update: `claimed += 500`
 
 ## Edge Cases
 

@@ -1,9 +1,8 @@
-#![cfg(test)]
-
 use crate::{
     DataKey, LendingContract, LendingContractClient, LendingError, HEALTH_FACTOR_SCALE,
     LIQUIDATION_THRESHOLD_BPS,
 };
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 use soroban_sdk::{Address, Env};
 

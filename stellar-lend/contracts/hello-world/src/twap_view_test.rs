@@ -134,7 +134,7 @@ mod twap_view_tests {
 
         // Must be identical to calling get_twap directly -- this view calls
         // the same path, not a reimplementation.
-        let direct = amm_twap::get_twap(&env, &asset, MIN_WINDOW_SECS);
+        let direct = amm_twap::get_twap(&env, &asset, MIN_WINDOW_SECS).unwrap();
         assert_eq!(result.unwrap(), direct);
     }
 
@@ -168,7 +168,7 @@ mod twap_view_tests {
             "ample multi-snapshot history must cover this window"
         );
 
-        let direct = amm_twap::get_twap(&env, &asset, window);
+        let direct = amm_twap::get_twap(&env, &asset, window).unwrap();
         assert_eq!(
             result.unwrap(),
             direct,

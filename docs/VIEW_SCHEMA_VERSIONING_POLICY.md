@@ -8,7 +8,7 @@ This document outlines the versioning policy for the `get_user_position` view fu
 
 ### Schema Stability Guarantee
 
-The `UserPositionSummary` struct and all individual view functions (`get_collateral_balance`, `get_debt_balance`, `get_collateral_value`, `get_debt_value`, `get_health_factor`, `get_max_liquidatable_amount`, `get_liquidation_incentive_amount`) are considered **schema v1** and must remain stable across all contract upgrades.
+The `UserPositionSummary` struct and all individual view functions (`get_collateral_balance`, `get_debt_balance`, `get_collateral_value`, `get_debt_value`, `get_health_factor`, `get_max_liquidatable_amount`, `get_liquidation_incentive_bps`) are considered **schema v1** and must remain stable across all contract upgrades.
 
 ### Versioning Rules
 
@@ -36,6 +36,14 @@ The `UserPositionSummary` struct and all individual view functions (`get_collate
 5. **Schema Version**: The public `VIEW_SCHEMA_VERSION` constant must remain `1`
    - Breaking changes require new versioned view functions
    - Never mutate existing schema in-place
+
+### Additive Position View
+
+`get_position_v2` returns `PositionSummaryV2`, which preserves the original
+position values and adds `price_stale`. It is an additive view; it does not
+change the schema or return semantics of `get_position` or
+`get_user_position`. Integrators that need to distinguish a health factor
+computed from stale oracle records should use `get_position_v2`.
 
 ## Upgrade Compatibility
 

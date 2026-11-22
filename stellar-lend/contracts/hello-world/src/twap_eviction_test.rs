@@ -124,7 +124,7 @@ mod tests {
 
         // Query a short window (well within the retained ring).
         let window = MIN_WINDOW_SECS * 4; // 4× minimum — comfortably inside the ring
-        let twap = get_twap(&env, &asset, window);
+        let twap = get_twap(&env, &asset, window).unwrap();
         let price = twap as f64 / PRICE_SCALE as f64;
 
         assert!(
@@ -253,7 +253,7 @@ mod tests {
 
         // TWAP over a short window inside the retained ring must still be ~2.0.
         let window = MIN_WINDOW_SECS * 2;
-        let twap = get_twap(&env, &asset, window);
+        let twap = get_twap(&env, &asset, window).unwrap();
         let price = twap as f64 / PRICE_SCALE as f64;
 
         assert!(
@@ -282,7 +282,7 @@ mod tests {
 
         // Request a window that spans the full available history.
         let window = MIN_WINDOW_SECS; // smallest valid window
-        let twap = get_twap(&env, &asset, window);
+        let twap = get_twap(&env, &asset, window).unwrap();
         let price = twap as f64 / PRICE_SCALE as f64;
 
         assert!(
@@ -320,7 +320,7 @@ mod tests {
 
         // Pool B TWAP should still reflect its 1:3 price.
         let window = MIN_WINDOW_SECS * 2;
-        let twap_b = get_twap(&env, &asset_b, window);
+        let twap_b = get_twap(&env, &asset_b, window).unwrap();
         let price_b = twap_b as f64 / PRICE_SCALE as f64;
         assert!(
             (price_b - 3.0_f64).abs() < 0.1,

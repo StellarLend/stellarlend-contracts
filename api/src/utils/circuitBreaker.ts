@@ -48,6 +48,14 @@ export class CircuitBreaker {
       return;
     }
 
+    // HALF_OPEN is adjudicated by the trial requests themselves (see record),
+    // never by re-reading the failure window: the events that opened the
+    // circuit are still inside the window and would re-trip it instantly,
+    // leaving the breaker unable to recover.
+    if (this.state !== 'CLOSED') {
+      return;
+    }
+
     this.purgeOld();
     const total = this.events.length;
     if (total < this.minRequests) return;

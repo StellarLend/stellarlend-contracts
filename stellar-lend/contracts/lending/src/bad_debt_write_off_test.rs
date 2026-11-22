@@ -5,7 +5,7 @@
 //! | Test                                         | Scenario                                         |
 //! |----------------------------------------------|--------------------------------------------------|
 //! | write_off_insurance_only                     | bad_debt ≤ insurance; zero reserve/socialise     |
-//! | write_off_reserve_only                       | no insurance; bad_debt ≤ deposits                |
+//! | write_off_reserve_only                       | no insurance; bad_debt ≤ protocol reserves       |
 //! | write_off_partial_insurance_partial_reserve  | insurance partial, reserve absorbs rest          |
 //! | write_off_socialisation_aborts_insufficient  | socialised > pool → Overflow (safe abort)        |
 //! | write_off_mixed_backstops_insufficient       | insurance+deposits < bad_debt → Overflow abort   |
@@ -82,6 +82,23 @@ fn read_total_deposits(env: &Env, contract: &Address) -> i128 {
     })
 }
 
+fn set_protocol_reserves(env: &Env, contract: &Address, amount: i128) {
+    env.as_contract(contract, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolReserves, &amount);
+    });
+}
+
+fn read_protocol_reserves(env: &Env, contract: &Address) -> i128 {
+    env.as_contract(contract, || {
+        env.storage()
+            .persistent()
+            .get::<DataKey, i128>(&DataKey::ProtocolReserves)
+            .unwrap_or(0)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // §1 — Insurance fund covers everything (no reserve or socialisation touched)
 // ---------------------------------------------------------------------------
@@ -110,15 +127,17 @@ fn write_off_insurance_only() {
 fn write_off_reserve_only() {
     let (env, client, _admin, user) = setup();
 
-    // Seed: 1000 deposits, 600 bad debt, 0 insurance
+    // Seed: 1000 deposits, 600 protocol reserves, 600 bad debt, 0 insurance
     client.deposit(&user, &1_000);
+    set_protocol_reserves(&env, &client.address, 600);
     set_bad_debt(&env, &client.address, 600);
 
     client.write_off_bad_debt(&600);
 
     assert_eq!(read_bad_debt(&env, &client.address), 0);
     assert_eq!(read_insurance_fund(&env, &client.address), 0);
-    assert_eq!(read_total_deposits(&env, &client.address), 400); // 1000 - 600
+    assert_eq!(read_protocol_reserves(&env, &client.address), 0);
+    assert_eq!(read_total_deposits(&env, &client.address), 1_000); // reserves absorb the loss
 }
 
 // ---------------------------------------------------------------------------
@@ -129,9 +148,10 @@ fn write_off_reserve_only() {
 fn write_off_partial_insurance_partial_reserve() {
     let (env, client, _admin, user) = setup();
 
-    // bad_debt=1000, insurance=300, deposits=800
+    // bad_debt=1000, insurance=300, reserves=700, deposits=800
     // Expected: insurance_used=300, reserve_used=700, socialized=0
     client.deposit(&user, &800);
+    set_protocol_reserves(&env, &client.address, 700);
     set_bad_debt(&env, &client.address, 1_000);
     client.credit_insurance_fund(&300);
 
@@ -139,7 +159,8 @@ fn write_off_partial_insurance_partial_reserve() {
 
     assert_eq!(read_bad_debt(&env, &client.address), 0);
     assert_eq!(read_insurance_fund(&env, &client.address), 0);
-    assert_eq!(read_total_deposits(&env, &client.address), 100); // 800 - 700
+    assert_eq!(read_protocol_reserves(&env, &client.address), 0);
+    assert_eq!(read_total_deposits(&env, &client.address), 800); // depositor funds are untouched
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +431,7 @@ fn event_emitted_reserve_only() {
     let cid = client.address.clone();
 
     client.deposit(&user, &1_000);
+    set_protocol_reserves(&env, &client.address, 600);
     set_bad_debt(&env, &client.address, 600);
 
     client.write_off_bad_debt(&600);
@@ -427,6 +449,34 @@ fn event_emitted_reserve_only() {
     );
 }
 
+#[test]
+fn write_off_uses_reserves_before_socializing_depositors() {
+    let (env, client, _admin, user) = setup();
+    let contract_id = client.address.clone();
+
+    client.deposit(&user, &1_000);
+    set_protocol_reserves(&env, &contract_id, 200);
+    set_bad_debt(&env, &contract_id, 500);
+    client.credit_insurance_fund(&100);
+
+    client.write_off_bad_debt(&500);
+    let write_off_events = env.events().all();
+
+    assert_eq!(read_protocol_reserves(&env, &contract_id), 0);
+    assert_eq!(read_total_deposits(&env, &contract_id), 800);
+    assert_eq!(
+        write_off_events,
+        [BadDebtWrittenOffEvent {
+            amount: 500,
+            insurance_used: 100,
+            reserve_used: 200,
+            socialized: 200,
+        }
+        .to_xdr(&env, &contract_id)],
+        "event amounts must match the reserve and depositor balance reductions"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // §16 — Sequential write-offs both succeed
 // ---------------------------------------------------------------------------
@@ -437,6 +487,7 @@ fn sequential_write_offs_both_succeed() {
 
     // bad_debt=1000, insurance=600, deposits=800
     client.deposit(&user, &800);
+    set_protocol_reserves(&env, &client.address, 400);
     set_bad_debt(&env, &client.address, 1_000);
     client.credit_insurance_fund(&600);
 
@@ -446,15 +497,13 @@ fn sequential_write_offs_both_succeed() {
     assert_eq!(read_insurance_fund(&env, &client.address), 100); // 600 - 500
     assert_eq!(read_total_deposits(&env, &client.address), 800); // untouched
 
-    // Second write-off: clear remaining 500
+    // Second write-off: insurance covers 100 and reserves cover the remaining 400.
     // insurance_used = min(500, 100) = 100
-    // remaining = 400
-    // reserve_used = min(400, 800) = 400
-    // deposits: 800 - 400 = 400
     client.write_off_bad_debt(&500);
     assert_eq!(read_bad_debt(&env, &client.address), 0);
     assert_eq!(read_insurance_fund(&env, &client.address), 0);
-    assert_eq!(read_total_deposits(&env, &client.address), 400); // 800 - 400
+    assert_eq!(read_protocol_reserves(&env, &client.address), 0);
+    assert_eq!(read_total_deposits(&env, &client.address), 800);
 }
 
 // ---------------------------------------------------------------------------

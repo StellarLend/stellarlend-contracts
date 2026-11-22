@@ -3,7 +3,7 @@
 //! Tests for exact-accounting bounds on `HelloContract::claim_reserves`.
 //!
 //! Goal: prove that protocol reserve claims are bounded by the accrued
-//! `DepositDataKey::ProtocolReserve(asset)` balance and that storage is debited
+//! [`ReserveDataKey::ReserveBalance`] balance and that storage is debited
 //! exactly by the claimed amount on a successful claim.
 //!
 //! These tests pin:
@@ -22,7 +22,7 @@
 
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-use crate::deposit::DepositDataKey;
+use crate::reserve::ReserveDataKey;
 use crate::risk_management::RiskManagementError;
 use crate::{HelloContract, HelloContractClient};
 
@@ -52,12 +52,15 @@ fn setup_contract(env: &Env) -> (HelloContractClient, Address, Address, Address)
     (client, contract_id, admin, user)
 }
 
-/// Seeds `DepositDataKey::ProtocolReserve(Some(asset))` with `balance` stroops.
+/// Seeds a reserve balance for `asset` directly in storage.
 ///
-/// Mirrors the flash-loan fee path: the `ProtocolReserve` bucket is credited
-/// outside of `accrue_reserve`, so tests must seed it directly by writing
+/// Mirrors the path that [`accrue_reserve`] uses: the reserve balance for an
+/// asset is stored under [`ReserveDataKey::ReserveBalance`].  Since unit tests
+/// do not call [`accrue_reserve`], they seed the value directly by writing
 /// through `env.as_contract`, which evaluates the storage write inside the
 /// deployed contract's address space.
+///
+/// [`accrue_reserve`]: crate::reserve::accrue_reserve
 ///
 /// # Arguments
 /// * `env`         — the Soroban test environment.
@@ -66,7 +69,7 @@ fn setup_contract(env: &Env) -> (HelloContractClient, Address, Address, Address)
 /// * `balance`     — the accrued reserve balance (stroops, `i128`).
 fn seed_protocol_reserve(env: &Env, contract_id: &Address, asset: &Address, balance: i128) {
     env.as_contract(contract_id, || {
-        let key = DepositDataKey::ProtocolReserve(Some(asset.clone()));
+        let key = ReserveDataKey::ReserveBalance(Some(asset.clone()));
         env.storage().persistent().set(&key, &balance);
     });
 }
@@ -185,44 +188,44 @@ fn test_zero_reserve_claim_is_rejected() {
     );
 }
 
-// ── 6. Empty bucket: zero-amount claim is a no-op ───────────────────────────
+// ── 6. Invalid amount: zero-amount claim is rejected ────────────────────────
 
-/// `0 > 0` is false, so a zero-amount claim against a zero reserve is
-/// permitted and is a no-op for the ledger.
+/// A zero-amount claim is rejected as `InvalidParameter` per the documented
+/// API, which requires positive amounts.
 #[test]
-fn test_zero_reserve_zero_amount_claim_is_noop() {
+fn test_zero_amount_claim_is_rejected() {
     let env = Env::default();
     let (client, contract_id, admin, _user) = setup_contract(&env);
     let asset = Address::generate(&env);
     let to = Address::generate(&env);
 
-    seed_protocol_reserve(&env, &contract_id, &asset, 0);
-    client.claim_reserves(&admin, &Some(asset.clone()), &to, &0);
+    seed_protocol_reserve(&env, &contract_id, &asset, 500);
+    let err = client
+        .try_claim_reserves(&admin, &Some(asset.clone()), &to, &0)
+        .expect_err("zero-amount claim must be rejected");
+    assert_eq!(err, RiskManagementError::InvalidParameter);
 
+    // Reserve is untouched after the rejection.
     assert_eq!(
         client.get_reserve_balance(&Some(asset)),
-        0,
-        "zero-amount claim against zero reserve must be a no-op"
+        500,
+        "reserve must be unchanged on zero-amount rejection"
     );
 }
 
-/// `0 > reserve_balance` is false for any non-zero bucket, so a zero-amount
-/// claim must be a no-op regardless of the accrued balance.
+/// A negative-amount claim is also rejected.
 #[test]
-fn test_zero_amount_claim_against_positive_reserve_is_noop() {
+fn test_negative_amount_claim_is_rejected() {
     let env = Env::default();
     let (client, contract_id, admin, _user) = setup_contract(&env);
     let asset = Address::generate(&env);
     let to = Address::generate(&env);
 
-    seed_protocol_reserve(&env, &contract_id, &asset, 1_000);
-    client.claim_reserves(&admin, &Some(asset.clone()), &to, &0);
-
-    assert_eq!(
-        client.get_reserve_balance(&Some(asset)),
-        1_000,
-        "zero-amount claim must not debit the reserve"
-    );
+    seed_protocol_reserve(&env, &contract_id, &asset, 500);
+    let err = client
+        .try_claim_reserves(&admin, &Some(asset.clone()), &to, &-100)
+        .expect_err("negative-amount claim must be rejected");
+    assert_eq!(err, RiskManagementError::InvalidParameter);
 }
 
 // ── 7. Authorization: non-admin caller is rejected ──────────────────────────

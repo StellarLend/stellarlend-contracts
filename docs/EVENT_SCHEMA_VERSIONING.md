@@ -7,34 +7,54 @@ integrators can decode events safely across contract upgrades.
 
 The versioning strategy is minimal by design:
 
-- A single `EVENT_SCHEMA_VERSION: u32` constant in
-  `contracts/hello-world/src/events.rs` is the single source of truth.
+- Each contract defines its own `EVENT_SCHEMA_VERSION: u32` constant in its
+  own event module.
 - Versioned event structs carry a `schema_version: u32` field populated with
-  that constant at emit time.
+  the contract-local constant at emit time.
 - A `SchemaVersionEvent` is emitted once during `initialize`, giving indexers
-  an on-chain anchor for the version active at deployment.
+  an on-chain anchor for the version active at deployment for that contract.
+
+This document covers the event schema versioning policy for each contract
+separately. `contracts/lending` and `contracts/hello-world` maintain independent
+schema versioning, so indexers should track each contract's schema version
+based on the contract address being indexed.
 
 ---
 
 ## Versioned Events
 
-| Struct | Since version | Notes |
-|---|---|---|
-| `SchemaVersionEvent` | 1 | Emitted once on `initialize`. |
-| `DepositEvent` | 1 | Emitted when a user deposits collateral. Includes user, amount, new balance, and timestamp. |
-| `WithdrawEvent` | 1 | Emitted when a user withdraws collateral. Includes user, amount, new balance, and timestamp. |
-| `BorrowEvent` | 1 | Emitted when a user borrows against collateral. Includes user, amount, new debt principal, and timestamp. |
-| `RepayEvent` | 1 | Emitted when a user repays debt. Includes user, amount, new debt principal, and timestamp. |
-| `LiquidateEvent` | 1 | Emitted when a liquidator liquidates an undercollateralized position. Includes liquidator, borrower, repaid debt, seized collateral, remaining debt, remaining collateral, and timestamp. |
-| `LiquidationEventV1` | 1 | Versioned liquidation with post-liquidation borrower snapshot. |
-| `BorrowerHealthEventV1` | 1 | Borrower health snapshot emitted alongside position updates. |
-| `DepositEvent` | 1 | Versioned deposit event with user and new collateral balance. |
-| `WithdrawEvent` | 1 | Versioned withdraw event with user and new collateral balance. |
-| `BorrowEvent` | 1 | Versioned borrow event with user and new debt balance. |
-| `RepayEvent` | 1 | Versioned repay event with user and new debt balance. |
-| `AmmSwapEventV1` | 1 | Versioned AMM swap event with stable `amm/v1` topics. |
-| `AmmLiquidityAddedEventV1` | 1 | Versioned AMM add-liquidity event with stable `amm/v1` topics. |
-| `AmmLiquidityRemovedEventV1` | 1 | Versioned AMM remove-liquidity event with stable `amm/v1` topics. |
+| Struct                           | Since version | Topics                                  | Notes                                                                                                                                           |
+| -------------------------------- | ------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SchemaVersionEvent`             | 1             | -                                       | Emitted once on `initialize`.                                                                                                                   |
+| `DepositEvent`                   | 2             | user                                    | Emitted when a user deposits collateral. V2 removed timestamp field and added user as topic.                                                    |
+| `WithdrawEvent`                  | 2             | user                                    | Emitted when a user withdraws collateral. V2 removed timestamp field and added user as topic.                                                   |
+| `BorrowEvent`                    | 2             | user                                    | Emitted when a user borrows against collateral. V2 removed timestamp field and added user as topic.                                             |
+| `RepayEvent`                     | 2             | user                                    | Emitted when a user repays debt. V2 removed timestamp field and added user as topic.                                                            |
+| `FlashLoanEvent`                 | 2             | initiator, receiver, asset              | Emitted when a flash loan is initiated. V2 removed timestamp field and added topics.                                                            |
+| `FlashLoanRepaidEvent`           | 2             | payer, asset                            | Emitted when a flash loan is repaid. V2 removed timestamp field and added topics.                                                               |
+| `LiquidationEventV1`             | 2             | liquidator, borrower                    | V2 added topics for liquidator and borrower.                                                                                                    |
+| `CrossLiquidationEvent`          | 2             | liquidator, borrower, debt_asset, collateral_asset | Emitted for cross-asset liquidation. V2 added topics.                                                                                    |
+| `CrossDepositEvent`              | 2             | user, asset                             | Emitted for cross-asset deposit. V2 added schema_version field and topics.                                                                      |
+| `CrossBorrowEvent`               | 2             | user, asset                             | Emitted for cross-asset borrow. V2 added schema_version field and topics.                                                                       |
+| `CrossRepayEvent`                | 2             | user, asset                             | Emitted for cross-asset repay. V2 added schema_version field and topics.                                                                        |
+| `CrossWithdrawEvent`             | 2             | user, asset                             | Emitted for cross-asset withdraw. V2 added schema_version field and topics.                                                                     |
+| `AdminProposedEvent`             | 2             | -                                       | Emitted when a new admin is proposed.                                                                                                           |
+| `AdminAcceptedEvent`             | 2             | -                                       | Emitted when a proposed admin accepts.                                                                                                          |
+| `AssetIsolationSetEvent`         | 2             | asset                                   | Emitted when asset isolation is configured.                                                                                                     |
+| `DepositCapSetEvent`             | 2             | -                                       | Emitted when deposit cap is updated.                                                                                                            |
+| `RateParamsSetEvent`             | 2             | -                                       | Emitted when rate parameters are updated.                                                                                                       |
+| `LiquidationThresholdSetEvent`   | 2             | -                                       | Emitted when liquidation threshold is updated.                                                                                                  |
+| `InsuranceFundedEvent`           | 2             | -                                       | Emitted when insurance fund is funded.                                                                                                          |
+| `InsuranceShareSetEvent`         | 2             | -                                       | Emitted when insurance share is updated.                                                                                                        |
+| `LiquidationGracePeriodSetEvent` | 2             | -                                       | Emitted when liquidation grace period is updated.                                                                                               |
+| `ConfigSetEvent`                 | 2             | key                                     | Emitted when a config key-value pair is set.                                                                                                    |
+| `ConfigBackupEvent`              | 2             | name                                    | Emitted when a config backup is created.                                                                                                        |
+| `ConfigRestoreEvent`             | 2             | name                                    | Emitted when a config backup is restored.                                                                                                       |
+| `BadDebtIncreasedEvent`          | 2             | borrower                                | Emitted when bad debt is increased during liquidation.                                                                                          |
+| `BorrowerHealthEventV1`          | 1             | -                                       | Borrower health snapshot emitted alongside position updates.                                                                                    |
+| `AmmSwapEventV1`                 | 1             | -                                       | Versioned AMM swap event with stable `amm/v1` topics.                                                                                           |
+| `AmmLiquidityAddedEventV1`       | 1             | -                                       | Versioned AMM add-liquidity event with stable `amm/v1` topics.                                                                                  |
+| `AmmLiquidityRemovedEventV1`     | 1             | -                                       | Versioned AMM remove-liquidity event with stable `amm/v1` topics.                                                                               |
 
 ## AMM Event Topics
 

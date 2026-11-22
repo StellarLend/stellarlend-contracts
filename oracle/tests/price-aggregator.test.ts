@@ -23,10 +23,11 @@ class MockProvider extends BasePriceProvider {
         weight: number,
         prices: Record<string, number> = {},
         volumes: Record<string, bigint> = {},
+        enabled = true,
     ) {
         super({
             name,
-            enabled: true,
+            enabled,
             priority,
             weight,
             baseUrl: 'https://mock.api',
@@ -55,7 +56,7 @@ class MockProvider extends BasePriceProvider {
             throw new Error(`Asset ${asset} not found in mock provider`);
         }
 
-        return { ...data, timestamp: Math.floor(Date.now() / 1000) };
+        return { ...data };
     }
 
     setPrice(asset: string, price: number): void {
@@ -72,6 +73,22 @@ class MockProvider extends BasePriceProvider {
 
     setFail(shouldFail: boolean): void {
         this.shouldFail = shouldFail;
+    }
+
+    /**
+     * Marks an asset's latest price as stale by rewriting its timestamp.
+     * Used to exercise the aggregator's freshness/staleness fallback path.
+     */
+    setStale(asset: string, ageSeconds: number): void {
+        const upper = asset.toUpperCase();
+        const existing = this.mockPrices.get(upper);
+        if (existing === undefined) {
+            throw new Error(`Asset ${asset} not found in mock provider`);
+        }
+        this.mockPrices.set(upper, {
+            ...existing,
+            timestamp: Math.floor(Date.now() / 1000) - ageSeconds,
+        });
     }
 }
 
@@ -362,6 +379,349 @@ describe('PriceAggregator', () => {
 
             expect(stats.enabledProviders).toBe(3);
             expect(stats.cacheStats).toBeDefined();
+        });
+    });
+});
+
+describe('oracle freshness and fallback policy', () => {
+    let aggregator: PriceAggregator;
+    let providerA: MockProvider;
+    let providerB: MockProvider;
+    let providerC: MockProvider;
+
+    beforeEach(() => {
+        providerA = new MockProvider('providerA', 1, 0.5, { XLM: 0.15 });
+        providerB = new MockProvider('providerB', 2, 0.3, { XLM: 0.151 });
+        providerC = new MockProvider('providerC', 3, 0.2, { XLM: 0.149 });
+
+        aggregator = createAggregator(
+            [providerA, providerB, providerC],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 1 }
+        );
+    });
+
+    it('returns null when all provider prices are stale', async () => {
+        providerA.setStale('XLM', 301);
+        providerB.setStale('XLM', 301);
+        providerC.setStale('XLM', 301);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).toBeNull();
+    });
+
+    it('accepts prices exactly at the staleness boundary', async () => {
+        providerA.setStale('XLM', 300);
+        providerB.setStale('XLM', 300);
+        providerC.setStale('XLM', 300);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+    });
+
+    it('skips stale high-priority prices and falls back to fresh providers', async () => {
+        providerA.setStale('XLM', 301);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+        expect(result!.sources.some((s) => s.source === 'providerA')).toBe(false);
+        expect(result!.sources.some((s) => s.source === 'providerB')).toBe(true);
+    });
+
+    it('skips a price that violates maxDeviationPercent and falls back to the cluster', async () => {
+        // First establish a baseline price of ~0.15 in validator cache
+        await aggregator.getPrice('XLM');
+
+        // Now set providerA to a 100% higher price (0.3 vs 0.15)
+        providerA.setPrice('XLM', 0.3);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+        expect(result!.sources.some((s) => s.source === 'providerA')).toBe(false);
+    });
+
+    it('refetches after the cache entry expires', async () => {
+        vi.useFakeTimers();
+        try {
+            const first = await aggregator.getPrice('XLM');
+            expect(first?.sources.length).toBeGreaterThan(0);
+
+            vi.setSystemTime(Date.now() + 31_000);
+
+            const second = await aggregator.getPrice('XLM');
+            expect(second?.sources.length).toBeGreaterThan(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('retries a provider after a transient failure and cooldown expiry', async () => {
+        vi.useFakeTimers();
+        try {
+            providerA.setFail(true);
+
+            const failedPromise = aggregator.getPrice('XLM');
+            await vi.runAllTimersAsync();
+            const failed = await failedPromise;
+            expect(failed?.sources.some((s) => s.source === 'providerA')).toBe(false);
+
+            providerA.setFail(false);
+            providerA.cooldownUntil = Date.now() - 1;
+            vi.setSystemTime(Date.now() + 61_000);
+
+            const retriedPromise = aggregator.getPrice('XLM');
+            await vi.runAllTimersAsync();
+            const retried = await retriedPromise;
+            expect(retried?.sources.some((s) => s.source === 'providerA')).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('enforces minSources below the required threshold', async () => {
+        const strict = createAggregator(
+            [providerA, providerB, providerC],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 3 }
+        );
+
+        providerB.setFail(true);
+
+        const result = await strict.getPrice('XLM');
+        expect(result).toBeNull();
+    });
+
+    it('returns a price when fresh sources meet minSources', async () => {
+        const strict = createAggregator(
+            [providerA, providerB, providerC],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 2 }
+        );
+
+        providerC.setFail(true);
+
+        const result = await strict.getPrice('XLM');
+        expect(result).not.toBeNull();
+        expect(result!.sources.some((s) => s.source === 'providerC')).toBe(false);
+    });
+
+    it('returns an empty map when no asset prices are available', async () => {
+        providerA.setFail(true);
+        providerB.setFail(true);
+        providerC.setFail(true);
+
+        const results = await aggregator.getPrices(['XLM']);
+
+        expect(results.size).toBe(0);
+    });
+
+    it('returns an empty map for an empty asset list', async () => {
+        const results = await aggregator.getPrices([]);
+
+        expect(results.size).toBe(0);
+    });
+
+    it('preserves fixed-point decimal scaling in reported prices', async () => {
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result!.price).toBeTypeOf('bigint');
+        expect(Number(result!.price)).toBeGreaterThan(0);
+    });
+
+    it('does not retry a provider before its cooldown expires', async () => {
+        vi.useFakeTimers();
+        try {
+            providerA.setFail(true);
+            providerA.cooldownUntil = Date.now() + 60_000;
+
+            const firstPromise = aggregator.getPrice('XLM');
+            await vi.runAllTimersAsync();
+            const first = await firstPromise;
+            expect(first?.sources.some((s) => s.source === 'providerA')).toBe(false);
+
+            providerA.setFail(false);
+            vi.setSystemTime(Date.now() + 31_000);
+
+            const second = await aggregator.getPrice('XLM');
+            expect(second?.sources.some((s) => s.source === 'providerA')).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not cache a null result when all sources are stale', async () => {
+        providerA.setStale('XLM', 301);
+        providerB.setStale('XLM', 301);
+        providerC.setStale('XLM', 301);
+
+        expect(await aggregator.getPrice('XLM')).toBeNull();
+
+        providerA.setStale('XLM', 0);
+        providerB.setStale('XLM', 0);
+        providerC.setStale('XLM', 0);
+
+        const fresh = await aggregator.getPrice('XLM');
+        expect(fresh).not.toBeNull();
+        expect(fresh!.sources.length).toBeGreaterThan(0);
+    });
+
+    it('returns an empty map for getPrices when all sources are stale', async () => {
+        providerA.setStale('XLM', 301);
+        providerB.setStale('XLM', 301);
+        providerC.setStale('XLM', 301);
+
+        const results = await aggregator.getPrices(['XLM']);
+
+        expect(results.size).toBe(0);
+    });
+
+    it('preserves fixed-point decimal scaling during stale-provider fallback', async () => {
+        providerA.setStale('XLM', 301);
+
+        const result = await aggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+        expect(result!.price).toBeTypeOf('bigint');
+        expect(result!.sources.some((s) => s.source === 'providerA')).toBe(false);
+        expect(result!.sources.some((s) => s.source === 'providerB')).toBe(true);
+    });
+
+    it('skips disabled providers and falls back to enabled providers', async () => {
+        const disabledProvider = new MockProvider('providerA', 1, 0.5, { XLM: 0.15 }, {}, false);
+        const disabledAggregator = createAggregator(
+            [disabledProvider, providerB, providerC],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 1 }
+        );
+
+        const result = await disabledAggregator.getPrice('XLM');
+
+        expect(result).not.toBeNull();
+        expect(result!.sources.some((s) => s.source === 'providerA')).toBe(false);
+        expect(result!.sources.some((s) => s.source === 'providerB')).toBe(true);
+    });
+
+    it('returns null when all providers are disabled', async () => {
+        const disabledAggregator = createAggregator(
+            [
+                new MockProvider('providerA', 1, 0.5, { XLM: 0.15 }, {}, false),
+                new MockProvider('providerB', 2, 0.3, { XLM: 0.151 }, {}, false),
+                new MockProvider('providerC', 3, 0.2, { XLM: 0.149 }, {}, false),
+            ],
+            createValidator({ maxDeviationPercent: 20, maxStalenessSeconds: 300 }),
+            createPriceCache(30),
+            { minSources: 1 }
+        );
+
+        const result = await disabledAggregator.getPrice('XLM');
+
+        expect(result).toBeNull();
+    });
+
+    describe('concurrent in-flight request coalescing and boundary coverage', () => {
+        it('coalesces concurrent getPrice calls for the same asset into a single fetch', async () => {
+            const fetchSpy = vi.spyOn(providerA, 'fetchPrice');
+
+            const [p1, p2, p3] = await Promise.all([
+                aggregator.getPrice('XLM'),
+                aggregator.getPrice('XLM'),
+                aggregator.getPrice('XLM'),
+            ]);
+
+            expect(p1).not.toBeNull();
+            expect(p2).not.toBeNull();
+            expect(p3).not.toBeNull();
+            expect(p1?.price).toEqual(p2?.price);
+            expect(p2?.price).toEqual(p3?.price);
+            // providerA fetchPrice should only have been called once for XLM during concurrent in-flight calls
+            expect(fetchSpy).toHaveBeenCalledTimes(1);
+            fetchSpy.mockRestore();
+        });
+
+        it('cleans up in-flight request on refresh failure so future attempts can retry', async () => {
+            providerA.setFail(true);
+            providerB.setFail(true);
+            providerC.setFail(true);
+
+            const failResult = await aggregator.getPrice('XLM');
+            expect(failResult).toBeNull();
+
+            // Restore providerA
+            providerA.setFail(false);
+            providerA.cooldownUntil = 0;
+
+            const successResult = await aggregator.getPrice('XLM');
+            expect(successResult).not.toBeNull();
+            expect(successResult?.sources.some((s) => s.source === 'providerA')).toBe(true);
+        });
+
+        it('handles filterOutliersByMAD with empty prices array', () => {
+            expect(filterOutliersByMAD([], 3.5)).toEqual([]);
+        });
+
+        it('handles filterOutliersByMAD with NaN / negative zMax gracefully', () => {
+            const prices = [pd(100), pd(101), pd(1000)];
+            expect(filterOutliersByMAD(prices, 0)).toEqual(prices);
+            expect(filterOutliersByMAD(prices, -5)).toEqual(prices);
+        });
+
+        it('falls back to stale cache when fresh fetch fails but cached price is within maxFallbackAgeMs', async () => {
+            // First populate cache
+            const initial = await aggregator.getPrice('XLM');
+            expect(initial).not.toBeNull();
+
+            // Simulate staleness beyond maxStalenessMs (e.g. 35s) but within maxFallbackAgeMs (e.g. 300s)
+            vi.useFakeTimers();
+            try {
+                vi.setSystemTime(Date.now() + 35_000);
+
+                // Make all providers fail
+                providerA.setFail(true);
+                providerB.setFail(true);
+                providerC.setFail(true);
+
+                const fallbackResultPromise = aggregator.getPrice('XLM');
+                await vi.runAllTimersAsync();
+                const fallbackResult = await fallbackResultPromise;
+
+                expect(fallbackResult).not.toBeNull();
+                expect(fallbackResult?.price).toEqual(initial?.price);
+                // Confidence decays linearly: round(100 * (1 - 35000 / 300000)) = 88
+                expect(fallbackResult?.confidence).toBe(88);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('rejects stale cache fallback if past maxFallbackAgeMs', async () => {
+            const initial = await aggregator.getPrice('XLM');
+            expect(initial).not.toBeNull();
+
+            vi.useFakeTimers();
+            try {
+                // Advance past maxFallbackAgeMs (300s -> 305s)
+                vi.setSystemTime(Date.now() + 305_000);
+
+                providerA.setFail(true);
+                providerB.setFail(true);
+                providerC.setFail(true);
+
+                const fallbackResultPromise = aggregator.getPrice('XLM');
+                await vi.runAllTimersAsync();
+                const fallbackResult = await fallbackResultPromise;
+
+                expect(fallbackResult).toBeNull();
+            } finally {
+                vi.useRealTimers();
+            }
         });
     });
 });

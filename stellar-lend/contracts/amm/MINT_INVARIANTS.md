@@ -25,6 +25,9 @@ On the first deposit:
 - If `sqrt(amount_0 × amount_1) ≤ MINIMUM_LIQUIDITY`, the deposit is rejected
   with `Err(InsufficientLiquidityMinted)`.
 
+The locked liquidity is tracked under `LpBalanceKey::Locked` and queryable via `get_locked_liquidity()`.
+The invariant `total_supply == sum(user_balances) + locked` holds across all deposits and burns.
+
 **Rationale**
 Without a minimum locked supply, an attacker could deposit 1 wei of each token
 (receiving 1 share), then donate a massive amount to the pool.  The share price

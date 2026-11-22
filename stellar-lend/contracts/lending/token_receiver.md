@@ -15,7 +15,7 @@ pub fn receive(
     from: Address,
     amount: i128,
     payload: Vec<Val>,
-) -> Result<(), BorrowError>
+) -> Result<(), LendingError>
 ```
 
 ## Parameters
@@ -62,29 +62,28 @@ To repay debt via `receive`, the user provides the payload `[1, "repay"]`, appro
 ### Core Security Model
 
 1. **Authorization**: `from.require_auth()` is required, so a third party cannot trigger a pull from another user's balance just because an allowance exists.
-2. **Token Transfer Flow**: The contract checks allowance and balance before calling `transfer_from`. The state mutation only occurs after the token pull succeeds.
-3. **Pause Enforcement**: Unlike the earlier optimistic-receiver approach, `receive` now validates protocol pause state before any funds move, so paused operations stay paused.
+2. **Token Transfer Flow**: The contract calls `transfer_from` to pull tokens from `from` into its own balance. The state mutation only occurs after the token pull succeeds (the Soroban host atomically reverts state changes on transfer failure).
+3. **Pause Enforcement**: Pause and emergency-state checks are delegated to the inner `deposit` and `repay` handlers, so paused operations stay paused.
 4. **Admin and Guardian Powers**: Admins can pause deposit/repay flows or trigger emergency lifecycle transitions through the normal protocol controls. Guardians do not have any special power over `receive` beyond the protocol-wide emergency states they can help initiate.
-5. **Reentrancy**: `receive` performs only a single token-contract call and then mutates local state; there is no callback path or user-supplied external call during processing.
-6. **Deposit Cap Enforcement**: The `deposit` action in the `receive` hook is subject to the same global deposit cap as direct deposits. Transactions that would exceed the cap are rejected and any pending token transfers are rolled back.
-7. **Checked Arithmetic**: Deposits, debt accrual, and repayments continue to use checked arithmetic in the underlying borrow logic, so overflow paths are explicit and tested.
+5. **Reentrancy**: `receive` performs only a single token-contract call and then delegates to existing state-mutating functions; there is no callback path or user-supplied external call during processing.
+6. **Deposit Cap Enforcement**: The `deposit` action delegates to [`deposit`] which enforces the global deposit cap. Transactions that would exceed the cap are rejected.
+7. **Checked Arithmetic**: Deposits, debt accrual, and repayments are handled by the existing [`deposit`] and [`repay`] functions which use checked arithmetic throughout.
 
-### Enhanced Security Validations (v1)
+### Enhanced Security Validations
 
-8. **Payload Versioning**: All payloads must include version `1`. Legacy payloads without versioning are rejected to prevent protocol downgrade attacks.
-9. **Strict Payload Structure**: Payloads must have exactly `[version, action]` structure with optional additional data. Malformed payloads are rejected.
-10. **Payload Length Limits**: Maximum payload length is enforced to prevent DoS attacks through oversized payloads.
-11. **Sender Validation**: The sender cannot be the token contract itself or the lending contract (prevents self-call attacks).
-12. **Action Whitelisting**: Only `deposit` and `repay` actions are allowed. All other actions are rejected.
-13. **Asset Registry Validation**: Token contracts must be registered in the asset registry before they can be used.
+8. **Payload Versioning**: All payloads must include version `1`. Legacy payloads without versioning are rejected to prevent protocol downgrade attacks (`LendingError::InvalidPayloadVersion`).
+9. **Strict Payload Structure**: Payloads must have at least `[version, action]` with up to `MAX_PAYLOAD_LEN` (10) elements. Malformed payloads are rejected (`LendingError::MalformedPayload`).
+10. **Payload Length Limits**: Maximum payload length is enforced to prevent DoS attacks through oversized payloads (`LendingError::MalformedPayload`).
+11. **Sender Validation**: The `from` address cannot be the token contract itself or the lending contract (prevents self-call attacks, `LendingError::UnauthorizedSender`).
+12. **Action Whitelisting**: Only `"deposit"` and `"repay"` actions are allowed. All other actions are rejected (`LendingError::AssetNotSupported`).
 
 ### Attack Scenarios Prevented
 
-- **Malformed Payload Attacks**: Rejected with `MalformedPayload` error
-- **Version Downgrade Attacks**: Rejected with `InvalidPayloadVersion` error
-- **Unauthorized Sender Attacks**: Token contracts and self-calls rejected with `UnauthorizedSender` error
-- **DoS via Large Payloads**: Rejected with `MalformedPayload` error
-- **Action Injection**: Invalid actions rejected with `AssetNotSupported` error
+- **Malformed Payload Attacks**: Rejected with `LendingError::MalformedPayload`
+- **Version Downgrade Attacks**: Rejected with `LendingError::InvalidPayloadVersion`
+- **Unauthorized Sender Attacks**: Token contracts and self-calls rejected with `LendingError::UnauthorizedSender`
+- **DoS via Large Payloads**: Rejected with `LendingError::MalformedPayload`
+- **Action Injection**: Invalid actions rejected with `LendingError::AssetNotSupported`
 
 ## Usage Example
 

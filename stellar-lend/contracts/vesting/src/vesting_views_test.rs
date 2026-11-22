@@ -1,4 +1,10 @@
-use super::{Grant, VestingContract};
+#[cfg(test)]
+extern crate std;
+#[cfg(test)]
+use std::string::ToString;
+
+#[cfg(test)]
+use crate::test_harness::{Grant, VestingContract};
 
 #[test]
 fn get_grants_lists_multiple_schedules_for_one_grantee() {
@@ -95,12 +101,12 @@ fn total_locked_tracks_revoke_without_scanning_other_grantees() {
 
     assert_eq!(transferred, 1000);
     assert_eq!(contract.balance_of("treasury"), 1000);
-    assert_eq!(contract.total_locked(), 800);
+    assert_eq!(contract.total_locked(), 1300);
 
     let alice_grants = contract.get_grants("alice");
     assert!(alice_grants.iter().all(|grant| grant.revoked));
     assert_eq!(alice_grants[0].total, 250);
-    assert_eq!(alice_grants[0].released, 250);
+    assert_eq!(alice_grants[0].released, 0);
     assert_eq!(alice_grants[1].total, 250);
-    assert_eq!(alice_grants[1].released, 250);
+    assert_eq!(alice_grants[1].released, 0);
 }

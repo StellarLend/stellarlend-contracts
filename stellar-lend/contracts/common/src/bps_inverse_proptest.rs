@@ -29,16 +29,19 @@ use proptest::prelude::*;
 
 /// Reference oracle for [`scale_bps`] using the same checked primitives.
 ///
-/// Used to prove `scale_bps` returns `None` exactly on overflow and never panics.
+/// Used to prove `scale_bps` returns `None` on out-of-range rates or overflow and never panics.
 fn scale_ref(value: i128, rate_bps: i128) -> Option<i128> {
+    if rate_bps < 0 || rate_bps > BPS_DENOM {
+        return None;
+    }
     value
         .checked_mul(rate_bps)
         .and_then(|product| product.checked_div(BPS_DENOM))
 }
 
-/// Reference oracle for [`unscale_bps`] (zero divisor and overflow → `None`).
+/// Reference oracle for [`unscale_bps`] (zero, negative, >100% rates, and overflow → `None`).
 fn unscale_ref(value: i128, rate_bps: i128) -> Option<i128> {
-    if rate_bps == 0 {
+    if rate_bps <= 0 || rate_bps > BPS_DENOM {
         return None;
     }
     value

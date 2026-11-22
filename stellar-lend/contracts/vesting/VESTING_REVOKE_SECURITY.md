@@ -12,7 +12,7 @@
 1. Rejects `caller != admin` with `Unauthorized`.
 2. Checks the pause gate (`check_not_paused`) **after** the auth check, so an
    unauthorized caller never learns the pause state.
-3. `sync_grants(grantee, now)` so `released` reflects the vested amount at `now`.
+3. `merge_grants(grantee, now)` so `released` reflects the vested amount at `now`.
 4. For each non-revoked grant: `unvested = grant.locked()`, accumulates
    `transfer`, decrements `total_locked`, sets `grant.total = grant.released`,
    marks `grant.revoked = true`.

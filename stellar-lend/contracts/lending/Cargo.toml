@@ -15,8 +15,9 @@ stellar-lend-common = { path = "../common" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils", "hazmat-address"] }
+stellar-lend-common = { path = "../common", features = ["testutils"] }
 proptest = "1.5"
-ed25519-dalek = { version = "1.0.1", features = ["std"] }
+ed25519-dalek = { version = "=1.0.1", features = ["std"] }
 rand = "0.7"
 
 # Re-export modules for integration tests

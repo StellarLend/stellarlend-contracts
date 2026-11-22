@@ -26,8 +26,8 @@ entire transaction is rolled back, leaving the pool exactly as it started.
 
 | Entry Point | Visibility | Role |
 |---|---|---|
-| `flash_swap_a_for_b(amount_out, fee_bps, params)` | `pub` | Step 1 — optimistic debit |
-| `repay_flash_swap(amount_in)` | `pub` | Step 2 — verify-k repayment |
+| `flash_swap_a_for_b(caller, amount_out, params)` | `pub` | Step 1 — optimistic debit (returns `Result<i128, AmmPoolError>`) |
+| `repay_flash_swap(caller, amount_in)` | `pub` | Step 2 — verify-k repayment (returns `Result<(), AmmPoolError>`) |
 | `assert_no_active_flash_swap(env)` | `fn` (internal) | Reentrancy guard |
 | `is_flash_active()` | `pub` | Read-only guard inspection |
 | `inverse_swap_in(ra, rb, amount_out, _fee_bps)` | `pub(crate)` / test | Minimum repay helper |
@@ -44,25 +44,27 @@ covers both operations:
 ┌──────────────────────────────────────────────────────────────────┐
 │              Single Soroban Multi-Operation Transaction           │
 │                                                                  │
-│  Op 1  AMM.flash_swap_a_for_b(amount_out, fee_bps, params)      │
-│         • Validates: amount_out > 0, fee_bps ∈ [0,9999]         │
-│         •            reserve_a > 0, reserve_b > 0               │
+│  Op 1  AMM.flash_swap_a_for_b(caller, amount_out, params)         │
+│         • Validates: amount_out > 0, reserve_a > 0, reserve_b > 0 │
 │         •            amount_out < reserve_b                      │
 │         • Snapshots  k_before = reserve_a × reserve_b           │
 │         • Debits     reserve_b ← reserve_b − amount_out         │
 │         • Sets       KEY_FLASH_ACTIVE = true                    │
-│         • Returns    amount_out                                  │
+│         • Sets       KEY_FLASH_INITIATOR = caller               │
+│         • Returns    Ok(amount_out)                             │
 │                                                                  │
 │  Op 2  <Caller executes arbitrary logic with borrowed asset B>   │
 │         (arbitrage, liquidation, collateral swap, etc.)          │
 │         State-mutating AMM calls are blocked by the guard        │
 │                                                                  │
-│  Op 3  AMM.repay_flash_swap(amount_in)                          │
+│  Op 3  AMM.repay_flash_swap(caller, amount_in)                  │
 │         • Validates  KEY_FLASH_ACTIVE == true, amount_in > 0    │
+│         • Validates  caller == KEY_FLASH_INITIATOR              │
 │         • Credits    reserve_a ← reserve_a + amount_in          │
 │         • Verifies   (reserve_a + amount_in) × reserve_b′       │
 │                      ≥ k_before   (k-monotonicity)              │
-│         • Clears     KEY_FLASH_ACTIVE = false                   │
+│         • Clears     KEY_FLASH_ACTIVE = false, initiator        │
+│         • Returns    Ok(())                                     │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -76,19 +78,21 @@ is left in exactly its pre-flash state.
 ```
 Caller / Tx                 AMM Contract               Storage
     |                           |                          |
-    |-- Op1: flash_swap_a_for_b(amount_out) ------------>  |
+    |-- Op1: flash_swap_a_for_b(caller, amount_out, params) > |
     |                           |-- validate inputs        |
     |                           |-- read ra, rb <--------- KEY_RES_A, KEY_RES_B
     |                           |-- k_before = ra × rb     |
     |                           |-- reserve_b -= amount_out --> KEY_RES_B
     |                           |-- KEY_K_BEFORE = k_before --> KEY_K_BEFORE
     |                           |-- KEY_FLASH_ACTIVE = true --> KEY_FLASH_ACTIVE
-    |<-- returns amount_out ---- |                          |
+    |                           |-- KEY_FLASH_INITIATOR = caller > KEY_FLASH_INITIATOR
+    |<-- returns Ok(amount_out) - |                          |
     |                           |                          |
     |  [do arbitrary work with borrowed asset B]           |
     |                           |                          |
-    |-- Op3: repay_flash_swap(amount_in) ---------------->  |
+    |-- Op3: repay_flash_swap(caller, amount_in) -------->  |
     |                           |-- validate active <----- KEY_FLASH_ACTIVE
+    |                           |-- validate caller <----- KEY_FLASH_INITIATOR
     |                           |-- read ra, rb′ <-------- KEY_RES_A, KEY_RES_B
     |                           |-- read k_before <------- KEY_K_BEFORE
     |                           |-- new_ra = ra + amount_in |
@@ -97,7 +101,8 @@ Caller / Tx                 AMM Contract               Storage
     |                           |   [panics + full rollback if fails]
     |                           |-- KEY_RES_A = new_ra -----> KEY_RES_A
     |                           |-- KEY_FLASH_ACTIVE = false -> KEY_FLASH_ACTIVE
-    |<-- returns () ------------ |                          |
+    |                           |-- remove initiator -----> KEY_FLASH_INITIATOR
+    |<-- returns Ok(()) -------- |                          |
 ```
 
 ---
@@ -242,18 +247,20 @@ the entire transaction, restoring the pool to its pre-flash state:
 | `KEY_FLASH_ACTIVE` | `true` | `false` |
 | `KEY_RES_A` | `ra + amount_in` | original `ra` |
 
-### Pre-Condition Panics (No State Written)
+### Pre-Condition Errors (No State Written)
 
-These checks fire before any storage mutation, so no rollback is necessary:
+These checks fire before any storage mutation, returning typed `Err(AmmPoolError)` results without writing state:
 
-| Entry Point | Condition | Panic message |
+| Entry Point | Condition | Error Return |
 |---|---|---|
-| `flash_swap_a_for_b` | `amount_out ≤ 0` | `"amount_out must be positive"` |
-| `flash_swap_a_for_b` | `fee_bps ∉ [0, 9 999]` | `"invalid fee_bps (must be in [0, 9999])"` |
-| `flash_swap_a_for_b` | `reserve_a ≤ 0 \|\| reserve_b ≤ 0` | `"empty pool"` |
-| `flash_swap_a_for_b` | `amount_out ≥ reserve_b` | `"Insufficient reserves: amount_out would drain reserve_b"` |
-| `repay_flash_swap` | `amount_in ≤ 0` | `"repay_flash_swap: amount_in must be positive"` |
-| `repay_flash_swap` | `KEY_FLASH_ACTIVE == false` | `"repay_flash_swap: no flash swap in progress"` |
+| `flash_swap_a_for_b` | a flash swap is already active | `Err(AmmPoolError::ReentrantFlashSwap)` |
+| `flash_swap_a_for_b` | `amount_out ≤ 0` | `Err(AmmPoolError::NonPositiveAmount)` |
+| `flash_swap_a_for_b` | `amount_out < min_swap_in` | `Err(AmmPoolError::AmountBelowMinSwapIn)` |
+| `flash_swap_a_for_b` | `reserve_a ≤ 0 \|\| reserve_b ≤ 0` | `Err(AmmPoolError::EmptyPool)` |
+| `flash_swap_a_for_b` | `amount_out ≥ reserve_b` | `Err(AmmPoolError::InsufficientReserves)` |
+| `repay_flash_swap` | `amount_in ≤ 0` | `Err(AmmPoolError::NonPositiveAmount)` |
+| `repay_flash_swap` | `KEY_FLASH_ACTIVE == false` | `Err(AmmPoolError::InvariantViolation)` |
+| `repay_flash_swap` | `caller != initiator` | `Err(AmmPoolError::UnauthorizedCaller)` |
 
 ---
 

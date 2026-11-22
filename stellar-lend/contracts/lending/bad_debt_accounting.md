@@ -7,7 +7,7 @@ When a liquidation event triggers, the liquidator is entitled to an incentivized
 
 $$\text{Shortfall} = \text{Seized Collateral} - \text{Available Collateral}$$
 
-This value is stored via `DataKey::BadDebt` using state instance storage.
+This value is stored via `DataKey::BadDebt` using persistent storage.
 
 ### Worked Example
 - **Incentivized Seizure Target:** 150 Collateral Tokens
@@ -15,7 +15,7 @@ This value is stored via `DataKey::BadDebt` using state instance storage.
 - **Shortfall Recorded:** 50 Tokens added monotonically to the BadDebt ledger.
 
 ### Invariants
-- **Monotonic Increase:** Bad debt values can never decrease except via explicit, future administrative `write_off_bad_debt` entrypoints (currently left as a TODO).
+- **Monotonic Increase:** Bad debt decreases only through the governed `write_off_bad_debt` entrypoint.
 - **Checked Arithmetic:** All computations run inside safe `checked_sub` and `checked_add` parameters to rule out integer overflow vulnerabilities.
 - **Bad Debt ($D_{bad}$)**: The unrecovered portion of a borrow position after all available collateral has been liquidated.
 - **Insurance Fund ($F_{ins}$)**: A per-asset pool of tokens (maintained via accounting) used to offset bad debt.
@@ -121,7 +121,7 @@ or `LendingError::ReservesNegative`).
 | I-3 | `total_borrows >= 0` | `assert_market_invariants` |
 | I-4 | `total_deposits >= 0` | `assert_market_invariants` |
 | I-5 | `total_deposits - total_borrows + reserves - bad_debt >= 0` _(nominal solvency)_ | logged, not aborted |
-| I-6 | After write-off: `user.borrowed == 0` | `record_bad_debt` |
+| I-6 | After write-off: `user.borrowed == 0` | `liquidate` |
 
 **Note on I-5:** When `bad_debt > reserves`, the protocol is nominally insolvent —
 depositors bear an economic loss equal to `bad_debt - reserves`.  This is an
@@ -130,25 +130,22 @@ in degraded mode.  Governance recovers solvency by topping up reserves.
 
 ---
 
-## 4. Write-Off Flow
+## 4. Bad-Debt Recording and Write-Off Flow
 
 ```
-liquidate()  ──or──  emergency_liquidate()
+liquidate()
         │
-        │  collateral fully seized, residual > 0?
+        │  collateral fully seized, shortfall > insurance?
         │
         ▼
-record_bad_debt(user, asset, residual, collateral_seized)
+Inline Bad-Debt Recording (inside liquidate)
         │
-        ├─ 1. Zero user.borrow                      [I-6]
-        ├─ 2. Decrement market.total_borrows
-        ├─ 3. reserve_cover = min(residual, reserves)
-        ├─ 4. market.reserves -= reserve_cover      [I-2]
-        ├─ 5. written_off = residual - reserve_cover
-        ├─ 6. market.bad_debt += written_off        [I-1]
-        ├─ 7. Store per-user audit record
-        ├─ 8. assert_market_invariants()
-        └─ 9. Persist market state
+        ├─ 1. Calculate shortfall = seized_collateral - available_collateral
+        ├─ 2. Draw insurance cover = min(shortfall, insurance_fund)
+        ├─ 3. residual = shortfall - insurance_drawn
+        ├─ 4. Increase market bad_debt accumulators += residual   [I-1]
+        ├─ 5. Decrement debt and available collateral
+        └─ 6. Emit bad_debt event
 ```
 
 ---
@@ -179,16 +176,15 @@ When governance triggers an emergency shutdown:
 1. Global shutdown flag is set — new borrows and deposits are rejected.
 2. Every specified market is **frozen** (same effect for deposits/borrows).
 3. **Liquidations remain open** so bad debt can still be cleared.
-4. `emergency_liquidate()` bypasses the close factor — the full position is
-   liquidated in a single call.
+4. `liquidate()` remains available so positions can still be liquidated.
 
 ### Shutdown accounting example
 
 | Step | Action | Result |
 |------|--------|--------|
 | 1 | Borrower has 1 ETH @ $500 collateral, 1000 USDC debt | shortfall = $500 |
-| 2 | `emergency_liquidate()` seizes 1 ETH → $500 value | collateral_seized = 1 ETH |
-| 3 | `record_bad_debt(residual=$500)` | reserve_cover = min($500, reserves) |
+| 2 | `liquidate()` seizes 1 ETH → $500 value | collateral_seized = 1 ETH |
+| 3 | Bad debt recorded inline (`residual=$500`) | reserve_cover = min($500, reserves) |
 | 4 | reserves = 0 → written_off = $500 | market.bad_debt += $500 |
 | 5 | User borrow zeroed | [I-6] satisfied |
 | 6 | Governance tops up $500 reserves | bad_debt → 0 |
@@ -222,7 +218,7 @@ Liquidation call 1:  repay 1000 USDC (50% close factor)
 Liquidation call 2:  repay 1000 USDC
   seized = min(1.35 ETH, 0.65 ETH) = 0.65 ETH ($520 value)
   residual = $1000 − $520 = $480
-  record_bad_debt(residual=$480)
+  liquidate() records bad debt inline (residual=$480)
 ```
 
 ---
@@ -247,7 +243,7 @@ Liquidation call 2:  repay 1000 USDC
 ### Re-entrancy
 - All state writes are committed atomically in Soroban's transaction model.
   There is no external call between reading and writing state in
-  `record_bad_debt`, so re-entrancy is structurally impossible.
+  `liquidate` or `write_off_bad_debt`, so re-entrancy is structurally impossible.
 
 ### Oracle manipulation
 - A manipulated oracle price could make a healthy position appear unhealthy
@@ -308,6 +304,29 @@ Top-up 2: add_reserves(300)  → bad_debt = 300
 Top-up 3: add_reserves(300)  → bad_debt = 0   ✓
 ```
 
+### Example D — Governed reserve-factor accrual
+
+For gross interest `I`, the reserve share is floored and the remainder belongs
+to depositors. The reserve cut is applied first; `InsuranceShareBps` is then
+applied to the interest remaining after that cut. This ordering guarantees
+that the reserve and insurance credits together never exceed gross interest.
+
+```
+Gross interest I            = 1,003 units
+ReserveFactorBps            = 1,000 (10%)
+Protocol reserve cut        = floor(1,003 * 1,000 / 10,000) = 100
+Interest after reserve cut  = 903
+InsuranceShareBps           = 500 (5%)
+Insurance credit            = floor(903 × 500 / 10,000) = 45
+Depositor share             = 1,003 - 100 - 45 = 858
+
+ProtocolReserves increases by 100; TotalDeposits is unchanged.
+```
+
+Reserve-factor changes checkpoint known borrower positions using the previous
+factor before saving the new factor. Protocol reserves are not included in
+`TotalDeposits` or utilization.
+
 ---
 
 ## 11. Governed Write-Off (`write_off_bad_debt`)
@@ -316,7 +335,7 @@ _Entrypoint added in feature/bad-debt-write-off._
 
 ### 11.1 Purpose
 
-`record_bad_debt` causes `bad_debt` to grow monotonically. Without a
+Liquidations resulting in unrecovered debt cause `bad_debt` to grow monotonically. Without a
 resolution path, the protocol remains nominally insolvent indefinitely.
 `write_off_bad_debt(amount)` provides the governed, auditable mechanism to
 clear recorded bad debt against available backstops.
@@ -331,20 +350,21 @@ made between reads and writes.
 
 | Priority | Source | Storage key | Notes |
 |----------|--------|-------------|-------|
-| 1 (first) | Insurance Fund | `InsuranceFund` (instance) | Credited by governance via `credit_insurance_fund` |
-| 2 | Protocol Reserve | `TotalDeposits` (persistent) | Deposit-pool surplus absorbed next |
+| 1 (first) | Insurance Fund | `InsuranceFund` (instance) | Credited by governance or accrued insurance share |
+| 2 | Protocol Reserves | `ProtocolReserves` (persistent) | Accrued from interest and withdrawn by governance |
 | 3 (last) | Depositor Socialisation | `TotalDeposits` (persistent) | Index haircut — irreversible economic loss |
 
 The insurance fund is consumed first because it was explicitly set aside for
-exactly this purpose.  Protocol reserves (the depositor pool) act as the
-second absorber.  Only when _both_ are exhausted is the residual socialised
+exactly this purpose. Protocol reserves are a separate protocol-owned balance
+and act as the second absorber. Only when _both_ are exhausted is the residual socialised
 across depositors via a `TotalDeposits` reduction (equivalent to an index
 haircut proportional to each depositor's share).
 
 > **Safety constraint**: `TotalDeposits` can never become negative.
 > If the socialised amount would reduce `TotalDeposits` below zero, the
-> transaction is rejected with `LendingError::Overflow`.  Governance must
-> ensure `insurance + total_deposits ≥ amount` before calling the entrypoint.
+> transaction is rejected with `LendingError::Overflow`. Governance must ensure
+> `insurance + protocol_reserves + total_deposits >= amount` before calling
+> the entrypoint.
 
 ---
 
@@ -361,8 +381,8 @@ write_off_bad_debt(amount)
         │     insurance_fund  -= insurance_used
         │     remaining        = amount - insurance_used
         │
-        ├─ 2. reserve_used    = min(remaining, total_deposits)
-        │     total_deposits  -= reserve_used
+        ├─ 2. reserve_used    = min(remaining, protocol_reserves)
+        │     protocol_reserves -= reserve_used
         │     remaining       -= reserve_used
         │
         ├─ 3. socialized       = remaining
@@ -393,6 +413,7 @@ write_off_bad_debt(amount)
 Initial state:
   bad_debt       = 1 000 USDC
   insurance_fund =   300 USDC   (credited by governance)
+  protocol_reserves = 700 USDC   (accrued from interest)
   total_deposits = 1 500 USDC   (aggregate depositor value)
 
 Call: write_off_bad_debt(1_000)
@@ -402,14 +423,14 @@ Step 1 — Insurance fund:
   insurance_fund → 300 - 300     =   0
   remaining      = 1 000 - 300   = 700
 
-Step 2 — Protocol reserve (TotalDeposits):
-  reserve_used     = min(700, 1 500) = 700
-  total_deposits   → 1 500 - 700    = 800
-  remaining        = 700 - 700      =   0
+Step 2 — Protocol reserves:
+  reserve_used       = min(700, 700) = 700
+  protocol_reserves  → 700 - 700     =   0
+  remaining          = 700 - 700     =   0
 
 Step 3 — Depositor socialisation:
   socialized       = 0   (nothing left to absorb)
-  total_deposits   → 800 - 0 = 800   (unchanged)
+  total_deposits   → 1 500 - 0 = 1 500   (unchanged)
 
 Step 4 — Clear bad debt:
   bad_debt         → 1 000 - 1 000 = 0
@@ -425,7 +446,8 @@ Event emitted:
 Post state:
   bad_debt       =     0 USDC  ✓
   insurance_fund =     0 USDC
-  total_deposits =   800 USDC  (depositors bear no haircut in this scenario)
+  protocol_reserves =   0 USDC
+  total_deposits = 1 500 USDC  (depositors bear no haircut in this scenario)
 ```
 
 ---
@@ -434,9 +456,10 @@ Post state:
 
 ```
 Initial state:
-  bad_debt       = 1 000 USDC
-  insurance_fund =   200 USDC
-  total_deposits =   600 USDC
+  bad_debt         = 1 000 USDC
+  insurance_fund   =   200 USDC
+  protocol_reserves = 100 USDC
+  total_deposits   =   600 USDC
 
 Call: write_off_bad_debt(600)  ← governance writes off only 600 (within pool capacity)
 
@@ -445,20 +468,21 @@ Step 1 — Insurance fund:
   insurance_fund → 0
   remaining      = 600 - 200   = 400
 
-Step 2 — Protocol reserve:
-  reserve_used   = min(400, 600) = 400
-  total_deposits → 600 - 400    = 200
-  remaining      = 400 - 400    =   0
+Step 2 — Protocol reserves:
+  reserve_used      = min(400, 100) = 100
+  protocol_reserves → 100 - 100     =   0
+  remaining         = 400 - 100     = 300
 
 Step 3 — Socialisation:
-  socialized = 0
+  socialized = 300
+  total_deposits → 600 - 300 = 300
 
 Step 4 — Clear bad debt (partial):
   bad_debt → 1 000 - 600 = 400   ← 400 USDC bad debt remains
 
 Event:
   BadDebtWrittenOffEvent {
-      amount: 600, insurance_used: 200, reserve_used: 400, socialized: 0
+      amount: 600, insurance_used: 200, reserve_used: 100, socialized: 300
   }
 
 Governance must call write_off_bad_debt again after topping up backstops

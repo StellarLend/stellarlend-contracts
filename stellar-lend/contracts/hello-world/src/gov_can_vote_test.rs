@@ -35,22 +35,27 @@ impl GovTestHost {
     ) -> Result<(), GovernanceError> {
         // Override voters list after default init.
         governance::initialize(
-            &env, admin.clone(),
+            &env,
+            admin.clone(),
             Address::generate(&env), // vote token (dummy)
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
         // Add additional voters.
         let mut config = governance::get_config(&env).unwrap();
         config.voters = voters;
-        env.storage().instance().set(&governance::GovernanceDataKey::Config, &config);
+        env.storage()
+            .instance()
+            .set(&governance::GovernanceDataKey::Config, &config);
         Ok(())
     }
 
     /// Create a new governance proposal.
-    pub fn propose(
-        env: Env,
-        proposer: Address,
-    ) -> Result<u64, GovernanceError> {
+    pub fn propose(env: Env, proposer: Address) -> Result<u64, GovernanceError> {
         governance::create_proposal(
             &env,
             proposer,
@@ -293,11 +298,7 @@ fn test_removed_voter_cannot_vote() {
 
     // Remove the voter from the config.
     let mut config = governance::get_config(&env).unwrap();
-    let new_voters: Vec<Address> = config
-        .voters
-        .iter()
-        .filter(|v| v != voter)
-        .collect();
+    let new_voters: Vec<Address> = config.voters.iter().filter(|v| v != voter).collect();
     config.voters = new_voters;
     env.storage()
         .instance()

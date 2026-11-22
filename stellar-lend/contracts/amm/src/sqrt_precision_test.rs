@@ -1,13 +1,13 @@
-use crate::math::sqrt;
+use crate::math::try_sqrt;
 
 /// Helper to verify the mathematical precision bound of the integer square root.
-/// For a given non-negative integer `y`, `r = sqrt(y)` must satisfy:
+/// For a given non-negative integer `y`, `r = try_sqrt(y).unwrap()` must satisfy:
 /// `r^2 <= y < (r + 1)^2`.
 ///
 /// Because `(r + 1)^2` can overflow `i128` for values near `i128::MAX`,
 /// we perform the upper bound verification using `u128`.
 fn assert_precision_bound(y: i128) {
-    let r = sqrt(y);
+    let r = try_sqrt(y).expect("non-negative input must succeed");
     let r_u128 = r as u128;
     let y_u128 = y as u128;
 
@@ -65,15 +65,20 @@ fn test_sqrt_precision_boundaries() {
     assert_precision_bound(i128::MAX - 1);
 }
 
+/// Negative inputs must return `Err` instead of panicking.
 #[test]
-#[should_panic(expected = "negative sqrt")]
-fn test_sqrt_negative_input() {
-    // Assert negative input handling matches the existing contract.
-    sqrt(-1);
+fn test_sqrt_negative_input_returns_err() {
+    assert!(
+        try_sqrt(-1).is_err(),
+        "try_sqrt(-1) must return Err, not panic"
+    );
 }
 
+/// i128::MIN must also return `Err` instead of panicking.
 #[test]
-#[should_panic(expected = "negative sqrt")]
-fn test_sqrt_min_input() {
-    sqrt(i128::MIN);
+fn test_sqrt_min_input_returns_err() {
+    assert!(
+        try_sqrt(i128::MIN).is_err(),
+        "try_sqrt(i128::MIN) must return Err, not panic"
+    );
 }

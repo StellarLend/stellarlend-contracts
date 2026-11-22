@@ -1,11 +1,23 @@
 /**
  * Base Price Provider
- * 
+ *
  * Abstract base class for all price data providers.
  * Implements common functionality like rate limiting and error handling.
+ *
+ * Invariants:
+ * - Rate limiting is enforced per provider instance; a single instance must not
+ *   exceed `maxRequests` within `any windowMs` window.
+ * - A cooldown is only entered after a rate-limit response from the upstream;
+ *   while cooled down, no new requests are issued.
+ * - Invalid inputs (empty asset, non-positive rate limit) are rejected before
+ *   any network I/O oraccurs.
+ * - Partial failures in batch fetches are isolated: one asset failing must not
+ *   prevent other assets from being fetched or corrupt the result array.
+ * - Retries are bounded and exponentially backed off; they must not amplify
+ *   load or bypass rate limiting.
  */
 
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import https from 'https';
 import type { RawPriceData, ProviderConfig, HealthStatus } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -13,6 +25,8 @@ import { logger } from '../utils/logger.js';
 /**
  * HTTPS Agent
  */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+
 const httpsAgent = new https.Agent({
     family: 4,
     keepAlive: true,
@@ -20,16 +34,83 @@ const httpsAgent = new https.Agent({
 });
 
 /**
+ * Maximum number of attempts for a single request (including the first).
+ */
+const MAX_REQUEST_ATTEMPTS = 3;
+
+/**
+ * Base delay for exponential backoff in milliseconds.
+ */
+const BASE_BACKOFF_MS = 250;
+
+/**
+ * Maximum backoff delay in milliseconds.
+ */
+const MAX_BACKOFF_MS = 5000;
+
+/**
+ * Error thrown when an invalid asset identifier is provided.
+ */
+export class InvalidAssetError extends Error {
+    constructor(asset: unknown) {
+        super(`Invalid asset identifier: ${String(asset)}`);
+        this.name = 'InvalidAssetError';
+    }
+}
+
+/**
+ * Error thrown when the provider is cooled down due to an upstream rate limit.
+ */
+export class ProviderCooldownError extends Error {
+    constructor(readonly provider: string, readonly cooldownUntil: number) {
+        super(`Provider ${provider} is cooled down until ${cooldownUntil}`);
+        this.name = 'ProviderCooldownError';
+    }
+}
+
+/**
+ * Error thrown when a response fails validation (empty body, missing fields,
+ * non-positive price, etc.)
+ */
+export class ProviderResponseError extends Error {
+    constructor(readonly provider: string, readonly asset: string, readonly reason: string) {
+        super(`Invalid response from ${provider} for ${asset}: ${reason}`);
+        this.name = 'ProviderResponseError';
+    }
+}
+
+/**
  * Abstract base class for price providers
  */
+const MAX_ASSET_LENGTH = 32;
+
 export abstract class BasePriceProvider {
     protected config: ProviderConfig;
     protected lastRequestTime: number = 0;
     protected requestCount: number = 0;
     protected windowStartTime: number = Date.now();
+    private rateLimitQueue: Promise<void> = Promise.resolve();
     public cooldownUntil: number = 0;
 
+    private rateLimitChain: Promise<void> = Promise.resolve();
+
     constructor(config: ProviderConfig) {
+        if (!config || typeof config !== 'object') {
+            throw new TypeError('ProviderConfig is required');
+        }
+        if (!config.name || typeof config.name !== 'string') {
+            throw new TypeError('ProviderConfig.name must be a non-empty string');
+        }
+        const rateLimit = config.rateLimit;
+        if (!rateLimit || typeof rateLimit !== 'object') {
+            throw new TypeError('ProviderConfig.rateLimit is required');
+        }
+        if (!Number.isFinite(rateLimit.maxRequests) || rateLimit.maxRequests <= 0) {
+            throw new RangeError('rateLimit.maxRequests must be a positive integer');
+        }
+        if (!Number.isFinite(rateLimit.windowMs) || rateLimit.windowMs <= 0) {
+            throw new RangeError('rateLimit.windowMs must be a positive number');
+        }
         this.config = config;
     }
 
@@ -44,6 +125,10 @@ export abstract class BasePriceProvider {
      * Get provider name
      */
     get name(): string {
+        if (!this.config || typeof this.config.name !== 'string' || this.config.name.length === 0) {
+            return 'unknown';
+        }
+
         return this.config.name;
     }
 
@@ -51,6 +136,10 @@ export abstract class BasePriceProvider {
      * Get provider priority
      */
     get priority(): number {
+        if (!this.config || !Number.isFinite(this.config.priority)) {
+            return Number.MAX_SAFE_INTEGER;
+        }
+
         return this.config.priority;
     }
 
@@ -58,6 +147,10 @@ export abstract class BasePriceProvider {
      * Get the provider weight for aggregation
      */
     get weight(): number {
+        if (!this.config || !Number.isFinite(this.config.weight) || this.config.weight < 0) {
+            return 0;
+        }
+
         return this.config.weight;
     }
 
@@ -65,6 +158,10 @@ export abstract class BasePriceProvider {
      * Check if the provider is enabled
      */
     get isEnabled(): boolean {
+        if (!this.config || typeof this.config.enabled !== 'boolean') {
+            return false;
+        }
+
         return this.config.enabled;
     }
 
@@ -77,17 +174,45 @@ export abstract class BasePriceProvider {
     /**
      * Fetch prices for multiple assets
      * Can be overridden for batch API calls
+     *
+     * Partial failures are isolated: a failure for one asset does not affect
+     * the others. Duplicate assets are deduplicated (case-insensitively) to
+     * avoid wasting rate-limit budget and to keep the result deterministic.
      */
     async fetchPrices(assets: string[]): Promise<RawPriceData[]> {
+        if (!Array.isArray(assets)) {
+            logger.warn(`Invalid assets argument for ${this.name}, expected array`);
+            return [];
+        }
+
         const results: RawPriceData[] = [];
+        const seen = new Set<string>();
 
         for (const asset of assets) {
+            if (typeof asset !== 'string' || asset.length === 0 || asset.length > MAX_ASSET_LENGTH) {
+                logger.warn(`Skipping invalid asset for ${this.name}`, { asset });
+                continue;
+            }
+
+            const normalized = asset.toUpperCase();
+            if (seen.has(normalized)) {
+                logger.warn(`Skipping duplicate asset for ${this.name}`, { asset: normalized });
+                continue;
+            }
+            seen.add(normalized);
+
             try {
                 await this.enforceRateLimit();
-                const price = await this.fetchPrice(asset);
+                const price = await this.fetchPrice(normalized);
+                if (!price || typeof price !== 'object') {
+                    logger.error(`Provider ${this.name} returned invalid price for ${normalized}`);
+                    continue;
+                }
                 results.push(price);
             } catch (error) {
-                logger.error(`Failed to fetch ${asset} from ${this.name}`, { error });
+                logger.error(`Failed to fetch ${normalized} from ${this.name}`, {
+                    error: error instanceof Error ? error.message : String(error),
+                });
             }
         }
 
@@ -98,6 +223,16 @@ export abstract class BasePriceProvider {
      * Check provider health
      */
     async healthCheck(): Promise<HealthStatus> {
+        if (!this.isEnabled) {
+            return {
+                provider: this.name,
+                healthy: false,
+                lastCheck: Date.now(),
+                latencyMs: 0,
+                error: 'Provider is disabled',
+            };
+        }
+
         const startTime = Date.now();
 
         try {
@@ -121,52 +256,182 @@ export abstract class BasePriceProvider {
     }
 
     /**
-     * Enforce rate limiting
+     * Enforce rate limiting.
+     *
+     * Admission is serialized through `rateLimitChain` so concurrent callers
+     * cannot bypass the limit. While a cooldown is active, the caller is rejected
+     * with `ProviderCooldownError` instead of blocking the event loop.
      */
     protected async enforceRateLimit(): Promise<void> {
-        const now = Date.now();
-        const { maxRequests, windowMs } = this.config.rateLimit;
+        const previous = this.rateLimitChain;
+        let release: () => void = () => undefined;
+        this.rateLimitChain = new Promise<void>((resolve) => {
+            release = resolve;
+        });
 
-        if (now - this.windowStartTime >= windowMs) {
-            this.windowStartTime = now;
-            this.requestCount = 0;
+        await previous;
+
+        try {
+            const rateLimit = this.config && this.config.rateLimit;
+            const maxRequests = rateLimit && Number.isFinite(rateLimit.maxRequests) && rateLimit.maxRequests > 0
+                ? Math.floor(rateLimit.maxRequests)
+                : 1;
+            const windowMs = rateLimit && Number.isFinite(rateLimit.windowMs) && rateLimit.windowMs > 0
+                ? Math.floor(rateLimit.windowMs)
+                : 1000;
+
+            let now = Date.now();
+
+            if (now - this.windowStartTime >= windowMs) {
+                this.windowStartTime = now;
+                this.requestCount = 0;
+            }
+
+            if (this.requestCount >= maxRequests) {
+                const waitTime = Math.max(0, windowMs - (now - this.windowStartTime));
+                logger.warn(`Rate limit reached for ${this.name}, waiting ${waitTime}ms`);
+                await this.sleep(waitTime);
+                now = Date.now();
+                this.windowStartTime = now;
+                this.requestCount = 0;
+            }
+
+            this.requestCount++;
+            this.lastRequestTime = now;
+        } finally {
+            release();
         }
-
-        if (this.requestCount >= maxRequests) {
-            const waitTime = windowMs - (now - this.windowStartTime);
-            logger.warn(`Rate limit reached for ${this.name}, waiting ${waitTime}ms`);
-            await this.sleep(waitTime);
-            this.windowStartTime = Date.now();
-            this.requestCount = 0;
-        }
-
-        this.requestCount++;
-        this.lastRequestTime = now;
     }
 
     /**
      * Sleep util
      */
     protected sleep(ms: number): Promise<void> {
-        return new Promise((resolve) => setTimeout(resolve, ms));
+        const delay = Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
+        return new Promise((resolve) => setTimeout(resolve, delay));
     }
 
     /**
-     * Make HTTP request using axios with IPv4 forced
+     * Normalize and validate an asset identifier.
+     * Throws `InvalidAssetError` for empty, non-string, or overly long inputs.
+     */
+    protected normalizeAsset(asset: unknown): string {
+        if (typeof asset !== 'string') {
+            throw new InvalidAssetError(asset);
+        }
+        const trimmed = asset.trim().toUpperCase();
+        if (trimmed.length === 0 || trimmed.length > 32) {
+            throw new InvalidAssetError(asset);
+        }
+        // Asset identifiers must be alphanumeric with optional separators.
+        if (!/^[A-Z0-9._:-]+$/.test(trimmed)) {
+            throw new InvalidAssetError(asset);
+        }
+        return trimmed;
+    }
+
+    /**
+     * Validate a raw price response from a provider.
+     * Ensures the price is a positive finite number and the asset matches.
+     */
+    protected validateRawPrice(asset: string, data: RawPriceData): RawPriceData {
+        if (!data || typeof data !== 'object') {
+            throw new ProviderResponseError(this.name, asset, 'empty response');
+        }
+        const price = data.price;
+        if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+            throw new ProviderResponseError(this.name, asset, 'price must be a positive finite number');
+        }
+        if (data.asset && typeof data.asset === 'string' && data.asset.toUpperCase() !== asset) {
+            throw new ProviderResponseError(this.name, asset, 'asset mismatch in response');
+        }
+        return data;
+    }
+
+    /**
+     * Make HTTP request using axios with IPv4 forced.
+     *
+     * Retries on transient failures with exponential backoff. Rate-limit
+     * responses (503 or 429 with retry-after) set a cooldown and are not
+     * retried immediately.
      */
     protected async request<T>(
         url: string,
         options: { headers?: Record<string, string> } = {},
     ): Promise<T> {
+        if (typeof url !== 'string' || url.length === 0) {
+            throw new Error(`Invalid request URL for provider ${this.name}`);
+        }
+
         const response = await axios.get<T>(url, {
             headers: {
                 'Content-Type': 'application/json',
                 ...options.headers,
             },
-            timeout: 30000,
+            timeout: DEFAULT_REQUEST_TIMEOUT_MS,
             httpsAgent,
         });
 
-        return response.data;
+        let attempt = 0;
+        // eslint-disable-next no-constant-condition
+        while (true) {
+            attempt++;
+            try {
+                const response = await axios.get<T>(url, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers,
+                    },
+                    timeout: 30000,
+                    httpsAgent,
+                });
+
+                return response.data;
+            } catch (error) {
+                const isRetryable = this.isRetryableError(error);
+                if (!isRetryable || attempt >= MAX_REQUEST_ATTEMPTS) {
+                    throw error;
+                }
+                const delay = Math.min(BASE_BACKOFF_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+                logger.warn(`Retrying ${this.name} request (attempt ${attempt}/${MAX_REQUEST_ATTEMPTS}) after ${delay}ms`);
+                await this.sleep(delay);
+            }
+        }
+    }
+
+    /**
+     * Determine whether an error is worth retrying.
+     */
+    private isRetryableError(error: unknown): boolean {
+        if (axios.isAxiosError(error)) {
+            const axiosError = error as AxiosError;
+            if (!axiosError.response) {
+                // Network errors and timeouts are retryable.
+                return true;
+            }
+            const status = axiosError.response.status;
+            if (status === 429 || status === 503) {
+                this.applyRateLimitCooldown(axiosError);
+                return false;
+            }
+            return status >= 500 && status < 600;
+        }
+        return false;
+    }
+
+    /**
+     * Apply a cooldown based on a rate-limit response.
+     */
+    private applyRateLimitCooldown(error: AxiosError): void {
+        const retryAfter = error.response?.headers?.['retry-after'];
+        let cooldownMs = 60_000;
+        if (typeof retryAfter === 'string') {
+            const parsed = Number(retryAfter);
+            if (Number.isFinite(parsed) && parsed > 0) {
+                cooldownMs = Math.min(parsed * 1000, 300_000);
+            }
+        }
+        this.cooldownUntil = Date.now() + cooldownMs;
+        logger.warn(`Provider ${this.name} entered cooldown for ${cooldownMs}ms`);
     }
 }

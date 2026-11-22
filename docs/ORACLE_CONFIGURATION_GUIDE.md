@@ -29,7 +29,7 @@ This document outlines the procedures for managing oracle configurations in the 
 
 | Role | Permissions | Responsibilities |
 |------|-------------|------------------|
-| **Admin** | - Configure oracle parameters<br>- Set/remove primary oracles<br>- Set/remove fallback oracles<br>- Pause/resume oracle updates<br>- Update prices directly | - System configuration<br>- Oracle management<br>- Emergency operations |
+| **Admin** | - Configure oracle parameters<br>- Set/remove primary oracles<br>- Set/remove fallback oracles<br>- Pause/resume oracle updates<br>- Configure the oracle signing key | - System configuration<br>- Oracle management<br>- Emergency operations |
 | **Primary Oracle** | - Update prices for registered assets<br>- Read price feeds | - Regular price updates<br>- Market data provision |
 | **Fallback Oracle** | - Update prices when primary is stale<br>- Read fallback price feeds | - Backup price provision<br>- Redundancy support |
 | **Public/Other** | - Read price feeds only | - Price consumption |
@@ -38,7 +38,7 @@ This document outlines the procedures for managing oracle configurations in the 
 
 1. **Admin Operations**: Require admin address verification
 2. **Oracle Operations**: Verify oracle is registered for the asset
-3. **Price Updates**: Validate caller authorization and price data
+3. **Price Updates**: Any relayer may submit a payload signed by the configured Ed25519 oracle key
 4. **Configuration Changes**: Admin-only with additional validation
 
 ## Price Move-Cap Circuit Breaker
@@ -88,6 +88,116 @@ triggering mass liquidations or enabling under-collateralised borrows. The
 * Decreasing the cap takes effect immediately on the next `set_price` call.
 * The cap applies **per asset address**; different assets may have different implicit
   volatility profiles but currently share one global setting.
+
+---
+
+## Oracle Hardening (per-asset staleness, windowed deviation, relayer role)
+
+This section documents the on-chain oracle trust-boundary hardening. It is
+authoritative; where the rest of this document describes aspirational entry
+points (`set_primary_oracle`, `configure_oracle`, …), prefer the functions named
+here.
+
+### 1. Per-asset staleness window
+
+Price freshness was previously hard-coded to 3600 s for every asset. It is now
+configurable per asset.
+
+| Function | Access | Description |
+|---|---|---|
+| `set_oracle_max_age(env, asset, secs)` | Admin only | Sets the max accepted age for `asset`. Bounds: `60 ..= 86_400` seconds. Emits `OracleMaxAgeSetEvent { asset, max_age_secs }`. |
+| `get_oracle_max_age(env, asset)` | Public | Returns `Some(secs)` if overridden, `None` when the protocol default (3600 s) applies. |
+
+`secs == 0` is rejected with `InvalidAmount (1001)`: a zero max age would mark
+every price instantly stale and brick borrowing.
+
+Every freshness check honours the override:
+
+* `set_price` timestamp validation
+* `require_fresh_valuation_prices` / `require_fresh_price_for_key` (borrow,
+  withdraw, liquidate gates)
+* `cross_asset::get_price_for_asset`
+* `position_health_factor` (per-leg, using each asset's own window)
+
+A stable asset can keep the 3600 s default while a volatile asset is tightened to
+60 s; a stale volatile leg rejects a borrow while the stable leg remains usable.
+
+### 2. Time-windowed deviation guard
+
+The per-update `MaxMoveBps` cap only compares against the *previous* update, so
+N updates one second apart can each move `max_move_bps` and walk the price an
+arbitrary distance. A windowed anchor closes that gap.
+
+| Function | Access | Description |
+|---|---|---|
+| `set_move_window_secs(env, secs)` | Admin only | Window length for the deviation guard. Bounds: `1 ..= 86_400` seconds (default 3600). Emits `MoveWindowSetEvent { move_window_secs }`. |
+| `get_move_window_secs(env)` | Public | Returns the configured window length. |
+
+For each asset the contract stores an `OracleAnchor { price, timestamp }`
+(under `DataKey::OracleAnchor(asset)`). On each `set_price`:
+
+1. If no anchor exists (first price) or the window has elapsed since the anchor
+   timestamp, the anchor is **reseeded** at the newly accepted price.
+2. Otherwise the proposed price must be within `max_move_bps` of the anchor
+   price, else `MaxMoveBpsExceeded (5004)`.
+
+The per-update cap is still enforced on top of the windowed guard. With no
+`MaxMoveBps` configured, the guard is a no-op (backward compatible).
+
+### 3. Price relayer role
+
+`set_price` no longer requires the admin key, so an always-online oracle process
+never needs to hold it.
+
+| Function | Access | Description |
+|---|---|---|
+| `set_price_relayer(env, relayer)` | Admin only | Designates the address permitted (alongside the admin) to relay signed prices. Emits `PriceRelayerSetEvent { relayer }`. |
+| `get_price_relayer(env)` | Public | Returns `Some(address)` if configured. |
+
+`set_price(env, caller, asset, price, timestamp, signature)` requires
+`caller == relayer || caller == admin` and `caller.require_auth()`; any other
+address fails with `Unauthorized (1003)`. The ed25519 signature over the
+canonical payload (unchanged, `StellarLendOracle:v2`) is still verified against
+the configured oracle pubkey, so the relayer role only gates *who may submit* an
+otherwise-valid update.
+
+#### Off-chain updater compatibility
+
+The signature **payload format is unchanged**, so the off-chain signer in
+`oracle/` keeps working. The only required config change is on the operator side:
+point the on-chain `set_price` invocation's `caller` at the address registered
+via `set_price_relayer`, and ensure that address (not the admin) signs the
+transaction.
+
+### 4. Price-bounds validation
+
+`set_price_bounds(env, asset, min_price, max_price, force)` now takes a `force`
+flag. When a price is already stored for `asset`, the new bounds must contain it,
+otherwise the call fails with `PriceOutOfBounds (3004)`; passing `force = true`
+explicitly overrides this (for example when the stored price is known to be wrong
+and will be corrected immediately). Bounds with no stored price are always
+accepted.
+
+### Error codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| `1001` | `InvalidAmount` | Max age / window out of range, or bad bounds ordering. |
+| `1002` | `Overflow` | `delta * 10_000` overflowed `i128` during a move check. |
+| `1003` | `Unauthorized` | `set_price` caller is neither relayer nor admin. |
+| `3004` | `PriceOutOfBounds` | Bounds exclude the current price (and `force` was not set). |
+| `5002` | `StaleOracleTimestamp` | Update timestamp is in the future or older than the per-asset max age. |
+| `5004` | `MaxMoveBpsExceeded` | Per-update or windowed deviation bound exceeded. |
+
+### Regression coverage
+
+`stellar-lend/contracts/lending/tests/oracle_hardening_test.rs` (integration
+tests, run with
+`cargo test -p stellarlend-lending --test oracle_hardening_test`) covers:
+`per_asset_max_age`, `walk_attack_blocked`, `window_resets_anchor`,
+`relayer_role`, `bounds_must_contain_current`, `first_price_still_allowed`,
+future-timestamp rejection, idempotent replay, and overflow on the move
+calculation.
 
 ---
 
@@ -248,9 +358,10 @@ contract.configure_oracle(admin, new_config)
 
 #### Tested Boundary Behaviour
 
-The lending contract currently hardcodes `DEFAULT_ORACLE_MAX_AGE_SECS = 3600`.
-The oracle-consumption paths in `borrow` and `liquidate` enforce that boundary
-at the point of use:
+The lending contract uses `DEFAULT_ORACLE_MAX_AGE_SECS = 3600` unless a
+per-asset override has been set via `set_oracle_max_age` (see the hardening
+section above). The oracle-consumption paths in `borrow` and `liquidate` enforce
+the effective boundary at the point of use:
 
 - `age <= 3600` seconds: accepted
 - `age == 3601` seconds: rejected with `LendingError::StaleOracleTimestamp`
@@ -582,8 +693,12 @@ Monitor both events to detect oracle health issues in production.
 To support multi-asset operations or require price availability checks on specific assets:
 - **`set_collateral_asset(env, asset)`**: Admin-only method to configure the address of the asset used as collateral.
 - **`get_collateral_asset(env)`**: Returns the configured collateral asset address, if any.
+- **`set_debt_asset(env, asset)`**: Admin-only method to configure the debt asset used for single-position valuation.
+- **`get_debt_asset(env)`**: Returns the configured debt asset address, if any.
 
-If a collateral asset is configured, both `borrow` and `liquidate` operations (and view functions like `get_position` and `get_health_factor`) require a valid on-chain `OraclePrice` record to value the collateral. If the price record is absent or cannot be loaded, the contract rejects the transaction with a `PriceUnavailable (5004)` error code.
+When both assets are configured and differ, `borrow`, `withdraw`, and `liquidate` require fresh prices for both assets and value the collateral and debt in the oracle's seven-decimal scale. Liquidation converts the repaid debt value into collateral token units before applying the incentive. If the debt asset is unset or matches the collateral asset, the legacy raw-unit health-factor behavior is retained.
+
+Read-only views remain callable with stale prices. Use `get_position_v2` to inspect its `price_stale` flag; the view reports the health factor from the last stored prices when available.
 
 ### New files added
 

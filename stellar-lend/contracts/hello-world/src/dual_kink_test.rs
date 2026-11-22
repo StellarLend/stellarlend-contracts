@@ -6,11 +6,10 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env};
 use crate::interest_rate::{
-    compute_borrow_rate, initialize_interest_rate_config, set_protocol_totals,
-    InterestRateConfig,
+    compute_borrow_rate, initialize_interest_rate_config, set_protocol_totals, InterestRateConfig,
 };
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn with_contract<F, T>(env: &Env, f: F) -> T
 where
@@ -21,8 +20,8 @@ where
 }
 
 fn init(env: &Env, admin: Address, total_deposits: i128, total_borrows: i128) {
-    initialize_interest_rate_config(env, admin).unwrap();
-    set_protocol_totals(env, total_deposits, total_borrows).unwrap();
+    initialize_interest_rate_config(env).unwrap();
+    set_protocol_totals(env, admin, total_deposits, total_borrows).unwrap();
 }
 
 #[test]
@@ -32,7 +31,10 @@ fn zero_utilization_uses_base_rate() {
     with_contract(&env, |admin| {
         init(&env, admin, 1_000, 0);
         let config = InterestRateConfig::default();
-        assert_eq!(compute_borrow_rate(0, 0, &config).unwrap(), config.base_rate_bps);
+        assert_eq!(
+            compute_borrow_rate(0, 0, &config).unwrap(),
+            config.base_rate_bps
+        );
     });
 }
 
@@ -43,16 +45,21 @@ fn at_first_kink_uses_first_segment_endpoint() {
     with_contract(&env, |admin| {
         init(&env, admin, 1_000, 800); // utilization = 8_000 bps (kink1)
         let config = InterestRateConfig::default();
-        let expected = config.base_rate_bps
+        let expected = config
+            .base_rate_bps
             .checked_add(
-                config.kink_utilization_bps
+                config
+                    .kink_utilization_bps
                     .checked_mul(config.multiplier_bps)
                     .unwrap()
                     .checked_div(config.kink_utilization_bps)
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(compute_borrow_rate(config.kink_utilization_bps, 0, &config).unwrap(), expected);
+        assert_eq!(
+            compute_borrow_rate(config.kink_utilization_bps, 0, &config).unwrap(),
+            expected
+        );
     });
 }
 
@@ -65,7 +72,8 @@ fn mid_between_kinks_uses_second_segment() {
         let config = InterestRateConfig::default();
         let utilization = 8_500;
         let denominator = config.kink2_bps - config.kink_utilization_bps;
-        let expected = config.base_rate_bps
+        let expected = config
+            .base_rate_bps
             .checked_add(config.multiplier_bps)
             .unwrap()
             .checked_add(
@@ -78,7 +86,10 @@ fn mid_between_kinks_uses_second_segment() {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(compute_borrow_rate(utilization, 0, &config).unwrap(), expected);
+        assert_eq!(
+            compute_borrow_rate(utilization, 0, &config).unwrap(),
+            expected
+        );
     });
 }
 
@@ -90,11 +101,13 @@ fn at_second_kink_uses_second_segment_endpoint() {
         init(&env, admin, 1_000, 900); // utilization = 9_000 bps (kink2)
         let config = InterestRateConfig::default();
         let denominator = config.kink2_bps - config.kink_utilization_bps;
-        let expected = config.base_rate_bps
+        let expected = config
+            .base_rate_bps
             .checked_add(config.multiplier_bps)
             .unwrap()
             .checked_add(
-                config.kink2_bps
+                config
+                    .kink2_bps
                     .checked_sub(config.kink_utilization_bps)
                     .unwrap()
                     .checked_mul(config.jump_multiplier_bps)
@@ -103,7 +116,10 @@ fn at_second_kink_uses_second_segment_endpoint() {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(compute_borrow_rate(config.kink2_bps, 0, &config).unwrap(), expected);
+        assert_eq!(
+            compute_borrow_rate(config.kink2_bps, 0, &config).unwrap(),
+            expected
+        );
     });
 }
 
@@ -116,7 +132,8 @@ fn high_utilization_uses_third_segment() {
         let config = InterestRateConfig::default();
         let utilization = 9_800;
         let denominator = 10_000 - config.kink2_bps;
-        let expected = config.base_rate_bps
+        let expected = config
+            .base_rate_bps
             .checked_add(config.multiplier_bps)
             .unwrap()
             .checked_add(config.jump_multiplier_bps)
@@ -131,7 +148,10 @@ fn high_utilization_uses_third_segment() {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(compute_borrow_rate(utilization, 0, &config).unwrap(), expected);
+        assert_eq!(
+            compute_borrow_rate(utilization, 0, &config).unwrap(),
+            expected
+        );
     });
 }
 

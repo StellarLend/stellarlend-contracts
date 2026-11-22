@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a637b779bfe47f5b63671b43fbd13e00e65d5c1d02c0394f2e84b6cc08ce9ed8 # shrinks to debt = 8072, threshold = 6000, close_factor = 1000, incentive = 0, elapsed = 0, repay_ratio_bps = 100

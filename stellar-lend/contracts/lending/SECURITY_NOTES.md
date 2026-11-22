@@ -15,11 +15,108 @@ In Soroban, contract logic guarantees atomicity. However, as an added measure ag
 - All external calls to update state (e.g. `save_deposit_position`) occur *before* external token transfers where applicable (the Checks-Effects-Interactions pattern).
 - High-risk operations are guarded by global pause mappings which an Admin or Guardian can engage via the pause module if anomalous behavior occurs.
 
+## ⚠️ P0 Finding — Missing Token Custody on Core Position Operations
+
+> **Correction notice:** A previous version of this document incorrectly
+> asserted that *"All position operations (`deposit`, `borrow`, `repay`,
+> `withdraw`) now explicitly enforce token transfers via the Soroban
+> `token::Client`."* **That claim is factually wrong** for the base
+> entrypoints in the canonical lending contract. It is recorded here as a
+> finding so that auditors, integrators, and reviewers reading this file
+> cannot miss it. Trusting the prior claim would lead a reviewer to
+> believe user funds are safely custodied by the contract on deposit;
+> they are not.
+
+### What the base entrypoints actually do
+
+The base `LendingContract` entrypoints in `src/lib.rs` are **accounting-only**:
+they mutate protocol counters, but they perform **no token transfers**.
+
+| Entrypoint (in `src/lib.rs`) | Real `TokenClient::transfer` / `transfer_from` call? | Behaviour |
+|---|---|---|
+| `deposit` (`src/lib.rs#L1118`) | **No.** | Increments `DataKey::Collateral(user)` and `TotalDeposits` via `checked_add`. No tokens are pulled. |
+| `withdraw` (`src/lib.rs#L1162`) | **No.** | Decrements `DataKey::Collateral(user)` and `TotalDeposits` via `checked_sub`. No tokens are pushed. |
+| `borrow` (`src/lib.rs#L1247`) | **No.** | Increments `Debt(user)` and `TotalDebt`. No tokens are pushed to the borrower. |
+| `repay` (`src/lib.rs#L1809`) | **No.** | Decrements `Debt(user)` and `TotalDebt`. No tokens are pulled from the user. |
+| `borrow_against_collateral` (`src/lib.rs#L1324`) | **No.** | Cross-asset isolation-aware variant of `borrow`; mutates `Debt(user)` / `TotalDebt` only. |
+| `repay_against_collateral` (`src/lib.rs#L1392`) | **No.** | Cross-asset isolation-aware variant of `repay`; mutates `Debt(user)` / `TotalDebt` only. |
+| `liquidate` (`src/lib.rs#L1524`) | **Yes** (only entry in the file). | Pulls debt-token from the liquidator into the contract, then pushes seized collateral to the liquidator. |
+| `flash_loan` (`src/lib.rs#L1988`) | **No.** | Updates internal `Treasury` / receiver-balance state and invokes the receiver via `env.invoke_contract::<Val>(&receiver, &Symbol::new(&env, "on_flash_loan"), …)` (`L2043`–`L2045`). The actual token movement is delegated to the receiver, which is expected to use `TokenClient` to move tokens into and out of the lending contract; the lending contract itself performs no transfer. |
+
+As of this revision, the only references to `TokenClient` in the entire
+`src/lib.rs` file are the `use soroban_sdk::token::Client as TokenClient;`
+import (`L147`) and the `TokenClient::new(...)` / `.transfer(...)` calls
+inside `liquidate` (~`L1643`–`L1648`). Every other entrypoint listed
+above — `deposit`, `withdraw`, `borrow`, `repay`,
+`borrow_against_collateral`, `repay_against_collateral`, `flash_loan` —
+neither constructs a `TokenClient` nor calls `.transfer(...)` or
+`.transfer_from(...)` (verifiable via `rg 'TokenClient' stellar-lend/contracts/lending/src/lib.rs`
+or `rg 'TokenClient|\\.transfer(_from)?\\(' stellar-lend/contracts/lending/src/lib.rs`).
+If a future revision re-introduces `TokenClient::new` inside any of those
+entrypoints, this section **must** be updated alongside the code change;
+otherwise it silently rots.
+
+### Why this is a P0 finding
+
+- Calling `deposit(user, amount)` **credits the user's collateral
+  counter** without taking custody of any underlying tokens from the user.
+  The borrowing contract does not hold user funds on deposit.
+- Calling `borrow(user, amount)` **increments the user's debt counter**
+  without funding the user.
+- Calling `repay(user, amount)` **decrements the user's debt counter**
+  without pulling tokens from the user.
+- Calling `withdraw(user, amount)` **decrements the user's collateral
+  counter** without pushing tokens back.
+
+Any integrator, front-end, or protocol-managed flow that treats the
+resulting `Collateral(user) / Debt(user)` / `TotalDeposits / TotalDebt`
+counters as denoting **custodied funds** — without separately moving the
+matching tokens — permits users to mint **phantom collateral** and borrow
+against unbacked positions. This drains protocol liquidity and other
+depositors.
+
+### Remediation paths required today
+
+Until the canonical contract is extended to custody tokens on
+`deposit` / `withdraw` / `borrow` / `repay`, **integrators must move
+funds out-of-band** before or after calling the counter-mutating
+entrypoint. Concretely:
+
+1. **Deposits and repays:** route through the pull-based `receive`
+   entrypoint documented in
+   [`token_receiver.md`](./token_receiver.md), which calls
+   `token::Client::transfer_from` on the user's approved allowance
+   **before** applying the position update.
+2. **Withdrawals:** push tokens to the user (or via a wrapper) before
+   calling `withdraw`; the base `withdraw` does not move tokens.
+3. **Borrows:** push borrowed funds to the user (or via a wrapper)
+   before or after calling `borrow`; the base `borrow` does not move
+   tokens.
+
+See also:
+- [`token_receiver.md`](./token_receiver.md) — pull-based `receive`
+  entrypoint and missing-custody discussion.
+- `src/lib.rs#L1524` (`liquidate`) — the **only** function in the
+  file that performs real `TokenClient` transfers; useful as a
+  reference for the canonical transfer framing this contract should
+  eventually adopt for the four core position operations.
+
+---
+
 ## Cross-Asset Module Hardening
-- **Token Transfer Enforcement:** All position operations (`deposit`, `borrow`, `repay`, `withdraw`) now explicitly enforce token transfers via the Soroban `token::Client`.
+
+> **⚠️ Retracted claim.** A previous version of this section listed *"Token
+> Transfer Enforcement: All position operations (`deposit`, `borrow`,
+> `repay`, `withdraw`) now explicitly enforce token transfers via the
+> Soroban `token::Client`."* That bullet has been **removed** because it
+> was factually incorrect — see the **⚠️ P0 Finding — Missing Token Custody
+> on Core Position Operations** section above. The bullets below apply to
+> **cross-asset** (`src/cross_asset.rs`) behaviours only and must not be
+> conflated with the base `src/lib.rs` entrypoints.
+
 - **Granular Pause Support:** Cross-asset operations now respect specific `PauseType` settings (e.g. `PauseType::Borrow`), allowing for targeted emergency interventions.
 - **Event-Driven Transparency:** Each significant operation emits a unique contract event (`CrossDepositEvent`, etc.), facilitating robust off-chain monitoring and audit trails.
-- **Initialization Safety:** The `initialize_admin` function now returns a `Result` and prevents re-initialization if an admin is already set.
+- **Initialization Safety:** The `initialize` function (which a previous revision of this document mis-named `initialize_admin`) returns `Result<(), LendingError>` and prevents re-initialization with a typed `LendingError::AlreadyInitialized` error if an admin is already set, rather than silently overwriting.
 
 ## Arithmetic Bounds
 Protocol parameters strictly utilize `checked_add`, `checked_sub`, `checked_mul`, and `checked_div` to prevent overflow and underflow paths. Zero-amount and uninitialized parameter paths intentionally return structured `ContractError` values rather than panicking where possible.
