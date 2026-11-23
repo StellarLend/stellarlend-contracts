@@ -46,6 +46,42 @@ describe('Hook HMAC middleware', () => {
     expect(response.body).toEqual({ success: true, message: 'Hook authenticated' });
   });
 
+  it('keeps the no-suffix hook route working', async () => {
+    const timestamp = Date.now().toString();
+    const response = await request(app)
+      .post('/api/lending/hooks')
+      .set('X-Hook-Timestamp', timestamp)
+      .set('X-Hook-Signature', sign(timestamp, rawBody))
+      .send(payload);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ success: true, message: 'Hook authenticated' });
+  });
+
+  it('returns a JSON 404 for an unknown hook name after HMAC verification', async () => {
+    const timestamp = Date.now().toString();
+    const response = await request(app)
+      .post('/api/lending/hooks/unknown')
+      .set('X-Hook-Timestamp', timestamp)
+      .set('X-Hook-Signature', sign(timestamp, rawBody))
+      .send(payload);
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: 'Not Found' });
+  });
+
+  it('continues supported indexer hook requests through the controller', async () => {
+    const timestamp = Date.now().toString();
+    const response = await request(app)
+      .post('/api/lending/hooks/indexer')
+      .set('X-Hook-Timestamp', timestamp)
+      .set('X-Hook-Signature', sign(timestamp, rawBody))
+      .send(payload);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ success: true, message: 'Hook authenticated' });
+  });
+
   it('rejects hook requests with missing headers', async () => {
     const response = await request(app).post(hookPath).send(payload);
 

@@ -1,3 +1,4 @@
+
 import crypto from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
@@ -60,5 +61,6 @@ describe('AdminServer security', () => {
 
         expect(response.status).toBe(403);
         await server.stop();
+
     });
 });

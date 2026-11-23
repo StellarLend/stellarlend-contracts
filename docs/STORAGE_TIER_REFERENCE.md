@@ -7,6 +7,7 @@ This reference documents the storage tiers for the lending contract's canonical 
 | Tier | Persistence model | Current lending-contract use |
 |------|-------------------|------------------------------|
 | `persistent()` | Independent entries that require rent/TTL management. | User positions, protocol accounting totals, flash-loan balances, treasury liquidity, deposit caps, and oracle price records. |
+| `persistent()` (paged borrower index) | Fixed-size borrower pages (`BorrowerPage(u32)`) plus a `BorrowerCount` key, bumped with the global TTL policy. | Borrower registry used by resumable `migrate_positions` and reserve-factor checkpoint work; iterated `(start_page, max_pages)` at a time. |
 | `instance()` | Contract-instance state bumped with the instance. | Admin state, oracle public keys, pause/emergency state, fee and minimum/rate configuration, and transient flash-loan guard state. |
 | `temporary()` | Ledger-scoped or short-lived entries. | Per-asset flash-loan reservation counter (`ReservedForFlashLoan(Address)`). |
 
@@ -24,6 +25,7 @@ To prevent archival of contract instance storage and global protocol keys on Sor
 ### Storage Tier Choices & Trade-offs
 - **Instance Storage**: Holds single-instance protocol configuration and state (e.g., `Admin`, `EmergencyState`, `BorrowIndex`, `LastIndexUpdate`). Bumping instance storage covers all instance data in a single operation. Every state-mutating entrypoint begins with `require_initialized(&env)?;`, which automatically triggers `ttl::extend_instance_ttl(env)`.
 - **Global Persistent Storage**: Keys that represent large or dynamic collections (e.g., `TotalDebt`, `TotalDeposits`, `OraclePrice(Asset)`, `PriceMin/Max`, `DepositCap`, `BadDebt`, `UtilizationHistory`, `TotalDebtAsset`, `TotalCollateralAsset`, `AssetIsolation`, `IsolationDebt`) are stored as `persistent()` entries. Keeping them in persistent storage prevents instance storage bloat (which increases transaction fees on every contract call).
+- **Paged Borrower Index**: The borrower registry is no longer a single `Vec<Address>` in instance storage. Borrowers are appended to persistent `BorrowerPage(u32)` chunks of a fixed page size, and the `BorrowerCount` key records the total. Instance storage holds only the derived page count, so the fixed per-call instance load does not grow with the number of borrowers. Iteration (`migrate_positions`, reserve-factor checkpoint) is resumable via `(start_page, max_pages)`. Existing `BorrowerList` data is read as a fallback during upgrade and migrated into pages on first resumable pass.
 - **Safe Trapping Prevention**: Bumping persistent keys checks `env.storage().persistent().has(key)` first to ensure non-existent keys are never passed to `extend_ttl`, avoiding Soroban host traps.
 - **Rent Fee Optimization**: Extending TTL only when the remaining TTL is below `THRESHOLD` (500,000 ledgers) prevents wasteful rent fees on every transaction during active usage periods.
 
@@ -45,6 +47,9 @@ Every current `DataKey` variant appears exactly once in this table.
 | `BorrowRateCache(u32)` | `persistent()` | Cached borrow-rate sample | No dedicated TTL helper. |
 | `FlashActive` | `instance()` | `bool` flash-loan reentrancy guard | Instance lifetime; set during the flash-loan callback flow and cleared afterward. |
 | `FlashFeeBps` | `instance()` | `i128` flash-loan fee in basis points | Instance lifetime (extended on every entrypoint mutation). |
+| `BorrowerList` | `instance()` (legacy) | `Vec<Address>` legacy unbounded borrower list | Read-only fallback during upgrade; drained into `BorrowerPage` chunks by the resumable migration and then removed. Do not write new entries. |
+| `BorrowerPage(u32)` | `persistent()` | `Vec<Address>` fixed-size chunk of registered borrowers | Extended alongside global persistent keys via `ttl::bump_global` on `register_borrower` and by keeper `bump_ttl()`. |
+| `BorrowerCount` | `persistent()` | `u32` total registered borrowers across all pages | Extended via `ttl::bump_global` on `register_borrower` and by keeper `bump_ttl()`. |
 | `MaxFlashUtilizationBps` | `instance()` | `i128` max flash-loan utilization in basis points | Instance lifetime (extended on every entrypoint mutation). |
 | `BorrowMinAmount` | `instance()` | `i128` minimum borrow amount | Instance lifetime (extended on every entrypoint mutation); defaults to `0` when absent. |
 | `Admin` | `instance()` | `Address` current admin | Instance lifetime (extended on every entrypoint mutation). |
@@ -82,6 +87,7 @@ Every current `DataKey` variant appears exactly once in this table.
 ### Automatic Trigger Points:
 - **Every Mutation**: All mutating entrypoints call `require_initialized(&env)?;` or `initialize(...)`, which calls `ttl::extend_instance_ttl(&env)`. If instance TTL < 500,000, it is extended to `1_000_000` ledgers.
 - **Deposit**: Bumps `TotalDeposits`, `DepositCap`, and user collateral TTL.
+- **Borrower Registration**: `register_borrower` appends to the current `BorrowerPage(n)` (creating a new page when the current one is full), bumps `BorrowerCount`, and extends the touched page TTL.
 - **Withdraw**: Bumps `TotalDeposits` and user collateral TTL.
 - **Borrow**: Bumps `TotalDebt` (and `TotalDebtAsset` in cross-asset flows) and user debt TTL.
 - **Repay**: Bumps `TotalDebt` (and `TotalDebtAsset` in cross-asset flows) and user debt TTL.
@@ -90,7 +96,7 @@ Every current `DataKey` variant appears exactly once in this table.
 - **Utilization Samples**: Bumps `UtilizationHistory` on each record.
 
 ### Keeper Entrypoints:
-- `bump_ttl(env)`: Admin-free, permissionless entrypoint. Extends instance TTL and all core global persistent keys (`TotalDebt`, `TotalDeposits`, `BadDebt`, `DepositCap`, `UtilizationHistory`, and configured valuation assets).
+- `bump_ttl(env)`: Admin-free, permissionless entrypoint. Extends instance TTL and all core global persistent keys (`TotalDebt`, `TotalDeposits`, `BadDebt`, `DepositCap`, `UtilizationHistory`, `BorrowerCount`, and configured valuation assets).
 - `bump_asset_ttl(env, asset)`: Admin-free, permissionless entrypoint to extend instance TTL and all persistent keys for a specific asset (`OraclePrice`, `PriceMin`, `PriceMax`, `AssetIsolation`, `IsolationDebt`, `TotalDebtAsset`, `TotalCollateralAsset`).
 
 ## Migration Notes
@@ -98,3 +104,4 @@ Every current `DataKey` variant appears exactly once in this table.
 - Treat `DataKey` as append-only. Do not reorder or reuse variants for a new value type.
 - Update both `docs/storage.md` and this compact reference whenever a storage tier, key, or TTL policy changes.
 - Add or update tests when new storage keys are introduced.
+- Borrower paging: `BorrowerList` is retained as a read-only legacy key until the resumable migration has drained it; after full drain it must be removed and never re-written. Benchmark evidence (`borrow_cost_does_not_grow_with_borrower_count`, 10 vs 1,000 borrowers) should be re-run whenever the page size changes.

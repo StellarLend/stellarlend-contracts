@@ -93,7 +93,7 @@ fn read_accounting_state(
             .persistent()
             .get(&DataKey::TotalDebt)
             .unwrap_or(0);
-        let expected_reserve = invariants::compute_expected_reserve(env, contract_id);
+        let expected_reserve = invariants::compute_expected_reserve(env, contract_id).unwrap();
         (
             collateral,
             debt,
