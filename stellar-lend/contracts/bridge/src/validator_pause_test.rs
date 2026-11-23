@@ -14,9 +14,18 @@ fn sign_payload(signing_key: &SigningKey, payload_bytes: &BytesN<32>) -> BytesN<
     BytesN::from_array(&Env::default(), &signature.to_bytes())
 }
 
+fn make_validators(env: &Env) -> Vec<BytesN<32>> {
+    let mut validators = Vec::new(env);
+    validators.push_back(BytesN::from_array(env, &[1u8; 32]));
+    validators.push_back(BytesN::from_array(env, &[2u8; 32]));
+    validators.push_back(BytesN::from_array(env, &[3u8; 32]));
+    validators
+}
+
 #[test]
-test_guardian_pause_unpause_happy_path() {
+fn test_guardian_pause_unpause_happy_path() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(Bridge, ());
     let client = BridgeClient::new(&env, &contract_id);
 
@@ -33,8 +42,10 @@ test_guardian_pause_unpause_happy_path() {
     validators.push_back(BytesN::from_array(&env, &[3u8; 32]));
 
     let bridge_id = Bytes::from_slice(&env, b"test_bridge");
+    let admin = Address::generate(&env);
     client.initialize(&validators, &bridge_id);
-    client.set_guardian(&guardian_pk);
+    client.set_admin(&admin);
+    client.set_guardian(&admin, &guardian_pk).unwrap();
 
     assert_eq!(client.get_guardian_nonce(), 0);
 
@@ -57,8 +68,9 @@ test_guardian_pause_unpause_happy_path() {
 }
 
 #[test]
-test_guardian_replay_and_cross_bridge() {
+fn test_guardian_replay_and_cross_bridge() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id_a = env.register(Bridge, ());
     let contract_id_b = env.register(Bridge, ());
     let client_a = BridgeClient::new(&env, &contract_id_a);
@@ -69,16 +81,18 @@ test_guardian_replay_and_cross_bridge() {
     let guardian_pk = BytesN::from_array(&env, &guardian_key.verifying_key().to_bytes());
 
     let val = BytesN::from_array(&env, &[1u8; 32]);
-    let mut validators = Vec::new(&env);
-    validators.push_back(val.clone());
-    validators.push_back(BytesN::from_array(&env, &[2u8; 32]));
-    validators.push_back(BytesN::from_array(&env, &[3u8; 32]));
+    let validators = make_validators(&env);
+
+    let admin_a = Address::generate(&env);
+    let admin_b = Address::generate(&env);
 
     client_a.initialize(&validators, &Bytes::from_slice(&env, b"bridge_a"));
-    client_a.set_guardian(&guardian_pk);
+    client_a.set_admin(&admin_a);
+    client_a.set_guardian(&admin_a, &guardian_pk).unwrap();
 
     client_b.initialize(&validators, &Bytes::from_slice(&env, b"bridge_b"));
-    client_b.set_guardian(&guardian_pk);
+    client_b.set_admin(&admin_b);
+    client_b.set_guardian(&admin_b, &guardian_pk).unwrap();
 
     let expires = u64::MAX;
     let payload_a = client_a.guardian_action_payload(&1u32, &val, &expires);
@@ -95,4 +109,46 @@ test_guardian_replay_and_cross_bridge() {
     // Cross-bridge replay on B fails because bridge_id / contract_id differ
     let err_cross = client_b.try_pause_validator(&val, &sig_a, &expires);
     assert!(err_cross.is_err());
+}
+
+#[test]
+fn test_set_guardian_requires_admin() {
+    let env = Env::default();
+    // No mock_all_auths — auth must come from the caller.
+    let contract_id = env.register(Bridge, ());
+    let client = BridgeClient::new(&env, &contract_id);
+
+    let validators = make_validators(&env);
+    client.initialize(&validators, &Bytes::from_slice(&env, b"bridge_auth_test"));
+
+    let guardian_pk = BytesN::from_array(&env, &[9u8; 32]);
+
+    // No admin set yet — must fail.
+    let no_admin_caller = Address::generate(&env);
+    let result = client.try_set_guardian(&no_admin_caller, &guardian_pk);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_guardian_non_admin_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Bridge, ());
+    let client = BridgeClient::new(&env, &contract_id);
+
+    let validators = make_validators(&env);
+    client.initialize(&validators, &Bytes::from_slice(&env, b"bridge_non_admin_test"));
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let non_admin = Address::generate(&env);
+    let guardian_pk = BytesN::from_array(&env, &[9u8; 32]);
+
+    let result = client.try_set_guardian(&non_admin, &guardian_pk);
+    // Expect Err(Ok(NotAdmin))
+    assert!(
+        matches!(result, Err(Ok(BridgeError::NotAdmin))),
+        "expected NotAdmin, got {:?}", result
+    );
 }

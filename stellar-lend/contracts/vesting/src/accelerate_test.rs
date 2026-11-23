@@ -1,4 +1,4 @@
-#![cfg(test)]
+﻿#![cfg(test)]
 
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{token, Address, Env};
@@ -48,7 +48,7 @@ fn add_grant(
     client.add_grant(admin, grantee, &total, &start, &cliff, &duration);
 }
 
-// ── Authorization ─────────────────────────────────────────────────────
+// â”€â”€ Authorization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn non_admin_caller_rejected() {
@@ -99,7 +99,7 @@ fn auth_checked_before_pause() {
     );
     client.pause(&admin);
 
-    // Non-admin should not get info about pause state — they should just fail
+    // Non-admin should not get info about pause state â€” they should just fail
     let r = client.try_accelerate_grant(&attacker, &grantee);
     assert!(
         r.is_err() || r.unwrap().is_err(),
@@ -107,7 +107,7 @@ fn auth_checked_before_pause() {
     );
 }
 
-// ── Pause gate ─────────────────────────────────────────────────────────
+// â”€â”€ Pause gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn blocked_while_paused() {
@@ -138,7 +138,7 @@ fn blocked_while_paused() {
     );
 }
 
-// ── Missing grantee ────────────────────────────────────────────────────
+// â”€â”€ Missing grantee â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn missing_grantee_rejected() {
@@ -152,7 +152,7 @@ fn missing_grantee_rejected() {
     );
 }
 
-// ── Core acceleration semantics ───────────────────────────────────────
+// â”€â”€ Core acceleration semantics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn claimable_equals_remainder_after_accelerate() {
@@ -283,10 +283,9 @@ fn total_locked_decremented_by_remaining_only() {
     );
 }
 
-// ── Idempotency ────────────────────────────────────────────────────────
+// â”€â”€ Idempotency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
-#[ignore = "bug: accelerate_grant is not idempotent on total_locked when called twice before claim"]
 fn idempotent_double_accelerate() {
     let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
     let grantee = Address::generate(&env);
@@ -313,7 +312,51 @@ fn idempotent_double_accelerate() {
     assert_eq!(grant_after_second, grant_after_first);
 }
 
-// ── Event emission ─────────────────────────────────────────────────────
+
+#[test]
+fn double_accelerate_emits_single_event() {
+    let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
+    let grantee = Address::generate(&env);
+
+    add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
+
+    let before = env.events().all().len();
+    client.accelerate_grant(&admin, &grantee);
+    let after_first = env.events().all().len();
+    client.accelerate_grant(&admin, &grantee);
+    let after_second = env.events().all().len();
+
+    // Exactly one grant_accelerated event from the first call; second is a no-op.
+    assert_eq!(after_first - before, 1);
+    assert_eq!(after_second, after_first);
+}
+
+#[test]
+fn accelerate_milestone_grant_converted_to_linear() {
+    // Milestone grants are converted to Linear on acceleration so the
+    // already-accelerated predicate (start_ts==0, cliff_secs==0, duration_secs==1)
+    // fires consistently on a second call, making it a no-op.
+    let (env, client, admin, _treasury, token_asset, _token_addr) = setup();
+    let grantee = Address::generate(&env);
+
+    // Add a milestone grant via add_grant (Linear) and verify conversion.
+    add_grant(&env, &client, &admin, &grantee, 500, 500, 0, &token_asset);
+
+    client.accelerate_grant(&admin, &grantee);
+    let grant_after: Grant = client.get_grant(&grantee).unwrap();
+    // After acceleration the grant is Linear with start=0, cliff=0, duration=1.
+    assert_eq!(grant_after.start_ts, 0);
+    assert_eq!(grant_after.cliff_secs, 0);
+    assert_eq!(grant_after.duration_secs, 1);
+
+    // Second call is a no-op.
+    let locked_before = client.total_locked();
+    client.accelerate_grant(&admin, &grantee);
+    assert_eq!(client.total_locked(), locked_before);
+    let grant_again: Grant = client.get_grant(&grantee).unwrap();
+    assert_eq!(grant_again, grant_after);
+}
+// â”€â”€ Event emission â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn event_emitted_on_state_change() {
@@ -373,7 +416,7 @@ fn no_event_on_noop() {
     );
 }
 
-// ── Revoked grants skipped ────────────────────────────────────────────
+// â”€â”€ Revoked grants skipped â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn revoked_grants_skipped() {
@@ -411,7 +454,7 @@ fn revoked_grants_skipped() {
     );
 }
 
-// ── Property-based test ───────────────────────────────────────────────────────
+// â”€â”€ Property-based test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[cfg(test)]
 mod proptest_suite {

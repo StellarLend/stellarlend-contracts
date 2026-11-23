@@ -71,6 +71,16 @@ const reloadPayloadSchema = z
     .refine(data => Boolean(data.validatorConfig || data.bounds), {
         message: 'Payload must include validatorConfig or bounds',
     });
+const MAX_BODY_BYTES = 64 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
+const HEADERS_TIMEOUT_MS = 10_000;
+
+class AdminBodyError extends Error {
+    constructor(message: string, public readonly statusCode: number) {
+        super(message);
+        this.name = 'AdminBodyError';
+    }
+}
 
 export class AdminServer {
     private server?: http.Server;
@@ -86,7 +96,11 @@ export class AdminServer {
 
     start(): Promise<void> {
         return new Promise((resolve, reject) => {
-            this.server = http.createServer(this.requestHandler.bind(this));
+            this.server = http.createServer((req, res) => {
+                void this.requestHandler(req, res);
+            });
+            this.server.requestTimeout = REQUEST_TIMEOUT_MS;
+            this.server.headersTimeout = HEADERS_TIMEOUT_MS;
 
             this.server.once('error', reject);
             this.server.listen(this.port, () => {
@@ -114,44 +128,56 @@ export class AdminServer {
         });
     }
 
-    private async requestHandler(req: IncomingMessage, res: ServerResponse) {
-        const { url, method, headers } = req;
+    private async requestHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+        try {
+            const { url, method, headers } = req;
 
-        if (url !== '/reload-config' || method !== 'POST') {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Not found' }));
-            return;
-        }
+            if (url !== '/reload-config' || method !== 'POST') {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Not found' }));
+                return;
+            }
 
-        const signature = headers['x-signature'];
-        if (!signature || Array.isArray(signature)) {
-            this.sendResponse(res, 401, { error: 'Missing signature header' });
-            return;
-        }
+            const contentType = headers['content-type'];
+            if (typeof contentType === 'string' && !contentType.toLowerCase().startsWith('application/json')) {
+                this.sendResponse(res, 415, { error: 'Content-Type must be application/json' });
+                return;
+            }
 
         const rawBody = await this.readBody(req);
         if (!rawBody || rawBody.length === 0) {
             this.sendResponse(res, 400, { error: 'Empty request body' });
             return;
         }
+            const signature = headers['x-signature'];
+            if (!signature || Array.isArray(signature)) {
+                this.sendResponse(res, 401, { error: 'Missing signature header' });
+                return;
+            }
 
-        if (!this.verifySignature(rawBody, signature)) {
-            this.sendResponse(res, 403, { error: 'Invalid signature' });
-            return;
-        }
+            const rawBody = await this.readBody(req);
+            if (!rawBody) {
+                this.sendResponse(res, 400, { error: 'Empty request body' });
+                return;
+            }
 
-        let payload: unknown;
-        try {
-            payload = JSON.parse(rawBody.toString('utf8'));
-        } catch (error) {
-            this.sendResponse(res, 400, { error: 'Invalid JSON body' });
-            return;
-        }
+            if (!this.verifySignature(rawBody, signature)) {
+                this.sendResponse(res, 403, { error: 'Invalid signature' });
+                return;
+            }
 
-        if (typeof payload !== 'object' || payload === null) {
-            this.sendResponse(res, 400, { error: 'Payload must be an object' });
-            return;
-        }
+            let payload: unknown;
+            try {
+                payload = JSON.parse(rawBody.toString('utf8'));
+            } catch {
+                this.sendResponse(res, 400, { error: 'Invalid JSON body' });
+                return;
+            }
+
+            if (typeof payload !== 'object' || payload === null) {
+                this.sendResponse(res, 400, { error: 'Payload must be an object' });
+                return;
+            }
 
         const parseResult = reloadPayloadSchema.safeParse(payload);
         if (!parseResult.success) {
@@ -181,19 +207,91 @@ export class AdminServer {
                 status: 'ok',
                 updatedBounds: Object.keys(normalizedBounds),
             });
+            const body = payload as {
+                validatorConfig?: Partial<ValidatorConfig>;
+                bounds?: Record<string, { minPrice: number; maxPrice: number }>;
+            };
+
+            if (!body.validatorConfig && !body.bounds) {
+                this.sendResponse(res, 400, { error: 'Payload must include validatorConfig or bounds' });
+                return;
+            }
+
+            const bounds = this.normalizeBounds(body.bounds ?? {});
+            if (bounds instanceof Error) {
+                this.sendResponse(res, 400, { error: bounds.message });
+                return;
+            }
+
+            try {
+                this.validator.reloadConfig(body.validatorConfig ?? {}, bounds);
+                this.sendResponse(res, 200, { status: 'ok', updatedBounds: Object.keys(bounds) });
+            } catch (error) {
+                logger.error('Failed to reload validator config', { error });
+                this.sendResponse(res, 500, { error: 'Unable to reload config' });
+            }
         } catch (error) {
-            logger.error('Failed to reload validator config', { error });
-            this.sendResponse(res, 500, { error: 'Unable to reload config' });
+            if (error instanceof AdminBodyError) {
+                logger.warn('Admin request body rejected', { statusCode: error.statusCode, error: error.message });
+                if (!res.headersSent) this.sendResponse(res, error.statusCode, { error: error.message });
+                return;
+            }
+            logger.warn('Unexpected admin handler error', { error });
+            if (!res.headersSent) this.sendResponse(res, 500, { error: 'Internal server error' });
         }
     }
 
     private readBody(req: IncomingMessage): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = [];
+            let receivedBytes = 0;
 
-            req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-            req.on('end', () => resolve(Buffer.concat(chunks)));
-            req.on('error', reject);
+            const timeout = setTimeout(() => {
+                const error = new AdminBodyError('Request timed out', 408);
+                req.destroy();
+                reject(error);
+            }, REQUEST_TIMEOUT_MS);
+
+            const cleanup = () => {
+                clearTimeout(timeout);
+                req.off('data', onData);
+                req.off('end', onEnd);
+                req.off('error', onError);
+                req.off('aborted', onAborted);
+            };
+
+            const onData = (chunk: Buffer | string) => {
+                const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                receivedBytes += buffer.length;
+                if (receivedBytes > MAX_BODY_BYTES) {
+                    cleanup();
+                    const error = new AdminBodyError('Request body too large', 413);
+                    req.destroy();
+                    reject(error);
+                    return;
+                }
+                chunks.push(buffer);
+            };
+
+            const onEnd = () => {
+                cleanup();
+                resolve(Buffer.concat(chunks));
+            };
+
+            const onError = (error: Error) => {
+                cleanup();
+                reject(new AdminBodyError(error.message || 'Request read error', 400));
+            };
+
+            const onAborted = () => {
+                cleanup();
+                reject(new AdminBodyError('Request aborted', 400));
+            };
+
+            req.on('data', onData);
+            req.on('end', onEnd);
+            req.on('error', onError);
+            req.on('aborted', onAborted);
         });
     }
 
