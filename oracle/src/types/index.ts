@@ -162,6 +162,7 @@ export interface OracleServiceConfig {
     contractId: string;
     adminSecretKey: string;
     adminApiPort?: number;
+    adminHost?: string;
     adminHmacSecret?: string;
     updateIntervalMs: number;
     maxPriceDeviationPercent: number;

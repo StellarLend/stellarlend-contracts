@@ -244,6 +244,7 @@ export class OracleService {
     } else if (config.adminApiPort && config.adminApiPort > 0) {
       this.adminServer = new AdminServer({
         port: config.adminApiPort,
+        host: config.adminHost,
         hmacSecret: config.adminHmacSecret!,
         validator,
       });
