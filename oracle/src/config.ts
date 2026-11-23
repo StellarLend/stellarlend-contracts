@@ -34,6 +34,20 @@ const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 export const positiveFiniteNumber = (label: string) =>
     z.coerce.number().refine((n) => Number.isFinite(n), { message: `${label} must be a finite number` }).refine((n) => n > 0, { message: `${label} must be greater than 0` }).refine((n) => Number.isInteger(n) ? n <= MAX_SAFE_INTEGER : true, { message: `${label} exceeds maximum safe integer` });
 
+const optionalEnvString = z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().optional(),
+);
+
+const optionalPort = z.preprocess(
+    (value) => {
+        if (value === '') return undefined;
+        if (typeof value === 'string' && !/^\d+$/.test(value)) return Number.NaN;
+        return value;
+    },
+    z.coerce.number().int().min(1).max(65535).optional(),
+);
+
 /**
  * Environment variable validation schema
  *
@@ -59,6 +73,16 @@ const envSchema = z.object({
     MAD_Z_SCORE_THRESHOLD: positiveFiniteNumber('MAD_Z_SCORE_THRESHOLD').default(3.5),
     PRICE_STALENESS_THRESHOLD_SECONDS: positiveFiniteNumber('PRICE_STALENESS_THRESHOLD_SECONDS').default(300),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    ADMIN_API_PORT: optionalPort,
+    ADMIN_HMAC_SECRET: optionalEnvString,
+}).superRefine((env, context) => {
+    if (env.ADMIN_API_PORT !== undefined && (!env.ADMIN_HMAC_SECRET || env.ADMIN_HMAC_SECRET.length < 32)) {
+        context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['ADMIN_HMAC_SECRET'],
+            message: 'ADMIN_HMAC_SECRET must contain at least 32 characters when ADMIN_API_PORT is set',
+        });
+    }
 });
 
 /**
@@ -212,6 +236,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): OracleServiceC
         cacheTtlSeconds: parsed.CACHE_TTL_SECONDS,
         redisUrl: parsed.REDIS_URL,
         logLevel: parsed.LOG_LEVEL,
+        adminApiPort: parsed.ADMIN_API_PORT,
+        adminHmacSecret: parsed.ADMIN_HMAC_SECRET,
         providers: getProviderConfigs(parsed),
     };
 }

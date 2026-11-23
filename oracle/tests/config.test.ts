@@ -30,6 +30,7 @@ import {
 
 const VALID_CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32, 7));
 const VALID_ADMIN_SECRET = Keypair.random().secret();
+const VALID_HMAC_SECRET = 'local-admin-hmac-secret-with-at-least-32-chars';
 
 const REQUIRED_ENV = {
     CONTRACT_ID: VALID_CONTRACT_ID,
@@ -68,6 +69,8 @@ describe('Configuration', () => {
             'COINGECKO_API_KEY',
             'COINMARKETCAP_API_KEY',
             'LOG_LEVEL',
+            'ADMIN_API_PORT',
+            'ADMIN_HMAC_SECRET',
             ...NUMERIC_ENV_KEYS,
         ]) {
             delete process.env[key];
@@ -109,6 +112,69 @@ describe('Configuration', () => {
             expect(config.maxPriceDeviationPercent).toBe(10);
             expect(config.priceStaleThresholdSeconds).toBe(300);
             expect(config.logLevel).toBe('info');
+            expect(config.adminApiPort).toBeUndefined();
+            expect(config.adminHmacSecret).toBeUndefined();
+        });
+
+        it('maps a valid admin API port and HMAC secret', () => {
+            setEnv({
+                ...REQUIRED_ENV,
+                ADMIN_API_PORT: '8080',
+                ADMIN_HMAC_SECRET: VALID_HMAC_SECRET,
+            });
+
+            const config = loadConfig();
+
+            expect(config.adminApiPort).toBe(8080);
+            expect(config.adminHmacSecret).toBe(VALID_HMAC_SECRET);
+        });
+
+        it('rejects an admin API port without a secret and identifies ADMIN_HMAC_SECRET', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: '8080' });
+
+            try {
+                loadConfig();
+                throw new Error('expected loadConfig to throw');
+            } catch (error) {
+                const details = error as Error & { issues?: string[] };
+                expect(details.issues?.join(' ')).toContain('ADMIN_HMAC_SECRET');
+            }
+        });
+
+        it('rejects an admin HMAC secret shorter than 32 characters when enabled', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: '8080', ADMIN_HMAC_SECRET: 'too-short' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it.each(['1', '65535'])('accepts the admin API port boundary %s', (port) => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: port, ADMIN_HMAC_SECRET: VALID_HMAC_SECRET });
+
+            expect(loadConfig().adminApiPort).toBe(Number(port));
+        });
+
+        it.each(['0', '65536', '8080.5', '1e3', '0x10', 'not-a-number'])('rejects invalid admin API port %s', (port) => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: port, ADMIN_HMAC_SECRET: VALID_HMAC_SECRET });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('keeps the admin API disabled when only the secret is set', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_HMAC_SECRET: VALID_HMAC_SECRET });
+
+            const config = loadConfig();
+
+            expect(config.adminApiPort).toBeUndefined();
+            expect(config.adminHmacSecret).toBe(VALID_HMAC_SECRET);
+        });
+
+        it('treats blank optional admin settings as unset', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: '', ADMIN_HMAC_SECRET: '' });
+
+            const config = loadConfig();
+
+            expect(config.adminApiPort).toBeUndefined();
+            expect(config.adminHmacSecret).toBeUndefined();
         });
 
         it('should override defaults with provided values', () => {
