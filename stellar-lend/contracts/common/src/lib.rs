@@ -17,7 +17,7 @@ pub const BPS_DENOM: i128 = 10_000;
 ///
 /// All variants carry a stable `u32` discriminant so that on-chain wire codes
 /// remain backward-compatible when new variants are added.
-#[contracterror]
+#[contracterror(export = false)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum LendingError {

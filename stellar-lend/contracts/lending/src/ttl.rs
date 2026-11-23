@@ -26,6 +26,7 @@ pub const GLOBAL_BUMP_THRESHOLD: u32 = 500_000;
 /// Extend instance storage TTL if it has dropped below `INSTANCE_BUMP_THRESHOLD`.
 ///
 /// Bounded by `env.storage().max_ttl()` to respect network limits.
+#[inline(never)]
 pub fn extend_instance_ttl(env: &Env) {
     let extend_to = env.storage().max_ttl().min(INSTANCE_BUMP_AMOUNT);
     let threshold = INSTANCE_BUMP_THRESHOLD.min(extend_to / 2);
@@ -35,6 +36,7 @@ pub fn extend_instance_ttl(env: &Env) {
 /// Extend the persistent TTL of a global storage key if it exists.
 ///
 /// Does nothing if the key is absent from persistent storage (avoids trapping).
+#[inline(never)]
 pub fn bump_global(env: &Env, key: &DataKey) {
     if env.storage().persistent().has(key) {
         let extend_to = env.storage().max_ttl().min(GLOBAL_BUMP_AMOUNT);

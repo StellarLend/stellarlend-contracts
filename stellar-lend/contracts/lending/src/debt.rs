@@ -7,62 +7,62 @@ use stellar_lend_common::BPS_DENOM;
 
 pub const DEFAULT_APR_BPS: i128 = 500;
 
-/// Fixed-point scale for the global borrow index (10^7 = 7 decimal places).
-///
-/// The index starts at `INDEX_SCALE` (representing 1.0) and grows
-/// monotonically as interest accrues.  A position's current debt is:
-///
-/// ```text
-/// current_debt = principal × current_index / borrow_index_snapshot
-/// ```
+// Fixed-point scale for the global borrow index (10^7 = 7 decimal places).
+//
+// The index starts at `INDEX_SCALE` (representing 1.0) and grows
+// monotonically as interest accrues.  A position's current debt is:
+//
+// ```text
+// current_debt = principal × current_index / borrow_index_snapshot
+// ```
 pub const INDEX_SCALE: i128 = 10_000_000;
 
-/// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
+// Reserve factor used when no explicit value is configured: 0% (protocol takes nothing).
 pub const DEFAULT_RESERVE_FACTOR_BPS: u32 = 0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InterestSplit {
-    /// Gross interest accrued during the period.
+    // Gross interest accrued during the period.
     pub total_interest: i128,
-    /// Share of interest owed to depositors (supply-side yield).
+    // Share of interest owed to depositors (supply-side yield).
     pub depositor_yield: i128,
-    /// Share of interest retained by the protocol reserve.
+    // Share of interest retained by the protocol reserve.
     pub reserve_cut: i128,
 }
 
 // ─── Core position type ───────────────────────────────────────────────────────
 
-/// Seconds in a 365-day year, shared with rounding_strategy.
+// Seconds in a 365-day year, shared with rounding_strategy.
 const SECONDS_PER_YEAR: u64 = 365 * 24 * 60 * 60; // 31_536_000
 
 // ---------------------------------------------------------------------------
 // DebtPosition
 // ---------------------------------------------------------------------------
 
-/// Per-borrower debt record.
-///
-/// Layout change (global-borrow-index feature):
-/// - `last_update` is **removed**; the global `LastIndexUpdate` timestamp
-///   drives time tracking.
-/// - `borrow_index_snapshot` is added; it holds the value of the index at the
-///   time the position was last touched. Single-asset positions snapshot the
-///   global `DataKey::BorrowIndex`; cross-asset positions snapshot the
-///   per-asset `DataKey::BorrowIndexAsset(asset)` instead.
-///
-/// Migration: pre-existing positions without a snapshot are treated as
-/// having `borrow_index_snapshot == 0`, which `migrate_positions` fixes
-/// by writing the current index into every such record before normal
-/// operations resume.
-#[contracttype]
+// Per-borrower debt record.
+//
+// Layout change (global-borrow-index feature):
+// - `last_update` is **removed**; the global `LastIndexUpdate` timestamp
+//   drives time tracking.
+// - `borrow_index_snapshot` is added; it holds the value of the index at the
+//   time the position was last touched. Single-asset positions snapshot the
+//   global `DataKey::BorrowIndex`; cross-asset positions snapshot the
+//   per-asset `DataKey::BorrowIndexAsset(asset)` instead.
+//
+// Migration: pre-existing positions without a snapshot are treated as
+// having `borrow_index_snapshot == 0`, which `migrate_positions` fixes
+// by writing the current index into every such record before normal
+// operations resume.
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DebtPosition {
-    /// Recorded principal at last touch (does not include un-accrued interest).
+    // Recorded principal at last touch (does not include un-accrued interest).
     pub principal: i128,
-    /// Snapshot of the global borrow index at the time this position was last
-    /// modified.  Zero signals "pre-migration; treat as current index".
+    // Snapshot of the global borrow index at the time this position was last
+    // modified.  Zero signals "pre-migration; treat as current index".
     pub borrow_index_snapshot: i128,
-    /// Wall-clock timestamp of the last explicit settlement, kept for
-    /// backward-compatible reads.  Updated on every position write.
+    // Wall-clock timestamp of the last explicit settlement, kept for
+    // backward-compatible reads.  Updated on every position write.
     pub last_update: u64,
 }
 
@@ -80,12 +80,12 @@ pub struct BorrowRateCache {
     pub rate_bps: i128,
 }
 
-/// Aggregate borrow-rate calculation output for one storage snapshot.
+// Aggregate borrow-rate calculation output for one storage snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BorrowRateComputation {
-    /// Current utilization in basis points.
+    // Current utilization in basis points.
     pub utilization_bps: i128,
-    /// Borrow APR in basis points.
+    // Borrow APR in basis points.
     pub rate_bps: i128,
 }
 
@@ -98,9 +98,9 @@ pub enum DebtError {
     Overflow,
     InvalidAmount,
     IndexInvariantViolated,
-    /// Repay amount exceeds the outstanding debt (principal + accrued interest).
-    /// Callers must not overpay the single-asset borrow system; query
-    /// `get_debt_position()` first to obtain the exact current balance.
+    // Repay amount exceeds the outstanding debt (principal + accrued interest).
+    // Callers must not overpay the single-asset borrow system; query
+    // `get_debt_position()` first to obtain the exact current balance.
     RepayAmountTooHigh,
 }
 
@@ -126,11 +126,11 @@ impl From<RoundingError> for DebtError {
 // Storage helpers
 // ---------------------------------------------------------------------------
 
-/// Load a debt position from persistent storage.
-///
-/// Returns a default zero-principal position if none is stored.
-/// The default snapshot is set to `INDEX_SCALE` (1.0) so that a brand-new
-/// position accrues no phantom interest.
+// Load a debt position from persistent storage.
+//
+// Returns a default zero-principal position if none is stored.
+// The default snapshot is set to `INDEX_SCALE` (1.0) so that a brand-new
+// position accrues no phantom interest.
 pub fn load_debt(env: &Env, user: &Address) -> DebtPosition {
     let key = DataKey::Debt(user.clone());
     env.storage()
@@ -143,7 +143,7 @@ pub fn load_debt(env: &Env, user: &Address) -> DebtPosition {
         })
 }
 
-/// Persist a debt position to storage.
+// Persist a debt position to storage.
 pub fn save_debt(env: &Env, user: &Address, position: &DebtPosition) {
     let key = DataKey::Debt(user.clone());
     env.storage().persistent().set(&key, position);
@@ -153,10 +153,10 @@ pub fn save_debt(env: &Env, user: &Address, position: &DebtPosition) {
 // Global borrow index helpers
 // ---------------------------------------------------------------------------
 
-/// Load the current global borrow index.
-///
-/// Returns `INDEX_SCALE` (1.0) if the index has not yet been written
-/// (first-ever call before `initialize`).
+// Load the current global borrow index.
+//
+// Returns `INDEX_SCALE` (1.0) if the index has not yet been written
+// (first-ever call before `initialize`).
 pub fn load_borrow_index(env: &Env) -> i128 {
     env.storage()
         .instance()
@@ -164,14 +164,14 @@ pub fn load_borrow_index(env: &Env) -> i128 {
         .unwrap_or(INDEX_SCALE)
 }
 
-/// Persist the global borrow index.
+// Persist the global borrow index.
 pub fn save_borrow_index(env: &Env, index: i128) {
     env.storage().instance().set(&DataKey::BorrowIndex, &index);
 }
 
-/// Load the timestamp of the last index update.
-///
-/// Returns the current ledger timestamp if none is stored (bootstrapping).
+// Load the timestamp of the last index update.
+//
+// Returns the current ledger timestamp if none is stored (bootstrapping).
 pub fn load_last_index_update(env: &Env) -> u64 {
     env.storage()
         .instance()
@@ -179,7 +179,7 @@ pub fn load_last_index_update(env: &Env) -> u64 {
         .unwrap_or_else(|| env.ledger().timestamp())
 }
 
-/// Persist the last-index-update timestamp.
+// Persist the last-index-update timestamp.
 pub fn save_last_index_update(env: &Env, ts: u64) {
     env.storage().instance().set(&DataKey::LastIndexUpdate, &ts);
 }
@@ -196,14 +196,14 @@ pub fn save_last_index_update(env: &Env, ts: u64) {
 //
 // See `PER_ASSET_ACCRUAL.md` for the migration story.
 
-/// Load the current per-asset borrow index.
-///
-/// When the asset has never accrued, the global [`DataKey::BorrowIndex`] is
-/// returned as the seed. Bootstrapping from the global index (rather than
-/// `INDEX_SCALE`) keeps any pre-existing cross-asset snapshot — which was
-/// recorded against the global index — on a continuous accrual timeline, so the
-/// first settlement after the upgrade charges only the interest that was not
-/// already baked into the global index.
+// Load the current per-asset borrow index.
+//
+// When the asset has never accrued, the global [`DataKey::BorrowIndex`] is
+// returned as the seed. Bootstrapping from the global index (rather than
+// `INDEX_SCALE`) keeps any pre-existing cross-asset snapshot — which was
+// recorded against the global index — on a continuous accrual timeline, so the
+// first settlement after the upgrade charges only the interest that was not
+// already baked into the global index.
 pub fn load_borrow_index_asset(env: &Env, asset: &Address) -> i128 {
     env.storage()
         .instance()
@@ -211,17 +211,17 @@ pub fn load_borrow_index_asset(env: &Env, asset: &Address) -> i128 {
         .unwrap_or_else(|| load_borrow_index(env))
 }
 
-/// Persist the per-asset borrow index.
+// Persist the per-asset borrow index.
 pub fn save_borrow_index_asset(env: &Env, asset: &Address, index: i128) {
     env.storage()
         .instance()
         .set(&DataKey::BorrowIndexAsset(asset.clone()), &index);
 }
 
-/// Load the timestamp of the last per-asset index update.
-///
-/// An uninitialised asset reports `now`, matching a freshly bootstrapped index
-/// (zero elapsed time, so no interest is fabricated on first touch).
+// Load the timestamp of the last per-asset index update.
+//
+// An uninitialised asset reports `now`, matching a freshly bootstrapped index
+// (zero elapsed time, so no interest is fabricated on first touch).
 pub fn load_last_index_update_asset(env: &Env, asset: &Address, now: u64) -> u64 {
     env.storage()
         .instance()
@@ -229,23 +229,23 @@ pub fn load_last_index_update_asset(env: &Env, asset: &Address, now: u64) -> u64
         .unwrap_or(now)
 }
 
-/// Persist the per-asset last-index-update timestamp.
+// Persist the per-asset last-index-update timestamp.
 pub fn save_last_index_update_asset(env: &Env, asset: &Address, ts: u64) {
     env.storage()
         .instance()
         .set(&DataKey::LastIndexUpdateAsset(asset.clone()), &ts);
 }
 
-/// Lazily advance the per-asset borrow index to `now` and persist both the new
-/// index value and the updated timestamp.
-///
-/// This is the single `touch` entry-point for cross-asset debt. It mirrors
-/// [`touch_borrow_index`] but is scoped to one asset, so activity on asset A
-/// never moves asset B's index.
-///
-/// # Monotonicity
-/// The returned value is always `>=` the loaded index ([`accrue_index`] clamps
-/// a backwards clock or a negative delta to zero).
+// Lazily advance the per-asset borrow index to `now` and persist both the new
+// index value and the updated timestamp.
+//
+// This is the single `touch` entry-point for cross-asset debt. It mirrors
+// [`touch_borrow_index`] but is scoped to one asset, so activity on asset A
+// never moves asset B's index.
+//
+// # Monotonicity
+// The returned value is always `>=` the loaded index ([`accrue_index`] clamps
+// a backwards clock or a negative delta to zero).
 pub fn touch_borrow_index_asset(env: &Env, asset: &Address, now: u64, rate_bps: i128) -> i128 {
     let current_index = load_borrow_index_asset(env, asset);
     let initialised = env
@@ -266,12 +266,12 @@ pub fn touch_borrow_index_asset(env: &Env, asset: &Address, now: u64, rate_bps: 
     new_index
 }
 
-/// Read-only projection of the per-asset index at `now`.
-///
-/// Performs the same arithmetic as [`touch_borrow_index_asset`] but writes
-/// nothing, so views can price cross-asset debt at the live rate without
-/// mutating state. At the same timestamp it returns the same value the
-/// mutating path would persist.
+// Read-only projection of the per-asset index at `now`.
+//
+// Performs the same arithmetic as [`touch_borrow_index_asset`] but writes
+// nothing, so views can price cross-asset debt at the live rate without
+// mutating state. At the same timestamp it returns the same value the
+// mutating path would persist.
 pub fn project_borrow_index_asset(env: &Env, asset: &Address, now: u64, rate_bps: i128) -> i128 {
     let current_index = load_borrow_index_asset(env, asset);
     let last_update = load_last_index_update_asset(env, asset, now);
@@ -282,23 +282,23 @@ pub fn project_borrow_index_asset(env: &Env, asset: &Address, now: u64, rate_bps
 // Index accrual
 // ---------------------------------------------------------------------------
 
-/// Advance the global borrow index by `elapsed` seconds at `rate_bps`.
-///
-/// Formula:
-/// ```text
-/// new_index = current_index + current_index * rate_bps * elapsed
-///             / (SECONDS_PER_YEAR * BPS_DENOM)
-/// ```
-///
-/// All intermediate multiplications use `checked_*` to detect overflow.
-/// Returns the new (or unchanged, if elapsed == 0 or rate == 0) index.
-///
-/// # Overflow guard
-/// If the new index would exceed `i128::MAX / INDEX_SCALE` the function
-/// panics with `"BorrowIndex: overflow guard triggered"`.
-///
-/// # Monotonicity guarantee
-/// The returned value is always `>= current_index`.
+// Advance the global borrow index by `elapsed` seconds at `rate_bps`.
+//
+// Formula:
+// ```text
+// new_index = current_index + current_index * rate_bps * elapsed
+//             / (SECONDS_PER_YEAR * BPS_DENOM)
+// ```
+//
+// All intermediate multiplications use `checked_*` to detect overflow.
+// Returns the new (or unchanged, if elapsed == 0 or rate == 0) index.
+//
+// # Overflow guard
+// If the new index would exceed `i128::MAX / INDEX_SCALE` the function
+// panics with `"BorrowIndex: overflow guard triggered"`.
+//
+// # Monotonicity guarantee
+// The returned value is always `>= current_index`.
 pub fn accrue_index(current_index: i128, elapsed: u64, rate_bps: i128) -> i128 {
     if elapsed == 0 || rate_bps == 0 {
         return current_index;
@@ -327,15 +327,15 @@ pub fn accrue_index(current_index: i128, elapsed: u64, rate_bps: i128) -> i128 {
     new_index.max(current_index)
 }
 
-/// Lazily advance the global borrow index to `now` and persist both the new
-/// index value and the updated timestamp.
-///
-/// This is the single "touch" entry-point for single-asset debt, called by
-/// every mutating single-asset operation (borrow, repay, liquidate, migrate).
-/// Cross-asset debt uses [`touch_borrow_index_asset`] instead.
-///
-/// Returns the updated index value so callers can use it immediately without
-/// a second storage round-trip.
+// Lazily advance the global borrow index to `now` and persist both the new
+// index value and the updated timestamp.
+//
+// This is the single "touch" entry-point for single-asset debt, called by
+// every mutating single-asset operation (borrow, repay, liquidate, migrate).
+// Cross-asset debt uses [`touch_borrow_index_asset`] instead.
+//
+// Returns the updated index value so callers can use it immediately without
+// a second storage round-trip.
 pub fn touch_borrow_index(env: &Env, now: u64, rate_bps: i128) -> i128 {
     let current_index = load_borrow_index(env);
     let last_update = load_last_index_update(env);
@@ -356,21 +356,21 @@ pub fn touch_borrow_index(env: &Env, now: u64, rate_bps: i128) -> i128 {
 // Per-position accrual (O(1) via index ratio)
 // ---------------------------------------------------------------------------
 
-/// Compute the current debt for a position using the index ratio:
-///
-/// ```text
-/// current_debt = position.principal × current_index / snapshot_index
-/// ```
-///
-/// Special cases:
-/// - If `snapshot_index` is zero (pre-migration record), returns
-///   `position.principal` unchanged (no phantom interest).
-/// - If `current_index < snapshot_index` (should not happen under normal
-///   operation), returns `position.principal` unchanged to avoid reducing
-///   debt (Requirement 3.4 / monotonicity safety valve).
-///
-/// # Panics
-/// Panics with a descriptive message if the multiplication overflows `i128`.
+// Compute the current debt for a position using the index ratio:
+//
+// ```text
+// current_debt = position.principal × current_index / snapshot_index
+// ```
+//
+// Special cases:
+// - If `snapshot_index` is zero (pre-migration record), returns
+//   `position.principal` unchanged (no phantom interest).
+// - If `current_index < snapshot_index` (should not happen under normal
+//   operation), returns `position.principal` unchanged to avoid reducing
+//   debt (Requirement 3.4 / monotonicity safety valve).
+//
+// # Panics
+// Panics with a descriptive message if the multiplication overflows `i128`.
 pub fn compute_debt(position: &DebtPosition, current_index: i128) -> i128 {
     let snapshot = position.borrow_index_snapshot;
 
@@ -388,13 +388,13 @@ pub fn compute_debt(position: &DebtPosition, current_index: i128) -> i128 {
         .unwrap_or(position.principal)
 }
 
-/// Settle a position's accrued interest into its principal and refresh the
-/// index snapshot to `current_index`.
-///
-/// After settlement `position.principal` equals the full debt (including
-/// interest), and `position.borrow_index_snapshot == current_index`.
-///
-/// Returns the settled `DebtPosition`.
+// Settle a position's accrued interest into its principal and refresh the
+// index snapshot to `current_index`.
+//
+// After settlement `position.principal` equals the full debt (including
+// interest), and `position.borrow_index_snapshot == current_index`.
+//
+// Returns the settled `DebtPosition`.
 pub fn settle_position(
     position: &DebtPosition,
     current_index: i128,
@@ -414,11 +414,11 @@ pub fn settle_position(
     })
 }
 
-/// Computes utilization and borrow rate from a preloaded aggregate snapshot.
-///
-/// If utilization or curve computation fails, use the last persisted effective
-/// rate (or the legacy default before one has been stored). This keeps rate
-/// math failures from blocking repayment or liquidation.
+// Computes utilization and borrow rate from a preloaded aggregate snapshot.
+//
+// If utilization or curve computation fails, use the last persisted effective
+// rate (or the legacy default before one has been stored). This keeps rate
+// math failures from blocking repayment or liquidation.
 pub(crate) fn compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
@@ -441,12 +441,12 @@ fn uncached_borrow_rate_computation(env: &Env) -> BorrowRateComputation {
     compute_borrow_rate_from_snapshot(env, &snapshot)
 }
 
-/// Returns the global borrow rate, computing it at most once per ledger.
-///
-/// The temporary-storage key includes `env.ledger().sequence()`, so advancing
-/// the ledger naturally misses the previous cache entry and recomputes from a
-/// fresh `RateSnapshot`. Each cache miss also writes one utilization sample for
-/// the current ledger into the bounded utilization-history ring buffer.
+// Returns the global borrow rate, computing it at most once per ledger.
+//
+// The temporary-storage key includes `env.ledger().sequence()`, so advancing
+// the ledger naturally misses the previous cache entry and recomputes from a
+// fresh `RateSnapshot`. Each cache miss also writes one utilization sample for
+// the current ledger into the bounded utilization-history ring buffer.
 pub fn cached_borrow_rate(env: &Env) -> i128 {
     // NOTE: the original per-ledger temporary-storage cache was keyed by the
     // current ledger sequence, which makes the transaction footprint depend on
@@ -460,15 +460,15 @@ pub fn cached_borrow_rate(env: &Env) -> i128 {
 
 // ─── Time helpers ─────────────────────────────────────────────────────────────
 
-/// Compute elapsed seconds between two timestamps (saturating).
+// Compute elapsed seconds between two timestamps (saturating).
 pub fn elapsed_seconds(now: u64, last_update: u64) -> u64 {
     now.saturating_sub(last_update)
 }
 
-/// Compute interest on `principal` over `elapsed` seconds at `rate_bps`.
-///
-/// Retained for backward compatibility with existing tests; new code should
-/// use `compute_debt` + `touch_borrow_index` instead.
+// Compute interest on `principal` over `elapsed` seconds at `rate_bps`.
+//
+// Retained for backward compatibility with existing tests; new code should
+// use `compute_debt` + `touch_borrow_index` instead.
 pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<i128, DebtError> {
     if principal == 0 || elapsed == 0 {
         return Ok(0);
@@ -484,32 +484,32 @@ pub fn accrue_interest(principal: i128, elapsed: u64, rate_bps: i128) -> Result<
     Ok(result.interest)
 }
 
-/// Compute gross interest for `principal` over `elapsed` seconds at `rate_bps`,
-/// then split it between depositors and the protocol reserve.
-///
-/// # Formula
-///
-/// ```text
-/// total_interest  = accrue_interest(principal, elapsed, rate_bps)
-/// reserve_cut     = floor(total_interest * reserve_factor_bps / 10_000)
-/// depositor_yield = total_interest - reserve_cut
-/// ```
-///
-/// The depositor share is the complement, so `depositor_yield + reserve_cut ==
-/// total_interest` exactly — no precision is lost to either side.
-///
-/// # Arguments
-///
-/// * `principal`           – Current settled principal (≥ 0).
-/// * `elapsed`             – Seconds since last accrual.
-/// * `rate_bps`            – Annual borrow rate in basis points (e.g. 500 = 5 %).
-/// * `reserve_factor_bps`  – Fraction of interest kept by the protocol, in
-///   basis points (0 = none, 10 000 = 100 %).
-///
-/// # Errors
-///
-/// Returns `DebtError::Overflow` on arithmetic overflow or if the reserve factor
-/// exceeds 10 000 bps.
+// Compute gross interest for `principal` over `elapsed` seconds at `rate_bps`,
+// then split it between depositors and the protocol reserve.
+//
+// # Formula
+//
+// ```text
+// total_interest  = accrue_interest(principal, elapsed, rate_bps)
+// reserve_cut     = floor(total_interest * reserve_factor_bps / 10_000)
+// depositor_yield = total_interest - reserve_cut
+// ```
+//
+// The depositor share is the complement, so `depositor_yield + reserve_cut ==
+// total_interest` exactly — no precision is lost to either side.
+//
+// # Arguments
+//
+// * `principal`           – Current settled principal (≥ 0).
+// * `elapsed`             – Seconds since last accrual.
+// * `rate_bps`            – Annual borrow rate in basis points (e.g. 500 = 5 %).
+// * `reserve_factor_bps`  – Fraction of interest kept by the protocol, in
+//   basis points (0 = none, 10 000 = 100 %).
+//
+// # Errors
+//
+// Returns `DebtError::Overflow` on arithmetic overflow or if the reserve factor
+// exceeds 10 000 bps.
 pub fn accrue_interest_split(
     principal: i128,
     elapsed: u64,
@@ -530,9 +530,9 @@ pub fn accrue_interest_split(
     })
 }
 
-/// Settle interest into `principal` using elapsed-time arithmetic.
-///
-/// Retained for backward compatibility.
+// Settle interest into `principal` using elapsed-time arithmetic.
+//
+// Retained for backward compatibility.
 pub fn settle_accrual(
     position: &DebtPosition,
     now: u64,
@@ -556,9 +556,9 @@ pub fn settle_accrual(
     })
 }
 
-/// Compute effective debt using elapsed-time arithmetic (read-only).
-///
-/// Retained for backward compatibility with view functions.
+// Compute effective debt using elapsed-time arithmetic (read-only).
+//
+// Retained for backward compatibility with view functions.
 pub fn effective_debt(
     position: &DebtPosition,
     now: u64,
@@ -576,9 +576,9 @@ pub fn effective_debt(
 // Mutating debt operations (index-aware)
 // ---------------------------------------------------------------------------
 
-/// Record a new borrow against `position`, settling accrued interest first.
-///
-/// The position's snapshot is refreshed to `current_index` after settlement.
+// Record a new borrow against `position`, settling accrued interest first.
+//
+// The position's snapshot is refreshed to `current_index` after settlement.
 pub fn borrow_amount(
     position: DebtPosition,
     now: u64,
@@ -598,16 +598,16 @@ pub fn borrow_amount(
     Ok(settled)
 }
 
-/// Record a repayment against `position`, settling accrued interest first.
-///
-/// The position's snapshot is refreshed to `current_index` after settlement.
-///
-/// # Errors
-///
-/// - [`DebtError::InvalidAmount`] if `amount <= 0`.
-/// - [`DebtError::RepayAmountTooHigh`] if `amount` exceeds the settled debt
-///   (principal + accrued interest). Callers must not overpay; query the
-///   current balance via `get_debt_position()` / `effective_debt()` first.
+// Record a repayment against `position`, settling accrued interest first.
+//
+// The position's snapshot is refreshed to `current_index` after settlement.
+//
+// # Errors
+//
+// - [`DebtError::InvalidAmount`] if `amount <= 0`.
+// - [`DebtError::RepayAmountTooHigh`] if `amount` exceeds the settled debt
+//   (principal + accrued interest). Callers must not overpay; query the
+//   current balance via `get_debt_position()` / `effective_debt()` first.
 pub fn repay_amount(
     position: DebtPosition,
     now: u64,
@@ -626,9 +626,9 @@ pub fn repay_amount(
     Ok(settled)
 }
 
-/// Index-aware borrow: settle via index ratio, then add `amount`.
-///
-/// Preferred over `borrow_amount` once the global index is active.
+// Index-aware borrow: settle via index ratio, then add `amount`.
+//
+// Preferred over `borrow_amount` once the global index is active.
 pub fn borrow_amount_indexed(
     position: &DebtPosition,
     current_index: i128,
@@ -646,14 +646,14 @@ pub fn borrow_amount_indexed(
     Ok(settled)
 }
 
-/// Index-aware repay: settle via index ratio, then subtract `amount`.
-///
-/// Preferred over `repay_amount` once the global index is active.
-///
-/// # Errors
-///
-/// - [`DebtError::InvalidAmount`] if `amount <= 0`.
-/// - [`DebtError::RepayAmountTooHigh`] if `amount` exceeds the settled debt.
+// Index-aware repay: settle via index ratio, then subtract `amount`.
+//
+// Preferred over `repay_amount` once the global index is active.
+//
+// # Errors
+//
+// - [`DebtError::InvalidAmount`] if `amount <= 0`.
+// - [`DebtError::RepayAmountTooHigh`] if `amount` exceeds the settled debt.
 pub fn repay_amount_indexed(
     position: &DebtPosition,
     current_index: i128,
@@ -671,7 +671,7 @@ pub fn repay_amount_indexed(
     Ok(settled)
 }
 
-/// Loads the aggregate values needed to compute the global borrow rate once.
+// Loads the aggregate values needed to compute the global borrow rate once.
 pub fn load_rate_snapshot(env: &Env) -> RateSnapshot {
     let storage = env.storage();
     let persistent = storage.persistent();
@@ -684,7 +684,7 @@ pub fn load_rate_snapshot(env: &Env) -> RateSnapshot {
     }
 }
 
-/// Computes the global borrow rate directly from current aggregate storage.
+// Computes the global borrow rate directly from current aggregate storage.
 pub fn uncached_borrow_rate(env: &Env) -> i128 {
     let snapshot = load_rate_snapshot(env);
     compute_borrow_rate_from_snapshot(env, &snapshot).rate_bps
@@ -694,21 +694,21 @@ pub fn uncached_borrow_rate(env: &Env) -> i128 {
 // Per-asset rate computation (cross-asset debt)
 // ---------------------------------------------------------------------------
 
-/// Per-asset aggregate values needed to compute that asset's borrow rate.
-///
-/// `total_debt` is [`DataKey::TotalDebtAsset`] and `total_supply` is the
-/// per-asset supplied collateral total ([`DataKey::TotalCollateralAsset`]).
-/// Both are denominated in the asset's own raw units, so the ratio is a true
-/// utilisation for that asset instead of a mix of incompatible units.
+// Per-asset aggregate values needed to compute that asset's borrow rate.
+//
+// `total_debt` is [`DataKey::TotalDebtAsset`] and `total_supply` is the
+// per-asset supplied collateral total ([`DataKey::TotalCollateralAsset`]).
+// Both are denominated in the asset's own raw units, so the ratio is a true
+// utilisation for that asset instead of a mix of incompatible units.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssetRateSnapshot {
     pub total_debt: i128,
     pub total_supply: i128,
-    /// Global rate parameters; per-asset parameter overrides are out of scope.
+    // Global rate parameters; per-asset parameter overrides are out of scope.
     pub params: Option<rate_model::RateParams>,
 }
 
-/// Loads the aggregate values needed to compute `asset`'s borrow rate once.
+// Loads the aggregate values needed to compute `asset`'s borrow rate once.
 pub fn load_asset_rate_snapshot(env: &Env, asset: &Address) -> AssetRateSnapshot {
     let storage = env.storage();
     AssetRateSnapshot {
@@ -724,16 +724,16 @@ pub fn load_asset_rate_snapshot(env: &Env, asset: &Address) -> AssetRateSnapshot
     }
 }
 
-/// Compute `asset`'s borrow rate from a preloaded per-asset snapshot.
-///
-/// The rate is a **pure function of storage**: it computes the two-slope rate
-/// model directly from the asset's utilisation and does not consult (or
-/// advance) the global rate-smoothing state. That keeps two assets with
-/// different utilisation on independent rates, keeps a single-asset borrow from
-/// changing cross-asset accrual, and makes the read-only views agree exactly
-/// with what the mutating settlement path charges.
-///
-/// Falls back to [`DEFAULT_APR_BPS`] when no rate model is configured.
+// Compute `asset`'s borrow rate from a preloaded per-asset snapshot.
+//
+// The rate is a **pure function of storage**: it computes the two-slope rate
+// model directly from the asset's utilisation and does not consult (or
+// advance) the global rate-smoothing state. That keeps two assets with
+// different utilisation on independent rates, keeps a single-asset borrow from
+// changing cross-asset accrual, and makes the read-only views agree exactly
+// with what the mutating settlement path charges.
+//
+// Falls back to [`DEFAULT_APR_BPS`] when no rate model is configured.
 pub fn compute_asset_borrow_rate(snapshot: &AssetRateSnapshot) -> Result<i128, DebtError> {
     let utilization_bps =
         compute_utilization_bps_from_totals(snapshot.total_debt, snapshot.total_supply)?;
@@ -744,33 +744,33 @@ pub fn compute_asset_borrow_rate(snapshot: &AssetRateSnapshot) -> Result<i128, D
     }
 }
 
-/// Convenience wrapper: `asset`'s current borrow rate.
+// Convenience wrapper: `asset`'s current borrow rate.
 pub fn asset_borrow_rate(env: &Env, asset: &Address) -> Result<i128, DebtError> {
     compute_asset_borrow_rate(&load_asset_rate_snapshot(env, asset))
 }
 
-/// Compute utilization (bps) from an aggregate snapshot, bounded to
-/// `[0, BPS_DENOM]` (0 %..100 %).
-///
-/// # Boundedness invariant
-///
-/// When debt transiently exceeds supply (e.g. during bad-debt, partial
-/// write-off, or a supply draw-down that outpaces debt), the raw `debt / supply`
-/// ratio can exceed 100 %. The rate model is only well-defined on `[0, 100 %]`,
-/// so the value is capped at 100 % before it reaches
-/// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
-/// bounded and deterministic at maximum utilization instead of feeding an
-/// out-of-range utilization to the model.
+// Compute utilization (bps) from an aggregate snapshot, bounded to
+// `[0, BPS_DENOM]` (0 %..100 %).
+//
+// # Boundedness invariant
+//
+// When debt transiently exceeds supply (e.g. during bad-debt, partial
+// write-off, or a supply draw-down that outpaces debt), the raw `debt / supply`
+// ratio can exceed 100 %. The rate model is only well-defined on `[0, 100 %]`,
+// so the value is capped at 100 % before it reaches
+// [`rate_model::compute_borrow_rate`]. This keeps the borrow-rate computation
+// bounded and deterministic at maximum utilization instead of feeding an
+// out-of-range utilization to the model.
 pub fn compute_utilization_bps(snapshot: &RateSnapshot) -> Result<i128, DebtError> {
     compute_utilization_bps_from_totals(snapshot.total_debt, snapshot.total_supply)
 }
 
-/// Compute utilisation (bps, bounded to `[0, BPS_DENOM]`) from raw per-asset
-/// (or aggregate) debt and supply totals.
-///
-/// A non-positive supply is defined as zero utilisation rather than a division
-/// by zero: an asset with no supplied collateral can never have meaningful
-/// utilisation, and its borrowers accrue at the model's zero-utilisation rate.
+// Compute utilisation (bps, bounded to `[0, BPS_DENOM]`) from raw per-asset
+// (or aggregate) debt and supply totals.
+//
+// A non-positive supply is defined as zero utilisation rather than a division
+// by zero: an asset with no supplied collateral can never have meaningful
+// utilisation, and its borrowers accrue at the model's zero-utilisation rate.
 pub fn compute_utilization_bps_from_totals(
     total_debt: i128,
     total_supply: i128,
@@ -786,11 +786,11 @@ pub fn compute_utilization_bps_from_totals(
         .map(|raw| raw.clamp(0, BPS_DENOM))
 }
 
-/// Computes utilization and borrow rate from a preloaded aggregate snapshot.
-///
-/// Utilization uses checked arithmetic and falls back to zero when supply is
-/// non-positive. Overflow in `debt * 10_000` returns [`DebtError::Overflow`].
-/// Utilization is bounded to `[0, BPS_DENOM]`; see [`compute_utilization_bps`].
+// Computes utilization and borrow rate from a preloaded aggregate snapshot.
+//
+// Utilization uses checked arithmetic and falls back to zero when supply is
+// non-positive. Overflow in `debt * 10_000` returns [`DebtError::Overflow`].
+// Utilization is bounded to `[0, BPS_DENOM]`; see [`compute_utilization_bps`].
 pub(crate) fn try_compute_borrow_rate_from_snapshot(
     env: &Env,
     snapshot: &RateSnapshot,
@@ -811,9 +811,9 @@ pub(crate) fn try_compute_borrow_rate_from_snapshot(
     })
 }
 
-/// Settle accrued interest and return both the updated `DebtPosition` **and**
-/// the `InterestSplit` that describes how the gross interest is divided between
-/// depositor yield and protocol reserve.
+// Settle accrued interest and return both the updated `DebtPosition` **and**
+// the `InterestSplit` that describes how the gross interest is divided between
+// depositor yield and protocol reserve.
 pub fn settle_accrual_split(
     position: &DebtPosition,
     now: u64,
@@ -837,39 +837,39 @@ pub fn settle_accrual_split(
     Ok((updated, split))
 }
 
-/// Compute the **depositor supply rate** (in basis points) that corresponds to
-/// the current borrow rate and utilization after applying the reserve factor.
-///
-/// This derives the supply-side APR that depositors *effectively* earn, using
-/// the same scale constants as the borrow side so the two rates are always
-/// consistent.
-///
-/// # Formula
-///
-/// ```text
-/// supply_rate_bps = borrow_rate_bps
-///                   * utilization_bps / 10_000
-///                   * (10_000 − reserve_factor_bps) / 10_000
-/// ```
-///
-/// When `reserve_factor_bps == 0` the formula reduces to
-/// `borrow_rate * utilization / 10_000`, which is the full utilization-weighted
-/// borrow rate — identical to the previous (no-reserve) behaviour.
-///
-/// # Arguments
-///
-/// * `borrow_rate_bps`    – Current borrow APR in basis points.
-/// * `utilization_bps`    – Current utilization in basis points
-///   (total_borrows * 10_000 / total_deposits).
-/// * `reserve_factor_bps` – Fraction of interest retained by the protocol, in
-///   basis points (0 = none, 10 000 = 100 %).
-///
-/// # Returns
-///
-/// The supply APR in basis points.
-///
-/// Returns `DebtError::Overflow` if any intermediate calculation overflows or
-/// an input is out of range.
+// Compute the **depositor supply rate** (in basis points) that corresponds to
+// the current borrow rate and utilization after applying the reserve factor.
+//
+// This derives the supply-side APR that depositors *effectively* earn, using
+// the same scale constants as the borrow side so the two rates are always
+// consistent.
+//
+// # Formula
+//
+// ```text
+// supply_rate_bps = borrow_rate_bps
+//                   * utilization_bps / 10_000
+//                   * (10_000 − reserve_factor_bps) / 10_000
+// ```
+//
+// When `reserve_factor_bps == 0` the formula reduces to
+// `borrow_rate * utilization / 10_000`, which is the full utilization-weighted
+// borrow rate — identical to the previous (no-reserve) behaviour.
+//
+// # Arguments
+//
+// * `borrow_rate_bps`    – Current borrow APR in basis points.
+// * `utilization_bps`    – Current utilization in basis points
+//   (total_borrows * 10_000 / total_deposits).
+// * `reserve_factor_bps` – Fraction of interest retained by the protocol, in
+//   basis points (0 = none, 10 000 = 100 %).
+//
+// # Returns
+//
+// The supply APR in basis points.
+//
+// Returns `DebtError::Overflow` if any intermediate calculation overflows or
+// an input is out of range.
 pub fn effective_supply_rate(
     borrow_rate_bps: i128,
     utilization_bps: i128,
@@ -910,8 +910,8 @@ pub fn effective_supply_rate(
 
 // ─── Accrual-split event log ──────────────────────────────────────────────────
 
-/// One entry in the persistent accrual-split history.
-#[contracttype]
+// One entry in the persistent accrual-split history.
+#[contracttype(export = false)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccrualSplitEntry {
     pub borrower: Address,
@@ -923,17 +923,17 @@ pub struct AccrualSplitEntry {
 
 const KEY_ACCRUAL_LOG: &str = "accrual_log";
 
-/// Append a settle_accrual_split result to the persistent log and emit a
-/// `settle_accrual_split` contract event for off-chain indexers.
-///
-/// The log is a bounded ring buffer capped at [`MAX_ACCRUAL_LOG_SIZE`] entries.
-/// When the cap is reached the oldest entry is evicted before the newest is
-/// appended, keeping persistent-storage rent cost and read/decode cost
-/// deterministically bounded regardless of protocol lifetime.
-///
-/// Call this immediately after `settle_accrual_split` so the split is
-/// recorded for both on-chain history (via `get_accrual_split_log`) and
-/// off-chain TWAP/revenue attribution consumers.
+// Append a settle_accrual_split result to the persistent log and emit a
+// `settle_accrual_split` contract event for off-chain indexers.
+//
+// The log is a bounded ring buffer capped at [`MAX_ACCRUAL_LOG_SIZE`] entries.
+// When the cap is reached the oldest entry is evicted before the newest is
+// appended, keeping persistent-storage rent cost and read/decode cost
+// deterministically bounded regardless of protocol lifetime.
+//
+// Call this immediately after `settle_accrual_split` so the split is
+// recorded for both on-chain history (via `get_accrual_split_log`) and
+// off-chain TWAP/revenue attribution consumers.
 pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split: &InterestSplit) {
     let entry = AccrualSplitEntry {
         borrower: borrower.clone(),
@@ -955,7 +955,9 @@ pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split
         // Remove front (oldest) entry to make room.
         let mut trimmed: Vec<AccrualSplitEntry> = Vec::new(env);
         for i in 1..log.len() {
-            trimmed.push_back(log.get(i).unwrap());
+            if let Some(item) = log.get(i) {
+                trimmed.push_back(item);
+            }
         }
         log = trimmed;
     }
@@ -975,7 +977,7 @@ pub fn record_accrual_split(env: &Env, borrower: &Address, timestamp: u64, split
     );
 }
 
-/// Return the full history of recorded accrual splits.
+// Return the full history of recorded accrual splits.
 pub fn get_accrual_split_log(env: &Env) -> Vec<AccrualSplitEntry> {
     env.storage()
         .persistent()
