@@ -12,11 +12,11 @@ Rationale
   against one direction unable to affect the other.
 
 API
-- `set_outbound_cap(max_per_window: i128, window_size: u64, current_time: u64)`
-  - Configure the outbound cap. `max_per_window == 0` means "no outbound".
+- `set_outbound_cap(caller: Address, max_per_window: i128, window_size: u64)`
+  - Configure the outbound cap as the admin. `max_per_window == 0` means "no outbound".
   - `window_size` must be > 0.
-  - Resets the current outbound window to begin at `current_time` and clears
-    the running total.
+  - Resets the current outbound window to begin at the current ledger timestamp
+    and clears the running total.
 - `admit_outbound(amount: i128, current_time: u64)`
   - Admit an outbound transfer of `amount` against the configured cap.
   - Rejects negative amounts, unconfigured (zero) cap, overflow, and
@@ -25,9 +25,10 @@ API
 
 Worked example
 
-1. Operator configures a daily outbound cap of 1000 units at ledger time 0:
+1. The admin configures a daily outbound cap of 1000 units. The window starts
+   at the ledger timestamp when the setter is called:
 
-   `set_outbound_cap(1000, 86_400, 0)`
+   `set_outbound_cap(admin, 1000, 86_400)`
 
 2. The bridge admits 200 units at time 1000: `admit_outbound(200, 1000)`.
    Running total becomes 200.
@@ -44,7 +45,7 @@ Worked example
 Edge cases and notes
 - Fail-closed: freshly constructed Bridge has `max_outbound_per_window == 0`.
 - Reconfiguring via `set_outbound_cap` clears the prior running total and
-  starts a new window at the provided `current_time`.
+  starts a new window at the current ledger timestamp.
 - Both inbound and outbound use checked `i128` arithmetic for totals and
   reject overflow rather than panicking.
 
