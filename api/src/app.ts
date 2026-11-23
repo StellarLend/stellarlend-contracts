@@ -21,7 +21,24 @@ const app: Application = express();
 // Security headers and CSRP protection.
 app.use(helmet());
 
-app.use(cors());
+// Vary rejected and accepted responses by Origin so shared caches cannot
+// reuse a response across different browser origins.
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.vary('Origin');
+  next();
+});
+
+app.use(cors({
+  origin: (requestOrigin, callback) => {
+    if (!requestOrigin) {
+      callback(null, false);
+      return;
+    }
+
+    const allowed = config.cors.origins;
+    callback(null, allowed.includes('*') || allowed.includes(requestOrigin) ? requestOrigin : false);
+  },
+}));
 
 app.use(
   express.json({
