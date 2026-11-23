@@ -19,7 +19,6 @@ import {
   createAggregator,
   createContractUpdater,
   type PriceAggregator,
-  type ContractUpdater,
   type PriceValidator,
   type PriceCache,
 } from "./services/index.js";
@@ -28,6 +27,7 @@ import type {
   ProviderConfig,
   ContractUpdateResult,
   AggregatedPrice,
+  IContractUpdater,
 } from "./types/index.js";
 
 /**
@@ -60,7 +60,7 @@ export interface OracleServiceStatus {
  */
 export interface OracleServiceDependencies {
   aggregator?: PriceAggregator;
-  contractUpdater?: ContractUpdater;
+  contractUpdater?: IContractUpdater;
   adminServer?: AdminServer;
   validator?: PriceValidator;
   cache?: PriceCache;
@@ -144,7 +144,7 @@ export class OracleService {
   private readonly config: OracleServiceConfig;
   private readonly configuredProviders: ProviderConfig[];
   private readonly aggregator: PriceAggregator;
-  private readonly contractUpdater: ContractUpdater;
+  private readonly contractUpdater: IContractUpdater;
   private readonly adminServer?: AdminServer;
   private intervalId?: ReturnType<typeof setInterval>;
   private isRunning: boolean = false;
