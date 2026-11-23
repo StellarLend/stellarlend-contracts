@@ -223,7 +223,6 @@ stellarlend-contracts/
     │       ├── Cargo.toml
     │       ├── README.md              # Lending contract README
     │       ├── Makefile
-    │       ├── TODO.md                # Current work tracker
     │       ├── *.md                   # Component docs (borrow.md, pause.md, etc.)
     │       └── src/
     │           ├── lib.rs             # Contract entry point
