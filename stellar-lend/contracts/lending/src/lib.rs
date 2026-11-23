@@ -138,6 +138,8 @@ mod max_borrow_proptest;
 #[cfg(test)]
 mod migration_event_test;
 #[cfg(test)]
+mod missing_price_test;
+#[cfg(test)]
 mod mul_div_proptest;
 #[cfg(test)]
 mod oracle_staleness_test;
@@ -205,6 +207,18 @@ mod utilization_math_boundary_test;
 mod withdraw_overflow_test;
 #[cfg(test)]
 mod withdraw_reserve_test;
+#[cfg(test)]
+mod cross_asset_health_doctest;
+#[cfg(test)]
+mod insurance_fund_test;
+#[cfg(test)]
+mod interest_ordering_time_test;
+#[cfg(test)]
+mod liquidation_grace_test;
+#[cfg(test)]
+mod partial_staleness_guard_test;
+#[cfg(test)]
+mod test_token_receiver;
 #[cfg(test)]
 mod zero_amount_semantics_test;
 use debt::{
