@@ -383,6 +383,14 @@ pub enum DataKey {
     UserCollateralAssets(Address),
     /// List of assets for which a user holds non-zero debt cross-asset.
     UserDebtAssets(Address),
+    /// Paged persistent borrower index: fixed-size chunk `n`.
+    BorrowerPage(u32),
+    /// Total number of registered borrowers (persistent).
+    BorrowerCount,
+    /// Number of allocated borrower pages (instance).
+    BorrowerPageCount,
+    /// Set once legacy `BorrowerList` has been migrated into pages.
+    BorrowerListMigrated,
     /// Per-asset total outstanding debt (cross-asset tracking).
     TotalDebtAsset(Address),
     /// Insurance fund balance credited by governance or protocol fees (i128).
