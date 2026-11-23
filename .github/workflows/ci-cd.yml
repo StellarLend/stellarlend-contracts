@@ -30,6 +30,12 @@ jobs:
         working-directory: stellar-lend
         run: cargo check --workspace --lib  --keep-going
 
+      - name: Run workspace tests (lending, common, cross-asset-test, amm)
+        working-directory: stellar-lend
+        timeout-minutes: 45
+        run: |
+          cargo test --locked -p stellarlend-lending -p stellar-lend-common -p cross-asset-test -p stellarlend-amm
+
       - name: Run vesting contract tests
         working-directory: stellar-lend
         run: cargo test -p stellarlend-vesting
