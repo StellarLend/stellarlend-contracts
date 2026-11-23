@@ -26,6 +26,8 @@ export function ShareRaffle({ title, text, url }: ShareRaffleProps) {
     }
   }, [title, text, url]);
 
+
+  
   return (
     <div>
       <button onClick={handleShare}>Share</button>
