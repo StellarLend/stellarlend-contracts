@@ -24,7 +24,7 @@ Entries marked **KNOWN GAP** are currently unauthenticated. Their presence here 
 | `get_guardian_nonce` | Anyone, read-only | None | None |
 | `guardian_action_payload` | Anyone, payload construction | None | None |
 | `set_max_churn` | **KNOWN GAP: anyone, unauthenticated** ([churn security gap](./VALIDATORSET_INVARIANTS.md)) | Maximum churn or removes limit at zero | None |
-| `set_admin` | **KNOWN GAP: no caller authorization**; one-time only ([issue #1901](https://github.com/Meet-hybrid/soroban-forge/issues/1901)) | Stored admin address | `NotAdmin` if already set |
+| `set_admin` | Proposed admin `require_auth()`; one-time only | Stored admin address | `AdminAlreadySet` if already set |
 | `get_admin` | Anyone, read-only | None | None |
 | `register_source_domain` | Admin | Source-domain registration/count | `NotAdmin`, `SourceDomainLimitReached` |
 | `unregister_source_domain` | Admin | Removes source-domain registration/count | `NotAdmin` |

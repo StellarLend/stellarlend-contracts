@@ -79,6 +79,8 @@ pub enum BridgeError {
     EpochOverflow = 32,
     /// Escrowed token balance would overflow `i128::MAX`.
     EscrowOverflow = 33,
+    /// An admin has already been configured.
+    AdminAlreadySet = 34,
 }
 
 /// Identifies the origin of an inbound bridge message.
@@ -805,8 +807,9 @@ impl Bridge {
     /// unauthorised admin rotation.
     pub fn set_admin(env: Env, admin: Address) -> Result<(), BridgeError> {
         if Self::load_admin(&env).is_some() {
-            return Err(BridgeError::NotAdmin);
+            return Err(BridgeError::AdminAlreadySet);
         }
+        admin.require_auth();
         Self::save_admin(&env, &admin);
         Ok(())
     }
@@ -2076,6 +2079,41 @@ mod replay_protection_test {
     }
 
     #[test]
+    fn set_admin_requires_authorization() {
+        let env = Env::default();
+        let contract_id = env.register(Bridge, ());
+        let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        let err = client.try_set_admin(&admin);
+
+        assert!(
+            err.is_err(),
+            "setting admin without authorization must fail"
+        );
+        assert_eq!(client.get_admin(), None);
+    }
+
+    #[test]
+    fn authorized_admin_can_register_source_domain() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(Bridge, ());
+        let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let source = SourceDomain {
+            chain_id: 1,
+            network_passphrase: Bytes::from_slice(&env, b"testnet"),
+            contract_id: Bytes::from_slice(&env, b"bridge_contract_v1"),
+        };
+
+        client.set_admin(&admin);
+        client.register_source_domain(&admin, &source);
+
+        assert!(client.is_source_registered(&source));
+    }
+
+    #[test]
     fn admin_setup_is_idempotent() {
         let env = Env::default();
         env.mock_all_auths();
@@ -2090,7 +2128,7 @@ mod replay_protection_test {
         // Second call fails (admin already set).
         let other = Address::generate(&env);
         let err = client.try_set_admin(&other);
-        assert!(matches!(err, Err(Ok(BridgeError::NotAdmin))));
+        assert!(matches!(err, Err(Ok(BridgeError::AdminAlreadySet))));
 
         // Original admin is unchanged.
         assert_eq!(client.get_admin(), Some(admin));
