@@ -59,7 +59,7 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => void):
 /** Build a valid config-shaped object for use with validateConfig. */
 function makeValidConfig(overrides: Record<string, unknown> = {}): typeof config {
   const base: typeof config = {
-    server: { port: 3000, env: 'test' },
+    server: { port: 3000, env: 'test', bodyLimit: '100kb' },
     stellar: {
       network: 'testnet',
       horizonUrl: 'https://horizon-testnet.stellar.org',
@@ -815,9 +815,10 @@ describe('auditSecurityDefaults — production mode', () => {
 // ---------------------------------------------------------------------------
 
 describe('config — exported object shape', () => {
-  it('exposes a server section with port and env', () => {
+  it('exposes a server section with port, env and bodyLimit', () => {
     expect(config.server).toHaveProperty('port');
     expect(config.server).toHaveProperty('env');
+    expect(config.server).toHaveProperty('bodyLimit');
   });
 
   it('exposes a stellar section with all required fields', () => {
@@ -873,6 +874,10 @@ describe('config — exported object shape', () => {
   it('default port is 3000 when PORT is not set in test environment', () => {
     // The module was loaded with test env, PORT not set → default applies.
     expect(config.server.port).toBe(3000);
+  });
+
+  it('default JSON body limit is 100kb when BODY_LIMIT is not set', () => {
+    expect(config.server.bodyLimit).toBe('100kb');
   });
 
   it('default stellar network is testnet', () => {

@@ -246,6 +246,7 @@ export const config = {
   server: {
     port: parseIntEnv('PORT', 3000),
     env: stringEnv('NODE_ENV', 'development'),
+    bodyLimit: stringEnv('BODY_LIMIT', '100kb'),
   },
   stellar: {
     network: stringEnv('STELLAR_NETWORK', 'testnet'),
