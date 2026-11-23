@@ -63,8 +63,39 @@ npm start
 ### Admin reload endpoint
 
 The oracle service can expose a secure admin endpoint when `ADMIN_API_PORT` is configured.
-Requests to `POST /reload-config` must include an `x-signature` header containing a hex HMAC-SHA256 over the raw request body using `ADMIN_HMAC_SECRET`.
+
+Requests to `POST /reload-config` must include two headers:
+
+| Header | Description |
+|--------|-------------|
+| `x-timestamp` | Current time in milliseconds since Unix epoch (e.g. `Date.now()`). Requests outside ±5 minutes of server time are rejected with `401`. |
+| `x-signature` | Lowercase hex HMAC-SHA256 of the string `${timestamp}.${rawBody}` using `ADMIN_HMAC_SECRET`. |
+
+The signed message format is `${x-timestamp}.${rawBody}`, matching the pattern used in `api/src/middleware/auth.ts`. The server keeps a bounded in-memory set of recently seen signatures and rejects replays with `409`.
+
 The payload may include `validatorConfig` updates and/or asset-specific `bounds` to tighten min/max price ranges.
+
+Example request (Node.js):
+
+```typescript
+import crypto from 'node:crypto';
+import { signRequest } from './src/services/admin-server.js';
+
+const secret = process.env.ADMIN_HMAC_SECRET!;
+const body = JSON.stringify({ bounds: { XLM: { minPrice: 0.1, maxPrice: 1000000 } } });
+const timestamp = Date.now();
+const signature = signRequest(secret, timestamp, body);
+
+await fetch('http://localhost:ADMIN_API_PORT/reload-config', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'x-timestamp': String(timestamp),
+    'x-signature': signature,
+  },
+  body,
+});
+```
 
 Example payload:
 
