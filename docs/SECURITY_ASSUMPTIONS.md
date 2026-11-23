@@ -219,5 +219,5 @@ Previously, `update_asset_price()` in the cross-asset module lacked an authoriza
 
 ### Test Coverage
 
-- `stellar-lend/contracts/hello-world/src/cross_asset_price_authorization_test.rs` and `stellar-lend/cross_asset_test/src/cross_asset_price_authorization_test.rs` verify non-admin rejection, unset-admin rejection, authorized multi-asset updates, zero/negative price bounds, and authorization-before-validation ordering.
+- `stellar-lend/contracts/lending/src/cross_asset_price_authorization_test.rs` verifies non-admin rejection, invalid price bounds, and authorization-before-validation ordering.
 

@@ -58,9 +58,15 @@ mod compound_interest_proptest;
 #[cfg(test)]
 mod cross_asset_borrow_cap_test;
 #[cfg(test)]
+mod cross_asset_config_bounds_test;
+#[cfg(test)]
+mod cross_asset_decimals_test;
+#[cfg(test)]
 mod cross_asset_e2e_test;
 #[cfg(test)]
 mod cross_asset_health_perf_test;
+#[cfg(test)]
+mod cross_asset_price_authorization_test;
 #[cfg(test)]
 mod cross_asset_price_cache_test;
 #[cfg(test)]
@@ -3965,7 +3971,7 @@ impl LendingContract {
         if supply_cap < 0 {
             return Err(LendingError::InvalidAmount);
         }
-        if decimals > MAX_ASSET_DECIMALS {
+        if decimals == 0 || decimals > MAX_ASSET_DECIMALS {
             return Err(LendingError::InvalidAmount);
         }
 

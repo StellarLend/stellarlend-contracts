@@ -329,14 +329,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cross-asset-test"
-version = "0.0.0"
-dependencies = [
- "soroban-sdk",
- "stellar-lend-common",
-]
-
-[[package]]
 name = "crypto-bigint"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

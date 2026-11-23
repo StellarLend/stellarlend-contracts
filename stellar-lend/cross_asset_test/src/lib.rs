@@ -1,6 +1,0 @@
-#![no_std]
-pub mod cross_asset;
-#[cfg(test)]
-mod cross_asset_config_bounds_test;
-#[cfg(test)]
-mod cross_asset_decimals_test;
