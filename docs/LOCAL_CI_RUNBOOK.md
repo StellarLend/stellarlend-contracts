@@ -68,6 +68,27 @@ job name to the equivalent manual command(s) (run from `stellar-lend/`).
 
 ## Running individual checks manually
 
+## Snapshot drift check
+
+`scripts/check-snapshots.sh` compares the committed `test_snapshots/` directories
+(for example `stellar-lend/contracts/lending/test_snapshots/borrow_test`) against
+freshly regenerated output. The CI `build-and-test` job runs it in strict mode
+after the test steps and fails the job on any diff, printing the diff output.
+
+Run it locally from the repo root:
+
+    SNAPSHOT_CHECK=1 bash scripts/check-snapshots.sh
+
+Exit code `0` means the snapshots match. A non-zero exit prints the diff.
+
+To accept intentional snapshot changes, regenerate the snapshots and commit them:
+
+    bash scripts/regenerate-snapshots.sh
+    git add -u stellar-lend/contracts/*/test_snapshots
+    git commit -m "test: regenerate snapshots"
+
+Do not hand-edit files under `test_snapshots/`.
+
 All commands below run from `stellar-lend/`:
 
     cd stellar-lend

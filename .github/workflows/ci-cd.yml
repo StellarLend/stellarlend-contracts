@@ -41,6 +41,10 @@ jobs:
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
 
+      - name: Check test snapshots for drift
+        working-directory: stellar-lend
+        run: SNAPSHOT_CHECK=1 bash scripts/check-snapshots.sh
+
       # Equivalent to `stellar contract build --package <pkg>` (which wraps this
       # exact cargo invocation) without the multi-minute Stellar CLI install.
       - name: Build release contract WASMs
