@@ -2,7 +2,7 @@
 
 This document describes the persistent storage structure of the StellarLend protocol on Soroban.
 
-For cross‑asset module storage details, see [Cross‑Asset Storage Layout](../stellar-lend/contracts/hello-world/docs/CROSS_ASSET_STORAGE_LAYOUT.md).
+For cross‑asset module storage details, see [Cross‑Asset Rules](CROSS_ASSET_RULES.md).
 
 ## Overview
 

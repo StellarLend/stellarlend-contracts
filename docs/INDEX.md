@@ -56,13 +56,11 @@ Single-page reference for frontend integrators: unit scales, entrypoint signatur
 - [Release Checklist](release_checklist.md)
 - [Incident Response](INCIDENT_RESPONSE.md)
 - [Upgrade Playbook](upgrade_playbook.md)
-- [Recovery Guide](recovery.md)
 
 Provides step-by-step instructions for building, deploying, and initializing contracts on testnet and mainnet.
 
 ### Testing & CI
 
-- [Borrow Tests](BORROW_TESTS.md)
 - [Initialization Tests](INITIALIZATION_TESTS.md)
 - [Local CI Runbook](LOCAL_CI_RUNBOOK.md)
 - [CI/CD Overview](CI_OVERVIEW.md)

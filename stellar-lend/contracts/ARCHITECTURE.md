@@ -8,15 +8,12 @@ This note documents the contract boundaries under `stellar-lend/contracts/` and 
 
 `contracts/amm` is a separate optional deployment for AMM integration. It is not the source of truth for lending positions.
 
-`contracts/hello-world` is legacy and not canonical for deployment. It remains in the active workspace at `stellar-lend/Cargo.toml` only so it compiles against the same shared Soroban SDK pin as the maintained contracts.
-
 ## Boundary Map
 
 | Crate | Purpose | Canonical? |
 | --- | --- | --- |
 | `lending` | Core lending state machine and protocol controls | Yes |
 | `amm` | Auxiliary AMM router/integration surface | Optional only |
-| `hello-world` | Older all-in-one prototype with overlapping responsibilities | No |
 | `bridge` | Bridge-specific contract | Separate concern |
 | `common` | Shared library code | Library only |
 
@@ -30,7 +27,6 @@ and other shared Rust dependencies must be pinned once under
 Current workspace members:
 
 - `contracts/common`
-- `contracts/hello-world`
 - `contracts/lending`
 - `contracts/multisig`
 
@@ -39,7 +35,6 @@ Policy:
 - do not pin `soroban-sdk` independently inside member crates
 - do not introduce a second Soroban SDK version through direct crate-level version specs
 - keep shared test dependencies, such as `proptest`, in the workspace dependency table when more than one member uses them
-- treat `contracts/hello-world` as a compatibility consumer of the shared pin, not as the canonical deployment artifact
 
 ### Soroban SDK Version Bump Procedure
 
@@ -97,10 +92,6 @@ not decrease `k` (fees are retained in the pool), while liquidity removals
 must not increase `k`. This check is implemented in the helper
 `assert_k_monotonic` in the `contracts/amm` crate to detect rounding or
 implementation errors and revert on violation.
-
-### `hello-world`
-
-`hello-world` combines lending, AMM, bridge, governance, analytics, and monitoring concerns in one crate. Because it remains in the active workspace only for compatibility and duplicates functionality now split across maintained crates, it should be treated as historical/reference code rather than the deployment artifact.
 
 ## Trust Boundaries
 
@@ -302,4 +293,3 @@ slippage tolerance. It is not stored on-chain.
 
 - deploy `contracts/lending` as the canonical lending contract
 - deploy `contracts/amm` only as a separately reviewed auxiliary contract
-- do not use `contracts/hello-world` as the canonical protocol deployment target

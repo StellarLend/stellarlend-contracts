@@ -20,7 +20,6 @@ StellarLend is a lending and borrowing protocol built on Soroban. It features cr
 
 ## Test Documentation
 
-- **[Borrow Function Tests](BORROW_TESTS.md)** - Comprehensive test suite documentation for the borrow functionality, covering all validation paths, edge cases, interest accrual, pause functionality, events, and security scenarios.
 - **[Incident Response](INCIDENT_RESPONSE.md)** - Documentation of pause mechanisms, read-only mode, precedence matrix, and guidance for administrators during security incidents.
 - **[Upgrade Authorization](UPGRADE_AUTHORIZATION.md)** - Authorization boundaries for upgrade operations, key rotation procedure, and covered failure scenarios.
 - **[Upgrade Playbook](upgrade_playbook.md)** - Practical guide for safely upgrading contracts, including preflight checks, execution procedures, monitoring, and rollback criteria.
@@ -99,7 +98,6 @@ Key admin entrypoints (see contract for full list):
 > **Authoritative multisig:** The canonical multisig implementation is the standalone
 > `stellarlend-multisig` crate at `stellar-lend/contracts/multisig/`. The lending contract
 > also has its own timelocked upgrade governance in `upgrade.rs`, which is independent.
-> The now-deleted `hello-world` contract previously contained a stub; it is not authoritative.
 
 ## Documentation
 

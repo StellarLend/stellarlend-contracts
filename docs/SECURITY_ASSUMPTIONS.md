@@ -215,9 +215,9 @@ Previously, `update_asset_price()` in the cross-asset module lacked an authoriza
 - **Admin persistence**: `initialize(env, admin)` persists the admin address in contract storage via `set_admin(env, &admin)` under `CrossAssetAdminKey::Admin`.
 - **Admin-gated price & config updates**: Both `update_asset_price(env, caller, asset, price)` and `update_asset_config(...)` enforce `require_admin(env, caller)?` before any input validation or state modification.
 - **No information leakage**: Unauthorized callers receive `CrossAssetError::Unauthorized` before value bounds are checked or storage is touched. If no admin is initialized, all callers are rejected.
-- **Contract wrappers**: The public wrapper `update_asset_price` in `stellar-lend/contracts/hello-world/src/lib.rs` requires `caller: Address` and forwards it to the cross-asset module.
+- **Contract wrappers**: The public cross-asset price wrapper requires `caller: Address` and forwards it to the cross-asset module.
 
 ### Test Coverage
 
-- `stellar-lend/contracts/hello-world/src/cross_asset_price_authorization_test.rs` and `stellar-lend/cross_asset_test/src/cross_asset_price_authorization_test.rs` verify non-admin rejection, unset-admin rejection, authorized multi-asset updates, zero/negative price bounds, and authorization-before-validation ordering.
+- `stellar-lend/cross_asset_test/src/cross_asset_price_authorization_test.rs` verifies non-admin rejection, unset-admin rejection, authorized multi-asset updates, zero/negative price bounds, and authorization-before-validation ordering.
 

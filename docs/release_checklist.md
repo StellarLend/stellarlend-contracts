@@ -29,7 +29,6 @@ they cover (`#[cfg(test)]` mod in `src/`).
       and `liquidate_pause_test`).
 - [ ] New test modules are registered in `lib.rs` under `#[cfg(test)]`.
 
-**Relevant docs**: [BORROW_TESTS.md](BORROW_TESTS.md),
 [REPAY_SEMANTICS.md](../stellar-lend/docs/REPAY_SEMANTICS.md),
 [ZERO_AMOUNT_SEMANTICS.md](ZERO_AMOUNT_SEMANTICS.md)
 

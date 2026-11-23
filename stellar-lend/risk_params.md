@@ -30,8 +30,8 @@ Admins update via:
 
 ## Status & Traceability
 
-This document describes the **implemented** behaviour of the
-`stellar-lend/contracts/hello-world/src/risk_params.rs` module. The paced
+This document describes the **implemented** behaviour of the lending
+risk-parameter module. The paced
 rate-change cap, bounds checks, and admin-only enforcement are all exercised
 in code and covered by tests.
 
@@ -59,7 +59,7 @@ contract entrypoint (`HelloContract::set_risk_params`) maps to
 
 ### Regression coverage
 
-`stellar-lend/contracts/hello-world/src/risk_params_paced_change_test.rs`
+The risk-parameter regression tests
 exercises:
 
 - The documented default values are set by `initialize_risk_params`.

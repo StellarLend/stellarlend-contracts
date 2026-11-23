@@ -14,9 +14,8 @@ The versioning strategy is minimal by design:
 - A `SchemaVersionEvent` is emitted once during `initialize`, giving indexers
   an on-chain anchor for the version active at deployment for that contract.
 
-This document covers the event schema versioning policy for each contract
-separately. `contracts/lending` and `contracts/hello-world` maintain independent
-schema versioning, so indexers should track each contract's schema version
+This document covers the event schema versioning policy for the deployable
+contracts separately, so indexers should track each contract's schema version
 based on the contract address being indexed.
 
 ---
@@ -190,11 +189,6 @@ The parser (`indexing_system/src/parser.rs`) automatically extracts
 - `contracts/lending/src/events.rs` – `EVENT_SCHEMA_VERSION` constant, all event structs, and emit functions.
 - `contracts/lending/src/lib.rs` – Event emission in `initialize`, `deposit`, `withdraw`, `borrow`, `repay`, and `liquidate`.
 - `contracts/lending/src/events_test.rs` – Comprehensive event emission tests for all core operations.
-- `contracts/hello-world/src/events.rs` – `EVENT_SCHEMA_VERSION` constant,
-  `SchemaVersionEvent`, `emit_schema_version`.
-- `contracts/hello-world/src/tests/events_test.rs` –
-  `test_schema_version_event_emitted`,
-  `test_versioned_events_carry_current_schema_version`.
 - `indexing_system/src/models.rs` – `CreateEvent.schema_version`,
   `Event.schema_version`.
 - `indexing_system/src/parser.rs` – automatic extraction of `schema_version`.

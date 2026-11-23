@@ -67,5 +67,5 @@ Floor division means the protocol always rounds in its own favour. A dust
 amount (e.g. `amount = 1, fee_bps = 9_999`) rounds the fee down to 0, so the
 user is never overcharged relative to exact arithmetic.
 
-See `stellar-lend/contracts/hello-world/src/bridge_fee_test.rs` for the full
-property-based and deterministic test suite.
+The bridge fee tests cover both property-based and deterministic rounding
+behaviour.
