@@ -10,12 +10,13 @@ import type {
   OracleServiceConfig,
   ProviderConfig,
   AggregatedPrice,
+  IContractUpdater,
 } from "../src/types/index.js";
 
 describe("Oracle Service (oracle/src/index.ts) Boundary & Failure Path Coverage", () => {
   let mockConfig: OracleServiceConfig;
   let mockAggregator: any;
-  let mockUpdater: any;
+  let mockUpdater: IContractUpdater & { updatePrices: ReturnType<typeof vi.fn> };
   let mockAdminServer: any;
 
   beforeEach(() => {
@@ -509,7 +510,7 @@ describe("Oracle Service (oracle/src/index.ts) Boundary & Failure Path Coverage"
 
       const service = new OracleService(mockConfig, {
         aggregator: mockAggregator,
-        contractUpdater: alternativeUpdater as any,
+        contractUpdater: alternativeUpdater,
       });
 
       const results = await service.updatePrices(["XLM", "FAIL"]);

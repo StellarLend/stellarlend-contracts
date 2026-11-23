@@ -425,6 +425,13 @@ export interface SubmissionReceipt {
   submittedAt: number;
 }
 
+/**
+ * Defines the contract updater interface for on-chain price updates.
+ */
+export interface IContractUpdater {
+  updatePrices(prices: AggregatedPrice[]): Promise<ContractUpdateResult[]>;
+}
+
 // ---------------------------------------------------------------------------
 // Security & Sanitization Helpers (Diagnosability without leaking secrets)
 // ---------------------------------------------------------------------------
