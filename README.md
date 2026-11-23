@@ -364,7 +364,7 @@ For exact signatures and planned-but-not-shipping names, see
 
 ## Contributing
 
-We welcome contributions! Here's how to get started:
+We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for test commands, local CI usage, testing rules, and pull request guidelines. Here's a quick overview to get started:
 
 ### Development Workflow
 
@@ -411,7 +411,7 @@ When reporting issues, please include:
 
 ### Security
 
-If you discover a security vulnerability, please **do not** open a public issue. Instead, contact the maintainers directly through a secure channel.
+If you discover a security vulnerability, please **do not** open a public issue. Instead, follow our private disclosure process in [SECURITY.md](SECURITY.md).
 
 ---
 
