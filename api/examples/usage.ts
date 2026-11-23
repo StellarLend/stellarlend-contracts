@@ -6,6 +6,7 @@
  */
 
 import axios, { AxiosError } from 'axios';
+import { generateToken } from '../src/middleware/authorization';
 
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
 const MAX_AMOUNT_STROOPS = 9223372036854775807n;
@@ -59,6 +60,11 @@ async function depositCollateral(
         assetAddress,
         amount,
         userSecret,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${generateToken(userAddress)}`,
+        },
       }
     );
 
@@ -97,6 +103,11 @@ async function borrowAssets(
         assetAddress,
         amount,
         userSecret,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${generateToken(userAddress)}`,
+        },
       }
     );
 
@@ -135,6 +146,11 @@ async function repayDebt(
         assetAddress,
         amount,
         userSecret,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${generateToken(userAddress)}`,
+        },
       }
     );
 
@@ -173,6 +189,11 @@ async function withdrawCollateral(
         assetAddress,
         amount,
         userSecret,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${generateToken(userAddress)}`,
+        },
       }
     );
 

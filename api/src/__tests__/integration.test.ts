@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import request from 'supertest';
+import { generateToken } from '../middleware/authorization';
 
 /**
  * The app mounts a per-IP rate limiter (100 requests / 15 min by default) on
@@ -41,6 +42,25 @@ const I128_MAX = '170141183460469231731687303715884105727';
 const I128_MAX_PLUS_ONE = '170141183460469231731687303715884105728';
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+const VALID_TOKEN = generateToken(VALID_ADDRESS);
+const VALID_USER_ADDRESS = VALID_ADDRESS;
+const VALID_ASSET_ADDRESS = 'GD5TFY4DYYF43CQN3UMZUPBBXBLWK3WYAM5PIOMKOVRHBTZF7J7VGHP4';
+const VALID_USER_SECRET = VALID_SECRET;
+const I128_OVERFLOW = I128_MAX_PLUS_ONE;
+
+const successfulMonitorResult = {
+  success: true,
+  status: 'success',
+  transactionHash: 'mock_hash',
+};
+
+const validRequest = (amount = '1000000') => ({
+  userAddress: VALID_USER_ADDRESS,
+  assetAddress: VALID_ASSET_ADDRESS,
+  amount,
+  userSecret: VALID_USER_SECRET,
+});
 
 describe('API Integration Tests', () => {
   beforeEach(() => {
@@ -92,6 +112,7 @@ describe('API Integration Tests', () => {
 
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send(validRequest());
 
       expect(response.status).toBe(400);
@@ -104,6 +125,7 @@ describe('API Integration Tests', () => {
       const requests = Array(10).fill(null).map(() =>
         request(app)
           .post('/api/lending/deposit')
+          .set('Authorization', `Bearer ${VALID_TOKEN}`)
           .send({
             userAddress: VALID_ADDRESS,
             amount: '1000000',
@@ -120,16 +142,22 @@ describe('API Integration Tests', () => {
   describe('Concurrent Requests', () => {
     it('should handle concurrent deposit requests', async () => {
       const requests = [
-        request(app).post('/api/lending/deposit').send({
-          userAddress: VALID_ADDRESS,
-          amount: '1000000',
-          userSecret: VALID_SECRET,
-        }),
-        request(app).post('/api/lending/deposit').send({
-          userAddress: 'GD5TFY4DYYF43CQN3UMZUPBBXBLWK3WYAM5PIOMKOVRHBTZF7J7VGHP4',
-          amount: '2000000',
-          userSecret: VALID_SECRET,
-        }),
+        request(app)
+          .post('/api/lending/deposit')
+          .set('Authorization', `Bearer ${VALID_TOKEN}`)
+          .send({
+            userAddress: VALID_ADDRESS,
+            amount: '1000000',
+            userSecret: VALID_SECRET,
+          }),
+        request(app)
+          .post('/api/lending/deposit')
+          .set('Authorization', `Bearer ${generateToken('GD5TFY4DYYF43CQN3UMZUPBBXBLWK3WYAM5PIOMKOVRHBTZF7J7VGHP4')}`)
+          .send({
+            userAddress: 'GD5TFY4DYYF43CQN3UMZUPBBXBLWK3WYAM5PIOMKOVRHBTZF7J7VGHP4',
+            amount: '2000000',
+            userSecret: VALID_SECRET,
+          }),
       ];
 
       const responses = await Promise.all(requests);
@@ -145,6 +173,7 @@ describe('API Integration Tests', () => {
     it('rejects malformed addresses before any transaction is built', async () => {
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send({
           userAddress: VALID_ADDRESS,
           amount: '170141183460469231731687303715884105728',
@@ -160,6 +189,7 @@ describe('API Integration Tests', () => {
     it.each(['0', '-1', '1.5', 'not-a-number'])('rejects invalid amount %s before controller execution', async amount => {
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send(validRequest(amount));
 
       expect(response.status).toBe(400);
@@ -169,6 +199,7 @@ describe('API Integration Tests', () => {
     it('accepts the maximum signed i128 amount', async () => {
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send(validRequest(I128_MAX));
 
       expect(response.status).toBe(200);
@@ -183,6 +214,7 @@ describe('API Integration Tests', () => {
     it('rejects an amount one unit above signed i128 max before controller execution', async () => {
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send(validRequest(I128_OVERFLOW));
 
       expect(response.status).toBe(400);
@@ -195,6 +227,7 @@ describe('API Integration Tests', () => {
 
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send(body);
 
       expect(response.status).toBe(200);
@@ -209,6 +242,7 @@ describe('API Integration Tests', () => {
     it('normalizes an empty optional asset address to undefined', async () => {
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send({
           userAddress: VALID_ADDRESS,
           amount: '1000000',
@@ -230,6 +264,7 @@ describe('API Integration Tests', () => {
 
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send(body);
 
       expect(response.status).toBe(400);
@@ -239,6 +274,7 @@ describe('API Integration Tests', () => {
     it('rejects malformed JSON without executing transaction code', async () => {
       const response = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .set('Content-Type', 'application/json')
         .send('{ invalid json }');
 
@@ -251,8 +287,8 @@ describe('API Integration Tests', () => {
   describe('Duplicate and concurrent requests', () => {
     it('handles duplicate valid requests as isolated invocations', async () => {
       const [first, second] = await Promise.all([
-        request(app).post('/api/lending/deposit').send(validRequest()),
-        request(app).post('/api/lending/deposit').send(validRequest()),
+        request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(validRequest()),
+        request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(validRequest()),
       ]);
 
       expect(first.status).toBe(200);
@@ -280,8 +316,8 @@ describe('API Integration Tests', () => {
       }));
 
       const [first, second] = await Promise.all([
-        request(app).post('/api/lending/deposit').send(validRequest('1000000')),
-        request(app).post('/api/lending/deposit').send(validRequest('2000000')),
+        request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(validRequest('1000000')),
+        request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(validRequest('2000000')),
       ]);
 
       expect(first.status).toBe(200);
@@ -366,8 +402,13 @@ describe('API Integration Tests', () => {
     const operations = ['deposit', 'borrow', 'repay', 'withdraw'] as const;
 
     describe.each(operations)('POST /api/lending/%s', (operation) => {
-      const post = (body: unknown) =>
-        request(app).post(`/api/lending/${operation}`).send(body as object);
+      const post = (body: unknown, token = VALID_TOKEN) => {
+        const req = request(app).post(`/api/lending/${operation}`);
+        if (token) {
+          req.set('Authorization', `Bearer ${token}`);
+        }
+        return req.send(body as object);
+      };
 
       const buildMock = () => mockStellarService[`build${capitalize(operation)}Transaction` as const];
 
@@ -555,6 +596,72 @@ describe('API Integration Tests', () => {
     });
   });
 
+  describe('Lending write route authentication & address binding', () => {
+    it('POST /token generates a JWT for a valid Stellar address', async () => {
+      const res = await request(app)
+        .post('/api/lending/token')
+        .send({ address: VALID_ADDRESS, network: 'testnet' });
+
+      expect(res.status).toBe(200);
+      expect(typeof res.body.token).toBe('string');
+      expect(res.body.token.length).toBeGreaterThan(0);
+    });
+
+    it('POST /token rejects invalid Stellar address', async () => {
+      const res = await request(app)
+        .post('/api/lending/token')
+        .send({ address: 'invalid-stellar-address' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Valid Stellar address required');
+    });
+
+    it('rejects deposit without an Authorization header with 401', async () => {
+      const res = await request(app)
+        .post('/api/lending/deposit')
+        .send(validRequest());
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toMatch(/token required/i);
+      expect(mockStellarService.buildDepositTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects deposit with invalid token with 401', async () => {
+      const res = await request(app)
+        .post('/api/lending/deposit')
+        .set('Authorization', 'Bearer invalid-token')
+        .send(validRequest());
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toMatch(/invalid or expired/i);
+      expect(mockStellarService.buildDepositTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects deposit when token address does not match body userAddress with 403', async () => {
+      const otherAddress = 'GD5TFY4DYYF43CQN3UMZUPBBXBLWK3WYAM5PIOMKOVRHBTZF7J7VGHP4';
+      const otherToken = generateToken(otherAddress);
+
+      const res = await request(app)
+        .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${otherToken}`)
+        .send(validRequest());
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/does not match authenticated token/i);
+      expect(mockStellarService.buildDepositTransaction).not.toHaveBeenCalled();
+    });
+
+    it('allows deposit when token address matches body userAddress', async () => {
+      const res = await request(app)
+        .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
+        .send(validRequest());
+
+      expect(res.status).toBe(200);
+      expect(mockStellarService.buildDepositTransaction).toHaveBeenCalled();
+    });
+  });
+
   describe('Hook endpoint authorization', () => {
     const hookPath = '/api/lending/hooks/indexer';
     const payload = { event: 'indexer.write', data: { id: 'abc123' } };
@@ -687,6 +794,7 @@ describe('API Integration Tests', () => {
     it('returns a JSON 400 for malformed JSON', async () => {
       const res = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .set('Content-Type', 'application/json')
         .send('{"userAddress": ');
 
@@ -708,6 +816,7 @@ describe('API Integration Tests', () => {
 
       const res = await request(app)
         .post('/api/lending/deposit')
+        .set('Authorization', `Bearer ${VALID_TOKEN}`)
         .send({ userAddress: VALID_ADDRESS, amount: '1000000', userSecret: VALID_SECRET });
 
       expect(res.text).not.toContain('/srv/secret/path');
@@ -720,7 +829,9 @@ describe('API Integration Tests', () => {
       const body = { userAddress: VALID_ADDRESS, amount: '1000000', userSecret: VALID_SECRET };
 
       const responses = await Promise.all(
-        Array.from({ length: 5 }, () => request(app).post('/api/lending/deposit').send(body))
+        Array.from({ length: 5 }, () =>
+          request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(body)
+        )
       );
 
       const statuses = new Set(responses.map(r => r.status));
@@ -732,8 +843,8 @@ describe('API Integration Tests', () => {
     it('returns a stable body for repeated identical valid requests', async () => {
       const body = { userAddress: VALID_ADDRESS, amount: '1000000', userSecret: VALID_SECRET };
 
-      const first = await request(app).post('/api/lending/deposit').send(body);
-      const second = await request(app).post('/api/lending/deposit').send(body);
+      const first = await request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(body);
+      const second = await request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(body);
 
       expect(second.status).toBe(first.status);
       expect(second.body).toEqual(first.body);
@@ -744,8 +855,8 @@ describe('API Integration Tests', () => {
       const invalid = { userAddress: 'bad', amount: '1000000', userSecret: VALID_SECRET };
 
       const [ok, bad] = await Promise.all([
-        request(app).post('/api/lending/deposit').send(valid),
-        request(app).post('/api/lending/deposit').send(invalid),
+        request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(valid),
+        request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(invalid),
       ]);
 
       // The invalid request is rejected by the schema; the valid one clears
@@ -770,7 +881,9 @@ describe('API Integration Tests', () => {
       const body = { userAddress: VALID_ADDRESS, amount: '1000000', userSecret: VALID_SECRET };
 
       await Promise.all(
-        Array.from({ length: 3 }, () => request(app).post('/api/lending/deposit').send(body))
+        Array.from({ length: 3 }, () =>
+          request(app).post('/api/lending/deposit').set('Authorization', `Bearer ${VALID_TOKEN}`).send(body)
+        )
       );
 
       // The service must receive the caller's values unmodified each time.

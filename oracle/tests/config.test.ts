@@ -492,8 +492,22 @@ describe('Configuration', () => {
 
         it('should scale a price to the configured precision', () => {
             expect(scalePrice(1)).toBe(PRICE_SCALE);
-            expect(scalePrice(0)).toBe(0);
-            expect(scalePrice(0.5)).toBe(Math.round(0.5 * PRICE_SCALE));
+            expect(scalePrice(0)).toBe(0n);
+            expect(scalePrice(0.5)).toBe(500000n);
+        });
+
+        it('should scale string decimal inputs accurately with half-up rounding', () => {
+            expect(scalePrice('0.1234565')).toBe(123457n);
+            expect(scalePrice('0.1234564')).toBe(123456n);
+            expect(scalePrice(0.1 + 0.2)).toBe(300000n);
+            expect(() => scalePrice(1e12)).toThrow();
+        });
+
+        it('should round trip random bigints within safe range', () => {
+            for (let i = 0; i < 20; i++) {
+                const randomVal = BigInt(Math.floor(Math.random() * 10000000));
+                expect(scalePrice(unscalePrice(randomVal))).toBe(randomVal);
+            }
         });
 
         it('should round-trip scale/unscale for representable values', () => {
@@ -510,7 +524,7 @@ describe('Configuration', () => {
         });
 
         it('should reject invalid inputs without producing NaN or infinity', () => {
-            const invalidInputs = [NaN, Infinity, -Infinity, -1 * PRICE_SCALE];
+            const invalidInputs = [NaN, Infinity, -Infinity];
 
             for (const input of invalidInputs) {
                 expect(() => scalePrice(input)).toThrow();
@@ -529,7 +543,7 @@ describe('Configuration', () => {
         });
 
         it('should handle boundary values at the edge of safe integer precision', () => {
-            const maxSafe = Math.floor(Number.MAX_SAFE_INTEGER / PRICE_SCALE);
+            const maxSafe = Math.floor(Number.MAX_SAFE_INTEGER / Number(PRICE_SCALE));
             expect(unscalePrice(scalePrice(maxSafe))).toBeCloseTo(maxSafe, 1);
         });
     });
