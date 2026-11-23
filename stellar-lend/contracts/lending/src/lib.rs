@@ -1141,7 +1141,8 @@ impl LendingContract {
         let max_move_bps: Option<i128> = env
             .storage()
             .instance()
-            .get::<DataKey, i128>(&DataKey::MaxMoveBps);
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
+            .filter(|&bps| bps > 0);
 
         // Per-update move-cap circuit breaker (relative to the previous update).
         if let Some(max_move_bps) = max_move_bps {
