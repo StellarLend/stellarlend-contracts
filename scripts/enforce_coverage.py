@@ -61,7 +61,7 @@ def _parse_threshold(value, label):
     try:
         threshold = float(value)
     except (TypeError, ValueError) as exc:
-        raise CoverageError(f"Invalid {label} threshold {value!r}: {exc}") from ex
+        raise CoverageError(f"Invalid {label} threshold {value!r}: {exc}") from exc
     if not math.isfinite(threshold):
         raise CoverageError(f"Invalid {label} threshold {value!r}: not finite")
     if not 0.0 <= threshold <= 100.0:
@@ -101,7 +101,7 @@ def load_thresholds(config_path):
         with open(config_path) as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        raise CoverageError(f"Failed to load threshold config {config_path!r}: {exc}") from ex
+        raise CoverageError(f"Failed to load threshold config {config_path!r}: {exc}") from exc
 
     if not isinstance(data, dict):
         raise CoverageError(
@@ -173,18 +173,18 @@ def _run_check(coverage_file, thresholds, flat_threshold, overall_only):
         tree = ET.parse(coverage_file)
         root = tree.getroot()
     except (ET.ParseError, OSError) as exc:
-        raise CoverageError(f"Error parsing {coverage_file}: {exc}") from ex
+        raise CoverageError(f"Error parsing {coverage_file}: {exc}") from exc
 
     packages = _collect_packages(root)
     if not packages:
         raise CoverageError("Error: No <package> elements found in cobertura.xml")
 
     failures = []
-    print(f"{'Crate':<45} {'Coverage'>:>10} {'Threshold':>10}  Status")
+    print(f"{'Crate':<45} {'Coverage':>10} {'Threshold':>10}  Status")
     print("-" * 80)
 
     if overall_only:
-        print(f"  { '(packages skipped by --overall-only)':<45} {'N/A'>:>10} {'N/A':>10}  SKIP")
+        print(f"  {'(packages skipped by --overall-only)':<45} {'N/A':>10} {'N/A':>10}  SKIP")
     else:
         for name in sorted(packages):
             coverage_pct = packages[name]
@@ -214,7 +214,12 @@ def main(argv_list=None):
     parser = argparse.ArgumentParser(
         description="Enforce minimum coverage thresholds from cobertura.xml"
     )
-    parser.add_argument("coverage_file", help="Path to cobertura.xml")
+    parser.add_argument(
+        "coverage_file",
+        nargs="?",
+        default="cobertura.xml",
+        help="Path to cobertura.xml (default: cobertura.xml)",
+    )
     parser.add_argument(
         "--threshold",
         type=float,

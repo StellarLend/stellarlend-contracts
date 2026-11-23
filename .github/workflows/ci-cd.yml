@@ -10,6 +10,53 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keep in sync with stellar-lend/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          targets: wasm32v1-none, wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stellar-lend
+
+      - name: Run coverage enforcement unit tests
+        run: python3 scripts/tests/test_enforce_coverage.py
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Generate and enforce coverage
+        working-directory: stellar-lend
+        run: |
+          cargo tarpaulin --config .tarpaulin.toml --out Xml
+          python3 ../scripts/enforce_coverage.py
+
+      - name: Upload Cobertura report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-report
+          path: stellar-lend/cobertura.xml
+          if-no-files-found: error
+
+      - name: Upload coverage to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        continue-on-error: true
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: stellar-lend/cobertura.xml
+          fail_ci_if_error: false
+
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
