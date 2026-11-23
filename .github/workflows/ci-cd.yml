@@ -38,6 +38,14 @@ jobs:
         working-directory: stellar-lend
         run: cargo test -p stellarlend-multisig
 
+      - name: Test bridge crate
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-bridge
+
+      - name: Build bridge WASM
+        working-directory: stellar-lend
+        run: cargo build -p stellarlend-bridge --target wasm32v1-none --release
+
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
 
@@ -141,9 +149,3 @@ jobs:
         continue-on-error: true
         working-directory: stellar-lend/contracts/lending/fuzz
         run: cargo +nightly fuzz run fuzz_borrow_rate -- -max_total_time=60
-
-      - name: Test bridge crate
-        run: cargo test -p stellarlend-bridge
-
-      - name: Build bridge WASM
-        run: cargo build -p stellarlend-bridge --target wasm32v1-none --release
