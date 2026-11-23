@@ -15,7 +15,8 @@ const app: Application = express();
  * 2. Rate limiting is applied to all /api/ routes with a deterministic configuration.
  * 3. Unknown routes under /api/ return a consistent 404 JSON response.
  * 4. All errors are routed through the central error handler without leaking internal details.
- * 5. Parser failures (malformed JSON, oversized payloads) are reported as 400 with a safe message.
+ * 5. Parser failures are reported as 400 (malformed JSON) or 413 (oversized payload) with a
+ *    safe message.
  */
 
 // Security headers and CSRP protection.
@@ -42,12 +43,12 @@ app.use(cors({
 
 app.use(
   express.json({
+    limit: config.server.bodyLimit,
     verify: (req: Request, _res: Response, buf: Buffer) => {
       (req as Request & { rawBody?: string }).rawBody = buf.toString('utf8');
     },
   }),
 );
-app.use(express.urlencoded({ extended: true }));
 
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
