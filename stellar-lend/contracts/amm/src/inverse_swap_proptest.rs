@@ -52,16 +52,20 @@ fn swap_out(reserve_a: i128, reserve_b: i128, amount_in: i128, fee_bps: i128) ->
 /// ```
 ///
 /// Panics if `amount_out >= rb` (cannot drain the pool).
-fn inverse_swap_in(ra: i128, rb: i128, amount_out: i128, _fee_bps: i128) -> i128 {
-    let rb_minus_out = rb
-        .checked_sub(amount_out)
-        .expect("inverse_swap_in: amount_out >= rb");
-    assert!(rb_minus_out > 0, "inverse_swap_in: amount_out must be < rb");
-    let numerator = ra
-        .checked_mul(amount_out)
-        .expect("inverse_swap_in: overflow in ra * amount_out");
+///
+/// Returns `None` if `amount_out >= rb`, `amount_out <= 0`, or on arithmetic overflow.
+fn inverse_swap_in(ra: i128, rb: i128, amount_out: i128, _fee_bps: i128) -> Option<i128> {
+    if amount_out <= 0 {
+        return None;
+    }
+    let rb_minus_out = rb.checked_sub(amount_out)?;
+    if rb_minus_out <= 0 {
+        return None;
+    }
+    let numerator = ra.checked_mul(amount_out)?;
     // Ceiling division: (numerator + denom - 1) / denom
-    (numerator + rb_minus_out - 1) / rb_minus_out
+    let adjusted = numerator.checked_add(rb_minus_out - 1)?;
+    Some(adjusted / rb_minus_out)
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +108,7 @@ proptest! {
     fn prop_round_trip_forward_gte_requested_output(
         (ra, rb, amount_out, fee_bps) in valid_inverse_params()
     ) {
-        let amount_in = inverse_swap_in(ra, rb, amount_out, fee_bps);
+        let amount_in = inverse_swap_in(ra, rb, amount_out, fee_bps).unwrap();
 
         // The inverse must always produce a positive amount_in.
         prop_assert!(amount_in > 0,
@@ -151,8 +155,8 @@ proptest! {
         if out2_raw >= reserve_b { return Ok(()); }
         if out1 >= reserve_b     { return Ok(()); }
 
-        let in1 = inverse_swap_in(reserve_a, reserve_b, out1, fee_bps);
-        let in2 = inverse_swap_in(reserve_a, reserve_b, out2_raw, fee_bps);
+        let in1 = inverse_swap_in(reserve_a, reserve_b, out1, fee_bps).unwrap();
+        let in2 = inverse_swap_in(reserve_a, reserve_b, out2_raw, fee_bps).unwrap();
 
         prop_assert!(
             in1 <= in2,
@@ -167,21 +171,25 @@ proptest! {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "inverse_swap_in: amount_out must be < rb")]
-fn prop_inverse_rejects_full_drain() {
-    // amount_out == rb: must panic because rb - amount_out = 0 (division by zero).
+fn inverse_swap_in_returns_none_when_out_equals_reserve() {
+    // amount_out == rb: must return None (would otherwise divide by zero).
     let ra = 1_000i128;
     let rb = 1_000i128;
-    inverse_swap_in(ra, rb, rb, 30); // amount_out == rb — should panic
+    assert_eq!(inverse_swap_in(ra, rb, rb, 30), None);
 }
 
 #[test]
-#[should_panic]
 fn prop_inverse_rejects_overdrain() {
-    // amount_out > rb: even more invalid.
+    // amount_out > rb: must return None.
     let ra = 1_000i128;
     let rb = 1_000i128;
-    inverse_swap_in(ra, rb, rb + 1, 30); // amount_out > rb — should panic
+    assert_eq!(inverse_swap_in(ra, rb, rb + 1, 30), None);
+}
+
+#[test]
+fn inverse_swap_in_returns_none_on_overflow() {
+    // ra * amount_out overflows i128.
+    assert_eq!(inverse_swap_in(i128::MAX, 1_000, 2, 30), None);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +206,7 @@ proptest! {
     fn prop_inverse_always_positive(
         (ra, rb, amount_out, fee_bps) in valid_inverse_params()
     ) {
-        let amount_in = inverse_swap_in(ra, rb, amount_out, fee_bps);
+        let amount_in = inverse_swap_in(ra, rb, amount_out, fee_bps).unwrap();
         prop_assert!(
             amount_in > 0,
             "inverse_swap_in returned 0 for ra={ra} rb={rb} amount_out={amount_out} fee_bps={fee_bps}"

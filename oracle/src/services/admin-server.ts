@@ -5,6 +5,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { z } from 'zod';
 import type { PriceValidator, ValidatorConfig } from './price-validator.js';
 import { logger } from '../utils/logger.js';
 import { isSupportedAsset } from '../config.js';
@@ -15,6 +16,61 @@ export interface AdminServerOptions {
     validator: PriceValidator;
 }
 
+const validatorConfigSchema = z
+    .object({
+        maxDeviationPercent: z.number().refine(n => Number.isFinite(n) && n >= 0, {
+            message: 'maxDeviationPercent must be a non-negative finite number',
+        }).optional(),
+        maxStalenessSeconds: z.number().refine(n => Number.isFinite(n) && n >= 0, {
+            message: 'maxStalenessSeconds must be a non-negative finite number',
+        }).optional(),
+        minPrice: z.number().refine(n => Number.isFinite(n) && n > 0, {
+            message: 'minPrice must be a positive finite number',
+        }).optional(),
+        maxPrice: z.number().refine(n => Number.isFinite(n) && n > 0, {
+            message: 'maxPrice must be a positive finite number',
+        }).optional(),
+        maxFallbackStalenessSeconds: z.number().refine(n => Number.isFinite(n) && n >= 0, {
+            message: 'maxFallbackStalenessSeconds must be a non-negative finite number',
+        }).optional(),
+    })
+    .strict({ message: 'Unknown fields in validatorConfig are not allowed' });
+
+const boundRangeSchema = z
+    .object({
+        minPrice: z.number()
+            .refine(n => Number.isFinite(n), { message: 'minPrice must be a finite number' })
+            .refine(n => n >= 0, { message: 'minPrice must be non-negative' }),
+        maxPrice: z.number()
+            .refine(n => Number.isFinite(n), { message: 'maxPrice must be a finite number' }),
+    })
+    .strict({ message: 'Unknown fields in bound range are not allowed' })
+    .refine(b => b.maxPrice > b.minPrice, {
+        message: 'maxPrice must be greater than minPrice',
+        path: ['maxPrice'],
+    });
+
+const boundsSchema = z.record(z.string(), boundRangeSchema).superRefine((val, ctx) => {
+    for (const asset of Object.keys(val)) {
+        if (!isSupportedAsset(asset.toUpperCase())) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `Unsupported asset in bounds: ${asset}`,
+                path: [asset],
+            });
+        }
+    }
+});
+
+const reloadPayloadSchema = z
+    .object({
+        validatorConfig: validatorConfigSchema.optional(),
+        bounds: boundsSchema.optional(),
+    })
+    .strict({ message: 'Unknown fields in reload payload are not allowed' })
+    .refine(data => Boolean(data.validatorConfig || data.bounds), {
+        message: 'Payload must include validatorConfig or bounds',
+    });
 const MAX_BODY_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 const HEADERS_TIMEOUT_MS = 10_000;
@@ -131,6 +187,11 @@ export class AdminServer {
                 return;
             }
 
+        const rawBody = await this.readBody(req);
+        if (!rawBody || rawBody.length === 0) {
+            this.sendResponse(res, 400, { error: 'Empty request body' });
+            return;
+        }
             // --- Timestamp check (must come before signature) ---
             const timestampHeader = headers['x-timestamp'];
             if (!timestampHeader || Array.isArray(timestampHeader)) {
@@ -192,6 +253,34 @@ export class AdminServer {
                 return;
             }
 
+        const parseResult = reloadPayloadSchema.safeParse(payload);
+        if (!parseResult.success) {
+            const firstIssue = parseResult.error.issues[0];
+            const path = firstIssue.path.join('.');
+            const errorMessage = path ? `${path}: ${firstIssue.message}` : firstIssue.message;
+            this.sendResponse(res, 400, { error: errorMessage, details: parseResult.error.issues });
+            return;
+        }
+
+        const normalizedBounds: Record<string, { minPrice: number; maxPrice: number }> = {};
+        if (parseResult.data.bounds) {
+            for (const [asset, range] of Object.entries(parseResult.data.bounds)) {
+                normalizedBounds[asset.toUpperCase()] = {
+                    minPrice: range.minPrice,
+                    maxPrice: range.maxPrice,
+                };
+            }
+        }
+
+        try {
+            this.validator.reloadConfig(
+                parseResult.data.validatorConfig ?? {},
+                normalizedBounds
+            );
+            this.sendResponse(res, 200, {
+                status: 'ok',
+                updatedBounds: Object.keys(normalizedBounds),
+            });
             const body = payload as {
                 validatorConfig?: Partial<ValidatorConfig>;
                 bounds?: Record<string, { minPrice: number; maxPrice: number }>;
@@ -305,41 +394,6 @@ export class AdminServer {
                 this.replayCache.delete(sig);
             }
         }
-    }
-
-    private normalizeBounds(
-        bounds: Record<string, { minPrice: number; maxPrice: number }>,
-    ): Record<string, { minPrice: number; maxPrice: number }> | Error {
-        const normalized: Record<string, { minPrice: number; maxPrice: number }> = {};
-
-        for (const [asset, range] of Object.entries(bounds)) {
-            const upperAsset = asset.toUpperCase();
-            if (!isSupportedAsset(upperAsset)) {
-                return new Error(`Unsupported asset in bounds: ${asset}`);
-            }
-
-            if (
-                typeof range.minPrice !== 'number' ||
-                typeof range.maxPrice !== 'number' ||
-                Number.isNaN(range.minPrice) ||
-                Number.isNaN(range.maxPrice)
-            ) {
-                return new Error('Bounds must contain numeric minPrice and maxPrice values');
-            }
-
-            if (range.maxPrice <= range.minPrice) {
-                return new Error(
-                    `Invalid bounds for ${upperAsset}: maxPrice must be greater than minPrice`,
-                );
-            }
-
-            normalized[upperAsset] = {
-                minPrice: range.minPrice,
-                maxPrice: range.maxPrice,
-            };
-        }
-
-        return normalized;
     }
 
     private sendResponse(res: ServerResponse, statusCode: number, body: unknown) {
