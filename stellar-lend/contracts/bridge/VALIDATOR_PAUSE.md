@@ -31,19 +31,15 @@ introspectors and one new typed error type, all defined in `src/lib.rs`.
 ### Guardian configuration
 
 ```rust
-pub fn set_guardian(&mut self, guardian: PublicKey);
-pub fn guardian(&self) -> Option<&PublicKey>;
+pub fn set_guardian(env: Env, caller: Address, guardian: BytesN<32>) -> Result<(), BridgeError>;
+pub fn get_guardian(env: Env) -> Option<BytesN<32>>;
 ```
 
-- `set_guardian` is **not** signature-protected. The bridge is a pure-Rust
-  data structure; the trust assumption is that whoever holds the
-  `&mut Bridge` is also trusted to configure its guardian, similarly to
-  how the validator set, inbound cap, and window size are configured.
-  Operational guidance: call `set_guardian` exactly once, on a trusted host,
-  immediately after `Bridge::new`. The companion toggles
-  (`pause_validator`, `unpause_validator`) are signature-protected, so a
-  later attempt to exfiltrate the bridge by rewriting the guardian still
-  requires possession of the current guardian's signing key.
+- `set_guardian` requires the bridge admin as `caller` (enforced via
+  `require_admin`). A non-admin caller or an unset admin returns
+  `BridgeError::NotAdmin`. On success it emits a `grd_set` event carrying
+  the new guardian key so monitors can alert on rotation.
+  Operational guidance: call `set_admin` before `set_guardian`.
 
 ### Guardian Payload & Nonce Domain Separation
 

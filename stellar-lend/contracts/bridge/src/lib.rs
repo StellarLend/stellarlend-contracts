@@ -711,8 +711,14 @@ impl Bridge {
         Self::save_epoch(&env, 0);
     }
 
-    pub fn set_guardian(env: Env, guardian: BytesN<32>) {
+    pub fn set_guardian(env: Env, caller: Address, guardian: BytesN<32>) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
         Self::save_guardian(&env, &guardian);
+        env.events().publish(
+            (soroban_sdk::symbol_short!("grd_set"),),
+            guardian,
+        );
+        Ok(())
     }
 
     pub fn get_guardian(env: Env) -> Option<BytesN<32>> {
