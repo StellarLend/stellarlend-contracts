@@ -75,6 +75,12 @@ const MAX_BODY_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 const HEADERS_TIMEOUT_MS = 10_000;
 
+/** Acceptable clock skew in milliseconds (±5 minutes). */
+const TIMESTAMP_WINDOW_MS = 5 * 60 * 1_000;
+
+/** How often the replay cache is pruned of expired entries. */
+const REPLAY_CACHE_PRUNE_INTERVAL_MS = 60_000;
+
 class AdminBodyError extends Error {
     constructor(message: string, public readonly statusCode: number) {
         super(message);
@@ -82,11 +88,37 @@ class AdminBodyError extends Error {
     }
 }
 
+/**
+ * Compute the HMAC-SHA256 signature for an admin request.
+ *
+ * The signed message is `${timestampMs}.${rawBody}`, mirroring the pattern
+ * used by the existing middleware in `api/src/middleware/auth.ts`.
+ *
+ * @param secret      - The HMAC secret (plain string).
+ * @param timestampMs - The `x-timestamp` value that will be sent with the request.
+ * @param rawBody     - The raw request body bytes (or string).
+ * @returns Lowercase hex-encoded HMAC-SHA256 digest.
+ */
+export function signRequest(secret: string, timestampMs: number, rawBody: Buffer | string): string {
+    const body = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+    return crypto
+        .createHmac('sha256', secret)
+        .update(`${timestampMs}.${body}`)
+        .digest('hex');
+}
+
 export class AdminServer {
     private server?: http.Server;
     private readonly port: number;
     private readonly hmacSecret: string;
     private readonly validator: PriceValidator;
+
+    /**
+     * In-memory replay cache: maps a recently-seen signature to the timestamp
+     * at which its validity window expires. Entries are pruned periodically.
+     */
+    private readonly replayCache = new Map<string, number>();
+    private pruneTimer?: NodeJS.Timeout;
 
     constructor(options: AdminServerOptions) {
         this.port = options.port;
@@ -102,6 +134,12 @@ export class AdminServer {
             this.server.requestTimeout = REQUEST_TIMEOUT_MS;
             this.server.headersTimeout = HEADERS_TIMEOUT_MS;
 
+            this.pruneTimer = setInterval(() => {
+                this.pruneReplayCache();
+            }, REPLAY_CACHE_PRUNE_INTERVAL_MS);
+            // Allow the timer to be garbage-collected without keeping the process alive.
+            this.pruneTimer.unref();
+
             this.server.once('error', reject);
             this.server.listen(this.port, () => {
                 logger.info('Admin server listening', { port: this.port });
@@ -112,6 +150,11 @@ export class AdminServer {
 
     stop(): Promise<void> {
         return new Promise((resolve, reject) => {
+            if (this.pruneTimer) {
+                clearInterval(this.pruneTimer);
+                this.pruneTimer = undefined;
+            }
+
             if (!this.server) {
                 resolve();
                 return;
@@ -149,6 +192,26 @@ export class AdminServer {
             this.sendResponse(res, 400, { error: 'Empty request body' });
             return;
         }
+            // --- Timestamp check (must come before signature) ---
+            const timestampHeader = headers['x-timestamp'];
+            if (!timestampHeader || Array.isArray(timestampHeader)) {
+                this.sendResponse(res, 401, { error: 'Missing x-timestamp header' });
+                return;
+            }
+
+            const timestampMs = Number(timestampHeader);
+            if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+                this.sendResponse(res, 401, { error: 'Invalid x-timestamp value' });
+                return;
+            }
+
+            const now = Date.now();
+            if (Math.abs(now - timestampMs) > TIMESTAMP_WINDOW_MS) {
+                this.sendResponse(res, 401, { error: 'Request timestamp outside acceptable window' });
+                return;
+            }
+
+            // --- Signature check ---
             const signature = headers['x-signature'];
             if (!signature || Array.isArray(signature)) {
                 this.sendResponse(res, 401, { error: 'Missing signature header' });
@@ -156,16 +219,27 @@ export class AdminServer {
             }
 
             const rawBody = await this.readBody(req);
-            if (!rawBody) {
+            if (!rawBody.length) {
                 this.sendResponse(res, 400, { error: 'Empty request body' });
                 return;
             }
 
-            if (!this.verifySignature(rawBody, signature)) {
+            if (!this.verifySignature(rawBody, timestampMs, signature)) {
                 this.sendResponse(res, 403, { error: 'Invalid signature' });
                 return;
             }
 
+            // --- Replay check (after signature so we only cache verified sigs) ---
+            if (this.replayCache.has(signature)) {
+                this.sendResponse(res, 409, { error: 'Duplicate request (replay rejected)' });
+                return;
+            }
+
+            // Record the signature; expire it when its timestamp window closes.
+            const expiresAt = timestampMs + TIMESTAMP_WINDOW_MS;
+            this.replayCache.set(signature, expiresAt);
+
+            // --- Parse and apply payload ---
             let payload: unknown;
             try {
                 payload = JSON.parse(rawBody.toString('utf8'));
@@ -295,17 +369,14 @@ export class AdminServer {
         });
     }
 
-    private verifySignature(body: Buffer, signature: string): boolean {
+    private verifySignature(body: Buffer, timestampMs: number, signature: string): boolean {
         try {
-            const expected = crypto
-                .createHmac('sha256', this.hmacSecret)
-                .update(body)
-                .digest('hex');
+            const expected = signRequest(this.hmacSecret, timestampMs, body);
 
-            const signatureBuffer = Buffer.from(signature, 'utf8');
-            const expectedBuffer = Buffer.from(expected, 'utf8');
+            const signatureBuffer = Buffer.from(signature, 'hex');
+            const expectedBuffer = Buffer.from(expected, 'hex');
 
-            if (signatureBuffer.length !== expectedBuffer.length) {
+            if (signatureBuffer.length !== expectedBuffer.length || expectedBuffer.length === 0) {
                 return false;
             }
 
@@ -313,6 +384,15 @@ export class AdminServer {
         } catch (error) {
             logger.error('Signature verification failed', { error });
             return false;
+        }
+    }
+
+    private pruneReplayCache(): void {
+        const now = Date.now();
+        for (const [sig, expiresAt] of this.replayCache) {
+            if (now >= expiresAt) {
+                this.replayCache.delete(sig);
+            }
         }
     }
 
