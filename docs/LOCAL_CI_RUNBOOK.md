@@ -73,6 +73,8 @@ job name to the equivalent manual command(s) (run from `stellar-lend/`).
 `scripts/check-snapshots.sh` compares the committed `test_snapshots/` directories
 (for example `stellar-lend/contracts/lending/test_snapshots/borrow_test`) against
 freshly regenerated output. The CI `build-and-test` job runs it in strict mode
+(for example `stellar-lend/contracts/lending/test_snapshots/borrow_test`) against
+freshly regenerated output. The CI `build-and-test` job runs it in strict mode
 after the test steps and fails the job on any diff, printing the diff output.
 
 Run it locally from the repo root:
