@@ -59,6 +59,9 @@ const envSchema = z.object({
     MAD_Z_SCORE_THRESHOLD: positiveFiniteNumber('MAD_Z_SCORE_THRESHOLD').default(3.5),
     PRICE_STALENESS_THRESHOLD_SECONDS: positiveFiniteNumber('PRICE_STALENESS_THRESHOLD_SECONDS').default(300),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    ADMIN_API_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+    ADMIN_HOST: z.string().trim().min(1).default('127.0.0.1'),
+    ADMIN_HMAC_SECRET: z.string().min(1).optional(),
 });
 
 /**
@@ -211,6 +214,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): OracleServiceC
         priceStaleThresholdSeconds: parsed.PRICE_STALENESS_THRESHOLD_SECONDS,
         cacheTtlSeconds: parsed.CACHE_TTL_SECONDS,
         redisUrl: parsed.REDIS_URL,
+        adminApiPort: parsed.ADMIN_API_PORT,
+        adminHost: parsed.ADMIN_HOST,
+        adminHmacSecret: parsed.ADMIN_HMAC_SECRET,
         logLevel: parsed.LOG_LEVEL,
         providers: getProviderConfigs(parsed),
     };

@@ -11,6 +11,7 @@ import { isSupportedAsset } from '../config.js';
 
 export interface AdminServerOptions {
     port: number;
+    host?: string;
     hmacSecret: string;
     validator: PriceValidator;
 }
@@ -29,11 +30,13 @@ class AdminBodyError extends Error {
 export class AdminServer {
     private server?: http.Server;
     private readonly port: number;
+    private readonly host: string;
     private readonly hmacSecret: string;
     private readonly validator: PriceValidator;
 
     constructor(options: AdminServerOptions) {
         this.port = options.port;
+        this.host = options.host ?? '127.0.0.1';
         this.hmacSecret = options.hmacSecret;
         this.validator = options.validator;
     }
@@ -47,8 +50,8 @@ export class AdminServer {
             this.server.headersTimeout = HEADERS_TIMEOUT_MS;
 
             this.server.once('error', reject);
-            this.server.listen(this.port, () => {
-                logger.info('Admin server listening', { port: this.port });
+            this.server.listen(this.port, this.host, () => {
+                logger.info('Admin server listening', { host: this.host, port: this.port });
                 resolve();
             });
         });
@@ -208,15 +211,17 @@ export class AdminServer {
 
     private verifySignature(body: Buffer, signature: string): boolean {
         try {
-            const expected = crypto
+            if (!/^[0-9a-fA-F]{64}$/.test(signature)) {
+                return false;
+            }
+
+            const expectedBuffer = crypto
                 .createHmac('sha256', this.hmacSecret)
                 .update(body)
-                .digest('hex');
+                .digest();
+            const signatureBuffer = Buffer.from(signature, 'hex');
 
-            const signatureBuffer = Buffer.from(signature, 'utf8');
-            const expectedBuffer = Buffer.from(expected, 'utf8');
-
-            if (signatureBuffer.length !== expectedBuffer.length) {
+            if (signatureBuffer.length !== 32 || expectedBuffer.length !== 32) {
                 return false;
             }
 
