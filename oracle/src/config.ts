@@ -40,7 +40,11 @@ const optionalEnvString = z.preprocess(
 );
 
 const optionalPort = z.preprocess(
-    (value) => value === '' ? undefined : value,
+    (value) => {
+        if (value === '') return undefined;
+        if (typeof value === 'string' && !/^\d+$/.test(value)) return Number.NaN;
+        return value;
+    },
     z.coerce.number().int().min(1).max(65535).optional(),
 );
 

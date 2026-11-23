@@ -153,7 +153,7 @@ describe('Configuration', () => {
             expect(loadConfig().adminApiPort).toBe(Number(port));
         });
 
-        it.each(['0', '65536', '8080.5', 'not-a-number'])('rejects invalid admin API port %s', (port) => {
+        it.each(['0', '65536', '8080.5', '1e3', '0x10', 'not-a-number'])('rejects invalid admin API port %s', (port) => {
             setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: port, ADMIN_HMAC_SECRET: VALID_HMAC_SECRET });
 
             expect(() => loadConfig()).toThrow('Invalid environment configuration');
