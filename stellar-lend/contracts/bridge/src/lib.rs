@@ -801,6 +801,7 @@ impl Bridge {
     /// Set the admin address for privileged operations.
     ///
     /// The admin is authorised to register and unregister source domains.
+    /// The admin can also configure inbound and outbound value caps.
     /// Can only be called once; subsequent calls are rejected to prevent
     /// unauthorised admin rotation.
     pub fn set_admin(env: Env, admin: Address) -> Result<(), BridgeError> {
@@ -1513,12 +1514,14 @@ impl Bridge {
     ///
     /// `max_per_window == 0` means fail-closed (no inbound permitted).
     /// `window_size` must be > 0.
+    /// Only the admin may call this; the window starts at ledger time.
     pub fn set_inbound_cap(
         env: Env,
+        caller: Address,
         max_per_window: i128,
         window_size: u64,
-        current_time: u64,
     ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
         if max_per_window < 0 {
             return Err(BridgeError::InboundCapExceeded);
         }
@@ -1527,7 +1530,11 @@ impl Bridge {
         }
         ttl::set_persistent(&env, &BridgeDataKey::MaxPerWindow, &max_per_window);
         ttl::set_persistent(&env, &BridgeDataKey::WindowSize, &window_size);
-        ttl::set_persistent(&env, &BridgeDataKey::WindowStart, &current_time);
+        ttl::set_persistent(
+            &env,
+            &BridgeDataKey::WindowStart,
+            &env.ledger().timestamp(),
+        );
         ttl::set_persistent(&env, &BridgeDataKey::WindowInboundTotal, &0i128);
         Ok(())
     }
@@ -1573,12 +1580,15 @@ impl Bridge {
     // -----------------------------------------------------------------------
 
     /// Reconfigure the per-window outbound value cap.
+    ///
+    /// Only the admin may call this; the window starts at ledger time.
     pub fn set_outbound_cap(
         env: Env,
+        caller: Address,
         max_per_window: i128,
         window_size: u64,
-        current_time: u64,
     ) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
         if max_per_window < 0 {
             return Err(BridgeError::OutboundCapExceeded);
         }
@@ -1587,7 +1597,11 @@ impl Bridge {
         }
         ttl::set_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow, &max_per_window);
         ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowSize, &window_size);
-        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowStart, &current_time);
+        ttl::set_persistent(
+            &env,
+            &BridgeDataKey::OutboundWindowStart,
+            &env.ledger().timestamp(),
+        );
         ttl::set_persistent(&env, &BridgeDataKey::WindowOutboundTotal, &0i128);
         Ok(())
     }
@@ -1713,7 +1727,7 @@ mod inbound_window_integration_test;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::Env;
+    use soroban_sdk::{testutils::Address as _, Env};
 
     fn fresh_env() -> Env {
         Env::default()
@@ -1778,11 +1792,14 @@ mod tests {
     #[test]
     fn test_set_inbound_cap_and_admit() {
         let env = fresh_env();
+        env.mock_all_auths();
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.set_admin(&admin);
 
         // Result<(), _> client methods return unit on success (use try_* for Result).
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.set_inbound_cap(&admin, &1000i128, &86400u64);
         client.admit_inbound(&500i128, &1000u64);
         client.admit_inbound(&500i128, &2000u64);
         // Now at cap â€” next should fail
@@ -1792,10 +1809,13 @@ mod tests {
     #[test]
     fn test_inbound_window_rolls_over() {
         let env = fresh_env();
+        env.mock_all_auths();
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.set_admin(&admin);
 
-        client.set_inbound_cap(&1000i128, &86400u64, &0u64);
+        client.set_inbound_cap(&admin, &1000i128, &86400u64);
         client.admit_inbound(&1000i128, &100u64);
         // Still in same window â€” should fail
         assert!(client.try_admit_inbound(&1i128, &200u64).is_err());
@@ -1806,10 +1826,13 @@ mod tests {
     #[test]
     fn test_set_outbound_cap_and_admit() {
         let env = fresh_env();
+        env.mock_all_auths();
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.set_admin(&admin);
 
-        client.set_outbound_cap(&500i128, &86400u64, &0u64);
+        client.set_outbound_cap(&admin, &500i128, &86400u64);
         client.admit_outbound(&499i128, &1000u64);
         client.admit_outbound(&1i128, &2000u64);
         assert!(client.try_admit_outbound(&1i128, &3000u64).is_err());
@@ -1827,12 +1850,17 @@ mod tests {
     #[test]
     fn test_invalid_window_size_rejected() {
         let env = fresh_env();
+        env.mock_all_auths();
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.set_admin(&admin);
 
-        assert!(client.try_set_inbound_cap(&1000i128, &0u64, &0u64).is_err());
         assert!(client
-            .try_set_outbound_cap(&1000i128, &0u64, &0u64)
+            .try_set_inbound_cap(&admin, &1000i128, &0u64)
+            .is_err());
+        assert!(client
+            .try_set_outbound_cap(&admin, &1000i128, &0u64)
             .is_err());
     }
 }
