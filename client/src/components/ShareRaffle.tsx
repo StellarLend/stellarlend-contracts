@@ -6,6 +6,9 @@ interface ShareRaffleProps {
   url: string;
 }
 
+
+
+
 export function ShareRaffle({ title, text, url }: ShareRaffleProps) {
   const [toast, setToast] = useState<string | null>(null);
 
