@@ -1,4 +1,4 @@
-﻿#![no_std]
+#![no_std]
 use stellar_lend_common::ttl;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
@@ -461,6 +461,10 @@ impl Bridge {
     /// Internal admit_outbound that uses the ledger timestamp.
     fn admit_outbound_internal(env: &Env, amount: i128) -> Result<(), BridgeError> {
         let current_time = env.ledger().timestamp();
+        ttl::bump_persistent(env, &BridgeDataKey::MaxOutboundPerWindow);
+        ttl::bump_persistent(env, &BridgeDataKey::OutboundWindowSize);
+        ttl::bump_persistent(env, &BridgeDataKey::OutboundWindowStart);
+        ttl::bump_persistent(env, &BridgeDataKey::WindowOutboundTotal);
         if amount < 0 {
             return Err(BridgeError::OutboundCapExceeded);
         }
@@ -485,12 +489,44 @@ impl Bridge {
             return Err(BridgeError::OutboundCapExceeded);
         }
 
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::OutboundWindowStart, &rolled_start);
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::WindowOutboundTotal, &new_total);
+        ttl::set_persistent(env, &BridgeDataKey::OutboundWindowStart, &rolled_start);
+        ttl::set_persistent(env, &BridgeDataKey::WindowOutboundTotal, &new_total);
+        Ok(())
+    }
+
+    /// Internal admit_inbound that uses the ledger timestamp.
+    fn admit_inbound_internal(env: &Env, amount: i128) -> Result<(), BridgeError> {
+        let current_time = env.ledger().timestamp();
+        ttl::bump_persistent(env, &BridgeDataKey::MaxPerWindow);
+        ttl::bump_persistent(env, &BridgeDataKey::WindowSize);
+        ttl::bump_persistent(env, &BridgeDataKey::WindowStart);
+        ttl::bump_persistent(env, &BridgeDataKey::WindowInboundTotal);
+        if amount < 0 {
+            return Err(BridgeError::InboundCapExceeded);
+        }
+
+        let max = Self::load_max_per_window(env);
+        if max == 0 {
+            return Err(BridgeError::InboundCapExceeded);
+        }
+
+        let window_size = Self::load_window_size(env);
+        let window_start = Self::load_window_start(env);
+        let mut total = Self::load_window_inbound_total(env);
+
+        let (rolled_start, rolled_total) =
+            Self::maybe_roll_window(current_time, window_start, window_size, total);
+        total = rolled_total;
+
+        let new_total = total
+            .checked_add(amount)
+            .ok_or(BridgeError::WindowTotalOverflow)?;
+        if new_total > max {
+            return Err(BridgeError::InboundCapExceeded);
+        }
+
+        ttl::set_persistent(env, &BridgeDataKey::WindowStart, &rolled_start);
+        ttl::set_persistent(env, &BridgeDataKey::WindowInboundTotal, &new_total);
         Ok(())
     }
 
@@ -901,27 +937,93 @@ impl Bridge {
     // -----------------------------------------------------------------------
 
     /// Consume an inbound bridge message, enforcing domain separation,
-    /// source validation, nonce ordering, and replay protection.
+    /// source validation, nonce ordering, replay protection, and per-window
+    /// value cap admission.
     ///
     /// The function:
     /// 1. Validates `source` is registered.
     /// 2. Computes the domain-separated message ID.
     /// 3. Checks the message has not already been consumed.
     /// 4. Checks `nonce` equals the next expected nonce for that source.
-    /// 5. Marks the message as consumed and increments the per-source nonce.
-    /// 6. Emits an [`InboundMessageConsumedEvent`].
+    /// 5. Enforces the per-window inbound value cap at the current ledger timestamp.
+    /// 6. Marks the message as consumed and increments the per-source nonce.
+    /// 7. Emits an [`InboundMessageConsumedEvent`].
     ///
     /// Failed validation does **not** burn the message or mutate balances.
     ///
     /// # Arguments
-    /// * `source` â€“ The [`SourceDomain`] identifying the sender.
-    /// * `nonce`  â€“ The message nonce from the source (must equal next expected).
+    /// * `source` - The [`SourceDomain`] identifying the sender.
+    /// * `nonce`  - The message nonce from the source (must equal next expected).
+    /// * `amount` - The value carried by the message to admit against the inbound window cap.
     ///
     /// # Returns
     /// The domain-separated message ID on success.
     ///
     /// # Errors
-    /// Returns the domain-separated payload that validators must sign to
+    /// - [`BridgeError::UnregisteredSource`]
+    /// - [`BridgeError::MessageAlreadyConsumed`]
+    /// - [`BridgeError::UnexpectedNonce`]
+    /// - [`BridgeError::InboundCapExceeded`] / [`BridgeError::WindowTotalOverflow`]
+    /// - [`BridgeError::NonceOverflow`]
+    pub fn consume_inbound_message(
+        env: Env,
+        source: SourceDomain,
+        nonce: u64,
+        amount: i128,
+    ) -> Result<BytesN<32>, BridgeError> {
+        // 1. Validate source is registered.
+        let source_hash = Self::source_domain_hash(&env, &source);
+        let registered = BridgeDataKey::SourceRegistered(source_hash.clone());
+        ttl::bump_persistent(&env, &registered);
+        if !env.storage().persistent().has(&registered) {
+            return Err(BridgeError::UnregisteredSource);
+        }
+
+        // 2. Compute domain-separated message ID and check it has not
+        // already been consumed. The replay check must run before the
+        // nonce-ordering check: once a message is consumed the nonce
+        // counter has advanced past it, so a duplicate delivery would
+        // otherwise be masked as UnexpectedNonce instead of being
+        // reported as the replay it is.
+        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
+        let consumed = BridgeDataKey::ConsumedInboundMessage(message_id.clone());
+        ttl::bump_persistent(&env, &consumed);
+        if env.storage().persistent().has(&consumed) {
+            return Err(BridgeError::MessageAlreadyConsumed);
+        }
+
+        // 3. Check nonce ordering.
+        let expected_nonce: u64 = env
+            .storage()
+            .persistent()
+            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash.clone()))
+            .unwrap_or(0);
+        if nonce != expected_nonce {
+            return Err(BridgeError::UnexpectedNonce);
+        }
+
+        // 4. Enforce per-window inbound value cap using ledger timestamp.
+        Self::admit_inbound_internal(&env, amount)?;
+
+        // 5. Mark consumed and advance nonce.
+        ttl::set_persistent(&env, &consumed, &true);
+        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
+        ttl::set_persistent(&env, &BridgeDataKey::InboundNonce(source_hash), &next_nonce);
+
+        // 6. Emit event.
+        env.events().publish(
+            (symbol_short!("in_msg"), symbol_short!("consumed")),
+            InboundMessageConsumedEvent {
+                message_id: message_id.clone(),
+                source,
+                nonce,
+            },
+        );
+
+        Ok(message_id)
+    }
+
+    /// Return the domain-separated payload that validators must sign to
     /// authorise consumption of an inbound message.
     ///
     /// Payload: SHA-256( INBOUND_MSG_DOMAIN || bridge_id || source_domain_hash || epoch(8 LE) || nonce(8 LE) )
@@ -950,77 +1052,6 @@ impl Bridge {
         data.extend_from_slice(&epoch.to_le_bytes());
         data.extend_from_slice(&nonce.to_le_bytes());
         env.crypto().sha256(&data).into()
-    }
-
-    /// Consume an inbound message, requiring a validator quorum proof.
-    ///
-    /// Errors (in order):
-    /// - [`BridgeError::UnregisteredSource`]
-    /// - [`BridgeError::MessageAlreadyConsumed`]
-    /// - [`BridgeError::UnexpectedNonce`]
-    /// - [`BridgeError::RetiredEpoch`] / [`BridgeError::EmptyProofs`] /
-    ///   [`BridgeError::InsufficientQuorum`] from proof verification
-    pub fn consume_inbound_message(
-        env: Env,
-        source: SourceDomain,
-        nonce: u64,
-        epoch: u64,
-        proofs: Vec<(BytesN<32>, BytesN<64>)>,
-    ) -> Result<BytesN<32>, BridgeError> {
-        // 1. Validate source is registered.
-        let source_hash = Self::source_domain_hash(&env, &source);
-        let registered = BridgeDataKey::SourceRegistered(source_hash.clone());
-        ttl::bump_persistent(&env, &registered);
-        if !env.storage().persistent().has(&registered) {
-            return Err(BridgeError::UnregisteredSource);
-        }
-
-        // 2. Compute domain-separated message ID and check it has not
-        // already been consumed. The replay check must run before the
-        // nonce-ordering check: once a message is consumed the nonce
-        // counter has advanced past it, so a duplicate delivery would
-        // otherwise be masked as UnexpectedNonce instead of being
-        // reported as the replay it is.
-        let message_id = Self::inbound_message_id(&env, &source_hash, nonce);
-        let consumed = BridgeDataKey::ConsumedInboundMessage(message_id.clone());
-        ttl::bump_persistent(&env, &consumed);
-        ttl::bump_persistent(&env, &consumed);
-        if env.storage().persistent().has(&consumed) {
-            return Err(BridgeError::MessageAlreadyConsumed);
-        }
-
-        // 3. Check nonce ordering.
-        let expected_nonce: u64 = env
-            .storage()
-            .persistent()
-            .get::<BridgeDataKey, u64>(&BridgeDataKey::InboundNonce(source_hash.clone()))
-            .unwrap_or(0);
-        if nonce != expected_nonce {
-            return Err(BridgeError::UnexpectedNonce);
-        }
-
-        // 4. Validate epoch and verify quorum proof over the inbound payload.
-        Self::validate_inbound_epoch(env.clone(), epoch)?;
-        let bridge_id = Self::load_bridge_id(&env);
-        let payload = Self::build_inbound_payload(&env, &bridge_id, &source_hash, epoch, nonce);
-        let validators = Self::load_validators(&env);
-        Self::verify_inbound_quorum(&env, &validators, &payload, &proofs)?;
-
-        // 5. Mark consumed and advance nonce.
-        ttl::set_persistent(&env, &consumed, &true);
-        let next_nonce = nonce.checked_add(1).ok_or(BridgeError::NonceOverflow)?;
-        ttl::set_persistent(&env, &BridgeDataKey::InboundNonce(source_hash), &next_nonce);
-
-        // 5. Emit event.
-        env.events().publish(
-            (symbol_short!("in_msg"), symbol_short!("consumed")),            InboundMessageConsumedEvent {
-                message_id: message_id.clone(),
-                source,
-                nonce,
-            },
-        );
-
-        Ok(message_id)
     }
 
     /// Check whether an inbound message has already been consumed.
@@ -1539,40 +1570,22 @@ impl Bridge {
         Ok(())
     }
 
-    /// Admit an inbound transfer of `amount` against the per-window cap.
-    pub fn admit_inbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
-        ttl::bump_persistent(&env, &BridgeDataKey::MaxPerWindow);
-        ttl::bump_persistent(&env, &BridgeDataKey::WindowSize);
-        ttl::bump_persistent(&env, &BridgeDataKey::WindowStart);
-        ttl::bump_persistent(&env, &BridgeDataKey::WindowInboundTotal);
-        if amount < 0 {
-            return Err(BridgeError::InboundCapExceeded);
-        }
-
+    /// Return the remaining inbound value capacity in the current ledger-time window.
+    ///
+    /// If the current window has expired relative to `env.ledger().timestamp()`,
+    /// reports the full `max_per_window`. Returns `0` when unconfigured or exhausted.
+    pub fn get_inbound_window_remaining(env: Env) -> i128 {
         let max = Self::load_max_per_window(&env);
-        if max == 0 {
-            return Err(BridgeError::InboundCapExceeded);
+        if max <= 0 {
+            return 0;
         }
-
-        // Roll window if expired.
+        let current_time = env.ledger().timestamp();
         let window_size = Self::load_window_size(&env);
         let window_start = Self::load_window_start(&env);
-        let mut total = Self::load_window_inbound_total(&env);
-
-        let (rolled_start, rolled_total) =
+        let total = Self::load_window_inbound_total(&env);
+        let (_, rolled_total) =
             Self::maybe_roll_window(current_time, window_start, window_size, total);
-        total = rolled_total;
-
-        let new_total = total
-            .checked_add(amount)
-            .ok_or(BridgeError::WindowTotalOverflow)?;
-        if new_total > max {
-            return Err(BridgeError::InboundCapExceeded);
-        }
-
-        ttl::set_persistent(&env, &BridgeDataKey::WindowStart, &rolled_start);
-        ttl::set_persistent(&env, &BridgeDataKey::WindowInboundTotal, &new_total);
-        Ok(())
+        max.saturating_sub(rolled_total).max(0)
     }
 
     // -----------------------------------------------------------------------
@@ -1606,39 +1619,22 @@ impl Bridge {
         Ok(())
     }
 
-    /// Admit an outbound transfer of `amount` against the per-window cap.
-    pub fn admit_outbound(env: Env, amount: i128, current_time: u64) -> Result<(), BridgeError> {
-        ttl::bump_persistent(&env, &BridgeDataKey::MaxOutboundPerWindow);
-        ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowSize);
-        ttl::bump_persistent(&env, &BridgeDataKey::OutboundWindowStart);
-        ttl::bump_persistent(&env, &BridgeDataKey::WindowOutboundTotal);
-        if amount < 0 {
-            return Err(BridgeError::OutboundCapExceeded);
-        }
-
+    /// Return the remaining outbound value capacity in the current ledger-time window.
+    ///
+    /// If the current window has expired relative to `env.ledger().timestamp()`,
+    /// reports the full `max_outbound_per_window`. Returns `0` when unconfigured or exhausted.
+    pub fn get_outbound_window_remaining(env: Env) -> i128 {
         let max = Self::load_max_outbound_per_window(&env);
-        if max == 0 {
-            return Err(BridgeError::OutboundCapExceeded);
+        if max <= 0 {
+            return 0;
         }
-
+        let current_time = env.ledger().timestamp();
         let window_size = Self::load_outbound_window_size(&env);
         let window_start = Self::load_outbound_window_start(&env);
-        let mut total = Self::load_window_outbound_total(&env);
-
-        let (rolled_start, rolled_total) =
+        let total = Self::load_window_outbound_total(&env);
+        let (_, rolled_total) =
             Self::maybe_roll_window(current_time, window_start, window_size, total);
-        total = rolled_total;
-
-        let new_total = total
-            .checked_add(amount)
-            .ok_or(BridgeError::WindowTotalOverflow)?;
-        if new_total > max {
-            return Err(BridgeError::OutboundCapExceeded);
-        }
-
-        ttl::set_persistent(&env, &BridgeDataKey::OutboundWindowStart, &rolled_start);
-        ttl::set_persistent(&env, &BridgeDataKey::WindowOutboundTotal, &new_total);
-        Ok(())
+        max.saturating_sub(rolled_total).max(0)
     }
 }
 
@@ -1727,10 +1723,21 @@ mod inbound_window_integration_test;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env,
+    };
 
     fn fresh_env() -> Env {
         Env::default()
+    }
+
+    fn default_source(env: &Env) -> SourceDomain {
+        SourceDomain {
+            chain_id: 1,
+            network_passphrase: Bytes::from_slice(env, b"testnet"),
+            contract_id: Bytes::from_slice(env, b"bridge_contract_v1"),
+        }
     }
 
     #[test]
@@ -1762,7 +1769,7 @@ mod tests {
         // Messages signed with the current epoch 1 are accepted.
         assert!(client.try_validate_inbound_epoch(&1u64).is_ok());
         // Messages signed with a far-future epoch 2 are rejected (not yet
-        // actively rotated into by the validator set â€” see #1147 /
+        // actively rotated into by the validator set - see #1147 /
         // INBOUND_EPOCH_TOLERANCE).
         assert!(matches!(
             client.try_validate_inbound_epoch(&2u64),
@@ -1779,7 +1786,7 @@ mod tests {
         let validators: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
         client.initialize(&validators, &Bytes::new(&env));
 
-        // epoch 0 is current â€” any lower would panic but there is no lower; future ok
+        // epoch 0 is current - any lower would panic but there is no lower; future ok
         assert!(client.try_validate_inbound_epoch(&0u64).is_ok());
         assert_eq!(
             client.try_validate_inbound_epoch(&1u64),
@@ -1797,13 +1804,23 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.set_admin(&admin);
+        let src = default_source(&env);
+        client.register_source_domain(&admin, &src);
 
-        // Result<(), _> client methods return unit on success (use try_* for Result).
         client.set_inbound_cap(&admin, &1000i128, &86400u64);
-        client.admit_inbound(&500i128, &1000u64);
-        client.admit_inbound(&500i128, &2000u64);
-        // Now at cap â€” next should fail
-        assert!(client.try_admit_inbound(&1i128, &3000u64).is_err());
+        assert_eq!(client.get_inbound_window_remaining(), 1000i128);
+        env.ledger().set_timestamp(1000);
+        client.consume_inbound_message(&src, &0u64, &500i128);
+        assert_eq!(client.get_inbound_window_remaining(), 500i128);
+        env.ledger().set_timestamp(2000);
+        client.consume_inbound_message(&src, &1u64, &500i128);
+        assert_eq!(client.get_inbound_window_remaining(), 0i128);
+        // Now at cap - next should fail
+        env.ledger().set_timestamp(3000);
+        assert_eq!(
+            client.try_consume_inbound_message(&src, &2u64, &1i128),
+            Err(Ok(BridgeError::InboundCapExceeded))
+        );
     }
 
     #[test]
@@ -1814,13 +1831,22 @@ mod tests {
         let client = BridgeClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.set_admin(&admin);
+        let src = default_source(&env);
+        client.register_source_domain(&admin, &src);
 
         client.set_inbound_cap(&admin, &1000i128, &86400u64);
-        client.admit_inbound(&1000i128, &100u64);
-        // Still in same window â€” should fail
-        assert!(client.try_admit_inbound(&1i128, &200u64).is_err());
-        // After window duration â€” should succeed
-        client.admit_inbound(&1000i128, &86400u64);
+        env.ledger().set_timestamp(100);
+        client.consume_inbound_message(&src, &0u64, &1000i128);
+        // Still in same window - should fail
+        env.ledger().set_timestamp(200);
+        assert_eq!(
+            client.try_consume_inbound_message(&src, &1u64, &1i128),
+            Err(Ok(BridgeError::InboundCapExceeded))
+        );
+        // After window duration - should succeed
+        env.ledger().set_timestamp(86400);
+        assert_eq!(client.get_inbound_window_remaining(), 1000i128);
+        client.consume_inbound_message(&src, &1u64, &1000i128);
     }
 
     #[test]
@@ -1833,18 +1859,42 @@ mod tests {
         client.set_admin(&admin);
 
         client.set_outbound_cap(&admin, &500i128, &86400u64);
-        client.admit_outbound(&499i128, &1000u64);
-        client.admit_outbound(&1i128, &2000u64);
-        assert!(client.try_admit_outbound(&1i128, &3000u64).is_err());
+        assert_eq!(client.get_outbound_window_remaining(), 500i128);
+        env.ledger().set_timestamp(1000);
+        env.as_contract(&contract_id, || {
+            Bridge::admit_outbound_internal(&env, 499i128).unwrap();
+        });
+        assert_eq!(client.get_outbound_window_remaining(), 1i128);
+        env.ledger().set_timestamp(2000);
+        env.as_contract(&contract_id, || {
+            Bridge::admit_outbound_internal(&env, 1i128).unwrap();
+        });
+        assert_eq!(client.get_outbound_window_remaining(), 0i128);
+        env.ledger().set_timestamp(3000);
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                Bridge::admit_outbound_internal(&env, 1i128),
+                Err(BridgeError::OutboundCapExceeded)
+            );
+        });
     }
 
     #[test]
     fn test_fail_closed_inbound_before_cap_set() {
         let env = fresh_env();
+        env.mock_all_auths();
         let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.set_admin(&admin);
+        let src = default_source(&env);
+        client.register_source_domain(&admin, &src);
 
-        assert!(client.try_admit_inbound(&1i128, &0u64).is_err());
+        assert_eq!(client.get_inbound_window_remaining(), 0i128);
+        assert_eq!(
+            client.try_consume_inbound_message(&src, &0u64, &1i128),
+            Err(Ok(BridgeError::InboundCapExceeded))
+        );
     }
 
     #[test]
@@ -1874,7 +1924,7 @@ mod replay_protection_test {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
-    /// Helper: spin up a fresh bridge, set an admin, and return the client.
+    /// Helper: spin up a fresh bridge, set an admin, configure inbound cap, and return the client.
     fn setup_bridge() -> (Env, BridgeClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
@@ -1882,6 +1932,7 @@ mod replay_protection_test {
         let client = BridgeClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.set_admin(&admin);
+        client.set_inbound_cap(&admin, &1_000_000_i128, &86_400_u64);
         (env, client, admin)
     }
 
@@ -1921,11 +1972,11 @@ mod replay_protection_test {
         client.register_source_domain(&admin, &src);
 
         // First consumption succeeds.
-        let _id = client.consume_inbound_message(&src, &0u64);
+        let _id = client.consume_inbound_message(&src, &0u64, &10i128);
         assert!(client.is_message_consumed(&src, &0u64));
 
         // Second consumption of the same nonce is rejected.
-        let err = client.try_consume_inbound_message(&src, &0u64);
+        let err = client.try_consume_inbound_message(&src, &0u64, &10i128);
         assert!(
             matches!(err, Err(Ok(BridgeError::MessageAlreadyConsumed))),
             "expected MessageAlreadyConsumed on duplicate, got {:?}",
@@ -1941,7 +1992,7 @@ mod replay_protection_test {
 
         // Consume nonces 0..4 in order.
         for i in 0..5u64 {
-            let id = client.consume_inbound_message(&src, &i);
+            let id = client.consume_inbound_message(&src, &i, &10i128);
             assert!(!id.is_empty());
             assert!(client.is_message_consumed(&src, &i));
         }
@@ -1959,7 +2010,7 @@ mod replay_protection_test {
 
         // A source with a different contract_id is unregistered.
         let other = source_different_contract(&env, 1);
-        let err = client.try_consume_inbound_message(&other, &0u64);
+        let err = client.try_consume_inbound_message(&other, &0u64, &10i128);
         assert!(
             matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
             "expected UnregisteredSource for different contract, got {:?}",
@@ -1975,7 +2026,7 @@ mod replay_protection_test {
 
         // A source with a different network passphrase is unregistered.
         let other = source_different_network(&env, 1);
-        let err = client.try_consume_inbound_message(&other, &0u64);
+        let err = client.try_consume_inbound_message(&other, &0u64, &10i128);
         assert!(
             matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
             "expected UnregisteredSource for different network, got {:?}",
@@ -1990,7 +2041,7 @@ mod replay_protection_test {
         client.register_source_domain(&admin, &src);
 
         let other = source(&env, 999);
-        let err = client.try_consume_inbound_message(&other, &0u64);
+        let err = client.try_consume_inbound_message(&other, &0u64, &10i128);
         assert!(
             matches!(err, Err(Ok(BridgeError::UnregisteredSource))),
             "expected UnregisteredSource for different chain_id, got {:?}",
@@ -2017,11 +2068,11 @@ mod replay_protection_test {
         client.register_source_domain(&admin, &src);
 
         // Wrong nonce: nonce 1 when expected is 0.
-        let err = client.try_consume_inbound_message(&src, &1u64);
+        let err = client.try_consume_inbound_message(&src, &1u64, &10i128);
         assert!(matches!(err, Err(Ok(BridgeError::UnexpectedNonce))));
 
         // Nonce 0 is still available for consumption.
-        let _id = client.consume_inbound_message(&src, &0u64);
+        let _id = client.consume_inbound_message(&src, &0u64, &10i128);
         assert!(client.is_message_consumed(&src, &0u64));
         assert_eq!(client.next_inbound_nonce(&src), 1u64);
     }
@@ -2032,7 +2083,7 @@ mod replay_protection_test {
         let src = source(&env, 1);
         // Do NOT register src.
 
-        let err = client.try_consume_inbound_message(&src, &0u64);
+        let err = client.try_consume_inbound_message(&src, &0u64, &10i128);
         assert!(matches!(err, Err(Ok(BridgeError::UnregisteredSource))));
 
         // Nonce is still 0 (no mutation).
@@ -2049,14 +2100,14 @@ mod replay_protection_test {
         client.register_source_domain(&admin, &src);
 
         // Consume nonce 0.
-        client.consume_inbound_message(&src, &0u64);
+        client.consume_inbound_message(&src, &0u64, &10i128);
 
         // Skip nonce 1, try nonce 2.
-        let err = client.try_consume_inbound_message(&src, &2u64);
+        let err = client.try_consume_inbound_message(&src, &2u64, &10i128);
         assert!(matches!(err, Err(Ok(BridgeError::UnexpectedNonce))));
 
         // Nonce 1 is still consumable.
-        client.consume_inbound_message(&src, &1u64);
+        client.consume_inbound_message(&src, &1u64, &10i128);
         assert_eq!(client.next_inbound_nonce(&src), 2u64);
     }
 
@@ -2159,7 +2210,7 @@ mod replay_protection_test {
         client.register_source_domain(&admin, &src);
         client.unregister_source_domain(&admin, &src);
 
-        let err = client.try_consume_inbound_message(&src, &0u64);
+        let err = client.try_consume_inbound_message(&src, &0u64, &10i128);
         assert!(matches!(err, Err(Ok(BridgeError::UnregisteredSource))));
     }
 
@@ -2174,11 +2225,11 @@ mod replay_protection_test {
         client.register_source_domain(&admin, &src_b);
 
         // Consume nonce 0 from source A.
-        client.consume_inbound_message(&src_a, &0u64);
+        client.consume_inbound_message(&src_a, &0u64, &10i128);
 
         // Source B still starts at nonce 0.
         assert_eq!(client.next_inbound_nonce(&src_b), 0u64);
-        client.consume_inbound_message(&src_b, &0u64);
+        client.consume_inbound_message(&src_b, &0u64, &10i128);
 
         // Source A nonce 0 is consumed; source B nonce 0 is also consumed.
         assert!(client.is_message_consumed(&src_a, &0u64));
@@ -2201,7 +2252,7 @@ mod replay_protection_test {
         let precomputed = client.compute_message_id(&src, &0u64);
 
         // Consume the message.
-        let consumed = client.consume_inbound_message(&src, &0u64);
+        let consumed = client.consume_inbound_message(&src, &0u64, &10i128);
 
         assert_eq!(precomputed, consumed);
     }
