@@ -1,2 +1,42 @@
-# Repository code owners - only arandomogg can approve PRs
+# =============================================================================
+# CODEOWNERS
+# -----------------------------------------------------------------------------
+# The first (catch-all) rule makes @arandomogg the required reviewer for every
+# file not matched by a more-specific rule below.  GitHub evaluates rules
+# bottom-up, so later lines override earlier ones – the catch-all MUST come
+# first so it acts as a fallback rather than a final authority.
+# =============================================================================
+
+# Fallback – every file not matched below requires @arandomogg's approval
 * @arandomogg
+
+# ---------------------------------------------------------------------------
+# Security-sensitive: GitHub Actions workflows
+# Any change to CI/CD pipelines must be reviewed by @arandomogg.
+# ---------------------------------------------------------------------------
+/.github/ @arandomogg
+
+# ---------------------------------------------------------------------------
+# Smart-contract source (Soroban / Rust)
+# ---------------------------------------------------------------------------
+/stellar-lend/ @arandomogg
+
+# ---------------------------------------------------------------------------
+# Oracle service
+# ---------------------------------------------------------------------------
+/oracle/ @arandomogg
+
+# ---------------------------------------------------------------------------
+# Backend API
+# ---------------------------------------------------------------------------
+/api/ @arandomogg
+
+# ---------------------------------------------------------------------------
+# Frontend client
+# ---------------------------------------------------------------------------
+/client/ @arandomogg
+
+# ---------------------------------------------------------------------------
+# Deployment & maintenance scripts
+# ---------------------------------------------------------------------------
+/scripts/ @arandomogg
