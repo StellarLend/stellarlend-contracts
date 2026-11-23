@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { Keypair, Networks, Transaction, TransactionBuilder } from '@stellar/stellar-sdk';
 import { config } from '../config';
-import { UnauthorizedError, ValidationError } from '../utils/errors';
+import { UnauthorizedError, ValidationError, ForbiddenError } from '../utils/errors';
 import { assertHookHmac } from '../utils/hookHmac';
 
 export interface AuthRequest extends Request {
@@ -52,8 +52,9 @@ export const authenticateToken = (
  * Generate JWT token with network information
  */
 export const generateToken = (address: string, network?: string): string => {
+  const payload = network ? { address, network } : { address };
   return jwt.sign(
-    { address, network },
+    payload,
     config.auth.jwtSecret,
     {
       expiresIn: config.auth.jwtExpiresIn,
@@ -250,6 +251,21 @@ export const requireAuthenticatedWallet = (
     throw new ValidationError('Invalid Stellar address format');
   }
 
+  next();
+};
+
+/**
+ * Ensure the authenticated user address matches the userAddress in the request body
+ */
+export const requireSameAddress = (
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction
+) => {
+  const bodyAddress = (req.body as { userAddress?: string })?.userAddress;
+  if (bodyAddress && req.user?.address && bodyAddress !== req.user.address) {
+    throw new ForbiddenError('User address does not match authenticated token');
+  }
   next();
 };
 

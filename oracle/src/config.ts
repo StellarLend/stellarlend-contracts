@@ -31,7 +31,7 @@ const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
  * Rejects non-finite, non-positive, or unsafe numeric values.
  * This guards against NaN, Infinity, negative values, and precision loss.
  */
-const positiveFiniteNumber = (label: string) =>
+export const positiveFiniteNumber = (label: string) =>
     z.coerce.number().refine((n) => Number.isFinite(n), { message: `${label} must be a finite number` }).refine((n) => n > 0, { message: `${label} must be greater than 0` }).refine((n) => Number.isInteger(n) ? n <= MAX_SAFE_INTEGER : true, { message: `${label} exceeds maximum safe integer` });
 
 /**
@@ -216,17 +216,72 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): OracleServiceC
     };
 }
 
-export const PRICE_SCALE = 1_000_000n | 1_000_000n;
+export const PRICE_SCALE = 1_000_000n;
 
-export function scalePrice(price: number): bigint {
-    if (!Number.isFinite(price)) {
-        throw new Error('scalePrice: price must be a finite number');
+/**
+ * Scale a decimal string to a 6-decimal bigint using exact decimal-string arithmetic.
+ * Half-up rounding is applied to the 7th decimal digit.
+ */
+export function scaleDecimalString(str: string): bigint {
+    const trimmed = str.trim();
+    if (!trimmed || trimmed === '.' || trimmed === '-' || trimmed === '+') {
+        throw new Error(`scalePrice: invalid decimal string '${str}'`);
     }
-    return BigInt(Math.round(price * Number(PRICE_SCALE)));
+    const isNegative = trimmed.startsWith('-');
+    const withoutSign = (trimmed.startsWith('-') || trimmed.startsWith('+'))
+        ? trimmed.slice(1)
+        : trimmed;
+
+    if (!/^\d*(\.\d*)?$/.test(withoutSign) || withoutSign === '' || withoutSign === '.') {
+        throw new Error(`scalePrice: invalid decimal string '${str}'`);
+    }
+
+    const [intPart = '0', fracPart = ''] = withoutSign.split('.');
+    const cleanInt = intPart === '' ? '0' : intPart;
+
+    const paddedFrac = fracPart.padEnd(7, '0');
+    const first6 = paddedFrac.slice(0, 6);
+    const seventhDigit = parseInt(paddedFrac.charAt(6), 10);
+
+    let base = BigInt(cleanInt) * PRICE_SCALE + BigInt(first6);
+    if (seventhDigit >= 5) {
+        base += 1n;
+    }
+    return isNegative ? -base : base;
 }
 
-export function unscalePrice(price: bigint): number {
-    return Number(price) / Number(PRICE_SCALE);
+export function scalePrice(price: number | string): bigint {
+    if (typeof price === 'string') {
+        return scaleDecimalString(price);
+    }
+    if (typeof price === 'number') {
+        if (!Number.isFinite(price)) {
+            throw new Error('scalePrice: price must be a finite number');
+        }
+        const maxSafePrice = Number(Number.MAX_SAFE_INTEGER) / Number(PRICE_SCALE);
+        if (Math.abs(price) > maxSafePrice) {
+            throw new Error(`scalePrice: number ${price} exceeds safe integer range for scaling (max safe: ${maxSafePrice})`);
+        }
+        const str = price.toString();
+        if (!str.includes('e') && !str.includes('E')) {
+            return scaleDecimalString(str);
+        }
+        return scaleDecimalString(price.toFixed(12));
+    }
+    throw new Error('scalePrice: price must be a number or string');
+}
+
+export function unscalePrice(price: bigint | number): number {
+    if (typeof price === 'bigint') {
+        return Number(price) / Number(PRICE_SCALE);
+    }
+    if (typeof price === 'number') {
+        if (!Number.isInteger(price)) {
+            throw new Error('unscalePrice: non-integer scaled value');
+        }
+        return price / Number(PRICE_SCALE);
+    }
+    throw new Error('unscalePrice: price must be a bigint or number');
 }
 
 /**
