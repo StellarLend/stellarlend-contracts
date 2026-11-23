@@ -38,6 +38,8 @@ cp .env.example .env
 | `STELLAR_RPC_URL` | Soroban RPC endpoint | Yes |
 | `CONTRACT_ID` | StellarLend contract address | Yes |
 | `ADMIN_SECRET_KEY` | Secret key for signing transactions | Yes |
+| `ADMIN_API_PORT` | Optional port for the authenticated admin reload API | No |
+| `ADMIN_HMAC_SECRET` | HMAC-SHA256 secret for the admin API; required and at least 32 characters when the API is enabled | No |
 | `COINGECKO_API_KEY` | CoinGecko Pro API key | No |
 | `CACHE_TTL_SECONDS` | Cache TTL in seconds (default: 30) | No |
 | `UPDATE_INTERVAL_MS` | Price update interval (default: 60000) | No |
@@ -65,6 +67,7 @@ npm start
 The oracle service can expose a secure admin endpoint when `ADMIN_API_PORT` is configured.
 Requests to `POST /reload-config` must include an `x-signature` header containing a hex HMAC-SHA256 over the raw request body using `ADMIN_HMAC_SECRET`.
 The payload may include `validatorConfig` updates and/or asset-specific `bounds` to tighten min/max price ranges.
+Set `ADMIN_API_PORT` to a value from 1 through 65535 and set `ADMIN_HMAC_SECRET` to a local secret with at least 32 characters. If the port is not set, the admin API remains disabled; a secret by itself does not enable it.
 
 Example payload:
 
@@ -74,6 +77,19 @@ Example payload:
     "XLM": { "minPrice": 0.1, "maxPrice": 1000000 }
   }
 }
+```
+
+The server signs the exact UTF-8 bytes sent in the request body. It does not add a timestamp or nonce. Generate the lowercase hexadecimal HMAC-SHA256 signature and send it in `x-signature`:
+
+```bash
+ADMIN_HMAC_SECRET='replace-with-a-local-secret-at-least-32-characters'
+BODY='{"bounds":{"XLM":{"minPrice":0.1,"maxPrice":1000000}}}'
+SIGNATURE=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$ADMIN_HMAC_SECRET" -hex | awk '{print $2}')
+
+curl -X POST "http://127.0.0.1:${ADMIN_API_PORT:-8080}/reload-config" \
+  -H 'Content-Type: application/json' \
+  -H "x-signature: $SIGNATURE" \
+  --data "$BODY"
 ```
 
 This endpoint is intended for emergency tightening of bounds without restarting the service.
