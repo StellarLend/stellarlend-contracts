@@ -49,6 +49,14 @@ fn advance_ledger_time(env: &Env, seconds: u64) {
     env.ledger().set(ledger_info);
 }
 
+fn set_protocol_reserves(env: &Env, contract_id: &Address, amount: i128) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolReserves, &amount);
+    });
+}
+
 #[test]
 fn test_configure_insurance_share_bounds() {
     let (_env, client, _id, _admin, _user, _liquidator, _debt_asset, _collateral_asset) = setup();
@@ -99,7 +107,8 @@ fn test_admin_explicit_funding() {
 fn test_accrual_interest_split() {
     let (env, client, _id, _admin, user, _liquidator, _debt_asset, _collateral_asset) = setup();
 
-    // Configure 30% insurance share
+    // Reserves receive 20% of interest first; insurance gets 30% of the remainder.
+    client.set_reserve_factor_bps(&2000);
     client.set_insurance_share(&3000);
 
     // Deposit collateral so borrow passes InsufficientCollateral check.
@@ -115,11 +124,12 @@ fn test_accrual_interest_split() {
     // Trigger accrual by executing a borrow or repay (or repayment here)
     // Let's do a repay of 1,000 units.
     // Interest accrued: 500 units.
-    // Expected insurance share: 30% of 500 = 150 units.
+    // Expected reserve cut: 20% of 500 = 100. Insurance receives 30% of
+    // the remaining 400 = 120 units.
     client.repay(&user, &1000);
 
-    // Verify insurance fund holds 150 units
-    assert_eq!(client.get_insurance_fund(), 150);
+    assert_eq!(client.get_protocol_reserves(), 100);
+    assert_eq!(client.get_insurance_fund(), 120);
 
     // Verify borrower's debt was updated with the full 500 interest units.
     // Remaining debt: 10,000 (principal) + 500 (interest) - 1000 (repay) = 9,500
@@ -128,9 +138,10 @@ fn test_accrual_interest_split() {
 }
 
 #[test]
-fn test_liquidation_empty_insurance_fund() {
+fn test_insurance_fund_liquidation_empty_fund() {
     let (env, client, id, _admin, user, liquidator, debt_asset, collateral_asset) = setup();
 
+    set_protocol_reserves(&env, &id, 25);
     // Set up shortfall: collateral = 10, debt = 200.
     // max_repay = 200 * 50% = 100.
     // seized_collateral = 100 * 110% = 110.
@@ -154,7 +165,9 @@ fn test_liquidation_empty_insurance_fund() {
     });
 
     // Verify insurance fund is empty and bad debt is 0
-    assert_eq!(client.get_insurance_fund(), 0);
+    let insurance_before = client.get_insurance_fund();
+    let reserves_before = client.get_protocol_reserves();
+    assert_eq!(insurance_before, 0);
     assert_eq!(client.get_bad_debt(), 0);
 
     // Perform liquidation
@@ -163,16 +176,21 @@ fn test_liquidation_empty_insurance_fund() {
 
     // Shortfall (100) must be recorded fully as bad debt
     assert_eq!(client.get_bad_debt(), 100);
-    assert_eq!(client.get_insurance_fund(), 0);
+    assert_eq!(client.get_insurance_fund() - insurance_before, 0);
+    assert_eq!(client.get_protocol_reserves() - reserves_before, 0);
 }
 
 #[test]
-fn test_liquidation_partial_insurance_coverage() {
+fn test_insurance_fund_liquidation_partial_coverage() {
     let (env, client, id, _admin, user, liquidator, debt_asset, collateral_asset) = setup();
+
+    set_protocol_reserves(&env, &id, 25);
 
     // Fund the insurance fund with 40 tokens
     client.fund_insurance(&40);
-    assert_eq!(client.get_insurance_fund(), 40);
+    let insurance_before = client.get_insurance_fund();
+    let reserves_before = client.get_protocol_reserves();
+    assert_eq!(insurance_before, 40);
 
     // Set up shortfall: collateral = 10, debt = 200.
     // shortfall = 100.
@@ -198,17 +216,22 @@ fn test_liquidation_partial_insurance_coverage() {
     assert_eq!(repaid, 100);
 
     // Insurance fund covers 40, leaving 60 to bad debt
-    assert_eq!(client.get_insurance_fund(), 0);
+    assert_eq!(client.get_insurance_fund() - insurance_before, -40);
+    assert_eq!(client.get_protocol_reserves() - reserves_before, 0);
     assert_eq!(client.get_bad_debt(), 60);
 }
 
 #[test]
-fn test_liquidation_full_insurance_coverage() {
+fn test_insurance_fund_liquidation_full_coverage() {
     let (env, client, id, _admin, user, liquidator, debt_asset, collateral_asset) = setup();
+
+    set_protocol_reserves(&env, &id, 25);
 
     // Fund the insurance fund with 150 tokens
     client.fund_insurance(&150);
-    assert_eq!(client.get_insurance_fund(), 150);
+    let insurance_before = client.get_insurance_fund();
+    let reserves_before = client.get_protocol_reserves();
+    assert_eq!(insurance_before, 150);
 
     // Set up shortfall: collateral = 10, debt = 200.
     // shortfall = 100.
@@ -233,7 +256,8 @@ fn test_liquidation_full_insurance_coverage() {
     let repaid = client.liquidate(&liquidator, &user, &debt_asset, &collateral_asset, &1000);
     assert_eq!(repaid, 100);
 
-    // Insurance fund covers all 100 shortfall, 50 remains in fund, bad debt remains 0
-    assert_eq!(client.get_insurance_fund(), 50);
+    // Insurance fund covers all 100 shortfall; 50 remains in the fund and bad debt is 0.
+    assert_eq!(client.get_insurance_fund() - insurance_before, -100);
+    assert_eq!(client.get_protocol_reserves() - reserves_before, 0);
     assert_eq!(client.get_bad_debt(), 0);
 }
