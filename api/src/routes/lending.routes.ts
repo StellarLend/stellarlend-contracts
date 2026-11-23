@@ -5,8 +5,9 @@ import {
   borrowValidation,
   repayValidation,
   withdrawValidation,
+  submitValidation,
 } from '../middleware/validation';
-import { verifyHookHmac } from '../middleware/auth';
+import { authenticateToken, verifyHookHmac } from '../middleware/auth';
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.post('/deposit', depositValidation, lendingController.deposit);
 router.post('/borrow', borrowValidation, lendingController.borrow);
 router.post('/repay', repayValidation, lendingController.repay);
 router.post('/withdraw', withdrawValidation, lendingController.withdraw);
+router.post('/submit', authenticateToken, submitValidation, lendingController.submit);
 
 export default router;

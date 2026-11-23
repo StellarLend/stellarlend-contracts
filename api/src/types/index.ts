@@ -2,28 +2,33 @@ export interface DepositRequest {
   userAddress: string;
   assetAddress?: string;
   amount: string;
-  userSecret: string;
 }
 
 export interface BorrowRequest {
   userAddress: string;
   assetAddress?: string;
   amount: string;
-  userSecret: string;
 }
 
 export interface RepayRequest {
   userAddress: string;
   assetAddress?: string;
   amount: string;
-  userSecret: string;
 }
 
 export interface WithdrawRequest {
   userAddress: string;
   assetAddress?: string;
   amount: string;
-  userSecret: string;
+}
+
+export interface PreparedTransactionResponse {
+  xdr: string;
+  networkPassphrase: string;
+}
+
+export interface SubmitTransactionRequest {
+  xdr: string;
 }
 
 export const AMM_EVENT_TOPIC_MODULE = 'amm' as const;

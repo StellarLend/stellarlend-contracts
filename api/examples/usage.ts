@@ -1,14 +1,19 @@
 /**
  * StellarLend API Usage Examples
- * 
+ *
  * This file demonstrates how to interact with the StellarLend API
- * for common lending operations.
+ * using the prepare-and-submit flow (client-side signing; secrets never leave the client).
  */
 
 import axios, { AxiosError } from 'axios';
 
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
 const MAX_AMOUNT_STROOPS = 9223372036854775807n;
+
+interface PreparedTransactionResponse {
+  xdr: string;
+  networkPassphrase: string;
+}
 
 interface TransactionResponse {
   success: boolean;
@@ -26,7 +31,7 @@ async function checkHealth(): Promise<void> {
   try {
     const response = await axios.get(`${API_BASE_URL}/health`);
     console.log('Health Check:', response.data.status === 'healthy' ? 'healthy' : 'unhealthy');
-    
+
     if (response.data.status === 'healthy') {
       console.log('✅ All services are operational');
     } else {
@@ -40,36 +45,27 @@ async function checkHealth(): Promise<void> {
 }
 
 /**
- * Deposit collateral into the lending protocol
+ * Prepare a deposit collateral transaction for client-side signing
  */
 async function depositCollateral(
   userAddress: string,
   amount: string,
-  userSecret: string,
   assetAddress?: string
-): Promise<TransactionResponse> {
-  validateTransactionInput(userAddress, amount, userSecret);
+): Promise<PreparedTransactionResponse> {
+  validateTransactionInput(userAddress, amount);
   try {
-    console.log(`\n📥 Depositing ${amount} stroops...`);
-    
-    const response = await axios.post<TransactionResponse>(
+    console.log(`\n📥 Preparing deposit of ${amount} stroops...`);
+
+    const response = await axios.post<PreparedTransactionResponse>(
       `${API_BASE_URL}/lending/deposit`,
       {
         userAddress,
         assetAddress,
         amount,
-        userSecret,
       }
     );
 
-    if (response.data.success && response.data.status === 'success') {
-      console.log('✅ Deposit successful!');
-      console.log(`   Transaction Hash: ${response.data.transactionHash}`);
-      console.log(`   Ledger: ${response.data.ledger}`);
-    } else {
-      console.log('❌ Deposit failed');
-    }
-
+    console.log('✅ Deposit transaction prepared for client-side signing');
     return response.data;
   } catch (error) {
     handleError('Deposit', error);
@@ -78,36 +74,27 @@ async function depositCollateral(
 }
 
 /**
- * Borrow assets against deposited collateral
+ * Prepare a borrow assets transaction for client-side signing
  */
 async function borrowAssets(
   userAddress: string,
   amount: string,
-  userSecret: string,
   assetAddress?: string
-): Promise<TransactionResponse> {
-  validateTransactionInput(userAddress, amount, userSecret);
+): Promise<PreparedTransactionResponse> {
+  validateTransactionInput(userAddress, amount);
   try {
-    console.log(`\n💰 Borrowing ${amount} stroops...`);
-    
-    const response = await axios.post<TransactionResponse>(
+    console.log(`\n💰 Preparing borrow of ${amount} stroops...`);
+
+    const response = await axios.post<PreparedTransactionResponse>(
       `${API_BASE_URL}/lending/borrow`,
       {
         userAddress,
         assetAddress,
         amount,
-        userSecret,
       }
     );
 
-    if (response.data.success && response.data.status === 'success') {
-      console.log('✅ Borrow successful!');
-      console.log(`   Transaction Hash: ${response.data.transactionHash}`);
-      console.log(`   Ledger: ${response.data.ledger}`);
-    } else {
-      console.log('❌ Borrow failed');
-    }
-
+    console.log('✅ Borrow transaction prepared for client-side signing');
     return response.data;
   } catch (error) {
     handleError('Borrow', error);
@@ -116,36 +103,27 @@ async function borrowAssets(
 }
 
 /**
- * Repay borrowed assets with interest
+ * Prepare a repay debt transaction for client-side signing
  */
 async function repayDebt(
   userAddress: string,
   amount: string,
-  userSecret: string,
   assetAddress?: string
-): Promise<TransactionResponse> {
-  validateTransactionInput(userAddress, amount, userSecret);
+): Promise<PreparedTransactionResponse> {
+  validateTransactionInput(userAddress, amount);
   try {
-    console.log(`\n💳 Repaying ${amount} stroops...`);
-    
-    const response = await axios.post<TransactionResponse>(
+    console.log(`\n💳 Preparing repayment of ${amount} stroops...`);
+
+    const response = await axios.post<PreparedTransactionResponse>(
       `${API_BASE_URL}/lending/repay`,
       {
         userAddress,
         assetAddress,
         amount,
-        userSecret,
       }
     );
 
-    if (response.data.success && response.data.status === 'success') {
-      console.log('✅ Repayment successful!');
-      console.log(`   Transaction Hash: ${response.data.transactionHash}`);
-      console.log(`   Ledger: ${response.data.ledger}`);
-    } else {
-      console.log('❌ Repayment failed');
-    }
-
+    console.log('✅ Repay transaction prepared for client-side signing');
     return response.data;
   } catch (error) {
     handleError('Repay', error);
@@ -154,36 +132,27 @@ async function repayDebt(
 }
 
 /**
- * Withdraw collateral from the protocol
+ * Prepare a withdraw collateral transaction for client-side signing
  */
 async function withdrawCollateral(
   userAddress: string,
   amount: string,
-  userSecret: string,
   assetAddress?: string
-): Promise<TransactionResponse> {
-  validateTransactionInput(userAddress, amount, userSecret);
+): Promise<PreparedTransactionResponse> {
+  validateTransactionInput(userAddress, amount);
   try {
-    console.log(`\n📤 Withdrawing ${amount} stroops...`);
-    
-    const response = await axios.post<TransactionResponse>(
+    console.log(`\n📤 Preparing withdrawal of ${amount} stroops...`);
+
+    const response = await axios.post<PreparedTransactionResponse>(
       `${API_BASE_URL}/lending/withdraw`,
       {
         userAddress,
         assetAddress,
         amount,
-        userSecret,
       }
     );
 
-    if (response.data.success && response.data.status === 'success') {
-      console.log('✅ Withdrawal successful!');
-      console.log(`   Transaction Hash: ${response.data.transactionHash}`);
-      console.log(`   Ledger: ${response.data.ledger}`);
-    } else {
-      console.log('❌ Withdrawal failed');
-    }
-
+    console.log('✅ Withdraw transaction prepared for client-side signing');
     return response.data;
   } catch (error) {
     handleError('Withdraw', error);
@@ -191,16 +160,50 @@ async function withdrawCollateral(
   }
 }
 
-function logTransactionFailure(operation: string, status: number): void {
-  console.error(`❌ ${operation} failed: API reported failure`);
-  console.error(`   Status: ${status}`);
+/**
+ * Submit a client-signed transaction XDR
+ */
+async function submitSignedTransaction(
+  signedXdr: string,
+  authToken: string
+): Promise<TransactionResponse> {
+  if (typeof signedXdr !== 'string' || !signedXdr.trim()) {
+    throw new Error('Signed transaction XDR is required');
+  }
+  if (typeof authToken !== 'string' || !authToken.trim()) {
+    throw new Error('Auth token is required');
+  }
+
+  try {
+    const response = await axios.post<TransactionResponse>(
+      `${API_BASE_URL}/lending/submit`,
+      { xdr: signedXdr },
+      {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      }
+    );
+
+    if (response.data.success && response.data.status === 'success') {
+      console.log('✅ Transaction submitted!');
+      console.log(`   Transaction Hash: ${response.data.transactionHash}`);
+      console.log(`   Ledger: ${response.data.ledger}`);
+    } else {
+      console.log('❌ Transaction submission failed');
+    }
+
+    return response.data;
+  } catch (error) {
+    handleError('Submit', error);
+    throw error;
+  }
 }
 
 /**
  * Handle API errors
  */
 function handleError(operation: string, error: unknown): void {
-  // Exception messages and response bodies may echo credentials; log safe metadata only.
   if (axios.isAxiosError(error)) {
     const axiosError = error as AxiosError;
     if (axiosError.response) {
@@ -215,7 +218,7 @@ function handleError(operation: string, error: unknown): void {
   }
 }
 
-function validateTransactionInput(userAddress: string, amount: string, userSecret: string): void {
+function validateTransactionInput(userAddress: string, amount: string): void {
   if (typeof userAddress !== 'string' || !userAddress.trim()) {
     throw new Error('User address is required');
   }
@@ -225,69 +228,28 @@ function validateTransactionInput(userAddress: string, amount: string, userSecre
   if (BigInt(amount) > MAX_AMOUNT_STROOPS) {
     throw new Error('Amount exceeds the maximum allowed stroops');
   }
-  if (typeof userSecret !== 'string' || !userSecret.trim()) {
-    throw new Error('User secret is required');
-  }
-}
-
-function requireSuccessfulTransaction(response: TransactionResponse, operation: string): void {
-  if (response.success !== true || response.status !== 'success') {
-    // Transaction writes are not retried because the API does not promise idempotency.
-    throw new Error(`${operation} did not complete`);
-  }
 }
 
 /**
- * Complete lending lifecycle example
+ * Complete lending lifecycle example (prepare step)
  */
 async function completeLendingCycle(): Promise<void> {
   console.log('='.repeat(60));
   console.log('StellarLend API - Complete Lending Cycle Example');
   console.log('='.repeat(60));
 
-  // Replace with your actual testnet credentials
   const USER_ADDRESS = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
-  const USER_SECRET = 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
-  
+
   try {
-    // 1. Check health
     await checkHealth();
 
-    // 2. Deposit collateral (10 XLM)
-    requireSuccessfulTransaction(
-      await depositCollateral(USER_ADDRESS, '100000000', USER_SECRET),
-      'Deposit'
-    );
-
-    // Wait a bit for transaction to settle
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    // 3. Borrow assets (5 XLM)
-    requireSuccessfulTransaction(
-      await borrowAssets(USER_ADDRESS, '50000000', USER_SECRET),
-      'Borrow'
-    );
-
-    // Wait a bit for transaction to settle
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    // 4. Repay debt (5.5 XLM with interest)
-    requireSuccessfulTransaction(
-      await repayDebt(USER_ADDRESS, '55000000', USER_SECRET),
-      'Repay'
-    );
-
-    // Wait a bit for transaction to settle
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    // 5. Withdraw collateral (5 XLM)
-    requireSuccessfulTransaction(
-      await withdrawCollateral(USER_ADDRESS, '50000000', USER_SECRET),
-      'Withdraw'
-    );
+    await depositCollateral(USER_ADDRESS, '100000000');
+    await borrowAssets(USER_ADDRESS, '50000000');
+    await repayDebt(USER_ADDRESS, '55000000');
+    await withdrawCollateral(USER_ADDRESS, '50000000');
 
     console.log('\n' + '='.repeat(60));
-    console.log('✅ Complete lending cycle finished successfully!');
+    console.log('✅ All lending transactions prepared for client-side signing!');
     console.log('='.repeat(60));
   } catch (error) {
     console.log('\n' + '='.repeat(60));
@@ -306,31 +268,27 @@ async function errorHandlingExamples(): Promise<void> {
   console.log('='.repeat(60));
 
   const USER_ADDRESS = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
-  const USER_SECRET = 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 
-  // Example 1: Invalid amount (zero)
   try {
     console.log('\n1. Testing zero amount (should fail)...');
-    await depositCollateral(USER_ADDRESS, '0', USER_SECRET);
+    await depositCollateral(USER_ADDRESS, '0');
   } catch (error) {
     console.log('   Expected error caught ✓');
   }
 
-  // Example 2: Invalid address
   try {
     console.log('\n2. Testing invalid address (should fail)...');
-    await depositCollateral('invalid_address', '1000000', USER_SECRET);
+    await depositCollateral('invalid_address', '1000000');
   } catch (error) {
     console.log('   Expected error caught ✓');
   }
 
-  // Example 3: Missing required field
   try {
-    console.log('\n3. Testing missing secret (should fail)...');
+    console.log('\n3. Testing unexpected extra field (should fail)...');
     await axios.post(`${API_BASE_URL}/lending/deposit`, {
       userAddress: USER_ADDRESS,
       amount: '1000000',
-      // userSecret missing
+      unexpectedField: 'rejected',
     });
   } catch (error) {
     console.log('   Expected error caught ✓');
@@ -339,10 +297,9 @@ async function errorHandlingExamples(): Promise<void> {
   console.log('\n' + '='.repeat(60));
 }
 
-// Run examples if executed directly
 if (require.main === module) {
   const args = process.argv.slice(2);
-  
+
   if (args.includes('--health')) {
     void checkHealth().catch(() => {
       process.exitCode = 1;
@@ -369,6 +326,7 @@ export {
   borrowAssets,
   repayDebt,
   withdrawCollateral,
+  submitSignedTransaction,
   completeLendingCycle,
   errorHandlingExamples,
 };

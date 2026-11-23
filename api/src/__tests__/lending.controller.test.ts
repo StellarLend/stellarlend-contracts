@@ -3,6 +3,8 @@ import { Request, Response } from 'express';
 import app from '../app';
 import { LendingController } from '../controllers/lending.controller';
 import { StellarService } from '../services/stellar.service';
+import { generateToken } from '../middleware/auth';
+import { ForbiddenError } from '../utils/errors';
 import {
   encodeCursor,
   decodeCursor,
@@ -29,6 +31,7 @@ jest.mock('../services/stellar.service', () => ({
     buildRepayTransaction: jest.fn(),
     buildWithdrawTransaction: jest.fn(),
     submitTransaction: jest.fn(),
+    submitSignedTransaction: jest.fn(),
     monitorTransaction: jest.fn(),
     healthCheck: jest.fn(),
     pingContract: jest.fn(),
@@ -46,6 +49,7 @@ type MockSvc = {
   buildRepayTransaction: jest.Mock;
   buildWithdrawTransaction: jest.Mock;
   submitTransaction: jest.Mock;
+  submitSignedTransaction: jest.Mock;
   monitorTransaction: jest.Mock;
   healthCheck: jest.Mock;
   pingContract: jest.Mock;
@@ -591,28 +595,32 @@ beforeAll(() => {
   }
 });
 
+const PREPARED_RESPONSE = {
+  xdr: 'unsigned_prepared_xdr',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+};
+
 describe('POST /api/lending/deposit', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('returns 200 on a successful deposit', async () => {
-    appSvc().buildDepositTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'hash1', status: 'success' });
-    appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'hash1', status: 'success', ledger: 1000 });
+  it('returns 200 with prepared unsigned XDR and networkPassphrase', async () => {
+    appSvc().buildDepositTransaction.mockResolvedValue(PREPARED_RESPONSE);
 
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
-      userSecret: VALID_SECRET,
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body).toEqual(PREPARED_RESPONSE);
+    expect(appSvc().buildDepositTransaction).toHaveBeenCalledWith(
+      VALID_ADDRESS,
+      undefined,
+      '1000000'
+    );
   });
 
-  it('returns 400 when the transaction fails on-chain', async () => {
-    appSvc().buildDepositTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: false, status: 'failed', error: 'Insufficient funds' });
-
+  it('rejects requests containing userSecret with 400', async () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
@@ -620,13 +628,12 @@ describe('POST /api/lending/deposit', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.success).toBe(false);
+    expect(appSvc().buildDepositTransaction).not.toHaveBeenCalled();
   });
 
   it('returns 400 when amount is missing', async () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(400);
   });
@@ -635,17 +642,14 @@ describe('POST /api/lending/deposit', () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '0',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(400);
   });
-});
 
   it('returns 400 when amount is negative', async () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '-1',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(400);
   });
@@ -654,7 +658,6 @@ describe('POST /api/lending/deposit', () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1.5',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(400);
   });
@@ -663,16 +666,6 @@ describe('POST /api/lending/deposit', () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: 'not-an-address',
       amount: '1000000',
-      userSecret: VALID_SECRET,
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('returns 400 when userSecret is empty', async () => {
-    const res = await request(app).post('/api/lending/deposit').send({
-      userAddress: VALID_ADDRESS,
-      amount: '1000000',
-      userSecret: '',
     });
     expect(res.status).toBe(400);
   });
@@ -683,35 +676,20 @@ describe('POST /api/lending/deposit', () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
-      userSecret: VALID_SECRET,
-    });
-    expect(res.status).toBe(500);
-  });
-
-  it('returns 500 when submitTransaction throws', async () => {
-    appSvc().buildDepositTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockRejectedValue(new Error('Horizon unreachable'));
-
-    const res = await request(app).post('/api/lending/deposit').send({
-      userAddress: VALID_ADDRESS,
-      amount: '1000000',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(500);
   });
 
   it('accepts the i128 max value as amount', async () => {
     const i128Max = ((1n << 127n) - 1n).toString();
-    appSvc().buildDepositTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h', status: 'success' });
-    appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h', status: 'success', ledger: 1 });
+    appSvc().buildDepositTransaction.mockResolvedValue(PREPARED_RESPONSE);
 
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: i128Max,
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(200);
+    expect(res.body).toEqual(PREPARED_RESPONSE);
   });
 
   it('rejects an amount exceeding i128 max', async () => {
@@ -719,7 +697,6 @@ describe('POST /api/lending/deposit', () => {
     const res = await request(app).post('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: tooBig,
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(400);
   });
@@ -728,30 +705,15 @@ describe('POST /api/lending/deposit', () => {
 describe('POST /api/lending/borrow', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('returns 200 on a successful borrow', async () => {
-    appSvc().buildBorrowTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h2', status: 'success' });
-    appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h2', status: 'success', ledger: 1001 });
+  it('returns 200 with prepared unsigned XDR on borrow', async () => {
+    appSvc().buildBorrowTransaction.mockResolvedValue(PREPARED_RESPONSE);
 
     const res = await request(app).post('/api/lending/borrow').send({
       userAddress: VALID_ADDRESS,
       amount: '500000',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-  });
-
-  it('returns 400 when on-chain borrow fails (insufficient collateral)', async () => {
-    appSvc().buildBorrowTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: false, status: 'failed', error: 'Insufficient collateral' });
-
-    const res = await request(app).post('/api/lending/borrow').send({
-      userAddress: VALID_ADDRESS,
-      amount: '500000',
-      userSecret: VALID_SECRET,
-    });
-    expect(res.status).toBe(400);
+    expect(res.body).toEqual(PREPARED_RESPONSE);
   });
 
   it('returns 400 for missing required fields', async () => {
@@ -765,7 +727,6 @@ describe('POST /api/lending/borrow', () => {
     const res = await request(app).post('/api/lending/borrow').send({
       userAddress: VALID_ADDRESS,
       amount: '500000',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(500);
   });
@@ -774,37 +735,21 @@ describe('POST /api/lending/borrow', () => {
 describe('POST /api/lending/repay', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('returns 200 on a successful repayment', async () => {
-    appSvc().buildRepayTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h3', status: 'success' });
-    appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h3', status: 'success', ledger: 1002 });
+  it('returns 200 with prepared unsigned XDR on repay', async () => {
+    appSvc().buildRepayTransaction.mockResolvedValue(PREPARED_RESPONSE);
 
     const res = await request(app).post('/api/lending/repay').send({
       userAddress: VALID_ADDRESS,
       amount: '250000',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body).toEqual(PREPARED_RESPONSE);
   });
 
   it('returns 400 for zero repayment amount', async () => {
     const res = await request(app).post('/api/lending/repay').send({
       userAddress: VALID_ADDRESS,
       amount: '0',
-      userSecret: VALID_SECRET,
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('returns 400 when on-chain repay fails', async () => {
-    appSvc().buildRepayTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: false, status: 'failed', error: 'Repay exceeds debt' });
-
-    const res = await request(app).post('/api/lending/repay').send({
-      userAddress: VALID_ADDRESS,
-      amount: '999999999',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(400);
   });
@@ -813,33 +758,15 @@ describe('POST /api/lending/repay', () => {
 describe('POST /api/lending/withdraw', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('returns 200 on a successful withdrawal', async () => {
-    appSvc().buildWithdrawTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h4', status: 'success' });
-    appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h4', status: 'success', ledger: 1003 });
+  it('returns 200 with prepared unsigned XDR on withdraw', async () => {
+    appSvc().buildWithdrawTransaction.mockResolvedValue(PREPARED_RESPONSE);
 
     const res = await request(app).post('/api/lending/withdraw').send({
       userAddress: VALID_ADDRESS,
       amount: '100000',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(200);
-  });
-
-  it('returns 400 when withdrawal violates collateral ratio', async () => {
-    appSvc().buildWithdrawTransaction.mockResolvedValue('tx_xdr');
-    appSvc().submitTransaction.mockResolvedValue({
-      success: false,
-      status: 'failed',
-      error: 'Withdrawal would violate minimum collateral ratio',
-    });
-
-    const res = await request(app).post('/api/lending/withdraw').send({
-      userAddress: VALID_ADDRESS,
-      amount: '99999999',
-      userSecret: VALID_SECRET,
-    });
-    expect(res.status).toBe(400);
+    expect(res.body).toEqual(PREPARED_RESPONSE);
   });
 
   it('returns 500 when service throws during withdraw', async () => {
@@ -848,9 +775,89 @@ describe('POST /api/lending/withdraw', () => {
     const res = await request(app).post('/api/lending/withdraw').send({
       userAddress: VALID_ADDRESS,
       amount: '100000',
-      userSecret: VALID_SECRET,
     });
     expect(res.status).toBe(500);
+  });
+});
+
+describe('POST /api/lending/submit', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('returns 200 when signed XDR matches JWT address and submits cleanly', async () => {
+    const token = generateToken(VALID_ADDRESS);
+    appSvc().submitSignedTransaction.mockResolvedValue({
+      success: true,
+      transactionHash: 'hash_submit_1',
+      status: 'success',
+    });
+    appSvc().monitorTransaction.mockResolvedValue({
+      success: true,
+      transactionHash: 'hash_submit_1',
+      status: 'success',
+      ledger: 2000,
+    });
+
+    const res = await request(app)
+      .post('/api/lending/submit')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ xdr: 'signed_tx_xdr' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.transactionHash).toBe('hash_submit_1');
+    expect(appSvc().submitSignedTransaction).toHaveBeenCalledWith('signed_tx_xdr', VALID_ADDRESS);
+  });
+
+  it('returns 401 when Authorization token is missing', async () => {
+    const res = await request(app)
+      .post('/api/lending/submit')
+      .send({ xdr: 'signed_tx_xdr' });
+
+    expect(res.status).toBe(401);
+    expect(appSvc().submitSignedTransaction).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 when tx source account differs from JWT token address', async () => {
+    const token = generateToken(VALID_ADDRESS);
+    appSvc().submitSignedTransaction.mockRejectedValue(
+      new ForbiddenError('Transaction source account does not match authenticated user address')
+    );
+
+    const res = await request(app)
+      .post('/api/lending/submit')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ xdr: 'signed_tx_xdr_from_other_account' });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 400 when xdr is missing', async () => {
+    const token = generateToken(VALID_ADDRESS);
+
+    const res = await request(app)
+      .post('/api/lending/submit')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(appSvc().submitSignedTransaction).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when transaction submission fails on-chain', async () => {
+    const token = generateToken(VALID_ADDRESS);
+    appSvc().submitSignedTransaction.mockResolvedValue({
+      success: false,
+      status: 'failed',
+      error: 'tx_bad_seq',
+    });
+
+    const res = await request(app)
+      .post('/api/lending/submit')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ xdr: 'signed_tx_xdr' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 });
 
