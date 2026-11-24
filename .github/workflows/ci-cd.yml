@@ -123,6 +123,11 @@ jobs:
         working-directory: stellar-lend
         run: cargo build -p stellarlend-bridge --target wasm32v1-none --release
 
+      - name: Run AMM tests
+        timeout-minutes: 15
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-amm
+
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
 
