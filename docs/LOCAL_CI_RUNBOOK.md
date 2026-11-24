@@ -268,8 +268,7 @@ Per-crate thresholds live in `scripts/coverage_thresholds.json`:
     "contracts/multisig/src": 95.0,
     "contracts/amm/src": 95.0,
     "contracts/bridge/src": 95.0,
-    "contracts/vesting/src": 95.0,
-    "cross_asset_test/src": 95.0
+    "contracts/vesting/src": 95.0
   }
 }
 ```

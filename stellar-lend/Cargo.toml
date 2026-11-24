@@ -7,7 +7,6 @@ members = [
   "contracts/lending",
   "contracts/vesting",
   "contracts/multisig",
-  "cross_asset_test",
 ]
 # NOTE: `contracts/hello-world` is deliberately NOT a workspace member. It is a
 # stale, unmaintained near-duplicate of `contracts/lending` (its own

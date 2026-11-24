@@ -4,6 +4,21 @@
 
 The StellarLend protocol supports cross-asset borrowing and repaying, allowing users to deposit multiple types of collateral and borrow different assets. This document outlines the rules, invariants, and edge cases for these operations.
 
+## Cross-Asset Implementation
+
+The authoritative implementation is `stellar-lend/contracts/lending/src/cross_asset.rs`.
+The former standalone `cross_asset_test` crate was a drifted mirror rather than a
+second implementation and has been removed. Unique behaviors covered by that crate
+have been ported into the lending crate:
+
+- Per-asset decimal normalization and overflow-safe floor/ceil conversion.
+- Admin-gated oracle price updates and authorization-before-validation ordering.
+- LTV, liquidation-threshold, and decimal-bound validation for asset configuration.
+
+Configuration uses `set_asset_params`/`set_asset_params_v2` on `LendingContract`.
+Asset decimals range from 1 through 18; legacy assets without V2 configuration
+fall back to 7 decimals.
+
 For cross‑asset module storage details, see [Cross‑Asset Storage Layout](../stellar-lend/contracts/hello-world/docs/CROSS_ASSET_STORAGE_LAYOUT.md).
 
 ## Core Concepts
