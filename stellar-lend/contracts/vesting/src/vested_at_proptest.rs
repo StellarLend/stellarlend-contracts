@@ -81,6 +81,7 @@ proptest! {
 mod contract_grant_properties {
     use super::*;
     use crate::{Grant as ContractGrant, VestingSchedule};
+    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Env, Vec};
 
     const MAX_CONTRACT_TIME: u64 = 1_000_000_000;

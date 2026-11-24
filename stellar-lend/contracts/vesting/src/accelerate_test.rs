@@ -320,15 +320,15 @@ fn double_accelerate_emits_single_event() {
 
     add_grant(&env, &client, &admin, &grantee, 1_000, 1_000, 0, &token_asset);
 
-    let before = env.events().all().len();
+    // `env.events().all()` only returns events from the most recent invocation.
     client.accelerate_grant(&admin, &grantee);
-    let after_first = env.events().all().len();
+    let after_first = env.events().all().events().len();
     client.accelerate_grant(&admin, &grantee);
-    let after_second = env.events().all().len();
+    let after_second = env.events().all().events().len();
 
     // Exactly one grant_accelerated event from the first call; second is a no-op.
-    assert_eq!(after_first - before, 1);
-    assert_eq!(after_second, after_first);
+    assert_eq!(after_first, 1);
+    assert_eq!(after_second, 0);
 }
 
 #[test]
