@@ -1,9 +1,9 @@
-import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { Keypair, Networks, Operation, Transaction, TransactionBuilder } from '@stellar/stellar-sdk';
+import { Keypair, Networks, Transaction, TransactionBuilder } from '@stellar/stellar-sdk';
 import { config } from '../config';
-import { UnauthorizedError, ValidationError } from '../utils/errors';
+import { UnauthorizedError, ValidationError, ForbiddenError } from '../utils/errors';
+import { assertHookHmac } from '../utils/hookHmac';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -13,10 +13,6 @@ export interface AuthRequest extends Request {
   rawBody?: string;
   validatedTransaction?: Transaction;
 }
-
-const HOOK_SIGNATURE_HEADER = 'x-hook-signature';
-const HOOK_TIMESTAMP_HEADER = 'x-hook-timestamp';
-const HOOK_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 // Network validation
 const ALLOWED_NETWORKS = {
@@ -56,8 +52,9 @@ export const authenticateToken = (
  * Generate JWT token with network information
  */
 export const generateToken = (address: string, network?: string): string => {
+  const payload = network ? { address, network } : { address };
   return jwt.sign(
-    { address, network },
+    payload,
     config.auth.jwtSecret,
     {
       expiresIn: config.auth.jwtExpiresIn,
@@ -178,59 +175,20 @@ function verifyTransactionSignature(transaction: Transaction, sourceAccount: str
   }
 }
 
-/**
- * Verify webhook HMAC signature
- */
 export const verifyHookHmac = (
   req: AuthRequest,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ) => {
-  const signatureHeader = req.headers[HOOK_SIGNATURE_HEADER];
-  const timestampHeader = req.headers[HOOK_TIMESTAMP_HEADER];
-  const signature = Array.isArray(signatureHeader)
-    ? signatureHeader[0]
-    : signatureHeader;
-  const timestampValue = Array.isArray(timestampHeader)
-    ? timestampHeader[0]
-    : timestampHeader;
-
-  if (!config.auth.hookSecret) {
-    throw new UnauthorizedError('Hook authentication secret is not configured');
-  }
-
-  if (!signature || !timestampValue) {
-    throw new UnauthorizedError('Hook signature and timestamp headers are required');
-  }
-
-  const timestamp = Number(timestampValue);
-
-  if (!Number.isFinite(timestamp)) {
-    throw new UnauthorizedError('Invalid hook timestamp');
-  }
-
-  // Prevent replay attacks with timestamp window
-  if (Math.abs(Date.now() - timestamp) > HOOK_WINDOW_MS) {
-    throw new UnauthorizedError('Hook timestamp outside allowable window (replay attack detected)');
-  }
-
-  const rawBody = req.rawBody ?? JSON.stringify(req.body ?? {});
-  const payload = `${timestampValue}.${rawBody}`;
-  const expectedSignature = crypto
-    .createHmac('sha256', config.auth.hookSecret)
-    .update(payload)
-    .digest('hex');
-
-  const signatureBuffer = Buffer.from(signature, 'hex');
-  const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-
-  if (
-    signatureBuffer.length !== expectedBuffer.length ||
-    !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
-  ) {
-    throw new UnauthorizedError('Invalid hook signature (tampering detected)');
-  }
-
+  assertHookHmac({
+    headers: req.headers,
+    rawBody: req.rawBody,
+    secret: config.auth.hookSecret,
+    messages: {
+      timestampOutsideWindow: 'Hook timestamp outside allowable window (replay attack detected)',
+      invalidSignature: 'Invalid hook signature (tampering detected)',
+    },
+  });
   next();
 };
 
@@ -293,6 +251,21 @@ export const requireAuthenticatedWallet = (
     throw new ValidationError('Invalid Stellar address format');
   }
 
+  next();
+};
+
+/**
+ * Ensure the authenticated user address matches the userAddress in the request body
+ */
+export const requireSameAddress = (
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction
+) => {
+  const bodyAddress = (req.body as { userAddress?: string })?.userAddress;
+  if (bodyAddress && req.user?.address && bodyAddress !== req.user.address) {
+    throw new ForbiddenError('User address does not match authenticated token');
+  }
   next();
 };
 

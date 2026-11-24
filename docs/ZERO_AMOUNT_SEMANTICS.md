@@ -13,23 +13,24 @@ All core lending entrypoints (`deposit`, `withdraw`, `borrow`, `repay`, `liquida
 
 ## Overpayment (Repay)
 
-When a user repays an amount greater than their outstanding debt (principal + accrued interest):
+> **Authoritative behavior:** The on-chain implementation (`debt::repay_amount` / `LendingContract::repay`) is authoritative. Overpayments are **rejected** rather than silently clamped.
 
-- The protocol **silently clamps** the repayment to the exact outstanding balance.
-- The remaining debt becomes exactly `0`.
+When a user attempts to repay an amount greater than their outstanding debt (principal + accrued interest):
+
+- The protocol **rejects** the call with `LendingError::RepayAmountTooHigh`.
+- No state is mutated, and the outstanding debt remains unchanged.
 - Debt balances are **never** allowed to become negative. A negative debt must not be used to represent a credit balance.
-- The `repay` function returns an explicit `i128` value indicating the **remaining principal debt after repayment**:
-  - On exact or overpayment: returns `0`.
-  - On partial repayment: returns the positive remaining principal.
-- By clamping rather than rejecting overpayments, the protocol ensures users can easily clear their entire debt even as interest accrues between transaction creation and execution.
+- On a valid repayment (`0 < amount <= settled_principal`), `repay` returns an explicit `i128` value indicating the **remaining principal debt after repayment**:
+  - On exact repayment (`amount == settled_principal`): returns `0`.
+  - On partial repayment (`amount < settled_principal`): returns the positive remaining principal.
 
 ## No Prior Debt (Repay)
 
-If a user calls `repay` when they have no outstanding debt:
+If a user calls `repay` with `amount > 0` when they have no outstanding debt:
 
-- The protocol treats this as a zero-debt repay and clamps cleanly to `0`.
-- No negative debt (credit balance) is created.
-- The return value is `0`.
+- The protocol **rejects** the call with `LendingError::RepayAmountTooHigh`.
+- No negative debt (credit balance) is created, and debt remains `0`.
+- Calling `repay` with `amount <= 0` when there is no debt still returns `LendingError::InvalidAmount`.
 
 ## View Functions
 
@@ -41,6 +42,6 @@ Read-only view functions such as `get_position` and `get_health_factor` are guar
 
 ## Implementation Notes
 
-- The clamp is applied in `debt::repay_amount` by comparing the repay amount against the accrual-settled principal; if `amount >= settled.principal`, the resulting principal is set to `0`.
+- Overpayment rejection is enforced in `debt::repay_amount` by comparing the repay amount against the accrual-settled principal; if `amount > settled.principal`, `DebtError::RepayAmountTooHigh` (mapped to `LendingError::RepayAmountTooHigh`) is returned.
 - An additional `.max(0)` guard is applied in `LendingContract::get_position` before constructing the `PositionSummary`, providing defense-in-depth against any future rounding edge case.
 - The `TotalDebt` protocol counter is decremented by `prev_principal - updated.principal` (floored at `0` via `saturating_sub`), so it also cannot become negative.

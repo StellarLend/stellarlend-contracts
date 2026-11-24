@@ -1,0 +1,75 @@
+name: Bug Report
+description: Report a bug in StellarLend contracts, oracle, or API integrations
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill in the details below so maintainers can reproduce and triage the issue.
+        For security vulnerabilities, please do **not** open a public issue — use private security reporting instead.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which area of the repository is affected?
+      options:
+        - lending
+        - amm
+        - bridge
+        - vesting
+        - multisig
+        - oracle
+        - api
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise summary of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Command / Steps
+      description: Provide the exact command(s) or steps to reproduce the issue.
+      placeholder: |
+        cargo test --package ...
+        # or
+        stellar contract invoke --id <CONTRACT_ID> --network testnet -- ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include error codes, panic messages, or logs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Environment & On-Chain Details
+      description: Relevant context such as network (local/testnet/mainnet), contract ID, ledger sequence, oracle provider, or Rust/Soroban CLI versions.
+      placeholder: |
+        - Network: testnet
+        - Contract ID:
+        - Ledger sequence:
+        - Oracle provider (if applicable):
+        - Rust / Soroban CLI version:
+    validations:
+      required: false

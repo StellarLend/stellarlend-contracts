@@ -6,14 +6,16 @@ Key features
 - `Bridge` struct with an `epoch` counter and validator set
 - `rotate_validators(new_set, epoch, proofs)` requires a quorum proof from the *current* validator set and advances the epoch atomically
 - `validate_inbound_epoch(signed_epoch)` rejects messages signed by retired epochs (signed_epoch < current epoch)
-- `set_inbound_cap(max_per_window, window_size, current_time)` / `admit_inbound(amount, current_time)` enforce a configurable, rolling-ledger-time cap on cumulative inbound value — defense-in-depth against an authorized-but-compromised validator set draining the bridge in a single window. **Fail-closed by default**: a fresh `Bridge` admits no inbound value until a cap is explicitly configured. See `SECURITY_NOTES.md` for the full threat model and design rationale.
+- `set_inbound_cap(caller: Address, max_per_window: i128, window_size: u64)` / `admit_inbound(amount: i128, current_time: u64)` enforce a configurable, rolling-ledger-time cap on cumulative inbound value. The setter requires the admin and starts the window at the current ledger timestamp. **Fail-closed by default**: a fresh `Bridge` admits no inbound value until a cap is explicitly configured.
+- `set_outbound_cap(caller: Address, max_per_window: i128, window_size: u64)` / `admit_outbound(amount: i128, current_time: u64)` apply the same window model to outbound value.
+- See [`SECURITY_NOTES.md`](./SECURITY_NOTES.md) for the authoritative roles-and-authorization table and the full threat model.
 
 ## Documentation Index
 
 | Document | Description |
 |---|---|
 | [ROTATION_PROTOCOL.md](./ROTATION_PROTOCOL.md) | Sequenced validator-set rotation flow, signed payload, quorum math, and inbound epoch handling |
-| [SECURITY_NOTES.md](./SECURITY_NOTES.md) | Bridge validator rotation threat model and inbound-cap security rationale |
+| [SECURITY_NOTES.md](./SECURITY_NOTES.md) | **Authoritative roles and authorization table for every public bridge entrypoint**, plus validator rotation and cap security rationale |
 | [INBOUND_WINDOW_TUNING.md](./INBOUND_WINDOW_TUNING.md) | Rolling-window cap algorithm and operator parameter-selection guide |
 | [QUORUM_PROOF_BOUNDS.md](./QUORUM_PROOF_BOUNDS.md) | Quorum-proof vector size and duplicate-signer DoS bounds |
 | [WINDOW_GUARD.md](./WINDOW_GUARD.md) | Window-boundary guard rationale for zero windows, clock rollback, and overflow |

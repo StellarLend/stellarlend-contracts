@@ -44,6 +44,8 @@ mod bad_debt_ledger_test;
 #[cfg(test)]
 mod bad_debt_write_off_test;
 #[cfg(test)]
+mod boundary_test;
+#[cfg(test)]
 mod borrow_health_factor_test;
 #[cfg(test)]
 mod borrow_index_test;
@@ -94,6 +96,10 @@ mod health_factor_edge_test;
 #[cfg(test)]
 mod initialize_auth_test;
 #[cfg(test)]
+mod failure_path_test;
+#[cfg(test)]
+mod initialization_guard_test;
+#[cfg(test)]
 mod interest_drift_regression_test;
 #[cfg(test)]
 mod interest_rate_regression_test;
@@ -132,7 +138,12 @@ mod max_borrow_proptest;
 #[cfg(test)]
 mod migration_event_test;
 #[cfg(test)]
+mod missing_price_test;
+#[cfg(test)]
+mod mul_div_proptest;
+#[cfg(test)]
 mod oracle_staleness_test;
+#[cfg(test)] mod oracle_payload_binding_test;
 #[cfg(test)]
 mod oracle_payload_binding_test;
 #[cfg(test)]
@@ -181,6 +192,8 @@ mod stateful_lifecycle_invariant_test;
 mod storage_tier_test;
 #[cfg(test)]
 mod supply_rate_split_test;
+#[cfg(test)]
+mod test_flash_loan_reservation;
 
 #[cfg(test)]
 mod config_roundtrip_test;
@@ -194,6 +207,20 @@ mod utilization_math_boundary_test;
 mod withdraw_overflow_test;
 #[cfg(test)]
 mod withdraw_reserve_test;
+#[cfg(test)]
+mod cross_asset_health_doctest;
+#[cfg(test)]
+mod insurance_fund_test;
+#[cfg(test)]
+mod interest_ordering_time_test;
+#[cfg(test)]
+mod liquidation_grace_test;
+#[cfg(test)]
+mod partial_staleness_guard_test;
+#[cfg(test)]
+mod test_token_receiver;
+#[cfg(test)]
+mod zero_amount_semantics_test;
 use debt::{
     borrow_amount, cached_borrow_rate, effective_debt, load_borrow_index, load_debt, repay_amount,
     save_debt, touch_borrow_index, DebtPosition, DEFAULT_APR_BPS,
@@ -356,6 +383,14 @@ pub enum DataKey {
     UserCollateralAssets(Address),
     /// List of assets for which a user holds non-zero debt cross-asset.
     UserDebtAssets(Address),
+    /// Paged persistent borrower index: fixed-size chunk `n`.
+    BorrowerPage(u32),
+    /// Total number of registered borrowers (persistent).
+    BorrowerCount,
+    /// Number of allocated borrower pages (instance).
+    BorrowerPageCount,
+    /// Set once legacy `BorrowerList` has been migrated into pages.
+    BorrowerListMigrated,
     /// Per-asset total outstanding debt (cross-asset tracking).
     TotalDebtAsset(Address),
     /// Insurance fund balance credited by governance or protocol fees (i128).
@@ -430,6 +465,10 @@ pub enum DataKey {
     BorrowIndexAsset(Address),
     /// Ledger timestamp of the last per-asset borrow-index update.
     LastIndexUpdateAsset(Address),
+    /// Per-asset amount currently reserved for active flash loans.
+    /// Stored in Temporary storage so it auto-expires at ledger close and
+    /// defaults to `0` when absent.
+    ReservedForFlashLoan(Address),
 }
 
 #[contracttype]
@@ -1124,7 +1163,8 @@ impl LendingContract {
         let max_move_bps: Option<i128> = env
             .storage()
             .instance()
-            .get::<DataKey, i128>(&DataKey::MaxMoveBps);
+            .get::<DataKey, i128>(&DataKey::MaxMoveBps)
+            .filter(|&bps| bps > 0);
 
         // Per-update move-cap circuit breaker (relative to the previous update).
         if let Some(max_move_bps) = max_move_bps {
@@ -3571,18 +3611,19 @@ impl LendingContract {
         let token = TokenClient::new(&env, &asset);
         let contract_address = env.current_contract_address();
         
-        // Get current balance
+        // Get current balance and subtract any liquidity already reserved for flash loans
         let balance_before = token.balance(&contract_address);
-        
-        // Check liquidity - must have enough tokens minus amounts reserved for depositors
-        // For now, use simple balance check (coordinate with reserve invariant if needed)
-        if amount > balance_before {
+        let reserved = get_flash_loan_reserved(&env, &asset);
+        let available_liquidity = balance_before.saturating_sub(reserved);
+
+        // Check liquidity against available (unreserved) balance
+        if amount > available_liquidity {
             return Err(LendingError::InsufficientLiquidity);
         }
 
-        // Check utilization cap
+        // Check utilization cap against available (unreserved) liquidity
         let max_flash_bps = Self::max_flash_bps_config(&env);
-        let max_flash_amount = balance_before
+        let max_flash_amount = available_liquidity
             .checked_mul(max_flash_bps)
             .and_then(|value| value.checked_div(BPS_DENOM))
             .ok_or(LendingError::Overflow)?;
@@ -3600,6 +3641,9 @@ impl LendingContract {
             .checked_add(BPS_DENOM - 1)
             .ok_or(LendingError::Overflow)?
             / BPS_DENOM;
+
+        // Reserve liquidity in Temporary storage before external callback
+        reserve_flash_loan(&env, &asset, amount)?;
 
         // Transfer tokens to receiver
         token.transfer(&contract_address, &receiver, &amount);
@@ -3625,8 +3669,9 @@ impl LendingContract {
             ],
         );
 
-        // Clear reentrancy guard
+        // Clear reentrancy guard and release flash-loan reservation
         env.storage().instance().set(&DataKey::FlashActive, &false);
+        release_flash_loan_reservation(&env, &asset, amount)?;
 
         // Verify repayment: balance must be >= balance_before + fee
         let balance_after = token.balance(&contract_address);
@@ -3812,6 +3857,7 @@ impl LendingContract {
         borrow_cap: i128,
         supply_cap: i128,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         admin.require_auth();
         if admin
             != env
@@ -3898,6 +3944,7 @@ impl LendingContract {
         supply_cap: i128,
         decimals: u32,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         admin.require_auth();
         if admin
             != env
@@ -4586,6 +4633,7 @@ impl LendingContract {
         current_wasm_hash: BytesN<32>,
         required_approvals: u32,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_init(&env, &caller, current_wasm_hash, required_approvals)
     }
 
@@ -4596,6 +4644,7 @@ impl LendingContract {
         new_wasm_hash: BytesN<32>,
         new_version: u32,
     ) -> Result<u64, LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_propose(&env, &caller, new_wasm_hash, new_version)
     }
 
@@ -4605,6 +4654,7 @@ impl LendingContract {
         caller: Address,
         proposal_id: u64,
     ) -> Result<u32, LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_approve(&env, &caller, proposal_id)
     }
 
@@ -4614,11 +4664,13 @@ impl LendingContract {
         caller: Address,
         proposal_id: u64,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_execute(&env, &caller, proposal_id)
     }
 
     // Cancel a pending upgrade proposal (admin-only, issue #1940).
     pub fn upgrade_cancel(env: Env, caller: Address, proposal_id: u64) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_cancel(&env, &caller, proposal_id)
     }
 
@@ -4627,6 +4679,7 @@ impl LendingContract {
         caller: Address,
         required_approvals: u32,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_set_required_approvals(&env, &caller, required_approvals)
     }
 
@@ -4636,6 +4689,7 @@ impl LendingContract {
         caller: Address,
         approver: Address,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_add_approver(&env, &caller, approver)
     }
 
@@ -4645,6 +4699,7 @@ impl LendingContract {
         caller: Address,
         approver: Address,
     ) -> Result<(), LendingError> {
+        require_initialized(&env)?;
         upgrade::upgrade_remove_approver(&env, &caller, approver)
     }
 
@@ -4831,6 +4886,51 @@ fn require_no_active_flash_loan(env: &Env) -> Result<(), LendingError> {
         return Err(LendingError::FlashLoanReentrancy);
     }
     Ok(())
+}
+
+/// Return the amount of `asset` currently reserved for active flash loans.
+/// Stored in Temporary storage and defaults to `0` when absent.
+pub fn get_flash_loan_reserved(env: &Env, asset: &Address) -> i128 {
+    env.storage()
+        .temporary()
+        .get(&DataKey::ReservedForFlashLoan(asset.clone()))
+        .unwrap_or(0)
+}
+
+/// Reserve `amount` of `asset` for an active flash loan in Temporary storage.
+pub fn reserve_flash_loan(env: &Env, asset: &Address, amount: i128) -> Result<i128, LendingError> {
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+    let key = DataKey::ReservedForFlashLoan(asset.clone());
+    let current: i128 = env.storage().temporary().get(&key).unwrap_or(0);
+    let updated = current.checked_add(amount).ok_or(LendingError::Overflow)?;
+    env.storage().temporary().set(&key, &updated);
+    Ok(updated)
+}
+
+/// Release `amount` of `asset` previously reserved for a flash loan.
+/// Removes the Temporary storage entry when the remaining reservation reaches `0`.
+pub fn release_flash_loan_reservation(
+    env: &Env,
+    asset: &Address,
+    amount: i128,
+) -> Result<i128, LendingError> {
+    if amount <= 0 {
+        return Err(LendingError::InvalidAmount);
+    }
+    let key = DataKey::ReservedForFlashLoan(asset.clone());
+    let current: i128 = env.storage().temporary().get(&key).unwrap_or(0);
+    if amount > current {
+        return Err(LendingError::InvalidAmount);
+    }
+    let updated = current.checked_sub(amount).ok_or(LendingError::Overflow)?;
+    if updated == 0 {
+        env.storage().temporary().remove(&key);
+    } else {
+        env.storage().temporary().set(&key, &updated);
+    }
+    Ok(updated)
 }
 
 pub(crate) fn settle_and_accrue_insurance(

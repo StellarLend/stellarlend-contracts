@@ -1,5 +1,50 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ContractUpdater, calculateJitterDelay } from '../src/services/contract-updater';
+import { ContractUpdater, calculateJitterDelay, idFor } from '../src/services/contract-updater';
+
+describe('ContractUpdater deterministic fallback idempotency', () => {
+  it('produces a stable id for identical requests', () => {
+    const request = {
+      asset: 'XLM',
+      price: 100,
+      source: 'test',
+      observedAt: 1700000000000,
+    };
+
+    expect(idFor(request)).toBe(idFor({ ...request }));
+  });
+
+  it('changes the id when the price changes', () => {
+    const request = {
+      asset: 'XLM',
+      price: 100,
+      source: 'test',
+      observedAt: 1700000000000,
+    };
+
+    expect(idFor(request)).not.toBe(idFor({ ...request, price: 101 }));
+  });
+
+  it('deduplicates identical requests without an explicit idempotencyKey', async () => {
+    const adapter = {
+      getLatestUpdate: vi.fn().mockResolvedValue(null),
+      submit: vi.fn().mockResolvedValue({ txHash: 'tx-fallback' }),
+    };
+    const updater = new ContractUpdater(adapter);
+    const request = {
+      asset: 'XLM',
+      price: 100,
+      source: 'test',
+      observedAt: Date.now(),
+    };
+
+    const first = await updater.submitPriceUpdate(request);
+    const second = await updater.submitPriceUpdate(request);
+
+    expect(first).toBe(second);
+    expect(first.id).toBe(idFor(request));
+    expect(adapter.submit).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('Oracle ContractUpdater Backoff & Jitter Distribution', () => {
   beforeEach(() => {
@@ -49,6 +94,58 @@ describe('ContractUpdater failure paths and boundaries', () => {
     observedAt: Date.now(),
     idempotencyKey: 'update-1',
     ...overrides,
+  });
+
+  const aggregatedPrice = (asset: string, price: bigint) => ({
+    asset,
+    price,
+    timestamp: Math.floor(Date.now() / 1000),
+    confidence: 95,
+    sources: [],
+  });
+
+  it('updatePrice_never_throws', async () => {
+    const adapter = {
+      getLatestUpdate: vi.fn().mockResolvedValue(null),
+      submit: vi.fn().mockRejectedValue(
+        Object.assign(new Error('submission rejected'), {
+          code: 'INVALID_ASSET',
+        }),
+      ),
+    };
+    const updater = new ContractUpdater(adapter);
+
+    await expect(
+      updater.updatePrice(aggregatedPrice('XLM', 100n)),
+    ).resolves.toMatchObject({
+      success: false,
+      asset: 'XLM',
+      error: 'submission rejected',
+    });
+  });
+
+  it('updatePrices_continues_after_one_asset_fails', async () => {
+    const adapter = {
+      getLatestUpdate: vi.fn().mockResolvedValue(null),
+      submit: vi.fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error('first asset rejected'), {
+            code: 'INVALID_ASSET',
+          }),
+        )
+        .mockResolvedValueOnce({ txHash: 'tx-second' }),
+    };
+    const updater = new ContractUpdater(adapter);
+
+    const results = await updater.updatePrices([
+      aggregatedPrice('FAIL', 100n),
+      aggregatedPrice('BTC', 200n),
+    ]);
+
+    expect(results.map(({ success }) => success)).toEqual([false, true]);
+    expect(results[0].error).toBe('first asset rejected');
+    expect(results[1].transactionHash).toBe('tx-second');
+    expect(adapter.submit).toHaveBeenCalledTimes(2);
   });
 
   it('rejects stale and future requests before touching the adapter', async () => {

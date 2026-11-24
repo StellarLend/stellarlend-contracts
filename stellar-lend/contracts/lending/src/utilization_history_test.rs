@@ -289,3 +289,30 @@ fn get_rate_model_diagnostics_reports_bounded_utilization() {
     assert_eq!(diagnostics.last_update_ledger, 0);
     assert_eq!(diagnostics.elapsed_ledgers, 0);
 }
+
+/// `register_borrower` must be idempotent: borrowing twice registers the
+/// borrower only once. This test documents the expected list-length invariant
+/// that the `.iter().any(..)` rewrite of `register_borrower` must preserve.
+#[test]
+fn register_borrower_is_idempotent() {
+    let (env, contract_id, client) = setup();
+    let user = Address::generate(&env);
+    let list = env.as_contract(&contract_id, || {
+        crate::register_borrower(&env, &user);
+        crate::register_borrower(&env, &user);
+        crate::get_borrowers(&env)
+    });
+    assert_eq!(list.len(), 1);
+    let _ = client;
+}
+
+/// A corrupted utilization ring buffer index must surface as a typed
+/// `LendingError` rather than trapping the entrypoint.
+#[test]
+fn utilization_history_missing_sample_returns_error() {
+    let (env, contract_id, _client) = setup();
+    env.as_contract(&contract_id, || {
+        let result = crate::read_utilization_sample_at(&env, 9_999);
+        assert!(result.is_err());
+    });
+}

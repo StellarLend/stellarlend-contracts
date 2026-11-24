@@ -1,5 +1,20 @@
 import crypto from 'crypto';
 import request from 'supertest';
+import { UnauthorizedError } from '../utils/errors';
+
+jest.mock('../controllers/lending.controller', () => ({
+  processHook: (
+    _req: unknown,
+    res: { status: (code: number) => { json: (body: unknown) => void } }
+  ) => {
+    res.status(200).json({ success: true, message: 'Hook authenticated' });
+  },
+  getActivity: jest.fn(),
+  deposit: jest.fn(),
+  borrow: jest.fn(),
+  repay: jest.fn(),
+  withdraw: jest.fn(),
+}));
 
 let app: any;
 
@@ -17,15 +32,48 @@ describe('Hook HMAC middleware', () => {
   const rawBody = JSON.stringify(payload);
 
   const sign = (timestamp: string, body: string) =>
-    crypto
-      .createHmac('sha256', HOOK_SECRET)
-      .update(`${timestamp}.${body}`)
-      .digest('hex');
+    crypto.createHmac('sha256', HOOK_SECRET).update(`${timestamp}.${body}`).digest('hex');
 
   it('accepts valid hook requests with matching signature and timestamp', async () => {
     const timestamp = Date.now().toString();
     const response = await request(app)
       .post(hookPath)
+      .set('X-Hook-Timestamp', timestamp)
+      .set('X-Hook-Signature', sign(timestamp, rawBody))
+      .send(payload);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ success: true, message: 'Hook authenticated' });
+  });
+
+  it('keeps the no-suffix hook route working', async () => {
+    const timestamp = Date.now().toString();
+    const response = await request(app)
+      .post('/api/lending/hooks')
+      .set('X-Hook-Timestamp', timestamp)
+      .set('X-Hook-Signature', sign(timestamp, rawBody))
+      .send(payload);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ success: true, message: 'Hook authenticated' });
+  });
+
+  it('returns a JSON 404 for an unknown hook name after HMAC verification', async () => {
+    const timestamp = Date.now().toString();
+    const response = await request(app)
+      .post('/api/lending/hooks/unknown')
+      .set('X-Hook-Timestamp', timestamp)
+      .set('X-Hook-Signature', sign(timestamp, rawBody))
+      .send(payload);
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: 'Not Found' });
+  });
+
+  it('continues supported indexer hook requests through the controller', async () => {
+    const timestamp = Date.now().toString();
+    const response = await request(app)
+      .post('/api/lending/hooks/indexer')
       .set('X-Hook-Timestamp', timestamp)
       .set('X-Hook-Signature', sign(timestamp, rawBody))
       .send(payload);
@@ -124,20 +172,40 @@ describe('Hook HMAC header handling', () => {
     ).toThrow('Invalid hook signature');
   });
 
-  it('falls back to the JSON-encoded body when no raw body was captured', () => {
+  it('rejects when no raw body was captured', () => {
     const timestamp = Date.now().toString();
     const next = jest.fn();
 
-    hookHmac()(
-      hookReq(
-        { 'x-hook-signature': sign(timestamp, rawBody), 'x-hook-timestamp': timestamp },
-        { rawBody: undefined }
-      ),
-      {} as any,
-      next
-    );
+    expect(() =>
+      hookHmac()(
+        hookReq(
+          { 'x-hook-signature': sign(timestamp, rawBody), 'x-hook-timestamp': timestamp },
+          { rawBody: undefined }
+        ),
+        {} as any,
+        next
+      )
+    ).toThrow(new UnauthorizedError('Raw request body is required for hook authentication'));
 
-    expect(next).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-hex signature before comparing bytes', () => {
+    const timestamp = Date.now().toString();
+    const next = jest.fn();
+
+    expect(() =>
+      hookHmac()(
+        hookReq(
+          { 'x-hook-signature': 'zz'.repeat(32), 'x-hook-timestamp': timestamp },
+          { rawBody }
+        ),
+        {} as any,
+        next
+      )
+    ).toThrow(new UnauthorizedError('Invalid hook signature'));
+
+    expect(next).not.toHaveBeenCalled();
   });
 
   it('rejects a signature computed over a different raw body', () => {

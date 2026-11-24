@@ -10,13 +10,13 @@ import type {
   OracleServiceConfig,
   ProviderConfig,
   AggregatedPrice,
-  ContractUpdateResult,
+  IContractUpdater,
 } from "../src/types/index.js";
 
 describe("Oracle Service (oracle/src/index.ts) Boundary & Failure Path Coverage", () => {
   let mockConfig: OracleServiceConfig;
   let mockAggregator: any;
-  let mockUpdater: any;
+  let mockUpdater: IContractUpdater & { updatePrices: ReturnType<typeof vi.fn> };
   let mockAdminServer: any;
 
   beforeEach(() => {
@@ -463,14 +463,24 @@ describe("Oracle Service (oracle/src/index.ts) Boundary & Failure Path Coverage"
       ]);
     });
 
-    it("should support contractUpdater with submitPriceUpdate interface", async () => {
+    it("should call the typed updatePrices method and retain per-asset failures", async () => {
       const alternativeUpdater = {
-        submitPriceUpdate: vi.fn().mockImplementation(async (priceData) => {
-          if (priceData.asset === "FAIL") {
-            throw new Error("On-chain submission rejected");
-          }
-          return { txHash: "tx-123" };
-        }),
+        updatePrices: vi.fn().mockResolvedValue([
+          {
+            success: true,
+            asset: "XLM",
+            price: 150000n,
+            timestamp: 1700000000,
+            transactionHash: "tx-123",
+          },
+          {
+            success: false,
+            asset: "FAIL",
+            price: 100n,
+            timestamp: 1700000000,
+            error: "On-chain submission rejected",
+          },
+        ]),
       };
 
       mockAggregator.getPrices.mockResolvedValueOnce(
@@ -500,11 +510,15 @@ describe("Oracle Service (oracle/src/index.ts) Boundary & Failure Path Coverage"
 
       const service = new OracleService(mockConfig, {
         aggregator: mockAggregator,
-        contractUpdater: alternativeUpdater as any,
+        contractUpdater: alternativeUpdater,
       });
 
       const results = await service.updatePrices(["XLM", "FAIL"]);
 
+      expect(alternativeUpdater.updatePrices).toHaveBeenCalledWith([
+        expect.objectContaining({ asset: "XLM" }),
+        expect.objectContaining({ asset: "FAIL" }),
+      ]);
       expect(results).toHaveLength(2);
       expect(results[0].success).toBe(true);
       expect(results[0].asset).toBe("XLM");

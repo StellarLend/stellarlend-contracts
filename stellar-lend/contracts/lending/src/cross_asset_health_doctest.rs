@@ -82,22 +82,22 @@ mod cross_asset_health_doctest {
         client.set_asset_params(
             &admin,
             &asset_a,
-            &7500i128,             // ltv_bps
-            &7500i128,             // liquidation_threshold_bps
-            &1_000_000_000_000i128, // debt_ceiling (unconstrained, &0i128,
-            &0i128)
-            &0i128,                // borrow_cap   (0 = uncapped)
+            &7500i128,              // ltv_bps
+            &7500i128,              // liquidation_threshold_bps
+            &1_000_000_000_000i128, // debt_ceiling (unconstrained)
+            &0i128,                 // borrow_cap   (0 = uncapped)
+            &0i128,                 // supply_cap   (0 = uncapped)
         );
 
         // Asset B (USDC proxy): 90% LTV, 90% liquidation threshold (9_000 bps)
         client.set_asset_params(
             &admin,
             &asset_b,
-            &9000i128,             // ltv_bps
-            &9000i128,             // liquidation_threshold_bps
-            &1_000_000_000_000i128, // debt_ceiling (unconstrained, &0i128,
-            &0i128)
-            &0i128,                // borrow_cap   (0 = uncapped)
+            &9000i128,              // ltv_bps
+            &9000i128,              // liquidation_threshold_bps
+            &1_000_000_000_000i128, // debt_ceiling (unconstrained)
+            &0i128,                 // borrow_cap   (0 = uncapped)
+            &0i128,                 // supply_cap   (0 = uncapped)
         );
 
         // Asset A price: $0.50 → 5_000_000 raw

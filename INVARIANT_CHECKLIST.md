@@ -72,20 +72,6 @@
   - [x] Contributing guide
   - [x] FAQ
 
-- [x] Implementation summary: `INVARIANT_IMPLEMENTATION_SUMMARY.md` (400 lines)
-  - [x] Overview
-  - [x] Components implemented
-  - [x] Behavior verification
-  - [x] Security properties
-  - [x] Testing status
-  - [x] Migration path
-  - [x] Known limitations
-  - [x] Future enhancements
-  - [x] API breaking changes
-  - [x] Verification steps
-  - [x] Success criteria
-  - [x] Recommendations
-
 - [x] This checklist: `INVARIANT_CHECKLIST.md`
 
 **Total documentation:** ~1,200 lines
@@ -185,7 +171,6 @@ grep "pub fn deposit\|pub fn withdraw\|pub fn borrow\|pub fn repay" src/lib.rs |
 # 5. Check documentation exists
 ls -la docs/RESERVE_INVARIANT_CHECKING.md
 ls -la stellar-lend/contracts/lending/INVARIANT_CHECKING.md
-ls -la INVARIANT_IMPLEMENTATION_SUMMARY.md
 
 # 6. Verify test coverage
 cargo test invariant -- --show-output

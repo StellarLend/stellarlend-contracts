@@ -137,6 +137,18 @@ export interface ContractUpdateResult {
 }
 
 /**
+ * Configuration required to create the contract updater.
+ */
+export interface ContractUpdaterOptions {
+  network: "testnet" | "mainnet";
+  rpcUrl: string;
+  contractId: string;
+  adminSecretKey: string;
+  maxRetries?: number;
+  retryDelayMs?: number;
+}
+
+/**
  * Service configuration
  */
 export interface AssetPriceBounds {
@@ -150,6 +162,7 @@ export interface OracleServiceConfig {
     contractId: string;
     adminSecretKey: string;
     adminApiPort?: number;
+    adminHost?: string;
     adminHmacSecret?: string;
     updateIntervalMs: number;
     maxPriceDeviationPercent: number;
@@ -411,6 +424,13 @@ export interface SubmissionReceipt {
   success: boolean;
   attempt: number;
   submittedAt: number;
+}
+
+/**
+ * Defines the contract updater interface for on-chain price updates.
+ */
+export interface IContractUpdater {
+  updatePrices(prices: AggregatedPrice[]): Promise<ContractUpdateResult[]>;
 }
 
 // ---------------------------------------------------------------------------

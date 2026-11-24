@@ -6,7 +6,6 @@ import { config } from './config';
 import lendingRoutes from './routes/lending.routes';
 import healthRoutes from './routes/health.routes';
 import { errorHandler } from './middleware/errorHandler';
-import logger from './utils/logger';
 
 const app: Application = express();
 
@@ -16,22 +15,40 @@ const app: Application = express();
  * 2. Rate limiting is applied to all /api/ routes with a deterministic configuration.
  * 3. Unknown routes under /api/ return a consistent 404 JSON response.
  * 4. All errors are routed through the central error handler without leaking internal details.
- * 5. Parser failures (malformed JSON, oversized payloads) are reported as 400 with a safe message.
+ * 5. Parser failures are reported as 400 (malformed JSON) or 413 (oversized payload) with a
+ *    safe message.
  */
 
 // Security headers and CSRP protection.
 app.use(helmet());
 
-app.use(cors());
+// Vary rejected and accepted responses by Origin so shared caches cannot
+// reuse a response across different browser origins.
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.vary('Origin');
+  next();
+});
+
+app.use(cors({
+  origin: (requestOrigin, callback) => {
+    if (!requestOrigin) {
+      callback(null, false);
+      return;
+    }
+
+    const allowed = config.cors.origins;
+    callback(null, allowed.includes('*') || allowed.includes(requestOrigin) ? requestOrigin : false);
+  },
+}));
 
 app.use(
   express.json({
+    limit: config.server.bodyLimit,
     verify: (req: Request, _res: Response, buf: Buffer) => {
       (req as Request & { rawBody?: string }).rawBody = buf.toString('utf8');
     },
   }),
 );
-app.use(express.urlencoded({ extended: true }));
 
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
@@ -58,17 +75,6 @@ app.use((_req: Request, res: Response) => {
 
 // Centralized error handling must be last so it can catch downstream failures.
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  logger.error('Unhandled request error', {
-    message: err?.message,
-    path: req.path,
-    method: req.method,
-  });
-
-  if ((err as { type?: string })?.type === 'entity.too.large') {
-    logger.warn('Request body too large', { path: req.path, method: req.method });
-    return res.status(413).json({ error: 'Payload too large' });
-  }
-
   return errorHandler(err, req, res, next);
 });
 

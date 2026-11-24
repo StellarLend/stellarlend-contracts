@@ -19,7 +19,6 @@ import {
   createAggregator,
   createContractUpdater,
   type PriceAggregator,
-  type ContractUpdater,
   type PriceValidator,
   type PriceCache,
 } from "./services/index.js";
@@ -28,6 +27,7 @@ import type {
   ProviderConfig,
   ContractUpdateResult,
   AggregatedPrice,
+  IContractUpdater,
 } from "./types/index.js";
 
 /**
@@ -60,7 +60,7 @@ export interface OracleServiceStatus {
  */
 export interface OracleServiceDependencies {
   aggregator?: PriceAggregator;
-  contractUpdater?: ContractUpdater;
+  contractUpdater?: IContractUpdater;
   adminServer?: AdminServer;
   validator?: PriceValidator;
   cache?: PriceCache;
@@ -144,7 +144,7 @@ export class OracleService {
   private readonly config: OracleServiceConfig;
   private readonly configuredProviders: ProviderConfig[];
   private readonly aggregator: PriceAggregator;
-  private readonly contractUpdater: ContractUpdater;
+  private readonly contractUpdater: IContractUpdater;
   private readonly adminServer?: AdminServer;
   private intervalId?: ReturnType<typeof setInterval>;
   private isRunning: boolean = false;
@@ -244,6 +244,7 @@ export class OracleService {
     } else if (config.adminApiPort && config.adminApiPort > 0) {
       this.adminServer = new AdminServer({
         port: config.adminApiPort,
+        host: config.adminHost,
         hmacSecret: config.adminHmacSecret!,
         validator,
       });
@@ -407,41 +408,10 @@ export class OracleService {
         assets: Array.from(prices.keys()),
       });
 
-      // Submit updates to contract updater with interface compatibility
+      // Submit updates through the typed contract updater API.
       const priceArray = Array.from(prices.values());
-      let results: ContractUpdateResult[] = [];
-
-      if (typeof (this.contractUpdater as any).updatePrices === "function") {
-        results = await (this.contractUpdater as any).updatePrices(priceArray);
-      } else if (
-        typeof (this.contractUpdater as any).submitPriceUpdate === "function"
-      ) {
-        results = await Promise.all(
-          priceArray.map(async (p): Promise<ContractUpdateResult> => {
-            try {
-              await (this.contractUpdater as any).submitPriceUpdate(p);
-              return {
-                success: true,
-                asset: p.asset,
-                price: p.price,
-                timestamp: p.timestamp,
-              };
-            } catch (err) {
-              return {
-                success: false,
-                asset: p.asset,
-                price: p.price,
-                timestamp: p.timestamp,
-                error: err instanceof Error ? err.message : String(err),
-              };
-            }
-          }),
-        );
-      } else {
-        throw new Error(
-          "ContractUpdater does not implement updatePrices or submitPriceUpdate",
-        );
-      }
+      const results: ContractUpdateResult[] =
+        await this.contractUpdater.updatePrices(priceArray);
 
       // Log results
       const successful = results.filter((r) => r.success);
