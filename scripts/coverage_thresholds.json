@@ -6,7 +6,7 @@
     "contracts/lending/tests": 70.0,
     "contracts/common/src": 77.0,
     "contracts/multisig/src": 85.0,
-    "contracts/bridge/src": 35.0,
+    "contracts/bridge/src": 55.0,
     "cross_asset_test/src": 82.0,
     "contracts/vesting/src": 80.0
   }

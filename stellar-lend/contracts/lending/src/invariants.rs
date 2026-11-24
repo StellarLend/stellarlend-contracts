@@ -27,9 +27,9 @@
 //! Any detected drift will panic the transaction immediately with a detailed
 //! error message indicating the expected vs actual balance mismatch.
 
-use crate::DataKey;
+use crate::{DataKey, LendingError};
 use soroban_sdk::token::Client as TokenClient;
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, Vec};
 
 /// Check that token reserves match internal accounting before a state-changing operation.
 ///
@@ -90,7 +90,10 @@ fn check_reserve_invariant(env: &Env, asset: &Address, checkpoint: &str) {
     };
 
     // Compute expected balance from internal accounting
-    let expected_balance = compute_expected_reserve(env, asset);
+    let expected_balance = match compute_expected_reserve(env, asset) {
+        Ok(value) => value,
+        Err(error) => panic!("RESERVE INVARIANT ARITHMETIC ERROR [{}]: {:?}", checkpoint, error),
+    };
 
     // Assert equality - panic immediately if drift detected
     assert_eq!(
@@ -105,24 +108,56 @@ fn check_reserve_invariant(env: &Env, asset: &Address, checkpoint: &str) {
     );
 }
 
+/// Sum cross-asset collateral for `asset`.
+///
+/// `TotalCollateralAsset` is authoritative when present.  For storage layouts
+/// created before that aggregate existed (or for unit tests), fall back to
+/// iterating the borrower/depositor lists and their per-user asset balances.
+pub fn sum_cross_asset_collateral(env: &Env, asset: &Address) -> Result<i128, LendingError> {
+    let total_key = DataKey::TotalCollateralAsset(asset.clone());
+    if let Some(total) = env.storage().persistent().get(&total_key) {
+        let total: i128 = total;
+        return Ok(total);
+    }
+
+    let mut sum = 0i128;
+
+    let borrowers: Option<Vec<Address>> = env
+        .storage()
+        .instance()
+        .get(&DataKey::BorrowerList);
+    if let Some(borrowers) = borrowers {
+        for i in 0..borrowers.len() {
+            let user = borrowers.get(i).ok_or(LendingError::Overflow)?;
+            let assets: Vec<Address> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::UserCollateralAssets(user.clone()))
+                .unwrap_or(Vec::new(env));
+            for j in 0..assets.len() {
+                let collateral_asset = assets.get(j).ok_or(LendingError::Overflow)?;
+                if collateral_asset == *asset {
+                    let balance: i128 = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::CollateralAsset(user.clone(), asset.clone()))
+                        .unwrap_or(0);
+                    sum = sum.checked_add(balance).ok_or(LendingError::Overflow)?;
+                }
+            }
+        }
+    }
+
+    Ok(sum)
+}
+
 /// Compute the expected reserve balance from all internal accounting ledgers.
 ///
-/// This aggregates:
-/// - Single-asset total deposits (DataKey::TotalDeposits)
-/// - Cross-asset collateral positions (sum across all users for this asset)
-/// - Protocol reserves (DepositDataKey::ProtocolReserve if available)
-/// - Bad debt (reduces effective reserves)
-///
-/// # Arguments
-/// * `env` - The Soroban environment
-/// * `asset` - The token asset address
-///
-/// # Returns
-/// The expected token balance that the contract should hold
-pub fn compute_expected_reserve(env: &Env, _asset: &Address) -> i128 {
-    let mut expected: i128 = 0;
+/// The result includes single-asset deposits, per-asset cross-asset
+/// collateral, and treasury/protocol reserves, then subtracts bad debt.
+pub fn compute_expected_reserve(env: &Env, asset: &Address) -> Result<i128, LendingError> {
+    let mut expected = 0i128;
 
-    // 1. Single-asset mode: TotalDeposits represents depositor collateral
     let total_deposits: i128 = env
         .storage()
         .persistent()
@@ -130,19 +165,31 @@ pub fn compute_expected_reserve(env: &Env, _asset: &Address) -> i128 {
         .unwrap_or(0);
     expected = expected
         .checked_add(total_deposits)
-        .expect("overflow computing expected reserve");
+        .ok_or(LendingError::Overflow)?;
 
-    // 2. Cross-asset mode: sum all per-user collateral for this asset
-    // Note: This requires iterating over UserCollateralAssets list for each user
-    // For now, we'll focus on the primary accounting path
-    // TODO: Add cross-asset position aggregation when implementing cross-asset invariants
+    let cross_asset = sum_cross_asset_collateral(env, asset)?;
+    expected = expected
+        .checked_add(cross_asset)
+        .ok_or(LendingError::Overflow)?;
 
-    // 3. Treasury/Reserve balance: flash-loan fees and protocol reserves
-    // Note: Using a simplified key pattern - adjust based on actual implementation
-    // This may require access to DepositDataKey which might be in a different module
-    // For now, we'll document this as a TODO
+    let treasury: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Treasury(asset.clone()))
+        .unwrap_or(0);
+    expected = expected
+        .checked_add(treasury)
+        .ok_or(LendingError::Overflow)?;
 
-    // 4. Subtract bad debt (represents unrecoverable losses)
+    let protocol_reserves: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::ProtocolReserves)
+        .unwrap_or(0);
+    expected = expected
+        .checked_add(protocol_reserves)
+        .ok_or(LendingError::Overflow)?;
+
     let bad_debt: i128 = env
         .storage()
         .persistent()
@@ -150,9 +197,9 @@ pub fn compute_expected_reserve(env: &Env, _asset: &Address) -> i128 {
         .unwrap_or(0);
     expected = expected
         .checked_sub(bad_debt)
-        .expect("underflow computing expected reserve");
+        .ok_or(LendingError::Overflow)?;
 
-    expected
+    Ok(expected)
 }
 
 /// Wrap a state-changing operation with before/after invariant checks.
@@ -213,7 +260,7 @@ mod tests {
     fn expected_reserve_defaults_to_zero_with_no_accounting() {
         let (env, contract_id, asset) = setup();
         env.as_contract(&contract_id, || {
-            assert_eq!(compute_expected_reserve(&env, &asset), 0);
+            assert_eq!(compute_expected_reserve(&env, &asset).unwrap(), 0);
         });
     }
 
@@ -222,7 +269,54 @@ mod tests {
         let (env, contract_id, asset) = setup();
         env.as_contract(&contract_id, || {
             set_accounting(&env, 1_000, 100);
-            assert_eq!(compute_expected_reserve(&env, &asset), 900);
+            assert_eq!(compute_expected_reserve(&env, &asset).unwrap(), 900);
+        });
+    }
+
+    #[test]
+    fn test_expected_reserve_two_assets() {
+        let (env, contract_id, asset_a) = setup();
+        let asset_b = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        env.as_contract(&contract_id, || {
+            set_accounting(&env, 1_000, 100);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalCollateralAsset(asset_a.clone()), &250i128);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalCollateralAsset(asset_b.clone()), &400i128);
+
+            assert_eq!(compute_expected_reserve(&env, &asset_a).unwrap(), 1_150);
+            assert_eq!(compute_expected_reserve(&env, &asset_b).unwrap(), 1_300);
+        });
+    }
+
+    #[test]
+    fn test_expected_reserve_includes_flash_fees() {
+        let (env, contract_id, asset) = setup();
+        env.as_contract(&contract_id, || {
+            set_accounting(&env, 1_000, 100);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Treasury(asset.clone()), &75i128);
+            assert_eq!(compute_expected_reserve(&env, &asset).unwrap(), 975);
+        });
+    }
+
+    #[test]
+    fn test_expected_reserve_overflow_returns_error() {
+        let (env, contract_id, asset) = setup();
+        env.as_contract(&contract_id, || {
+            set_accounting(&env, i128::MAX, 0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Treasury(asset.clone()), &1i128);
+            assert_eq!(
+                compute_expected_reserve(&env, &asset),
+                Err(LendingError::Overflow)
+            );
         });
     }
 

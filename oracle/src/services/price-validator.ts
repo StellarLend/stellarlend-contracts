@@ -518,6 +518,22 @@ export class PriceValidator {
         this.pendingPrices.clear();
     }
 
+    /** Reload validator configuration and optional asset bounds at runtime. */
+    reloadConfig(
+        config: Partial<ValidatorConfig> = {},
+        assetBounds: Record<string, AssetPriceBounds> = {},
+    ): void {
+        const merged = { ...this.config, ...config };
+        this.validateConfig(merged);
+        const normalizedBounds = this.normalizeBounds(assetBounds);
+        this.config = {
+            ...merged,
+            maxFallbackStalenessSeconds:
+                merged.maxFallbackStalenessSeconds ?? merged.maxStalenessSeconds * 3,
+        };
+        this.assetBounds = { ...this.assetBounds, ...normalizedBounds };
+    }
+
     /**
      * Get the configured bounds for an asset, falling back to global limits.
      */

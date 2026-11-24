@@ -84,7 +84,7 @@ fn example_invariant_formula() {
     let actual_balance = token_client.balance(&contract_address);
 
     // Expected balance: computed from internal accounting
-    let expected_balance = invariants::compute_expected_reserve(&env, &asset);
+    let expected_balance = invariants::compute_expected_reserve(&env, &asset).unwrap();
 
     // The invariant asserts they match exactly
     assert_eq!(actual_balance, expected_balance);

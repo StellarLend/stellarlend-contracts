@@ -45,6 +45,14 @@ function stringEnv(name: string, defaultValue: string): string {
   return raw !== undefined && raw.trim() !== '' ? raw.trim() : defaultValue;
 }
 
+function corsOriginsEnv(): string[] {
+  const defaultOrigins = process.env.NODE_ENV === 'production' ? '' : '*';
+  return stringEnv('CORS_ALLOWED_ORIGINS', defaultOrigins)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
 // ---------------------------------------------------------------------------
 // Known-insecure sentinel values
 // ---------------------------------------------------------------------------
@@ -246,6 +254,7 @@ export const config = {
   server: {
     port: parseIntEnv('PORT', 3000),
     env: stringEnv('NODE_ENV', 'development'),
+    bodyLimit: stringEnv('BODY_LIMIT', '100kb'),
   },
   stellar: {
     network: stringEnv('STELLAR_NETWORK', 'testnet'),
@@ -265,6 +274,9 @@ export const config = {
   },
   logging: {
     level: stringEnv('LOG_LEVEL', 'info'),
+  },
+  cors: {
+    origins: corsOriginsEnv(),
   },
   request: {
     timeout: parseIntEnv('REQUEST_TIMEOUT', 30000),
