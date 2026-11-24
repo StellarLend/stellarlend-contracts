@@ -1,6 +1,7 @@
 # Rust/Cargo
 target/
 **/target/
+cobertura.xml
 Cargo.lock
 **/*.rs.bk
 *.pdb

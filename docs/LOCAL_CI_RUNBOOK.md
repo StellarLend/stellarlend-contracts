@@ -11,24 +11,24 @@ Run from the repo root:
     chmod +x local-ci.sh
     ./local-ci.sh
 
-`local-ci.sh` mirrors the 5-job pipeline in `.github/workflows/ci-cd.yml`. By
-default it runs every section in pipeline order:
+`local-ci.sh` mirrors the workflow jobs and steps in `.github/workflows/ci-cd.yml`. By
+default it runs the primary CI sections:
 
-    check  →  soroban-checks  →  build-and-test  →  audit  →  coverage
+    check  →  build-and-test  →  wasm  →  api-service
 
 Exit code `0` = all green. Any failure prints ❌ and stops the script.
 
 ### Run a single CI job locally
 
-`local-ci.sh` accepts `--only <section>` to run exactly one CI job in
+`local-ci.sh` accepts `--only <section>` to run exactly one CI job or group in
 isolation — useful when a single PR check is failing and you want to focus on
 that step without reproducing unrelated setup:
 
     ./local-ci.sh --only check
-    ./local-ci.sh --only soroban-checks
     ./local-ci.sh --only build-and-test
-    ./local-ci.sh --only audit
-    ./local-ci.sh --only coverage
+    ./local-ci.sh --only wasm
+    ./local-ci.sh --only fuzz-smoke
+    ./local-ci.sh --only api-service
 
 > Note: ci-cd.yml's `build-and-test` job runs on `macos-latest`. The same
 > commands reproduced here on Linux can exhibit rare platform-specific flakes
@@ -56,17 +56,40 @@ Verify your setup:
 ## Mapping of CI jobs to local commands
 
 Each CI job has a labeled section in `local-ci.sh`. The table below maps the
-job name to the equivalent manual command(s) (run from `stellar-lend/`).
+job name to the equivalent manual command(s).
 
 | CI job | Local section | Manual command(s) |
 |--------|--------------|-------------------|
 | `check` | `--only check` | `cargo fmt --all -- --check`<br>`cargo clippy --all-targets --all-features --workspace -- -D warnings …` (allow flags retained, see `local-ci.sh`) |
-| `soroban-checks` | `--only soroban-checks` | `stellar contract build --verbose`<br>for each `target/wasm32-unknown-unknown/release/*.wasm`: `stellar contract optimize --wasm <file>` then `stellar contract inspect --wasm <file> --output json` |
-| `build-and-test` (macos-latest) | `--only build-and-test` | `cargo build --verbose`<br>`cargo test --lib --verbose`<br>`cargo test --tests --verbose` |
-| `audit` | `--only audit` | `cargo audit --ignore RUSTSEC-2026-0049 --ignore RUSTSEC-2025-0009 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0363 --ignore RUSTSEC-2024-0344 --ignore RUSTSEC-2022-0093` |
-| `coverage` | `--only coverage` | `cargo tarpaulin --verbose --out Xml --workspace`<br>`python3 ../scripts/enforce_coverage.py cobertura.xml --thresholds-json ../scripts/coverage_thresholds.json` |
+| `build-and-test` | `--only build-and-test` | `cargo check --workspace --lib --keep-going`<br>`cargo test -p stellarlend-vesting`<br>`cargo test -p stellarlend-multisig`<br>`bash scripts/tests/test_check_wasm_sizes.sh`<br>`cargo build --release --target wasm32v1-none -p stellarlend-lending -p stellarlend-amm -p stellarlend-vesting -p stellarlend-multisig`<br>`bash scripts/check_wasm_sizes.sh` |
+| `wasm` | `--only wasm` | `bash scripts/tests/test_check_wasm_sizes.sh`<br>`cargo build --release --target wasm32v1-none -p stellarlend-lending -p stellarlend-amm -p stellarlend-vesting -p stellarlend-multisig`<br>`bash scripts/check_wasm_sizes.sh` |
+| `fuzz-smoke` | `--only fuzz-smoke` | `cargo +nightly fuzz build`<br>`cargo +nightly fuzz run fuzz_entrypoints -- -max_total_time=60`<br>`cargo +nightly fuzz run fuzz_liquidate_close_factor -- -max_total_time=60`<br>`cargo +nightly fuzz run fuzz_borrow_rate -- -max_total_time=60`<br>`cargo test -p stellarlend-bridge`<br>`cargo build -p stellarlend-bridge --target wasm32v1-none --release` |
+| `api-service` | `--only api-service` | `cd api && npm ci && npm run lint && npm run build && npm test` |
 
 ## Running individual checks manually
+
+## Snapshot drift check
+
+`scripts/check-snapshots.sh` compares the committed `test_snapshots/` directories
+(for example `stellar-lend/contracts/lending/test_snapshots/borrow_test`) against
+freshly regenerated output. The CI `build-and-test` job runs it in strict mode
+(for example `stellar-lend/contracts/lending/test_snapshots/borrow_test`) against
+freshly regenerated output. The CI `build-and-test` job runs it in strict mode
+after the test steps and fails the job on any diff, printing the diff output.
+
+Run it locally from the repo root:
+
+    SNAPSHOT_CHECK=1 bash scripts/check-snapshots.sh
+
+Exit code `0` means the snapshots match. A non-zero exit prints the diff.
+
+To accept intentional snapshot changes, regenerate the snapshots and commit them:
+
+    bash scripts/regenerate-snapshots.sh
+    git add -u stellar-lend/contracts/*/test_snapshots
+    git commit -m "test: regenerate snapshots"
+
+Do not hand-edit files under `test_snapshots/`.
 
 All commands below run from `stellar-lend/`:
 
