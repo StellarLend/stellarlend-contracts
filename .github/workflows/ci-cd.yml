@@ -57,6 +57,39 @@ jobs:
           files: stellar-lend/cobertura.xml
           fail_ci_if_error: false
 
+  check:
+    name: Format & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keep in sync with stellar-lend/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stellar-lend
+
+      - name: Check formatting
+        working-directory: stellar-lend
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: stellar-lend
+        run: |
+          cargo clippy --workspace --all-targets -- \
+            -D warnings \
+            -A deprecated \
+            -A dead_code \
+            -A unused-imports \
+            -A unused-attributes \
+            -A clippy::inconsistent-digit-grouping \
+            -A clippy::manual-range-contains \
+            -A clippy::unnecessary_cast
+
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
