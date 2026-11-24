@@ -79,6 +79,8 @@ pub enum BridgeError {
     EpochOverflow = 32,
     /// Escrowed token balance would overflow `i128::MAX`.
     EscrowOverflow = 33,
+    /// Contract is already initialized.
+    AlreadyInitialized = 34,
 }
 
 /// Identifies the origin of an inbound bridge message.
@@ -705,10 +707,17 @@ impl Bridge {
         Ok((nonce, message_hash))
     }
 
-    pub fn initialize(env: Env, validators: Vec<BytesN<32>>, bridge_id: Bytes) {
+    pub fn initialize(env: Env, validators: Vec<BytesN<32>>, bridge_id: Bytes) -> Result<(), BridgeError> {
+        if env.storage().persistent().has(&BridgeDataKey::Validators) {
+            return Err(BridgeError::AlreadyInitialized);
+        }
+        if validators.len() < MIN_VALIDATORS {
+            return Err(BridgeError::ValidatorSetTooSmall);
+        }
         Self::save_validators(&env, &validators);
         Self::save_bridge_id(&env, &bridge_id);
         Self::save_epoch(&env, 0);
+        Ok(())
     }
 
     pub fn set_guardian(env: Env, caller: Address, guardian: BytesN<32>) -> Result<(), BridgeError> {
@@ -1726,6 +1735,8 @@ mod outbound_send_test;
 
 #[cfg(test)]
 mod inbound_window_integration_test;
+#[cfg(test)]
+mod initialize_once_test;
 
 #[cfg(test)]
 mod tests {
