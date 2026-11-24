@@ -1,0 +1,139 @@
+# Security audit configuration for cargo-audit and the dependency-audit workflow.
+#
+# cargo-audit reads this file through the stellar-lend/.cargo/audit.toml symlink.
+# The `GHSA-*` entries are npm advisories accepted in oracle/ and api/: they are
+# inert to cargo-audit but are used by the workflow's npm allowlist check.
+#
+# Review date: 2026-11-24
+# Maintainer: @StellarLend/core-devs
+#
+# When reviewing, verify each ignore is still valid by running:
+#   cd stellar-lend && cargo audit --file Cargo.lock
+#   cd oracle && npm audit --omit=dev --audit-level=high
+#   cd api && npm audit --omit=dev --audit-level=high
+# If an advisory has been fixed upstream in a dependency we can update to,
+# remove the ignore entry, update the dependency, and re-test.
+#
+# Every entry below must carry a one-line rationale explaining why the
+# advisory does not apply to code we actually ship. Dependency upgrades are
+# deliberately out of scope for this change; an entry here is a time-boxed
+# acceptance, not a permanent suppression.
+
+[advisories]
+ignore = [
+    # ── Soroban SDK transitive dependencies (we cannot upgrade independently) ──
+    "RUSTSEC-2026-0007",  # bytes - Integer overflow in Bytes::slice; only reachable via attacker-controlled lengths which Soroban host env sanitises — low risk in WASM sandbox
+    "RUSTSEC-2026-0009",  # time - DoS via stack exhaustion parsing large Duration strings; contracts don't parse user-supplied durations at runtime
+    "RUSTSEC-2026-0012",  # keccak - Unsoundness in ARMv8 assembly (aarch64 crypto backend); WASM contracts are architecture-independent, wasm32 backend unaffected
+    "RUSTSEC-2024-0388",  # derivative - Unmaintained; transitive through arkworks (Soroban SDK crypto), no maintained fork available at compatible semver
+    "RUSTSEC-2024-0436",  # paste - Unmaintained; transitive through arkworks (Soroban SDK crypto), no maintained fork available at compatible semver
+
+    # ── Client / oracle dependencies (not deployed on-chain) ──
+    "RUSTSEC-2025-0012",  # backoff - Unmaintained; used only in oracle client (TypeScript/Node), not in on-chain contracts
+    "RUSTSEC-2024-0384",  # instant - Unmaintained; used only in oracle client, not in on-chain contracts
+    "RUSTSEC-2025-0134",  # rustls-pemfile - Unmaintained; used only in oracle client, not in on-chain contracts
+
+    # ── Soroban SDK crypto dependencies ──
+    "RUSTSEC-2025-0009",  # ring - Panics on AES when overflow checks enabled (debug builds only); Soroban SDK transitive dep, contracts don't use AES/QUIC directly
+    "RUSTSEC-2025-0010",  # ring - Unmaintained; Soroban SDK transitive dep, upstream ring continues to receive security patches via the BoringSSL project, no practical alternative available
+    "RUSTSEC-2025-0057",  # fxhash - Unmaintained; used only in indexing_system (ethers-rs dep), not in on-chain contracts
+
+    # ── Contract dev-dependency (test-only, not in production WASM) ──
+    "RUSTSEC-2022-0093",  # ed25519-dalek v1.0.1 - Double-signature oracle attack on decoupled Keypair API; used only as a test dev-dependency in lending crate to generate test keypairs, never exposed to adversarial oracle inputs
+    "RUSTSEC-2024-0344",  # curve25519-dalek - Timing variability in Scalar::sub via compiler branch insertion; contracts run in WASM interpreter (not native), timing side-channels are not observable
+    "RUSTSEC-2026-0097",  # rand 0.7.3 - Unsound only when a custom logger itself calls rand::rng() and ThreadRng reseeds inside it; rand 0.7 is a dev-dependency of contracts/lending used solely in #[cfg(test)] keypair generation via OsRng, and no custom logger is installed
+
+    # ── No upgrade path available ──
+    "RUSTSEC-2023-0071",  # rsa v0.9.x - Marvin Attack timing side-channel on RSA decryption; no fixed release in the 0.9.x line, upgrading to 0.10+ is a breaking change blocked by upstream Soroban SDK
+    "RUSTSEC-2022-0054",  # wee_alloc - Unmaintained; legacy WASM allocator pinned by older Soroban SDK contract templates, contracts use the default global allocator at runtime
+
+    # ── Transient dependencies not reachable from contract code paths ──
+    "RUSTSEC-2026-0049",  # rustls-webpki - CRL distributionPoint matching logic bug; contracts do not perform TLS certificate validation, crate is pulled only through Soroban SDK host-facing HTTP client which is not used in contract WASM
+    "RUSTSEC-2024-0363",  # sqlx - PostgreSQL protocol smuggling via oversized values (>4 GiB); Rust database driver used only in off-chain indexing service, not in on-chain WASM contracts, and all values are < 1 MiB in practice
+
+    # ── Reviewed 2026-11-24: SDK-pinned crates with unreachable APIs ──
+    "RUSTSEC-2026-0387",  # crypto-bigint 0.5.5 - Timing variability in constant-time operations; transitive through Soroban SDK crypto, no fixed 0.5.x release compatible with the pinned SDK, and WASM determinism prevents wall-clock timing observation by counterparties
+    "RUSTSEC-2026-0543",  # chrono - Unmaintained; transitive through SDK/off-chain tooling with no fixed upgrade available, and shipped contracts do not parse user-supplied dates
+    "RUSTSEC-2026-0581",  # heapless 0.8.0 - Deque::make_contiguous broken invariants; contracts do not use this API and the 0.9.4 fix is a semver-breaking SDK transition
+    "RUSTSEC-2026-0582",  # heapless 0.8.0 - IndexMap::insert invariant on u16::MAX maps; contract collections are far smaller and the 0.9.4 fix is a semver-breaking SDK transition
+    "RUSTSEC-2026-0577",  # heapless 0.8.0 - Panicking Drop could lead to UB; only reachable through heapless container drops not used in shipped contract paths, fix requires heapless 0.9.4
+    "RUSTSEC-2026-0574",  # heapless 0.8.0 - FindMutView::pop use-after-free after mutating values; this view API is not used by contracts, fix requires heapless 0.9.4
+    "RUSTSEC-2026-0578",  # heapless 0.8.0 - SortedLinkedList::zeroize inconsistent state; this API is not used by contracts, fix requires heapless 0.9.4
+    "RUSTSEC-2026-0579",  # heapless 0.8.0 - TryFrom Deque full-state bug; contracts construct fixed-capacity queues via new(), fix requires heapless 0.9.4
+    "RUSTSEC-2026-0576",  # heapless 0.8.0 - IndexMap::truncate inconsistent state; this API is not used by contracts, fix requires heapless 0.9.4
+    "RUSTSEC-2026-0580",  # heapless 0.8.0 - Treiber stack race condition; contracts are single-threaded WASM modules that never use this stack, fix requires heapless 0.9.4
+    "RUSTSEC-2026-0575",  # heapless 0.8.0 - Spsc::peek relaxed ordering; the SPSC queue is not used by contracts, fix requires heapless 0.9.4
+    "RUSTSEC-2026-0486",  # rustix 1.1.4 - xattr zero-length buffer unsoundness; rustix is host-side tooling only and contract WASM never calls xattr, patched 1.1.6 arrives with the next SDK bump
+
+    # ── npm: oracle + api production tree (server-side RPC/HTTP client) ──
+    # Requests go to operator-configured Horizon/RPC URLs with no
+    # attacker-controlled proxy, URL, multipart field, or prototype-polluted
+    # config objects; the pinned axios/Stellar SDK majors cannot be upgraded in isolation.
+    "GHSA-35jp-ww65-95wh",  # axios - Proxy pollution MITM; proxy config is operator-owned and never derived from request bodies
+    "GHSA-3g43-6gmg-66jw",  # axios - Config-merge credential theft; merge inputs are internal constants, not client JSON
+    "GHSA-3p68-rc4w-qgx5",  # axios - NO_PROXY normalization SSRF; no_proxy is not populated from untrusted input
+    "GHSA-3pq3-5fj3-cg6v",  # axios - HTTP/2 DNS/proxy bypass; HTTP/2 adapter is not enabled for RPC calls
+    "GHSA-3w6x-2g7m-8v23",  # axios - parseReviver response tampering; no user-supplied reviver is passed
+    "GHSA-42h9-826w-cgv3",  # axios - formToJSON recursion DoS; applications never call formToJSON on request data
+    "GHSA-43fc-jf86-j433",  # axios - __proto__ mergeConfig DoS; config objects are internal and JSON bodies are validated first
+    "GHSA-445q-vr5w-6q77",  # axios - multipart blob.type CRLF injection; no multipart uploads are constructed
+    "GHSA-4hqw-qxg8-jxx2",  # axios - Fetch adapter FormData header injection; fetch adapter and inherited FormData headers are unused
+    "GHSA-542g-h47m-68v8",  # axios - HTTP/2 stream error DoS; HTTP/2 adapter is not enabled for RPC calls
+    "GHSA-5c9x-8gcm-mpgx",  # axios - streamed upload maxBodyLength bypass; only GET/POST JSON RPC calls are made
+    "GHSA-62hf-57xw-28j9",  # axios - toFormData recursion DoS; toFormData is never called on request data
+    "GHSA-6chq-wfr3-2hj9",  # axios - prototype pollution header injection; headers are static per request
+    "GHSA-6pq8-jhm2-2vcw",  # qs - comma-array stringify DoS; axios query strings are built from validated scalars
+    "GHSA-777c-7fjr-54vf",  # axios - unbounded resource use; RPC responses pass through JSON body limits and timeouts
+    "GHSA-7q8q-rj6j-mhjq",  # axios - nested option prototype values; request config is constructed in code, not merged from clients
+    "GHSA-82x6-q7mm-w9cf",  # toml - TOML parse recursion; toml is transitive via the pinned Stellar SDK and parses trusted local config only
+    "GHSA-898c-q2cr-xwhg",  # axios - merge read-side gadgets; no polluted objects reach axios config
+    "GHSA-9fr6-4gfg-395g",  # axios - Object.prototype method override; defaults are not extended from untrusted values
+    "GHSA-9j65-hcg3-gc64",  # toml - dotted-key parse DoS; no attacker-controlled TOML is parsed
+    "GHSA-9qmh-m7c6-f92p",  # toml - integer literal CPU DoS; no attacker-controlled TOML is parsed
+    "GHSA-fvcv-3m26-pcqx",  # axios - cloud metadata exfiltration chain; request URLs are fixed Horizon/RPC endpoints
+    "GHSA-h895-cgqg-jf52",  # toml - Object.prototype write via __proto__ key; no attacker-controlled TOML is parsed
+    "GHSA-hfxv-24rg-xrqf",  # axios - cookie-name ReDoS; no cookies are sent to Horizon/RPC endpoints
+    "GHSA-hmw2-7cc7-3qxx",  # form-data - multipart CRLF injection; no multipart fields are built from user input
+    "GHSA-j5f8-grm9-p9fc",  # axios - Proxy-Authorization leak on re-resolved redirect; RPC redirects are not followed with credentials
+    "GHSA-j8rh-479h-cp32",  # axios - inherited headers after interceptor; no minimal interceptors are installed
+    "GHSA-jqh4-m9w3-8hp9",  # axios - fetch stream upload bypass; fetch adapter is not enabled
+    "GHSA-m7pr-hjqh-92cm",  # axios - no_proxy IP alias SSRF; no_proxy is not client-controlled
+    "GHSA-mmx7-hfxf-jppx",  # axios - request-construction gadgets; config objects are internal constants
+    "GHSA-mwf2-3pr3-8698",  # axios - HTTP/2 upload limit bypass; HTTP/2 adapter is not enabled
+    "GHSA-p92q-9vqr-4j8v",  # axios - Proxy-Authorization leak on redirect; RPC endpoints are fixed and do not redirect to other hosts
+    "GHSA-pf86-5x62-jrwf",  # axios - prototype pollution gadgets; no polluted objects reach axios config
+    "GHSA-pmv8-rq9r-6j72",  # axios - formToJSON recursion DoS; formToJSON is unused
+    "GHSA-pmwg-cvhr-8vh7",  # axios - loopback NO_PROXY bypass; no_proxy is not client-controlled
+    "GHSA-q8qp-cvcw-x6jj",  # axios - read-side credential injection; headers are static per request
+    "GHSA-r4q5-vmmm-2653",  # follow-redirects - auth header leak on cross-domain redirect; axios redirects are disabled for authorized RPC calls
+    "GHSA-vf2m-468p-8v99",  # axios - maxContentLength bypass on streamed responses; RPC responses are non-streamed and size-bounded
+    "GHSA-vh66-26gq-q6x8",  # axios - fetch adapter request gadgets; fetch adapter is not enabled
+    "GHSA-w9j2-pvgh-6h63",  # axios - validateStatus auth bypass; validateStatus is not supplied by clients
+    "GHSA-x5fp-wj9c-mxmx",  # qs - array-limit bypass; query strings use a fixed schema
+    "GHSA-xhjh-pmcv-23jw",  # axios - null-byte query encoding; query parameters are validated scalars
+    "GHSA-xx6v-rp6x-q39c",  # axios - XSRF token leakage; withXSRFToken is unused server-side
+
+    # ── npm: toml via @stellar/stellar-sdk (breaking SDK major required) ──
+    "GHSA-4qx8-w7c3-pj3p",  # toml - array-of-tables DoS; trusted local SDK config only
+    "GHSA-v5mp-jgw5-2x6j",  # toml - __proto__ pollution; trusted local SDK config only
+
+    # ── npm: zod (request schemas are bounded by express.json limit) ──
+    "GHSA-mrhx-c7xc-m3w5",  # zod - oversized collection memory exhaustion; schemas cap collection sizes and request bodies are size-limited, zod 4.x is a breaking upgrade
+
+    # ── npm: express transitive deps in api/ (static routes, no trust proxy) ──
+    "GHSA-27r3-jxmh-p828",  # body-parser - compressed trailing-byte DoS; express.json limit is configured and no compressed body parser is mounted
+    "GHSA-v422-hmwv-36x6",  # body-parser - invalid limit disables enforcement; the configured limit is a validated constant
+    "GHSA-37ch-88jc-xwx2",  # path-to-regexp - route parameter ReDoS; all routes are static strings with no user-supplied patterns
+    "GHSA-jqcg-44mw-7w3h",  # proxy-addr - IPv4-mapped IPv6 trust spoofing; express `trust proxy` is not enabled, so proxy-addr is not trusted
+    "GHSA-q8mj-m7cp-5q26",  # qs - stringify comma-array DoS; query parsing uses fixed schemas
+    "GHSA-4mjr-xmp4-gh2g",  # qs - isBuffer DoS; query parsing uses fixed schemas
+    "GHSA-f23m-r3pf-42rh",  # lodash - _.unset/_.omit prototype pollution; lodash is transitive tooling and those APIs are not called on request data
+    "GHSA-r5fr-rjxr-66jc",  # lodash - _.template code injection; templates are never compiled from client input
+]
+
+[yanked]
+enabled = false
+
+[database]
+fetch = true
+stale = false
