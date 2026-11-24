@@ -43,9 +43,9 @@ Entries marked **KNOWN GAP** are currently unauthenticated. Their presence here 
 | `validate_inbound_epoch` | Anyone, read-only validation | None | `RetiredEpoch`, `InvalidEpoch` |
 | `pause_validator` | Guardian signature | Validator pause state, guardian nonce | `NoGuardianConfigured`, `UnknownValidator`, `AlreadyPaused`, `PauseWouldBreakQuorum`, `NonceOverflow`; signature verification error |
 | `unpause_validator` | Guardian signature | Validator pause state, guardian nonce | `NoGuardianConfigured`, `UnknownValidator`, `NotPaused`, `NonceOverflow`; signature verification error |
-| `set_inbound_cap` | **KNOWN GAP: anyone, unauthenticated** | Inbound cap, window size/start, inbound total reset | `InboundCapExceeded`, `InvalidWindowSize` |
+| `set_inbound_cap` | Admin | Inbound cap, window size/start, inbound total reset | `NotAdmin`, `InboundCapExceeded`, `InvalidWindowSize` |
 | `admit_inbound` | Anyone; intended inbound-processing caller | Rolls inbound window and accumulates admitted value | `InboundCapExceeded`, `InvalidWindowSize`, `WindowTotalOverflow` |
-| `set_outbound_cap` | **KNOWN GAP: anyone, unauthenticated** | Outbound cap, window size/start, outbound total reset | `OutboundCapExceeded`, `InvalidWindowSize` |
+| `set_outbound_cap` | Admin | Outbound cap, window size/start, outbound total reset | `NotAdmin`, `OutboundCapExceeded`, `InvalidWindowSize` |
 | `admit_outbound` | Anyone; `send` calls it after sender authorization | Rolls outbound window and accumulates admitted value | `OutboundCapExceeded`, `InvalidWindowSize`, `WindowTotalOverflow` |
 | `advance_epoch` | Test-only, unauthenticated; production code excludes this entrypoint | Advances epoch once | Epoch overflow trap in test code |
 
@@ -244,11 +244,11 @@ For operator-facing parameter guidance and code-verified examples, see
   an operator calls `set_inbound_cap` with a positive value. This also means
   an explicitly-configured `0` (e.g. an emergency pause) behaves identically:
   it rejects every amount, including `0`-value transfers.
-- **Ledger time, not block/call count.** The window is tracked against a
-  `current_time: u64` passed in by the caller (intended to be the chain's
-  ledger timestamp), per the requirement that the window reset on monotonic
-  time rather than on a fixed number of calls. This means an attacker can't
-  extend or shrink the effective window by batching many small calls.
+- **Ledger time, not block/call count.** Cap configuration starts each window
+  at the ledger timestamp. Admission still receives `current_time: u64` from
+  its caller (intended to be the chain's ledger timestamp), per the requirement
+  that the window reset on monotonic time rather than on a fixed number of
+  calls.
 - **Window realignment on rollover, not fixed-step advancement.** When
   `current_time` has moved past the end of the current window,
   `roll_window_if_expired` resets `window_start` to `current_time` directly
@@ -267,7 +267,7 @@ For operator-facing parameter guidance and code-verified examples, see
   `window_inbound_total` untouched, so a sequence of failed admission
   attempts can never partially consume the window.
 - **Reconfiguration starts a clean window.** `set_inbound_cap` resets
-  `window_start` to the given `current_time` and zeroes
+  `window_start` to the current ledger timestamp and zeroes
   `window_inbound_total`. An operator raising or lowering the cap mid-window
   doesn't inherit whatever value was admitted under the old configuration.
 

@@ -12,6 +12,7 @@ import { isSupportedAsset } from '../config.js';
 
 export interface AdminServerOptions {
     port: number;
+    host?: string;
     hmacSecret: string;
     validator: PriceValidator;
 }
@@ -110,6 +111,7 @@ export function signRequest(secret: string, timestampMs: number, rawBody: Buffer
 export class AdminServer {
     private server?: http.Server;
     private readonly port: number;
+    private readonly host: string;
     private readonly hmacSecret: string;
     private readonly validator: PriceValidator;
 
@@ -122,6 +124,7 @@ export class AdminServer {
 
     constructor(options: AdminServerOptions) {
         this.port = options.port;
+        this.host = options.host ?? '127.0.0.1';
         this.hmacSecret = options.hmacSecret;
         this.validator = options.validator;
     }
@@ -141,8 +144,8 @@ export class AdminServer {
             this.pruneTimer.unref();
 
             this.server.once('error', reject);
-            this.server.listen(this.port, () => {
-                logger.info('Admin server listening', { port: this.port });
+            this.server.listen(this.port, this.host, () => {
+                logger.info('Admin server listening', { host: this.host, port: this.port });
                 resolve();
             });
         });
@@ -371,12 +374,18 @@ export class AdminServer {
 
     private verifySignature(body: Buffer, timestampMs: number, signature: string): boolean {
         try {
-            const expected = signRequest(this.hmacSecret, timestampMs, body);
+            if (!/^[0-9a-fA-F]{64}$/.test(signature)) {
+                return false;
+            }
 
+            const expectedBuffer = crypto
+                .createHmac('sha256', this.hmacSecret)
+                .update(body)
+                .digest();
             const signatureBuffer = Buffer.from(signature, 'hex');
-            const expectedBuffer = Buffer.from(expected, 'hex');
 
-            if (signatureBuffer.length !== expectedBuffer.length || expectedBuffer.length === 0) {
+            if (signatureBuffer.length !== 32 || expectedBuffer.length !== 32) {
+
                 return false;
             }
 
