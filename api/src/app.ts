@@ -9,6 +9,8 @@ import { errorHandler } from './middleware/errorHandler';
 
 const app: Application = express();
 
+app.set('trust proxy', config.server.trustProxy);
+
 /**
  * Invariants enforced by this module:
  * 1. Request bodies are parsed deterministically and the raw body is preserved for signature verification.
@@ -55,7 +57,10 @@ const limiter = rateLimit({
   max: config.rateLimit.maxRequests,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
-  keyGenerator: (req: Request) => req.ip || req.socket.remoteAddress || 'unknown',
+  validate: {
+    trustProxy: false,
+    xForwardedForHeader: false,
+  },
 });
 
 app.use('/api/', limiter);
