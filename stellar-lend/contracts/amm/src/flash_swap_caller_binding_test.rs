@@ -22,7 +22,7 @@
 //! | `test_k_invariant_preserved`                  | Verify-k still enforced (under-repay reverts).                      |
 //! | `test_initiator_via_proxy_matches_proxy`      | When a proxy contract calls flash_swap, *that proxy* must repay.    |
 
-use crate::{inverse_swap_in, AmmContract, AmmContractClient};
+use crate::{inverse_swap_in, AmmContract, AmmContractClient, AmmPoolError};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, Env};
 
 const FEE_BPS: i128 = 30;
@@ -151,15 +151,15 @@ fn test_non_initiator_rejected() {
     let amount_out: i128 = 200;
     amm_client.flash_swap_a_for_b(&alice, &amount_out, &Bytes::new(&env));
 
-    // The interloper tries to repay -- must be rejected. Use the `try_`
-    // client wrapper so the AMM's UnauthorizedCaller panic is captured as
-    // an Err instead of unwinding the test.
+    // The interloper tries to repay -- it must be rejected as the typed
+    // `UnauthorizedCaller` result, while the original flash remains active.
     let amount_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
-    let res = interloper.try_attempt_repay(&amm_id, &amount_in);
-    assert!(
-        res.is_err(),
-        "non-initiator repay must fail with UnauthorizedCaller"
+    assert_eq!(
+        interloper.try_attempt_repay(&amm_id, &amount_in),
+        Err(Ok(AmmPoolError::UnauthorizedCaller)),
+        "non-initiator repay must return AmmPoolError::UnauthorizedCaller"
     );
+    assert!(amm_client.is_flash_active(), "mismatched repay must leave the flash active");
 }
 
 /// After a successful repay the initiator address is cleared from storage
@@ -205,15 +205,10 @@ fn test_reentrancy_blocks_flash() {
     assert!(res.is_err(), "nested flash swap must be rejected");
 }
 
-/// Verify-k invariant is still enforced: an under-repay panics.
-///
-/// The debit (`flash_swap_a_for_b`) and the failing repay must be routed
-/// through a single host invocation (via `FlashProxy::open_and_repay`) for
-/// Soroban's atomic rollback to cover both writes -- two separate
-/// top-level client calls are each their own transaction, so an under-repay
-/// in the second call cannot undo storage already committed by the first.
+/// Verify-k invariant is still enforced: an under-repay returns
+/// `AmmPoolError::InvariantViolation`, and the proxy transaction rolls back
+/// both the debit and all flash-swap state.
 #[test]
-#[ignore = "flash-swap rollback behavior changed by Result-ification; see issue #1419 comment on rollback-vs-error semantics"]
 fn test_k_invariant_preserved() {
     let (env, amm_id, _alice, _bob) = setup_two_users(1_000, 1_000);
 
@@ -224,11 +219,12 @@ fn test_k_invariant_preserved() {
     let exact_in: i128 = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
     let under_in: i128 = exact_in - 1;
 
-    let res = proxy_client.try_open_and_repay(&amm_id, &amount_out, &under_in);
-    assert!(
-        res.is_err(),
-        "under-repay must fail (k-violation rolled back)"
+    assert_eq!(
+        proxy_client.try_open_and_repay(&amm_id, &amount_out, &under_in),
+        Err(Ok(AmmPoolError::InvariantViolation)),
+        "under-repay must return AmmPoolError::InvariantViolation"
     );
+
     // Pool should be fully rolled back.
     let amm_client = AmmContractClient::new(&env, &amm_id);
     let (ra, rb) = amm_client.get_reserves();
@@ -241,7 +237,6 @@ fn test_k_invariant_preserved() {
 /// must be called from *that same proxy* -- not from the human user who
 /// invoked the proxy.
 #[test]
-#[ignore = "flash-swap rollback behavior changed by Result-ification; see issue #1419 comment on rollback-vs-error semantics"]
 fn test_initiator_via_proxy_matches_proxy() {
     let env = Env::default();
     env.mock_all_auths();
@@ -264,17 +259,21 @@ fn test_initiator_via_proxy_matches_proxy() {
     // the initiator is the *proxy*, not the human.
     let human = Address::generate(&env);
     let amm_client = AmmContractClient::new(&env, &amm_id);
-    let res = amm_client.try_repay_flash_swap(&human, &amount_in);
-    assert!(
-        res.is_err(),
-        "direct repay by human on proxy-initiated flash must fail"
+    assert_eq!(
+        amm_client.try_repay_flash_swap(&human, &amount_in),
+        Err(Ok(AmmPoolError::UnauthorizedCaller)),
+        "direct repay by human on proxy-initiated flash must return UnauthorizedCaller"
     );
+    assert!(amm_client.is_flash_active(), "mismatched repay must leave the flash active");
 
-    // The proxy itself can repay (it is the initiator). The flash swap
-    // opened above via `open_flash` is still pending -- repay it directly
-    // (rather than via `open_and_repay`, which would open a *second*,
-    // nested flash swap and trip the reentrancy guard).
-    amm_client.repay_flash_swap(&proxy_id, &amount_in);
+    // The proxy itself can repay (it is the initiator), settling and clearing
+    // the active flag.
+    assert_eq!(
+        amm_client.try_repay_flash_swap(&proxy_id, &amount_in),
+        Ok(Ok(())),
+        "proxy initiator must successfully repay"
+    );
+    assert!(!amm_client.is_flash_active(), "flag must clear after proxy repay");
 }
 
 /// Multiple consecutive flash swaps from the same address all succeed

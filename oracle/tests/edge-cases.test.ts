@@ -237,14 +237,15 @@ describe('Edge Cases', () => {
             const scaled = scalePrice(smallPrice);
             const unscaled = unscalePrice(scaled);
 
-            expect(scaled).toBeGreaterThanOrEqual(0n");
+            expect(scaled).toBeGreaterThanOrEqual(0n);
             expect(unscaled).toBeCloseTo(smallPrice, 8);
         });
 
         it('should handle maximum safe integer', () => {
-            const maxSafe = Number.MAX_SAFE_INTEGER;
+            const maxSafe = Math.floor(Number.MAX_SAFE_INTEGER / Number(PRICE_SCALE));
 
             expect(() => scalePrice(maxSafe)).not.toThrow();
+            expect(() => scalePrice(Number.MAX_SAFE_INTEGER)).toThrow();
         });
 
         it('should handle number precision limits', async () => {

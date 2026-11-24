@@ -42,10 +42,11 @@ window_start = 0
 window_inbound_total = 0
 ```
 
-That means day-one inbound flow is disabled until an operator calls
-`set_inbound_cap(max_per_window, window_size, current_time)` with a positive
-cap. This is intentional: the safe default is to require an explicit operating
-limit before any value can enter.
+That means day-one inbound flow is disabled until the admin calls
+`set_inbound_cap(caller, max_per_window, window_size)` with a positive cap.
+The setter starts the window at the current ledger timestamp. This is
+intentional: the safe default is to require an explicit operating limit before
+any value can enter.
 
 Use an explicit zero cap as an emergency pause. It rejects all inbound amounts,
 including zero-value transfers, until a positive cap is configured again.
@@ -69,10 +70,11 @@ over 24 hours if every hourly window is filled.
 
 ## Conservative Worked Example
 
-Configure a conservative daily cap at time zero:
+The admin configures a conservative daily cap. The window starts at the
+current ledger timestamp:
 
 ```text
-set_inbound_cap(max_per_window = 1_000, window_size = 86_400, current_time = 0)
+set_inbound_cap(caller = admin, max_per_window = 1_000, window_size = 86_400)
 ```
 
 Then:
@@ -96,7 +98,7 @@ window_inbound_total = 1_000
 Configure an hourly cap:
 
 ```text
-set_inbound_cap(max_per_window = 20_000, window_size = 3_600, current_time = 10)
+set_inbound_cap(caller = admin, max_per_window = 20_000, window_size = 3_600)
 ```
 
 Then three same-window admissions can fill the hour exactly:
@@ -119,5 +121,5 @@ again.
 - Use a shorter `window_size` only when monitoring and incident response are
   fast enough to justify the higher daily throughput.
 - Use `max_per_window = 0` to pause inbound flow during incidents.
-- Reconfigure deliberately: `set_inbound_cap` starts a clean window and clears
-  the prior running total.
+- Reconfigure deliberately: the admin-only `set_inbound_cap` starts a clean
+  window at the current ledger timestamp and clears the prior running total.

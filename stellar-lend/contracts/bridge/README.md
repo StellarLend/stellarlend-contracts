@@ -6,9 +6,9 @@ Key features
 - `Bridge` struct with an `epoch` counter and validator set
 - `rotate_validators(new_set, epoch, proofs)` requires a quorum proof from the *current* validator set and advances the epoch atomically
 - `validate_inbound_epoch(signed_epoch)` rejects messages signed by retired epochs (signed_epoch < current epoch)
-- `set_inbound_cap(max_per_window: i128, window_size: u64, current_time: u64)` / `admit_inbound(amount: i128, current_time: u64)` enforce a configurable, rolling-ledger-time cap on cumulative inbound value. **Fail-closed by default**: a fresh `Bridge` admits no inbound value until a cap is explicitly configured.
-- `set_outbound_cap(max_per_window: i128, window_size: u64, current_time: u64)` / `admit_outbound(amount: i128, current_time: u64)` apply the same window model to outbound value.
-- See [`SECURITY_NOTES.md`](./SECURITY_NOTES.md) for the authoritative roles-and-authorization table and the full threat model. **The cap setters are currently unauthenticated and must not be treated as admin-protected.**
+- `set_inbound_cap(caller: Address, max_per_window: i128, window_size: u64)` / `admit_inbound(amount: i128, current_time: u64)` enforce a configurable, rolling-ledger-time cap on cumulative inbound value. The setter requires the admin and starts the window at the current ledger timestamp. **Fail-closed by default**: a fresh `Bridge` admits no inbound value until a cap is explicitly configured.
+- `set_outbound_cap(caller: Address, max_per_window: i128, window_size: u64)` / `admit_outbound(amount: i128, current_time: u64)` apply the same window model to outbound value.
+- See [`SECURITY_NOTES.md`](./SECURITY_NOTES.md) for the authoritative roles-and-authorization table and the full threat model.
 
 ## Documentation Index
 
