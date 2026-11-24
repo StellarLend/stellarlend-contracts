@@ -72,6 +72,7 @@ fn consuming_inbound_message_keeps_validator_and_replay_state_alive() {
     validators.push_back(BytesN::from_array(&env, &[1; 32]));
     client.initialize(&validators, &Bytes::new(&env));
     client.set_admin(&admin);
+    client.set_inbound_cap(&admin, &1_000_i128, &86_400_u64);
     let source = SourceDomain {
         chain_id: 2,
         network_passphrase: Bytes::from_slice(&env, b"testnet"),
@@ -80,7 +81,7 @@ fn consuming_inbound_message_keeps_validator_and_replay_state_alive() {
     client.register_source_domain(&admin, &source);
     let nonce = 0_u64;
     let source_hash = Bridge::source_domain_hash(&env, &source);
-    let message_id = client.consume_inbound_message(&source, &nonce);
+    let message_id = client.consume_inbound_message(&source, &nonce, &10_i128);
 
     env.as_contract(&contract_id, || {
         assert!(env.storage().persistent().get_ttl(&BridgeDataKey::Validators) > 0);
