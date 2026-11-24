@@ -12,6 +12,7 @@ jest.mock('../controllers/lending.controller', () => ({
   borrow: jest.fn(),
   repay: jest.fn(),
   withdraw: jest.fn(),
+  getActivity: jest.fn(),
   healthCheck: jest.fn(),
   deepHealthCheck: jest.fn(),
 }));
@@ -86,6 +87,20 @@ describe('API app authorization and validation', () => {
     expect(response.body.success).toBe(false);
     expect(response.body.error).toContain('valid Stellar');
     expect(JSON.stringify(response.body)).not.toContain('submitted-secret');
+    expect(mockDeposit).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized JSON body with 413 before invoking the controller', async () => {
+    const response = await request(app)
+      .post('/api/lending/deposit')
+      .send({
+        userAddress: 'GBO4N5HSFF3XMRRYYFGKNO6QEEIYCMDTFVUJUPNS2F5A7QQTNEQ5NWWK',
+        amount: '1000000',
+        userSecret: 'x'.repeat(200 * 1024),
+      });
+
+    expect(response.status).toBe(413);
+    expect(response.body).toEqual({ error: 'Payload too large' });
     expect(mockDeposit).not.toHaveBeenCalled();
   });
 });

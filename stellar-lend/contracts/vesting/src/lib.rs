@@ -798,12 +798,26 @@ impl VestingContract {
             if g.revoked {
                 continue;
             }
+            // Skip grants that are already fully elapsed (already accelerated).
+            // A grant is considered already accelerated when start_ts == 0,
+            // cliff_secs == 0, and duration_secs == 1 — the exact shape written
+            // by a previous acceleration call.  Skipping them makes repeated
+            // acceleration a true no-op: get_grant is unchanged, total_locked is
+            // unchanged, and no second grant_accelerated event is emitted.
+            if g.start_ts == 0 && g.cliff_secs == 0 && g.duration_secs == 1 {
+                continue;
+            }
             let unvested = g.total_amount.saturating_sub(g.claimed_amount);
             if unvested > 0 {
                 // Make the grant always fully elapsed: start=0, cliff=0, duration=1
                 g.start_ts = 0;
                 g.cliff_secs = 0;
                 g.duration_secs = 1;
+                // Milestone schedules are converted to Linear so the elapsed
+                // predicate above is consistent on the next call.  This is
+                // documented behaviour: Milestone grants are treated the same
+                // as Linear grants on acceleration (see VALIDATOR_PAUSE.md /
+                // vesting docs).
                 g.schedule = VestingSchedule::Linear;
                 locked_delta = locked_delta.saturating_add(unvested);
                 grants.set(i, g);

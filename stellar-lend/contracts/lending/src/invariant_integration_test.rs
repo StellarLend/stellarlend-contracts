@@ -8,14 +8,10 @@
 //!
 //! ## Why these checks are not wired into the entrypoints
 //!
-//! `compute_expected_reserve` models only `TotalDeposits - BadDebt`, and the
-//! legacy single-asset flows invalidate that model in both directions:
-//!
-//! * `deposit`/`withdraw` mutate `TotalDeposits` without moving a single token,
-//!   so the accounting ledger and the contract's token balance necessarily
-//!   diverge.
-//! * `liquidate` moves both tokens (repayment in, seized collateral out)
-//!   without touching `TotalDeposits`.
+//! `compute_expected_reserve` now includes cross-asset collateral and
+//! treasury/protocol reserves in addition to legacy deposits and bad debt;
+//! legacy deposit and liquidation flows may still not move token balances in
+//! lockstep with every ledger entry, so checks remain opt-in.
 //!
 //! Enabling `check_invariant_*` inside those paths therefore makes every call
 //! trap. The checks stay opt-in and are exercised directly here;
@@ -54,7 +50,9 @@ fn balance(env: &Env, asset: &Address, who: &Address) -> i128 {
 }
 
 fn expected_reserve(env: &Env, id: &Address, asset: &Address) -> i128 {
-    env.as_contract(id, || invariants::compute_expected_reserve(env, asset))
+    env.as_contract(id, || {
+        invariants::compute_expected_reserve(env, asset).unwrap()
+    })
 }
 
 fn set_accounting(env: &Env, id: &Address, total_deposits: i128, bad_debt: i128) {
@@ -203,4 +201,44 @@ fn legacy_deposit_mutates_accounting_without_moving_tokens() {
         "accounting rose while the held balance did not, so the reserve model \
          cannot be satisfied on the legacy deposit path"
     );
+}
+
+#[test]
+fn test_expected_reserve_two_assets() {
+    let (env, client, _admin, _user) = setup();
+    let asset_a = new_asset(&env);
+    let asset_b = new_asset(&env);
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDeposits, &1_000i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BadDebt, &100i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalCollateralAsset(asset_a.clone()), &250i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalCollateralAsset(asset_b.clone()), &400i128);
+    });
+
+    assert_eq!(expected_reserve(&env, &client.address, &asset_a), 1_150);
+    assert_eq!(expected_reserve(&env, &client.address, &asset_b), 1_300);
+}
+
+#[test]
+fn test_expected_reserve_includes_flash_fees() {
+    let (env, client, _admin, _user) = setup();
+    let asset = new_asset(&env);
+    set_accounting(&env, &client.address, 1_000, 100);
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Treasury(asset.clone()), &75i128);
+    });
+
+    assert_eq!(expected_reserve(&env, &client.address, &asset), 975);
 }

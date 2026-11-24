@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import app from '../app';
 import { LendingController } from '../controllers/lending.controller';
 import { StellarService } from '../services/stellar.service';
+import { generateToken } from '../middleware/authorization';
 import {
   encodeCursor,
   decodeCursor,
@@ -96,6 +97,8 @@ function mockEvent(overrides: Record<string, unknown> = {}) {
 // Real Stellar keypair for integration tests (passes the StellarAddress validator)
 const VALID_ADDRESS = 'GA4Q2H7SGM7NQGJU6666RQKNVQFZRFK5M3ETRCAQRENNHHVFUXFFV32B';
 const VALID_SECRET = 'SAHJ4ZDN7I2ZYW2HHXF2TA5JMILOHQB3X3KGE3BX6OFFV6HHJFGRTNRA';
+const VALID_TOKEN = generateToken(VALID_ADDRESS);
+const authPost = (path: string) => request(app).post(path).set('Authorization', `Bearer ${VALID_TOKEN}`);
 
 // ---------------------------------------------------------------------------
 // Cursor utilities
@@ -599,7 +602,7 @@ describe('POST /api/lending/deposit', () => {
     appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'hash1', status: 'success' });
     appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'hash1', status: 'success', ledger: 1000 });
 
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
       userSecret: VALID_SECRET,
@@ -613,7 +616,7 @@ describe('POST /api/lending/deposit', () => {
     appSvc().buildDepositTransaction.mockResolvedValue('tx_xdr');
     appSvc().submitTransaction.mockResolvedValue({ success: false, status: 'failed', error: 'Insufficient funds' });
 
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
       userSecret: VALID_SECRET,
@@ -624,7 +627,7 @@ describe('POST /api/lending/deposit', () => {
   });
 
   it('returns 400 when amount is missing', async () => {
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       userSecret: VALID_SECRET,
     });
@@ -632,7 +635,7 @@ describe('POST /api/lending/deposit', () => {
   });
 
   it('returns 400 when amount is zero', async () => {
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '0',
       userSecret: VALID_SECRET,
@@ -642,7 +645,7 @@ describe('POST /api/lending/deposit', () => {
 });
 
   it('returns 400 when amount is negative', async () => {
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '-1',
       userSecret: VALID_SECRET,
@@ -651,7 +654,7 @@ describe('POST /api/lending/deposit', () => {
   });
 
   it('returns 400 when amount is not an integer string', async () => {
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1.5',
       userSecret: VALID_SECRET,
@@ -660,7 +663,7 @@ describe('POST /api/lending/deposit', () => {
   });
 
   it('returns 400 when userAddress is invalid', async () => {
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: 'not-an-address',
       amount: '1000000',
       userSecret: VALID_SECRET,
@@ -669,7 +672,7 @@ describe('POST /api/lending/deposit', () => {
   });
 
   it('returns 400 when userSecret is empty', async () => {
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
       userSecret: '',
@@ -680,7 +683,7 @@ describe('POST /api/lending/deposit', () => {
   it('returns 500 when buildDepositTransaction throws', async () => {
     appSvc().buildDepositTransaction.mockRejectedValue(new Error('Soroban RPC unavailable'));
 
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
       userSecret: VALID_SECRET,
@@ -692,7 +695,7 @@ describe('POST /api/lending/deposit', () => {
     appSvc().buildDepositTransaction.mockResolvedValue('tx_xdr');
     appSvc().submitTransaction.mockRejectedValue(new Error('Horizon unreachable'));
 
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: '1000000',
       userSecret: VALID_SECRET,
@@ -706,7 +709,7 @@ describe('POST /api/lending/deposit', () => {
     appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h', status: 'success' });
     appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h', status: 'success', ledger: 1 });
 
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: i128Max,
       userSecret: VALID_SECRET,
@@ -716,7 +719,7 @@ describe('POST /api/lending/deposit', () => {
 
   it('rejects an amount exceeding i128 max', async () => {
     const tooBig = (1n << 127n).toString();
-    const res = await request(app).post('/api/lending/deposit').send({
+    const res = await authPost('/api/lending/deposit').send({
       userAddress: VALID_ADDRESS,
       amount: tooBig,
       userSecret: VALID_SECRET,
@@ -733,7 +736,7 @@ describe('POST /api/lending/borrow', () => {
     appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h2', status: 'success' });
     appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h2', status: 'success', ledger: 1001 });
 
-    const res = await request(app).post('/api/lending/borrow').send({
+    const res = await authPost('/api/lending/borrow').send({
       userAddress: VALID_ADDRESS,
       amount: '500000',
       userSecret: VALID_SECRET,
@@ -746,7 +749,7 @@ describe('POST /api/lending/borrow', () => {
     appSvc().buildBorrowTransaction.mockResolvedValue('tx_xdr');
     appSvc().submitTransaction.mockResolvedValue({ success: false, status: 'failed', error: 'Insufficient collateral' });
 
-    const res = await request(app).post('/api/lending/borrow').send({
+    const res = await authPost('/api/lending/borrow').send({
       userAddress: VALID_ADDRESS,
       amount: '500000',
       userSecret: VALID_SECRET,
@@ -755,14 +758,14 @@ describe('POST /api/lending/borrow', () => {
   });
 
   it('returns 400 for missing required fields', async () => {
-    const res = await request(app).post('/api/lending/borrow').send({ userAddress: VALID_ADDRESS });
+    const res = await authPost('/api/lending/borrow').send({ userAddress: VALID_ADDRESS });
     expect(res.status).toBe(400);
   });
 
   it('returns 500 when service throws during borrow', async () => {
     appSvc().buildBorrowTransaction.mockRejectedValue(new Error('contract call failed'));
 
-    const res = await request(app).post('/api/lending/borrow').send({
+    const res = await authPost('/api/lending/borrow').send({
       userAddress: VALID_ADDRESS,
       amount: '500000',
       userSecret: VALID_SECRET,
@@ -779,7 +782,7 @@ describe('POST /api/lending/repay', () => {
     appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h3', status: 'success' });
     appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h3', status: 'success', ledger: 1002 });
 
-    const res = await request(app).post('/api/lending/repay').send({
+    const res = await authPost('/api/lending/repay').send({
       userAddress: VALID_ADDRESS,
       amount: '250000',
       userSecret: VALID_SECRET,
@@ -789,7 +792,7 @@ describe('POST /api/lending/repay', () => {
   });
 
   it('returns 400 for zero repayment amount', async () => {
-    const res = await request(app).post('/api/lending/repay').send({
+    const res = await authPost('/api/lending/repay').send({
       userAddress: VALID_ADDRESS,
       amount: '0',
       userSecret: VALID_SECRET,
@@ -801,7 +804,7 @@ describe('POST /api/lending/repay', () => {
     appSvc().buildRepayTransaction.mockResolvedValue('tx_xdr');
     appSvc().submitTransaction.mockResolvedValue({ success: false, status: 'failed', error: 'Repay exceeds debt' });
 
-    const res = await request(app).post('/api/lending/repay').send({
+    const res = await authPost('/api/lending/repay').send({
       userAddress: VALID_ADDRESS,
       amount: '999999999',
       userSecret: VALID_SECRET,
@@ -818,7 +821,7 @@ describe('POST /api/lending/withdraw', () => {
     appSvc().submitTransaction.mockResolvedValue({ success: true, transactionHash: 'h4', status: 'success' });
     appSvc().monitorTransaction.mockResolvedValue({ success: true, transactionHash: 'h4', status: 'success', ledger: 1003 });
 
-    const res = await request(app).post('/api/lending/withdraw').send({
+    const res = await authPost('/api/lending/withdraw').send({
       userAddress: VALID_ADDRESS,
       amount: '100000',
       userSecret: VALID_SECRET,
@@ -834,7 +837,7 @@ describe('POST /api/lending/withdraw', () => {
       error: 'Withdrawal would violate minimum collateral ratio',
     });
 
-    const res = await request(app).post('/api/lending/withdraw').send({
+    const res = await authPost('/api/lending/withdraw').send({
       userAddress: VALID_ADDRESS,
       amount: '99999999',
       userSecret: VALID_SECRET,
@@ -845,7 +848,7 @@ describe('POST /api/lending/withdraw', () => {
   it('returns 500 when service throws during withdraw', async () => {
     appSvc().buildWithdrawTransaction.mockRejectedValue(new Error('unexpected'));
 
-    const res = await request(app).post('/api/lending/withdraw').send({
+    const res = await authPost('/api/lending/withdraw').send({
       userAddress: VALID_ADDRESS,
       amount: '100000',
       userSecret: VALID_SECRET,

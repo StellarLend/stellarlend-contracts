@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import {
     loadConfig,
     getAssetMapping,
@@ -27,8 +28,9 @@ import {
     ASSET_MAPPINGS,
 } from '../src/config.js';
 
-const VALID_CONTRACT_ID = 'CTEST123456789';
-const VALID_ADMIN_SECRET = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+const VALID_CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32, 7));
+const VALID_ADMIN_SECRET = Keypair.random().secret();
+const VALID_HMAC_SECRET = 'local-admin-hmac-secret-with-at-least-32-chars';
 
 const REQUIRED_ENV = {
     CONTRACT_ID: VALID_CONTRACT_ID,
@@ -67,6 +69,8 @@ describe('Configuration', () => {
             'COINGECKO_API_KEY',
             'COINMARKETCAP_API_KEY',
             'LOG_LEVEL',
+            'ADMIN_API_PORT',
+            'ADMIN_HMAC_SECRET',
             ...NUMERIC_ENV_KEYS,
         ]) {
             delete process.env[key];
@@ -108,6 +112,69 @@ describe('Configuration', () => {
             expect(config.maxPriceDeviationPercent).toBe(10);
             expect(config.priceStaleThresholdSeconds).toBe(300);
             expect(config.logLevel).toBe('info');
+            expect(config.adminApiPort).toBeUndefined();
+            expect(config.adminHmacSecret).toBeUndefined();
+        });
+
+        it('maps a valid admin API port and HMAC secret', () => {
+            setEnv({
+                ...REQUIRED_ENV,
+                ADMIN_API_PORT: '8080',
+                ADMIN_HMAC_SECRET: VALID_HMAC_SECRET,
+            });
+
+            const config = loadConfig();
+
+            expect(config.adminApiPort).toBe(8080);
+            expect(config.adminHmacSecret).toBe(VALID_HMAC_SECRET);
+        });
+
+        it('rejects an admin API port without a secret and identifies ADMIN_HMAC_SECRET', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: '8080' });
+
+            try {
+                loadConfig();
+                throw new Error('expected loadConfig to throw');
+            } catch (error) {
+                const details = error as Error & { issues?: string[] };
+                expect(details.issues?.join(' ')).toContain('ADMIN_HMAC_SECRET');
+            }
+        });
+
+        it('rejects an admin HMAC secret shorter than 32 characters when enabled', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: '8080', ADMIN_HMAC_SECRET: 'too-short' });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it.each(['1', '65535'])('accepts the admin API port boundary %s', (port) => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: port, ADMIN_HMAC_SECRET: VALID_HMAC_SECRET });
+
+            expect(loadConfig().adminApiPort).toBe(Number(port));
+        });
+
+        it.each(['0', '65536', '8080.5', '1e3', '0x10', 'not-a-number'])('rejects invalid admin API port %s', (port) => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: port, ADMIN_HMAC_SECRET: VALID_HMAC_SECRET });
+
+            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+        });
+
+        it('keeps the admin API disabled when only the secret is set', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_HMAC_SECRET: VALID_HMAC_SECRET });
+
+            const config = loadConfig();
+
+            expect(config.adminApiPort).toBeUndefined();
+            expect(config.adminHmacSecret).toBe(VALID_HMAC_SECRET);
+        });
+
+        it('treats blank optional admin settings as unset', () => {
+            setEnv({ ...REQUIRED_ENV, ADMIN_API_PORT: '', ADMIN_HMAC_SECRET: '' });
+
+            const config = loadConfig();
+
+            expect(config.adminApiPort).toBeUndefined();
+            expect(config.adminHmacSecret).toBeUndefined();
         });
 
         it('should override defaults with provided values', () => {
@@ -204,7 +271,14 @@ describe('Configuration', () => {
         it('should reject an unsupported ADMIN_SECRET_KEY format', () => {
             setEnv({ ...REQUIRED_ENV, ADMIN_SECRET_KEY: 'not-a-stellar-secret' });
 
-            expect(() => loadConfig()).toThrow('Invalid environment configuration');
+            try {
+                loadConfig();
+                throw new Error('expected loadConfig to throw');
+            } catch (error) {
+                const details = error as Error & { issues?: string[] };
+                expect(details.issues?.join(' ')).toContain('ADMIN_SECRET_KEY');
+                expect(details.issues?.join(' ')).not.toContain('not-a-stellar-secret');
+            }
         });
 
         it('should reject an unsupported LOG_LEVEL', () => {
@@ -484,15 +558,29 @@ describe('Configuration', () => {
 
         it('should scale a price to the configured precision', () => {
             expect(scalePrice(1)).toBe(PRICE_SCALE);
-            expect(scalePrice(0)).toBe(0);
-            expect(scalePrice(0.5)).toBe(Math.round(0.5 * PRICE_SCALE));
+            expect(scalePrice(0)).toBe(0n);
+            expect(scalePrice(0.5)).toBe(500000n);
+        });
+
+        it('should scale string decimal inputs accurately with half-up rounding', () => {
+            expect(scalePrice('0.1234565')).toBe(123457n);
+            expect(scalePrice('0.1234564')).toBe(123456n);
+            expect(scalePrice(0.1 + 0.2)).toBe(300000n);
+            expect(() => scalePrice(1e12)).toThrow();
+        });
+
+        it('should round trip random bigints within safe range', () => {
+            for (let i = 0; i < 20; i++) {
+                const randomVal = BigInt(Math.floor(Math.random() * 10000000));
+                expect(scalePrice(unscalePrice(randomVal))).toBe(randomVal);
+            }
         });
 
         it('should round-trip scale/unscale for representable values', () => {
             const values = [1, 0.5, 0.25, 10, 123.45, 0.0001];
 
             for (const value of values) {
-                expect(unscalePrice(scalePrice(value))).toBevalue(value);
+                expect(unscalePrice(scalePrice(value))).toBe(value);
             }
         });
 
@@ -502,7 +590,7 @@ describe('Configuration', () => {
         });
 
         it('should reject invalid inputs without producing NaN or infinity', () => {
-            const invalidInputs = [NuN), Infinity, -Infinity, -1 * PRICE_SCALE];
+            const invalidInputs = [NaN, Infinity, -Infinity];
 
             for (const input of invalidInputs) {
                 expect(() => scalePrice(input)).toThrow();
@@ -521,7 +609,7 @@ describe('Configuration', () => {
         });
 
         it('should handle boundary values at the edge of safe integer precision', () => {
-            const maxSafe = Math.floor(Number.MAX_SAFE_INTEGER / PRICE_SCALE);
+            const maxSafe = Math.floor(Number.MAX_SAFE_INTEGER / Number(PRICE_SCALE));
             expect(unscalePrice(scalePrice(maxSafe))).toBeCloseTo(maxSafe, 1);
         });
     });
@@ -539,8 +627,8 @@ describe('Configuration', () => {
 describe('Configuration failure paths and boundaries', () => {
     const originalEnv = process.env;
     const requiredEnv = {
-        CONTRACT_ID: 'CTEST123456789',
-        ADMIN_SECRET_KEY: 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789',
+        CONTRACT_ID: VALID_CONTRACT_ID,
+        ADMIN_SECRET_KEY: VALID_ADMIN_SECRET,
     };
 
     beforeEach(() => {

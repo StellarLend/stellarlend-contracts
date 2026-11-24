@@ -28,7 +28,7 @@ fn setup_bridge(env: &Env) -> (Address, BridgeClient<'_>, Address) {
     client.set_admin(&admin);
 
     // Configure outbound cap: 1000 units per 86400 seconds
-    client.set_outbound_cap(&1000i128, &86400u64, &0u64);
+    client.set_outbound_cap(&admin, &1000i128, &86400u64);
 
     (bridge_id, client, admin)
 }

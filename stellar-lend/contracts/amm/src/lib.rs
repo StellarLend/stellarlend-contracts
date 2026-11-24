@@ -2010,13 +2010,18 @@ fn compute_swap_out(
 ///
 /// See: [FLASH_SWAP_PROTOCOL.md §Minimum Repayment Formula](../FLASH_SWAP_PROTOCOL.md)
 #[cfg(test)]
-pub(crate) fn inverse_swap_in(ra: i128, rb: i128, amount_out: i128, _fee_bps: i128) -> i128 {
-    let rb_minus_out = rb.checked_sub(amount_out).expect("amount_out >= rb");
-    let numerator = ra
-        .checked_mul(amount_out)
-        .expect("inverse_swap_in overflow");
+pub(crate) fn inverse_swap_in(ra: i128, rb: i128, amount_out: i128, _fee_bps: i128) -> Option<i128> {
+    if amount_out < 0 || amount_out >= rb {
+        return None;
+    }
+    let rb_minus_out = rb.checked_sub(amount_out)?;
+    if rb_minus_out <= 0 {
+        return None;
+    }
+    let numerator = ra.checked_mul(amount_out)?;
     // ceil(numerator / rb_minus_out) — round up so we never under-pay.
-    (numerator + rb_minus_out - 1) / rb_minus_out
+    let sum = numerator.checked_add(rb_minus_out)?.checked_sub(1)?;
+    sum.checked_div(rb_minus_out)
 }
 
 // ---------------------------------------------------------------------------

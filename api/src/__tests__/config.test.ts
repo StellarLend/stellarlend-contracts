@@ -59,7 +59,7 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => void):
 /** Build a valid config-shaped object for use with validateConfig. */
 function makeValidConfig(overrides: Record<string, unknown> = {}): typeof config {
   const base: typeof config = {
-    server: { port: 3000, env: 'test' },
+    server: { port: 3000, env: 'test', bodyLimit: '100kb' },
     stellar: {
       network: 'testnet',
       horizonUrl: 'https://horizon-testnet.stellar.org',
@@ -74,6 +74,7 @@ function makeValidConfig(overrides: Record<string, unknown> = {}): typeof config
     },
     rateLimit: { windowMs: 900000, maxRequests: 100 },
     logging: { level: 'info' },
+    cors: { origins: [] },
     request: {
       timeout: 30000,
       maxRetries: 3,
@@ -273,6 +274,39 @@ describe('stringEnv', () => {
   it('treats "0" as a non-empty value', () => {
     process.env[KEY] = '0';
     expect(stringEnv(KEY, 'default')).toBe('0');
+  });
+});
+
+describe('CORS configuration', () => {
+  function loadOrigins(overrides: Record<string, string | undefined>): string[] {
+    let origins: string[] = [];
+    withEnv(overrides, () => {
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        origins = require('../config/index').config.cors.origins;
+      });
+    });
+    return origins;
+  }
+
+  it('defaults to a wildcard in development', () => {
+    expect(loadOrigins({ NODE_ENV: 'development', CORS_ALLOWED_ORIGINS: undefined })).toEqual(['*']);
+  });
+
+  it('defaults to an empty allow-list in production', () => {
+    expect(loadOrigins({
+      NODE_ENV: 'production',
+      CORS_ALLOWED_ORIGINS: undefined,
+      JWT_SECRET: 'production-test-secret',
+      CONTRACT_ID: 'contract-for-cors-test',
+    })).toEqual([]);
+  });
+
+  it('trims configured origins and ignores empty entries', () => {
+    expect(loadOrigins({
+      NODE_ENV: 'test',
+      CORS_ALLOWED_ORIGINS: ' https://app.example , , https://admin.example  ',
+    })).toEqual(['https://app.example', 'https://admin.example']);
   });
 });
 
@@ -815,9 +849,10 @@ describe('auditSecurityDefaults — production mode', () => {
 // ---------------------------------------------------------------------------
 
 describe('config — exported object shape', () => {
-  it('exposes a server section with port and env', () => {
+  it('exposes a server section with port, env and bodyLimit', () => {
     expect(config.server).toHaveProperty('port');
     expect(config.server).toHaveProperty('env');
+    expect(config.server).toHaveProperty('bodyLimit');
   });
 
   it('exposes a stellar section with all required fields', () => {
@@ -873,6 +908,10 @@ describe('config — exported object shape', () => {
   it('default port is 3000 when PORT is not set in test environment', () => {
     // The module was loaded with test env, PORT not set → default applies.
     expect(config.server.port).toBe(3000);
+  });
+
+  it('default JSON body limit is 100kb when BODY_LIMIT is not set', () => {
+    expect(config.server.bodyLimit).toBe('100kb');
   });
 
   it('default stellar network is testnet', () => {

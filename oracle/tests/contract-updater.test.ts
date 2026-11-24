@@ -1,5 +1,50 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ContractUpdater, calculateJitterDelay } from '../src/services/contract-updater';
+import { ContractUpdater, calculateJitterDelay, idFor } from '../src/services/contract-updater';
+
+describe('ContractUpdater deterministic fallback idempotency', () => {
+  it('produces a stable id for identical requests', () => {
+    const request = {
+      asset: 'XLM',
+      price: 100,
+      source: 'test',
+      observedAt: 1700000000000,
+    };
+
+    expect(idFor(request)).toBe(idFor({ ...request }));
+  });
+
+  it('changes the id when the price changes', () => {
+    const request = {
+      asset: 'XLM',
+      price: 100,
+      source: 'test',
+      observedAt: 1700000000000,
+    };
+
+    expect(idFor(request)).not.toBe(idFor({ ...request, price: 101 }));
+  });
+
+  it('deduplicates identical requests without an explicit idempotencyKey', async () => {
+    const adapter = {
+      getLatestUpdate: vi.fn().mockResolvedValue(null),
+      submit: vi.fn().mockResolvedValue({ txHash: 'tx-fallback' }),
+    };
+    const updater = new ContractUpdater(adapter);
+    const request = {
+      asset: 'XLM',
+      price: 100,
+      source: 'test',
+      observedAt: Date.now(),
+    };
+
+    const first = await updater.submitPriceUpdate(request);
+    const second = await updater.submitPriceUpdate(request);
+
+    expect(first).toBe(second);
+    expect(first.id).toBe(idFor(request));
+    expect(adapter.submit).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('Oracle ContractUpdater Backoff & Jitter Distribution', () => {
   beforeEach(() => {
