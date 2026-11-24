@@ -59,7 +59,7 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => void):
 /** Build a valid config-shaped object for use with validateConfig. */
 function makeValidConfig(overrides: Record<string, unknown> = {}): typeof config {
   const base: typeof config = {
-    server: { port: 3000, env: 'test', bodyLimit: '100kb' },
+    server: { port: 3000, env: 'test', bodyLimit: '100kb', trustProxy: false },
     stellar: {
       network: 'testnet',
       horizonUrl: 'https://horizon-testnet.stellar.org',

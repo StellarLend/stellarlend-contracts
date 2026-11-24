@@ -53,6 +53,21 @@ function corsOriginsEnv(): string[] {
     .filter(Boolean);
 }
 
+function parseTrustProxyEnv(name: string, defaultValue: boolean | number = false): boolean | number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return defaultValue;
+
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`Config: environment variable ${name} must be a boolean or a non-negative integer, got "${raw}"`);
+  }
+
+  return parseInt(normalized, 10);
+}
+
 // ---------------------------------------------------------------------------
 // Known-insecure sentinel values
 // ---------------------------------------------------------------------------
@@ -92,6 +107,16 @@ function validateConfig(cfg: typeof config): void {
   if (cfg.server.port < 1 || cfg.server.port > 65535) {
     throw new Error(
       `Config: PORT must be between 1 and 65535, got ${cfg.server.port}`
+    );
+  }
+
+  if (
+    cfg.server.trustProxy !== undefined &&
+    typeof cfg.server.trustProxy !== 'boolean' &&
+    (!Number.isInteger(cfg.server.trustProxy) || cfg.server.trustProxy < 0)
+  ) {
+    throw new Error(
+      `Config: TRUST_PROXY must be a boolean or a non-negative integer, got "${String(cfg.server.trustProxy)}"`
     );
   }
 
@@ -255,6 +280,7 @@ export const config = {
     port: parseIntEnv('PORT', 3000),
     env: stringEnv('NODE_ENV', 'development'),
     bodyLimit: stringEnv('BODY_LIMIT', '100kb'),
+    trustProxy: parseTrustProxyEnv('TRUST_PROXY', false),
   },
   stellar: {
     network: stringEnv('STELLAR_NETWORK', 'testnet'),
@@ -301,5 +327,5 @@ auditSecurityDefaults(config);
 // Exported helpers for testability
 // ---------------------------------------------------------------------------
 
-export { validateConfig, auditSecurityDefaults, parseIntEnv, parseFloatEnv, stringEnv };
+export { validateConfig, auditSecurityDefaults, parseIntEnv, parseFloatEnv, stringEnv, parseTrustProxyEnv };
 export type { StellarNetwork, LogLevel };

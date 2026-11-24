@@ -214,8 +214,6 @@ mod insurance_fund_test;
 #[cfg(test)]
 mod interest_ordering_time_test;
 #[cfg(test)]
-mod liquidation_grace_test;
-#[cfg(test)]
 mod partial_staleness_guard_test;
 #[cfg(test)]
 mod test_token_receiver;
@@ -6107,7 +6105,7 @@ impl MockAsset {}
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use ed25519_dalek::{Keypair, Signer};
+    use ed25519_dalek::{Signer, SigningKey};
 
     use soroban_sdk::testutils::{Address as _, Ledger};
 
@@ -6144,17 +6142,15 @@ pub(crate) mod test {
         client.oracle_payload(asset, &price, &timestamp)
     }
 
-    pub(crate) fn chrono_keypair() -> Keypair {
+    pub(crate) fn chrono_keypair() -> SigningKey {
         let seed = [42u8; 32];
-        let secret = ed25519_dalek::SecretKey::from_bytes(&seed).unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        Keypair { secret, public }
+        SigningKey::from_bytes(&seed)
     }
 
     pub(crate) fn sign_oracle_update(
         env: &Env,
         client: &LendingContractClient<'static>,
-        keypair: &Keypair,
+        keypair: &SigningKey,
         asset: &Address,
         price: i128,
         timestamp: u64,
@@ -6294,11 +6290,10 @@ pub(crate) mod test {
         );
     }
     #[test]
-    #[ignore = "ed25519 verification is unstable in this local CI toolchain"]
     fn test_set_price_with_valid_signature_succeeds() {
         let (env, client, admin, _user) = setup();
         let keypair = chrono_keypair();
-        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        let pubkey = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
         client.set_oracle_pubkey(&pubkey);
 
         let asset = env.register(MockAsset, ());
@@ -6320,14 +6315,9 @@ pub(crate) mod test {
         let (env, client, admin, _user) = setup();
         let keypair = chrono_keypair();
         let bad_seed = [43u8; 32];
-        let bad_secret = ed25519_dalek::SecretKey::from_bytes(&bad_seed).unwrap();
-        let bad_public = ed25519_dalek::PublicKey::from(&bad_secret);
-        let bad_keypair = Keypair {
-            secret: bad_secret,
-            public: bad_public,
-        };
+        let bad_keypair = SigningKey::from_bytes(&bad_seed);
 
-        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        let pubkey = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
         client.set_oracle_pubkey(&pubkey);
 
         let asset = env.register(MockAsset, ());
@@ -6343,7 +6333,7 @@ pub(crate) mod test {
     fn test_set_price_rejects_stale_timestamp() {
         let (env, client, admin, _user) = setup();
         let keypair = chrono_keypair();
-        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        let pubkey = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
         client.set_oracle_pubkey(&pubkey);
 
         advance_time(&env, DEFAULT_ORACLE_MAX_AGE_SECS + 10);
@@ -6367,7 +6357,7 @@ pub(crate) mod test {
     fn test_set_price_retry_exact_update_is_idempotent() {
         let (env, client, admin, _user) = setup();
         let keypair = chrono_keypair();
-        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        let pubkey = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
         client.set_oracle_pubkey(&pubkey);
 
         let asset = env.register(MockAsset, ());
@@ -6393,7 +6383,7 @@ pub(crate) mod test {
     fn test_set_price_rejects_same_timestamp_different_price() {
         let (env, client, admin, _user) = setup();
         let keypair = chrono_keypair();
-        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        let pubkey = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
         client.set_oracle_pubkey(&pubkey);
 
         let asset = env.register(MockAsset, ());
@@ -6417,7 +6407,7 @@ pub(crate) mod test {
         let (env, client, admin, _user) = setup();
         env.ledger().set_timestamp(1_000);
         let keypair = chrono_keypair();
-        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        let pubkey = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
         client.set_oracle_pubkey(&pubkey);
 
         // The default test ledger closes at timestamp 0, so `timestamp - 1`
@@ -6449,7 +6439,7 @@ pub(crate) mod test {
         let (env, client, _admin, _user) = setup();
         let attacker = Address::generate(&env);
         let keypair = chrono_keypair();
-        let pubkey = BytesN::from_array(&env, &keypair.public.to_bytes());
+        let pubkey = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
         client.set_oracle_pubkey(&pubkey);
 
         let asset = env.register(MockAsset, ());

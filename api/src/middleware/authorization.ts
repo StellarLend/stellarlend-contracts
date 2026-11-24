@@ -37,11 +37,22 @@ export const authenticateToken = (
   }
 
   try {
-    const decoded = jwt.verify(token, config.auth.jwtSecret) as {
+    const decoded = jwt.verify(token, config.auth.jwtSecret, {
+      algorithms: ['HS256'],
+    });
+
+    if (
+      typeof decoded !== 'object' ||
+      decoded === null ||
+      typeof (decoded as jwt.JwtPayload).address !== 'string'
+    ) {
+      throw new UnauthorizedError('Invalid or expired token');
+    }
+
+    req.user = decoded as {
       address: string;
       network?: string;
     };
-    req.user = decoded;
     next();
   } catch (error) {
     throw new UnauthorizedError('Invalid or expired token');
@@ -57,6 +68,7 @@ export const generateToken = (address: string, network?: string): string => {
     payload,
     config.auth.jwtSecret,
     {
+      algorithm: 'HS256',
       expiresIn: config.auth.jwtExpiresIn,
     } as jwt.SignOptions
   );

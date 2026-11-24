@@ -1,11 +1,11 @@
-# Testnet Deployments
+﻿# Testnet Deployments
 
 Network: Stellar **testnet** (Test SDF Network ; September 2015)
 
-| Contract | ID | Explorer |
-|---|---|---|
-| stellarlend-lending (current) | `CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6` | [stellar.expert](https://stellar.expert/explorer/testnet/contract/CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6) |
-| stellarlend-lending v1 (deprecated) | `CAAD3BFVIQENIUV6MDCI76FHI5XFQ3ZNZFLTTRBOVDLINEFXNOABWPIH` | [stellar.expert](https://stellar.expert/explorer/testnet/contract/CAAD3BFVIQENIUV6MDCI76FHI5XFQ3ZNZFLTTRBOVDLINEFXNOABWPIH) |
+| Contract | ID | Explorer | WASM hash |
+|---|---|---|---|
+| stellarlend-lending (current) | `CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6` | [stellar.expert](https://stellar.expert/explorer/testnet/contract/CC4A6A46O2KQA7KEMOFK3TQ4YRSLCJ4ZP26SQWXIKNF4DTEX3BOL2HF6) |  |
+| stellarlend-lending v1 (deprecated) | `CAAD3BFVIQENIUV6MDCI76FHI5XFQ3ZNZFLTTRBOVDLINEFXNOABWPIH` | [stellar.expert](https://stellar.expert/explorer/testnet/contract/CAAD3BFVIQENIUV6MDCI76FHI5XFQ3ZNZFLTTRBOVDLINEFXNOABWPIH) |  |
 
 Admin / deployer: `GAH5NAPXT6T4Z6VUGGVIVTUT6I6JNDMBTKA4VYIUYZLTNZ2FW6NRGLJX`  
 Demo user: `GBS6O6RWCY7NYVC5KL3YBPPSLXWLSV2OP4KNXJNKWCBWLMJNL5IN3NE6`

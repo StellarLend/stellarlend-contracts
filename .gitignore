@@ -1,6 +1,7 @@
 # Rust/Cargo
 target/
 **/target/
+cobertura.xml
 Cargo.lock
 # The workspace lock is committed; keep dependency commands in sync with --locked.
 !stellar-lend/Cargo.lock
