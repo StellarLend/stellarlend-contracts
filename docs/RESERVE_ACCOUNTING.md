@@ -152,7 +152,7 @@ claim_reserves(admin, Some(USDC), treasury, 1)     // over-claim on depleted buc
 
 ### Test coverage (`claim_reserves_test.rs`)
 
-The test file `stellar-lend/contracts/hello-world/src/claim_reserves_test.rs`
+The reserve accounting tests
 pins every invariant above:
 
 | Test | Invariant pinned |
@@ -172,7 +172,7 @@ pins every invariant above:
 Run with:
 
 ```
-cargo test -p hello-world claim_reserves
+cargo test -p stellarlend-lending claim_reserves
 ```
 
 ---
@@ -204,7 +204,7 @@ lender_amount  = 9 − 0               = 9
 
 ## References
 
-- `contracts/hello-world/src/reserve.rs` — accrual, withdrawal, view functions
-- `contracts/hello-world/src/flash_loan.rs` — fee calculation and fee bucket write
-- `contracts/hello-world/src/tests/reserve_test.rs` — full test suite including
+- `contracts/lending/src/lib.rs` — accrual, withdrawal, and reserve functions
+- `contracts/lending/src/lib.rs` — fee calculation and fee bucket writes
+- `contracts/lending/src/` — reserve accounting tests including
   edge-case coverage added in issue #659

@@ -218,7 +218,6 @@ stellarlend-contracts/
 └── stellar-lend/
     ├── Cargo.toml
     ├── contracts/
-    │   ├── hello-world/               # Example/initialization contract
     │   └── lending/                   # PRIMARY LENDING CONTRACT
     │       ├── Cargo.toml
     │       ├── README.md              # Lending contract README

@@ -263,7 +263,6 @@ Per-crate thresholds live in `scripts/coverage_thresholds.json`:
   "flat_threshold": 95.0,
   "per_crate": {
     "contracts/lending/src": 95.0,
-    "contracts/hello-world/src": 95.0,
     "contracts/common/src": 95.0,
     "contracts/multisig/src": 95.0,
     "contracts/amm/src": 95.0,
@@ -276,12 +275,6 @@ Per-crate thresholds live in `scripts/coverage_thresholds.json`:
 
 - `flat_threshold` — fallback for any crate not listed in `per_crate`
 - `per_crate` — crate-specific minimum line-rate percentages
-
-> Note: `contracts/hello-world` is intentionally excluded from the workspace
-> (`stellar-lend/Cargo.toml`) because it is in a broken mid-migration state;
-> tarpaulin will not produce a cobertura entry for it until after the crate
-> is restored to the workspace. The threshold entry above is preserved so
-> coverage is enforced automatically once the crate is revived.
 
 ### Running locally
 
@@ -321,11 +314,9 @@ the offending crate:
 ```
 Crate                                           Coverage  Threshold  Status
 --------------------------------------------------------------------------------
-  contracts/hello-world/src                         0.00%     95.00%  FAIL
   contracts/lending/src                           100.00%     95.00%  OK
 
 Coverage check FAILED:
-  contracts/hello-world/src: 0.00% < 95.00%
 ```
 
 ### Unit tests

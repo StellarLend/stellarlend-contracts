@@ -160,5 +160,4 @@ test result: ok
 ## References
 
 - [INTEREST_NUMERIC_ASSUMPTIONS.md](./INTEREST_NUMERIC_ASSUMPTIONS.md)
-- [LONG_HORIZON_INTEREST_TEST_REPORT.md](./LONG_HORIZON_INTEREST_TEST_REPORT.md)
 - Banker's Rounding: https://en.wikipedia.org/wiki/Rounding#Round_half_to_even
