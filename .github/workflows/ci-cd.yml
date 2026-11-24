@@ -93,6 +93,7 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -108,15 +109,11 @@ jobs:
 
       - name: Check workspace
         working-directory: stellar-lend
-        run: cargo check --workspace --lib  --keep-going
+        run: cargo check --workspace --lib --keep-going
 
-      - name: Run vesting contract tests
+      - name: Run workspace tests (excluding bridge)
         working-directory: stellar-lend
-        run: cargo test -p stellarlend-vesting
-
-      - name: Run multisig tests
-        working-directory: stellar-lend
-        run: cargo test -p stellarlend-multisig
+        run: cargo test --workspace --exclude stellarlend-bridge --locked
 
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
