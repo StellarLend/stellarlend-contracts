@@ -1,8 +1,11 @@
 # Soroban Smart Contracts CI/CD
 
 This document describes the continuous integration setup defined in
-[`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and how to
-reproduce the same checks locally.
+[`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and
+[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml),
+and how to reproduce the same checks locally. The dependency audit is a
+separate workflow; the job graph below predates that split and is retained
+only for the main CI jobs.
 
 ## CI Pipeline Overview
 
@@ -45,15 +48,28 @@ The pipeline in `.github/workflows/ci-cd.yml` consists of automated jobs designe
   - `cargo build -p stellarlend-bridge --target wasm32v1-none --release`
 
 ### 3. API Service (`api-service`)
+### 4. Security Audit (`security-audit.yml`)
 
 - **Purpose**: REST API service verification
 - **Runs on**: `ubuntu-latest` (triggers on push or PRs modifying `api/**`)
+- **Purpose**: Dependency vulnerability scanning for Rust and Node.js
+- **Runs on**: `ubuntu-latest`, on every pull request and weekly via
+  `on: schedule` (Monday 03:17 UTC)
 - **Checks**:
   - `npm ci`
   - `npm run lint` (ESLint)
   - `npm run build` (TypeScript compiler)
   - `npm test` (Jest test suite with coverage thresholds)
   - Coverage report artifact upload
+  - `cargo install cargo-audit --version '^0.21' --locked`
+  - `cargo audit --file Cargo.lock` from `stellar-lend/`
+  - `npm audit --omit=dev --audit-level=high` from `oracle/` and `api/`
+- **Accepted advisories**: documented with one-line justifications in
+  [`stellar-lend/audit.toml`](../stellar-lend/audit.toml), which
+  `stellar-lend/.cargo/audit.toml` symlinks to for cargo-audit. The npm steps
+  accept only `GHSA-*` IDs listed there; a new high-severity advisory fails
+  the job until it is reviewed and documented. Dependency upgrades are out of
+  scope for an acceptance entry.
 
 ## Caching Strategy
 
@@ -130,7 +146,7 @@ rustup target add wasm32-unknown-unknown
 cargo install --locked stellar-cli
 
 # Install additional tools (audit + coverage)
-cargo install cargo-audit
+cargo install cargo-audit --version '^0.21' --locked
 cargo install cargo-tarpaulin --locked --version 0.31.0
 ```
 
@@ -208,18 +224,17 @@ python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml \
 > (95% per crate currently). If a workspace member does not meet its
 > threshold, the job fails and names the offending crate.
 
-#### 6. Security Audit (matches `audit`)
+#### 6. Security Audit (matches `security-audit.yml`)
 
 ```bash
 cd stellar-lend
-cargo audit \
-  --ignore RUSTSEC-2026-0049 \
-  --ignore RUSTSEC-2025-0009 \
-  --ignore RUSTSEC-2023-0071 \
-  --ignore RUSTSEC-2024-0363 \
-  --ignore RUSTSEC-2024-0344 \
-  --ignore RUSTSEC-2022-0093
+cargo audit --file Cargo.lock
+cd ../oracle && npm audit --omit=dev --audit-level=high
+cd ../api && npm audit --omit=dev --audit-level=high
 ```
+
+Ignored advisories come from `stellar-lend/audit.toml`; do not pass ad-hoc
+`--ignore` flags locally, because the workflow will not know about them.
 
 ## Fixing Common Issues
 
@@ -252,12 +267,17 @@ cargo clippy --all-targets --all-features --workspace
 ### Security Issues
 
 ```bash
-# Update dependencies
-cargo update
+# Update dependencies against the committed workspace lock
+cargo update --manifest-path stellar-lend/Cargo.toml
+cargo check --locked --manifest-path stellar-lend/Cargo.toml
 
 # Check for specific vulnerabilities
-cargo audit --db /path/to/advisory-db
+cd stellar-lend && cargo audit --file Cargo.lock
 ```
+
+`stellar-lend/Cargo.lock` is intentionally tracked; use `--locked` for
+dependency-sensitive cargo commands so an accidental lockfile change cannot go
+uncommitted.
 
 ## Environment Variables
 
