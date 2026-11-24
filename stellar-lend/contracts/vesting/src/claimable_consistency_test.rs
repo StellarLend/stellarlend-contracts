@@ -217,3 +217,51 @@ fn claimable_after_mid_schedule_claim_reflects_new_vesting() {
     assert_eq!(g.released, 750);
     assert_eq!(g.claimable(), 0);
 }
+
+#[test]
+fn revoked_linear_claimable_equals_retained_vested() {
+    let mut c = VestingContract::new("admin", "treasury");
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
+
+    // Revoke at t=300: 300 vested (retained), 700 unvested (clawed back to treasury)
+    let clawback = c.revoke("admin", "alice", 300).expect("revoke should succeed");
+    assert_eq!(clawback, 700);
+
+    // Assert claimable_total == 300
+    assert_eq!(c.claimable_total("alice", 300), 300);
+
+    // Assert claim == 300
+    let claimed = c.claim("alice", 300).expect("claim should succeed");
+    assert_eq!(claimed, 300);
+    assert_eq!(c.balance_of("alice"), 300);
+
+    // Vault health: token_balance >= total_locked
+    let (token_balance, total_locked) = c.get_vault_health();
+    assert!(token_balance >= total_locked);
+    assert_eq!(total_locked, 0);
+}
+
+#[test]
+fn revoked_linear_partial_claim_then_revoke() {
+    let mut c = VestingContract::new("admin", "treasury");
+    c.add_grant("admin", "alice", 1_000, 0, 1_000, 0).unwrap();
+
+    // Claim 100 at t=200
+    let claimed1 = c.claim_partial("alice", 100, 200).expect("partial claim should succeed");
+    assert_eq!(claimed1, 100);
+
+    // Revoke at t=500: at t=500, 500 vested, 500 unvested clawed back
+    let clawback = c.revoke("admin", "alice", 500).expect("revoke should succeed");
+    assert_eq!(clawback, 500);
+
+    // Claimable remainder should be 500 - 100 = 400
+    assert_eq!(c.claimable_total("alice", 500), 400);
+
+    let claimed2 = c.claim("alice", 500).expect("claim should succeed");
+    assert_eq!(claimed2, 400);
+    assert_eq!(c.balance_of("alice"), 500);
+
+    let (token_balance, total_locked) = c.get_vault_health();
+    assert!(token_balance >= total_locked);
+    assert_eq!(total_locked, 0);
+}

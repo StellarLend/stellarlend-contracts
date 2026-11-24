@@ -1,13 +1,13 @@
 #!/bin/bash
 # local-ci.sh - Reproduce the CI pipeline locally
 #
-# This script mirrors the 5-job pipeline in .github/workflows/ci-cd.yml:
+# This script mirrors the workflow jobs and steps in .github/workflows/ci-cd.yml:
 #
 #   1. check            - cargo fmt + clippy
-#   2. soroban-checks   - stellar contract build + optimize + inspect
-#   3. build-and-test   - cargo build + unit/integration tests
-#   4. audit            - cargo audit
-#   5. coverage         - cargo tarpaulin + enforce_coverage.py
+#   2. build-and-test   - cargo check + contract tests + WASM release build & budgets
+#   3. wasm             - WASM size checker tests + size budget enforcement
+#   4. fuzz-smoke       - lending fuzz targets build/smoke + bridge tests
+#   5. api-service      - npm ci, lint, build, test for api/ service
 #
 # Run individual sections via the --only flag (see "USAGE" below), or run the
 # whole pipeline with no arguments.
@@ -19,7 +19,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Project directory
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="stellar-lend"
 
 # ─── USAGE ────────────────────────────────────────────────────────────────────
@@ -27,17 +27,13 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [--only <section>] [--help]
 
-Sections (each maps to one CI job):
-  check           cargo fmt --all -- --check + cargo clippy
-  soroban-checks  stellar contract build + optimize + inspect
-  build-and-test  cargo build + unit/integration tests
-  audit           cargo audit
-  coverage        cargo tarpaulin + enforce_coverage.py
-  all             (default) run every section in pipeline order
-
-NOTE: ci-cd.yml's build-and-test job runs on macos-latest. If you're on Linux,
-this script still runs the same commands; expect occasional platform-specific
-flakes from native dev-dependencies (e.g. ed25519-dalek, rand).
+Sections (matching CI jobs and steps in .github/workflows/ci-cd.yml):
+  check           cargo fmt + clippy linting
+  build-and-test  cargo check, contract tests, and release WASM build
+  wasm            WASM size checker unit tests and size budget enforcement
+  fuzz-smoke      fuzz smoke tests for lending contracts & bridge build
+  api-service     npm ci, lint, build, and test for api/ Express service
+  all             (default) run primary CI pipeline sections
 EOF
 }
 
@@ -54,17 +50,17 @@ should_run() {
     [ -z "$ONLY" ] || [ "$ONLY" = "$1" ] || [ "$ONLY" = "all" ]
 }
 
-echo -e "${BLUE}🚀 Running local CI checks for Soroban Smart Contracts${NC}"
+echo -e "${BLUE}🚀 Running local CI checks for StellarLend${NC}"
 echo "=================================================="
 
 # Check if we're in the right directory
-if [ ! -d "$PROJECT_DIR" ]; then
-    echo -e "${RED}❌ Error: $PROJECT_DIR directory not found${NC}"
+if [ ! -d "$REPO_ROOT/$PROJECT_DIR" ]; then
+    echo -e "${RED}❌ Error: $PROJECT_DIR directory not found at $REPO_ROOT/$PROJECT_DIR${NC}"
     echo "Make sure to run this script from the project root"
     exit 1
 fi
 
-cd "$PROJECT_DIR"
+cd "$REPO_ROOT"
 
 # Track overall pass/fail across all checks
 FAILED=0
@@ -92,21 +88,14 @@ if ! command -v rustc &> /dev/null; then
     exit 1
 fi
 
-# Install required Rust components
-echo -e "\n${BLUE}🔧 Installing Rust components...${NC}"
-rustup component add rustfmt clippy
-rustup target add wasm32-unknown-unknown
-
-# ─── 1. CHECK (matches CI job: check) ─────────────────────────────────────────
+# ─── 1. CHECK (Format & Linting) ──────────────────────────────────────────────
 if should_run check; then
     echo -e "\n${BLUE}🧹 [check] Format & Lint${NC}"
     echo "================================================"
 
-    run_check "Format Check" "cargo fmt --all -- --check"
+    run_check "Format Check" "(cd '$REPO_ROOT/$PROJECT_DIR' && cargo fmt --all -- --check)"
 
-    # --all-targets --all-features matches the CI clippy invocation, with the
-    # same -A allow flags for known false positives.
-    run_check "Clippy Linting" "cargo clippy --all-targets --all-features --workspace -- \
+    run_check "Clippy Linting" "(cd '$REPO_ROOT/$PROJECT_DIR' && cargo clippy --all-targets --all-features --workspace -- \
         -D warnings \
         -A deprecated \
         -A dead_code \
@@ -114,111 +103,67 @@ if should_run check; then
         -A unused-attributes \
         -A clippy::inconsistent-digit-grouping \
         -A clippy::manual-range-contains \
-        -A clippy::unnecessary_cast"
+        -A clippy::unnecessary_cast)"
 fi
 
-# ─── 2. SOROBAN-CHECKS (matches CI job: soroban-checks) ───────────────────────
-if should_run soroban-checks; then
-    echo -e "\n${BLUE}🔍 [soroban-checks] Soroban Validations & WASM Size Budgets${NC}"
-    echo "=========================================="
-
-    # Run size checker script tests
-    run_check "WASM Size Checker Tests" "bash ../scripts/tests/test_check_wasm_sizes.sh"
-
-    # Install Stellar CLI (used for build/optimize/inspect). Mirrors the CI job
-    # step which runs `cargo install --locked stellar-cli`.
-    if ! command -v stellar &> /dev/null; then
-        echo -e "${BLUE}🛠️  Installing Stellar CLI (cargo install --locked stellar-cli --version 25.2.0)...${NC}"
-        cargo install --locked stellar-cli --version 25.2.0
-    fi
-
-    run_check "Contract Build (Lending)" "stellar contract build --package stellarlend-lending"
-    run_check "Contract Build (AMM)" "stellar contract build --package stellarlend-amm"
-    run_check "Contract Build (Vesting)" "stellar contract build --package stellarlend-vesting"
-    run_check "Contract Build (Multisig)" "stellar contract build --package stellarlend-multisig"
-
-    # Enforce size budgets
-    run_check "Enforce WASM Size Budgets" "bash ../scripts/check_wasm_sizes.sh"
-
-    WASM_DIR="target/wasm32v1-none/release"
-    if [ ! -d "$WASM_DIR" ]; then
-        WASM_DIR="target/wasm32-unknown-unknown/release"
-    fi
-
-    if [ -d "$WASM_DIR" ]; then
-        # Optimize each non-optimized wasm artifact, then inspect the result.
-        for wasm in "$WASM_DIR"/*.wasm; do
-            [ -f "$wasm" ] || continue
-            case "$wasm" in
-                *-optimized.wasm|*.optimized.wasm) continue ;;
-            esac
-            run_check "Contract Optimization" "stellar contract optimize --wasm $wasm"
-
-            optimized_wasm="${wasm%.wasm}-optimized.wasm"
-            if [ -f "$optimized_wasm" ]; then
-                run_check "Contract Inspection" "stellar contract inspect --wasm $optimized_wasm --output json"
-            fi
-        done
-    else
-        echo -e "${YELLOW}⚠️  No WASM files found to optimize/inspect${NC}"
-    fi
-fi
-
-# ─── 3. BUILD-AND-TEST (matches CI job: build-and-test on macos-latest) ────────
+# ─── 2. BUILD-AND-TEST (matches CI job: build-and-test) ───────────────────────
 if should_run build-and-test; then
     echo -e "\n${BLUE}🧪 [build-and-test] Build & Tests${NC}"
     echo "==================================="
 
-    run_check "Build" "cargo build --verbose"
-    run_check "Unit Tests" "cargo test --lib --verbose"
-    run_check "Integration Tests" "cargo test --tests --verbose"
-    run_check "Documentation Build" "cargo doc --no-deps --verbose"
+    run_check "Check Workspace" "(cd '$REPO_ROOT/$PROJECT_DIR' && cargo check --workspace --lib --keep-going)"
+    run_check "Run Vesting Contract Tests" "(cd '$REPO_ROOT/$PROJECT_DIR' && cargo test -p stellarlend-vesting)"
+    run_check "Run Multisig Tests" "(cd '$REPO_ROOT/$PROJECT_DIR' && cargo test -p stellarlend-multisig)"
+    run_check "Run WASM Size Checker Unit Tests" "(cd '$REPO_ROOT' && bash scripts/tests/test_check_wasm_sizes.sh)"
+    run_check "Build Release Contract WASMs" "(cd '$REPO_ROOT/$PROJECT_DIR' && cargo build --release --target wasm32v1-none \
+        -p stellarlend-lending \
+        -p stellarlend-amm \
+        -p stellarlend-vesting \
+        -p stellarlend-multisig)"
+    run_check "Enforce WASM Size Budgets" "(cd '$REPO_ROOT' && bash scripts/check_wasm_sizes.sh)"
 fi
 
-# ─── 4. AUDIT (matches CI job: audit) ─────────────────────────────────────────
-if should_run audit; then
-    echo -e "\n${BLUE}🔒 [audit] Security Audit${NC}"
-    echo "==========================="
+# ─── 3. WASM (WASM size checks & enforcement) ────────────────────────────────
+if should_run wasm; then
+    echo -e "\n${BLUE}📦 [wasm] WASM Size Checks & Budget Enforcement${NC}"
+    echo "=============================================="
 
-    if ! command -v cargo-audit &> /dev/null; then
-        echo -e "${BLUE}🛠️  Installing cargo-audit...${NC}"
-        # --locked here matches the workflow so the local install and the CI
-        # install resolve to the same advisory-db revision.
-        cargo install cargo-audit --version '^0.21' --locked
-    fi
-
-    # Ignored advisories live in stellar-lend/.cargo/audit.toml.
-    run_check "Security Audit" "cargo audit"
+    run_check "WASM Size Checker Tests" "(cd '$REPO_ROOT' && bash scripts/tests/test_check_wasm_sizes.sh)"
+    run_check "Build Release Contract WASMs" "(cd '$REPO_ROOT/$PROJECT_DIR' && cargo build --release --target wasm32v1-none \
+        -p stellarlend-lending \
+        -p stellarlend-amm \
+        -p stellarlend-vesting \
+        -p stellarlend-multisig)"
+    run_check "Enforce WASM Size Budgets" "(cd '$REPO_ROOT' && bash scripts/check_wasm_sizes.sh)"
 fi
 
-# ─── 5. COVERAGE (matches CI job: coverage on ubuntu-latest) ───────────────────
-if should_run coverage; then
-    echo -e "\n${BLUE}📊 [coverage] Code Coverage${NC}"
-    echo "============================="
+# ─── 4. FUZZ-SMOKE (matches CI job: fuzz-smoke) ──────────────────────────────
+if should_run fuzz-smoke; then
+    echo -e "\n${BLUE}⚡ [fuzz-smoke] Fuzz Smoke & Bridge Tests${NC}"
+    echo "========================================="
 
-    if ! command -v cargo-tarpaulin &> /dev/null; then
-        echo -e "${BLUE}🛠️  Installing cargo-tarpaulin...${NC}"
-        cargo install cargo-tarpaulin --locked --version 0.31.0
+    if command -v cargo-fuzz &> /dev/null; then
+        run_check "Build All Fuzz Targets" "(cd '$REPO_ROOT/$PROJECT_DIR/contracts/lending/fuzz' && cargo +nightly fuzz build)"
+        run_check "Smoke Run fuzz_entrypoints" "(cd '$REPO_ROOT/$PROJECT_DIR/contracts/lending/fuzz' && cargo +nightly fuzz run fuzz_entrypoints -- -max_total_time=60)"
+        run_check "Smoke Run fuzz_liquidate_close_factor" "(cd '$REPO_ROOT/$PROJECT_DIR/contracts/lending/fuzz' && cargo +nightly fuzz run fuzz_liquidate_close_factor -- -max_total_time=60)"
+        run_check "Smoke Run fuzz_borrow_rate" "(cd '$REPO_ROOT/$PROJECT_DIR/contracts/lending/fuzz' && cargo +nightly fuzz run fuzz_borrow_rate -- -max_total_time=60)"
+    else
+        echo -e "${YELLOW}⚠️ cargo-fuzz not installed; skipping lending fuzz smoke tests${NC}"
     fi
 
-    echo -e "\n${YELLOW}🔍 Generating coverage${NC}"
-    run_check "Coverage Generation" "cargo tarpaulin --verbose --out Xml --workspace"
+    run_check "Test Bridge Crate" "(cd '$REPO_ROOT' && cargo test -p stellarlend-bridge)"
+    run_check "Build Bridge WASM" "(cd '$REPO_ROOT' && cargo build -p stellarlend-bridge --target wasm32v1-none --release)"
+fi
 
-    # Coverage enforcement. cwd is stellar-lend/ (set at the top of this
-    # script), so cobertura.xml is in the cwd and the thresholds JSON lives at
-    # ../scripts/coverage_thresholds.json relative to that.
-    #
-    # We deliberately do NOT provide a "fall back to default 95%" branch here:
-    # any silent-swallow of a coverage failure (e.g. `|| true`) would let real
-    # below-threshold crates slip through unreported. If the JSON is missing
-    # for some reason, hard-fail immediately so the operator fixes the repo
-    # rather than mis-attributing the result.
-    echo -e "\n${YELLOW}🔍 Enforcing per-crate thresholds${NC}"
-    if [ ! -f "../scripts/coverage_thresholds.json" ]; then
-        echo -e "${RED}❌ ../scripts/coverage_thresholds.json not found; cannot enforce coverage.${NC}"
-        exit 1
-    fi
-    run_check "Coverage Threshold Enforcement" "python3 ../scripts/enforce_coverage.py cobertura.xml --thresholds-json ../scripts/coverage_thresholds.json"
+# ─── 5. API-SERVICE (matches CI job: api-service) ─────────────────────────────
+if should_run api-service; then
+    echo -e "\n${BLUE}🌐 [api-service] API Service Checks (lint, tsc, jest)${NC}"
+    echo "====================================================="
+
+    run_check "API Dependencies Install" "(cd '$REPO_ROOT/api' && npm ci)"
+    run_check "API Lint" "(cd '$REPO_ROOT/api' && npm run lint)"
+    run_check "API Build (TypeScript)" "(cd '$REPO_ROOT/api' && npm run build)"
+    run_check "API Tests" "(cd '$REPO_ROOT/api' && npm test)"
 fi
 
 # ─── SUMMARY ──────────────────────────────────────────────────────────────────
@@ -229,13 +174,6 @@ else
 fi
 echo "===================================="
 echo -e "${YELLOW}Note: Some checks might behave slightly differently in CI (e.g. ephemeral cache state).${NC}"
-
-echo -e "\n${BLUE}💡 Quick fixes for common issues:${NC}"
-echo "- Format issues:    cd stellar-lend && cargo fmt --all"
-echo "- Clippy warnings:  cd stellar-lend && cargo clippy --fix --all-targets --all-features"
-echo "- Build issues:     check error output, fix code, re-run ./local-ci.sh"
-echo "- Security issues:  cargo update or add --ignore RUSTSEC-XXXX-XXXX to audit run"
-echo "- Coverage:          add tests, then re-run ./local-ci.sh --only coverage"
 
 # Exit with non-zero if any check failed
 exit "$FAILED"
