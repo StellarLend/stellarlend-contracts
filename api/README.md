@@ -32,7 +32,10 @@ SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 CONTRACT_ID=<your_deployed_contract_id>
 JWT_SECRET=<your_secret_key>
 STELLAR_API_HOOK_SECRET=<your_hook_secret>
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
 ```
+
+`CORS_ALLOWED_ORIGINS` is a comma-separated list of browser origins. Entries are trimmed and empty entries are ignored. In production, the default is an empty list, so cross-origin access is denied unless origins are explicitly configured. In development, the default is `*`.
 
 Circuit breaker tuning (optional, environment variables):
 
@@ -84,8 +87,36 @@ The health endpoint now includes Soroban RPC circuit breaker metrics under `serv
 }
 ```
 
+### Token Generation
+`POST /api/lending/token` - Generate a JWT bearer token for an authenticated Stellar address
+
+Request body:
+```json
+{
+  "address": "G...",
+  "network": "testnet"
+}
+```
+Response:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+Tokens can also be generated directly in backend code using `generateToken(address, network)` from `middleware/authorization`.
+
+## Lending Write Operations (Authentication Required)
+
+All lending write routes (`/deposit`, `/borrow`, `/repay`, `/withdraw`) require:
+1. `Authorization: Bearer <token>` header with a valid JWT token.
+2. Address binding: `userAddress` in the request body must match the authenticated `address` in the token.
+
+Requests without a valid token return HTTP `401 Unauthorized`. Requests where the authenticated address does not match `userAddress` in the body return HTTP `403 Forbidden`.
+
 ### Deposit Collateral
 `POST /api/lending/deposit`
+Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",
@@ -96,6 +127,7 @@ Returns `{ "xdr": "...", "networkPassphrase": "..." }` for client-side signing.
 
 ### Borrow Assets
 `POST /api/lending/borrow`
+Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",
@@ -106,6 +138,7 @@ Returns `{ "xdr": "...", "networkPassphrase": "..." }` for client-side signing.
 
 ### Repay Debt
 `POST /api/lending/repay`
+Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",
@@ -116,6 +149,7 @@ Returns `{ "xdr": "...", "networkPassphrase": "..." }` for client-side signing.
 
 ### Withdraw Collateral
 `POST /api/lending/withdraw`
+Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",

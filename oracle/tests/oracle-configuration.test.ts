@@ -14,9 +14,12 @@
  * reliance on `Math.random()` or on the ambient environment.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import http from 'node:http';
+import crypto from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OracleService } from '../src/index.js';
+import { AdminServer } from '../src/services/admin-server.js';
+import { PriceValidator } from '../src/services/price-validator.js';
 import {
     validateOracleServiceConfig,
     ConfigValidationError,
@@ -1648,5 +1651,68 @@ describe('validateOracleServiceConfig', () => {
         expect(validated.madZScoreThreshold).toBe(2.5);
         expect(validated.cacheTtlSeconds).toBe(0);
         expect(validated.logLevel).toBe('warn');
+    });
+
+    describe('AdminServer /reload-config schema validation', () => {
+        let server: AdminServer;
+        let validator: PriceValidator;
+        const secret = 'test-secret-key-for-hmac-32chars';
+        const port = 38991;
+
+        beforeEach(async () => {
+            validator = new PriceValidator();
+            server = new AdminServer({ port, hmacSecret: secret, validator });
+            await server.start();
+        });
+
+        afterEach(async () => {
+            await server.stop();
+        });
+
+        const sendReload = async (payload: unknown) => {
+            const body = Buffer.from(JSON.stringify(payload));
+            const signature = crypto.createHmac('sha256', secret).update(body).digest('hex');
+            return new Promise<{ status: number; body: any }>((resolve, reject) => {
+                const req = http.request(
+                    {
+                        hostname: '127.0.0.1',
+                        port,
+                        path: '/reload-config',
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-signature': signature,
+                            'Content-Length': body.length,
+                        },
+                    },
+                    (res) => {
+                        let data = '';
+                        res.on('data', (chunk) => (data += chunk));
+                        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(data) }));
+                    }
+                );
+                req.on('error', reject);
+                req.write(body);
+                req.end();
+            });
+        };
+
+        it('rejects bounds with negative minPrice with 400', async () => {
+            const res = await sendReload({ bounds: { BTC: { minPrice: -1, maxPrice: 2 } } });
+            expect(res.status).toBe(400);
+            expect(res.body.error).toContain('bounds.BTC.minPrice');
+        });
+
+        it('rejects bounds with infinite maxPrice with 400', async () => {
+            const res = await sendReload({ bounds: { BTC: { minPrice: 1, maxPrice: 1e999 } } });
+            expect(res.status).toBe(400);
+            expect(res.body.error).toContain('bounds.BTC.maxPrice');
+        });
+
+        it('rejects validatorConfig with negative maxDeviationPercent with 400', async () => {
+            const res = await sendReload({ validatorConfig: { maxDeviationPercent: -5 } });
+            expect(res.status).toBe(400);
+            expect(res.body.error).toContain('validatorConfig.maxDeviationPercent');
+        });
     });
 });

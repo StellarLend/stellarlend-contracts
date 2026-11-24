@@ -162,6 +162,7 @@ export interface OracleServiceConfig {
     contractId: string;
     adminSecretKey: string;
     adminApiPort?: number;
+    adminHost?: string;
     adminHmacSecret?: string;
     updateIntervalMs: number;
     maxPriceDeviationPercent: number;
@@ -423,6 +424,13 @@ export interface SubmissionReceipt {
   success: boolean;
   attempt: number;
   submittedAt: number;
+}
+
+/**
+ * Defines the contract updater interface for on-chain price updates.
+ */
+export interface IContractUpdater {
+  updatePrices(prices: AggregatedPrice[]): Promise<ContractUpdateResult[]>;
 }
 
 // ---------------------------------------------------------------------------

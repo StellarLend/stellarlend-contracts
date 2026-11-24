@@ -6,6 +6,7 @@
  */
 
 import axios, { AxiosError } from 'axios';
+import { generateToken } from '../src/middleware/authorization';
 
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
 const MAX_AMOUNT_STROOPS = 9223372036854775807n;
@@ -62,6 +63,12 @@ async function depositCollateral(
         userAddress,
         assetAddress,
         amount,
+        userSecret,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${generateToken(userAddress)}`,
+        },
       }
     );
 
@@ -91,6 +98,12 @@ async function borrowAssets(
         userAddress,
         assetAddress,
         amount,
+        userSecret,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${generateToken(userAddress)}`,
+        },
       }
     );
 
@@ -120,6 +133,12 @@ async function repayDebt(
         userAddress,
         assetAddress,
         amount,
+        userSecret,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${generateToken(userAddress)}`,
+        },
       }
     );
 
@@ -149,38 +168,11 @@ async function withdrawCollateral(
         userAddress,
         assetAddress,
         amount,
-      }
-    );
-
-    console.log('✅ Withdraw transaction prepared for client-side signing');
-    return response.data;
-  } catch (error) {
-    handleError('Withdraw', error);
-    throw error;
-  }
-}
-
-/**
- * Submit a client-signed transaction XDR
- */
-async function submitSignedTransaction(
-  signedXdr: string,
-  authToken: string
-): Promise<TransactionResponse> {
-  if (typeof signedXdr !== 'string' || !signedXdr.trim()) {
-    throw new Error('Signed transaction XDR is required');
-  }
-  if (typeof authToken !== 'string' || !authToken.trim()) {
-    throw new Error('Auth token is required');
-  }
-
-  try {
-    const response = await axios.post<TransactionResponse>(
-      `${API_BASE_URL}/lending/submit`,
-      { xdr: signedXdr },
+        userSecret,
+      },
       {
         headers: {
-          Authorization: `Bearer ${authToken}`,
+          Authorization: `Bearer ${generateToken(userAddress)}`,
         },
       }
     );
