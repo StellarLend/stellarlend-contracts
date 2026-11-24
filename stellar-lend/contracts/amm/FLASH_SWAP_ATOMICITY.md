@@ -39,16 +39,20 @@ Op 3  AMM.repay_flash_swap(amount_in)
         • Checks FlashActive == true
         • Credits reserve_a by amount_in
         • Verifies: (reserve_a + amount_in) × reserve_b_after ≥ k_before
-          → if this fails: PANIC → Soroban rolls back Ops 1-3 entirely
+          → if this fails: returns Err(AmmPoolError::InvariantViolation)
+            AND the Soroban host rolls back the whole top-level invocation (Ops 1-3)
         • Sets FlashActive = false
 
 ───────────────────────────────────────────────────────────────
 ```
 
-Soroban executes all operations in a transaction atomically: if any operation
-panics, every storage write in the entire transaction is rolled back.  That
-includes Op 1's optimistic debit, so a failed repay leaves the pool in exactly
-the same state it was in before the flash swap started.
+Soroban executes all operations in a single top-level invocation atomically:
+when `repay_flash_swap` fails (for example, on under-repayment), it returns a
+typed contract error (`Err(AmmPoolError::InvariantViolation)`) **and** the
+Soroban host rolls back every storage write made during the entire top-level
+invocation.  That includes Op 1's optimistic debit and `FlashActive = true`,
+so a failed repay returns `Err` and leaves the pool in exactly the same state
+it was in before the flash swap started.
 
 > **Why two entry-points instead of a callback?**  Soroban 25.3.1 forbids a
 > contract from invoking itself from inside a callback (*Contract re-entry is
@@ -107,8 +111,8 @@ FlashActive = false
 
 ```
 k_after = (1 000 + 249) × 800 = 1 249 × 800 = 999 200 < k_before ✗
-→ PANIC "Invariant violation: k decreased during flash-swap repayment"
-→ Soroban rolls back; reserves restored to (1 000, 1 000); FlashActive = false
+→ returns Err(AmmPoolError::InvariantViolation)
+→ Soroban host rolls back the entire top-level invocation; reserves restored to (1 000, 1 000); FlashActive = false
 ```
 
 ---
@@ -147,11 +151,11 @@ state-mutating entrypoint while a flash swap is in flight:
 
 | Test | Scenario |
 |---|---|
-| `test_correct_repay_clears_flag_and_k_ok` | Correct repay via `SwapCallbackStub` → k ≥ k_before, flag cleared |
-| `test_under_repay_reverts_k_violation` | Under-repay (1 stroop short) → panic with invariant message |
+| `test_correct_repay_clears_flag_and_k_ok` | Correct repay via `SwapCallbackStub::try_execute` → `Ok`, k ≥ k_before, flag cleared |
+| `test_under_repay_reverts_k_violation` | Under-repay (1 stroop short) via `try_execute` → `Err`; reserves and flag rolled back |
 | `test_under_repay_reserves_unchanged` | `try_` captures under-repay error; reserves fully restored |
 | `test_under_repay_flag_cleared_on_rollback` | `is_flash_active` false after rolled-back swap |
-| `test_reentrant_flash_rejected` | `ReentrantCallbackStub` triggers nested flash → `ReentrantFlashSwap` |
+| `test_reentrant_flash_rejected` | `ReentrantCallbackStub::try_execute` triggers nested flash → `Err` (`ReentrantFlashSwap`); state rolled back |
 
 Additional coverage lives in `flash_swap_test.rs` (input validation, fee
 variants, consecutive swaps, params payload).

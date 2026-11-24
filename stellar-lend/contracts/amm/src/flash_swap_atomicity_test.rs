@@ -22,11 +22,11 @@
 //!
 //! | Test                                         | Scenario                                     |
 //! |----------------------------------------------|----------------------------------------------|
-//! | `test_correct_repay_clears_flag_and_k_ok`    | Correct repay → k non-decreasing, flag clear |
-//! | `test_under_repay_reverts_k_violation`       | Under-repay → panic, reserves unchanged      |
+//! | `test_correct_repay_clears_flag_and_k_ok`    | Correct repay → `Ok`, k non-decreasing, flag clear |
+//! | `test_under_repay_reverts_k_violation`       | Under-repay → `Err`, reserves & flag rolled back |
 //! | `test_under_repay_reserves_unchanged`        | Under-repay rollback leaves reserves exact   |
 //! | `test_under_repay_flag_cleared_on_rollback`  | `is_flash_active` false after rollback       |
-//! | `test_reentrant_flash_rejected`              | Re-entrant flash during active one → reject  |
+//! | `test_reentrant_flash_rejected`              | Re-entrant flash during active one → `Err` & rollback |
 
 use crate::{inverse_swap_in, AmmContract, AmmContractClient};
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Bytes, Env};
@@ -103,9 +103,9 @@ impl ReentrantCallbackStub {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Correct repay: `is_flash_active` is cleared and k is non-decreasing.
+/// Correct repay: `try_execute` succeeds, `is_flash_active` is cleared, and k
+/// is non-decreasing.
 #[test]
-#[ignore = "flash-swap rollback behavior changed by Result-ification; see issue #1419 comment on rollback-vs-error semantics"]
 fn test_correct_repay_clears_flag_and_k_ok() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
     let amm = AmmContractClient::new(&env, &amm_id);
@@ -114,7 +114,9 @@ fn test_correct_repay_clears_flag_and_k_ok() {
     let amount_in = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
 
     let stub_id = env.register(SwapCallbackStub, ());
-    SwapCallbackStubClient::new(&env, &stub_id).execute(&amm_id, &amount_out, &amount_in);
+    let res =
+        SwapCallbackStubClient::new(&env, &stub_id).try_execute(&amm_id, &amount_out, &amount_in);
+    assert!(res.is_ok(), "correct repay must succeed");
 
     let (ra, rb) = amm.get_reserves();
     let k_after = ra.checked_mul(rb).unwrap();
@@ -122,18 +124,30 @@ fn test_correct_repay_clears_flag_and_k_ok() {
     assert!(!amm.is_flash_active(), "FlashActive must be cleared");
 }
 
-/// Under-repay must panic with the k-violation message.
+/// Under-repay returns `Err` (`AmmPoolError::InvariantViolation`) and the host
+/// rolls back the entire top-level invocation (reserves and `FlashActive` are
+/// restored to their pre-flash state).
 #[test]
-#[should_panic]
 fn test_under_repay_reverts_k_violation() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
+    let amm = AmmContractClient::new(&env, &amm_id);
 
     let amount_out: i128 = 200;
     let exact_in = inverse_swap_in(1_000, 1_000, amount_out, FEE_BPS);
     let under_in = exact_in - 1;
 
     let stub_id = env.register(SwapCallbackStub, ());
-    SwapCallbackStubClient::new(&env, &stub_id).execute(&amm_id, &amount_out, &under_in);
+    let res =
+        SwapCallbackStubClient::new(&env, &stub_id).try_execute(&amm_id, &amount_out, &under_in);
+    assert!(res.is_err(), "under-repay must return Err");
+
+    let (ra, rb) = amm.get_reserves();
+    assert_eq!(ra, 1_000, "reserve_a must be rolled back");
+    assert_eq!(rb, 1_000, "reserve_b must be rolled back");
+    assert!(
+        !amm.is_flash_active(),
+        "FlashActive must be false after rolled-back flash swap"
+    );
 }
 
 /// Under-repay via `try_` captures the error and confirms reserves are fully
@@ -181,12 +195,21 @@ fn test_under_repay_flag_cleared_on_rollback() {
 }
 
 /// A re-entrant flash swap while `FlashActive` is true must be rejected with
-/// `ReentrantFlashSwap`.
+/// `AmmPoolError::ReentrantFlashSwap` and the host rolls back the invocation.
 #[test]
-#[should_panic]
 fn test_reentrant_flash_rejected() {
     let (env, amm_id) = setup_pool(1_000, 1_000);
+    let amm = AmmContractClient::new(&env, &amm_id);
 
     let stub_id = env.register(ReentrantCallbackStub, ());
-    ReentrantCallbackStubClient::new(&env, &stub_id).execute(&amm_id, &100_i128);
+    let res = ReentrantCallbackStubClient::new(&env, &stub_id).try_execute(&amm_id, &100_i128);
+    assert!(res.is_err(), "re-entrant flash swap must return Err");
+
+    let (ra, rb) = amm.get_reserves();
+    assert_eq!(ra, 1_000, "reserve_a must be rolled back");
+    assert_eq!(rb, 1_000, "reserve_b must be rolled back");
+    assert!(
+        !amm.is_flash_active(),
+        "FlashActive must be false after rolled-back re-entrant flash swap"
+    );
 }
