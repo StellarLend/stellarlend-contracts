@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ContractUpdater, calculateJitterDelay, idFor } from '../src/services/contract-updater';
+import { Account, Keypair, xdr } from '@stellar/stellar-sdk';
+import {
+  ContractUpdater,
+  SorobanAdapter,
+  calculateJitterDelay,
+  createContractUpdater,
+  idFor,
+} from '../src/services/contract-updater';
 
 describe('ContractUpdater deterministic fallback idempotency', () => {
   it('produces a stable id for identical requests', () => {
@@ -184,7 +191,7 @@ describe('ContractUpdater failure paths and boundaries', () => {
 
     const update = updater.submitPriceUpdate(request());
     await vi.runAllTimersAsync();
-    await expect(update).resolves.toBeUndefined();
+    await expect(update).resolves.toMatchObject({ status: 'CONFIRMED', attempts: 2, txHash: 'tx-2' });
 
     expect(adapter.submit).toHaveBeenCalledTimes(2);
     expect(updater.subs.get('update-1')).toMatchObject({ status: 'CONFIRMED', attempts: 2, txHash: 'tx-2' });
@@ -226,5 +233,39 @@ describe('ContractUpdater failure paths and boundaries', () => {
     releaseFirst?.();
     await Promise.all([first, second]);
     expect(order).toEqual(['update-1', 'update-2']);
+  });
+
+  it('createContractUpdater wires SorobanAdapter when given RPC config', async () => {
+    const admin = Keypair.random();
+    const server = {
+      getAccount: vi.fn().mockImplementation(async (address: string) => new Account(address, '10')),
+      prepareTransaction: vi.fn().mockImplementation(async (tx) => tx),
+      sendTransaction: vi.fn().mockResolvedValue({ status: 'PENDING', hash: 'tx-soroban-1' }),
+      getTransaction: vi.fn().mockResolvedValue({ status: 'SUCCESS' }),
+      simulateTransaction: vi.fn().mockResolvedValue({
+        result: { retval: xdr.ScVal.scvVoid() },
+      }),
+    };
+
+    const updater = createContractUpdater({
+      network: 'testnet',
+      rpcUrl: 'https://soroban-testnet.stellar.org',
+      contractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+      adminSecretKey: admin.secret(),
+      txPollTimeoutMs: 5_000,
+      pollIntervalMs: 1,
+      server,
+    });
+
+    expect(updater.adapter).toBeInstanceOf(SorobanAdapter);
+
+    const result = await updater.updatePrice(aggregatedPrice('XLM', 1_500_000n));
+    expect(result).toMatchObject({
+      success: true,
+      asset: 'XLM',
+      transactionHash: 'tx-soroban-1',
+    });
+    expect(server.sendTransaction).toHaveBeenCalledTimes(1);
+    expect(server.getTransaction).toHaveBeenCalledWith('tx-soroban-1');
   });
 });
