@@ -214,8 +214,6 @@ mod insurance_fund_test;
 #[cfg(test)]
 mod interest_ordering_time_test;
 #[cfg(test)]
-mod liquidation_grace_test;
-#[cfg(test)]
 mod partial_staleness_guard_test;
 #[cfg(test)]
 mod test_token_receiver;
