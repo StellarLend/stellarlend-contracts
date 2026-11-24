@@ -28,6 +28,13 @@ export class UnauthorizedError extends ApiError {
   }
 }
 
+export class ForbiddenError extends ApiError {
+  constructor(message = 'Forbidden') {
+    super(403, message);
+    Object.setPrototypeOf(this, ForbiddenError.prototype);
+  }
+}
+
 export class NotFoundError extends ApiError {
   constructor(message = 'Resource not found') {
     super(404, message);

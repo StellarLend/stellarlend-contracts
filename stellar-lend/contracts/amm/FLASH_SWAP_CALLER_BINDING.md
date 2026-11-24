@@ -148,6 +148,12 @@ Proxy calls repay_flash_swap(amount_in):
 | Initiator cleared after successful repay| Next `flash_swap` binds fresh caller  |
 | Rolled-back failed repay                | Initiator cleared (entire TX reverted)|
 
+Caller mismatch and under-repay failures are returned through the typed
+`AmmPoolError` `Result` surface (`UnauthorizedCaller` and
+`InvariantViolation`, respectively). Tests use the generated `try_` client
+methods so the error variant and transaction rollback state can be asserted
+without unwinding the test.
+
 ## Backward compatibility
 
 - **No breaking changes** to the public API signature.
