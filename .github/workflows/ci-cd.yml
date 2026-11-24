@@ -115,6 +115,14 @@ jobs:
         working-directory: stellar-lend
         run: cargo test --workspace --exclude stellarlend-bridge --locked
 
+      - name: Test bridge crate
+        working-directory: stellar-lend
+        run: cargo test -p stellarlend-bridge
+
+      - name: Build bridge WASM
+        working-directory: stellar-lend
+        run: cargo build -p stellarlend-bridge --target wasm32v1-none --release
+
       - name: Run WASM size checker unit tests
         run: bash scripts/tests/test_check_wasm_sizes.sh
 
@@ -247,12 +255,6 @@ jobs:
           targets: wasm32v1-none
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Test bridge crate
-        run: cargo test -p stellarlend-bridge
-
-      - name: Build bridge WASM
-        run: cargo build -p stellarlend-bridge --target wasm32v1-none --release
 
   api-service:
     name: API Service (lint, tsc, jest)
