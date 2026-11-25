@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-crate coverage thresholds enforced by scripts/enforce_coverage.py against stellar-lend/cobertura.xml (cargo-tarpaulin output). NOTE: as of the chore/ci-green pass, the flat_threshold and several per_crate values below were recalibrated downward from a blanket 95% to match genuinely-achievable current coverage. First pass used numbers measured locally; a second pass then used the actual figures reported by CI's Linux ptrace-based tarpaulin run (which differs from other engines/platforms -- e.g. contracts/lending/src measured ~85% locally but ~77% on CI's real ptrace run), with a safety margin subtracted below the real CI numbers to absorb run-to-run noise within that same engine. Raising a crate's threshold back toward 95% is welcome once real test coverage for that crate improves accordingly -- these numbers are a floor reflecting where the suite honestly stands today (per real CI runs), not an aspirational target. contracts/amm/src and contracts/hello-world are intentionally omitted because they are excluded from coverage scanning in stellar-lend/.tarpaulin.toml: amm and hello-world are retired/unmaintained code paths.",
+  "_comment": "Per-crate coverage thresholds enforced by scripts/enforce_coverage.py against stellar-lend/cobertura.xml (cargo-tarpaulin output). NOTE: as of the chore/ci-green pass, the flat_threshold and several per_crate values below were recalibrated downward from a blanket 95% to match genuinely-achievable current coverage. First pass used numbers measured locally; a second pass then used the actual figures reported by CI's Linux ptrace-based tarpaulin run (which differs from other engines/platforms -- e.g. contracts/lending/src measured ~85% locally but ~77% on CI's real ptrace run), with a safety margin subtracted below the real CI numbers to absorb run-to-run noise within that same engine. Raising a crate's threshold back toward 95% is welcome once real test coverage for that crate improves accordingly -- these numbers are a floor reflecting where the suite honestly stands today (per real CI runs), not an aspirational target. contracts/amm/src is included in coverage scanning; its threshold is the measured CI ptrace figure minus the standard safety margin. contracts/hello-world is intentionally omitted because it is excluded from coverage scanning in stellar-lend/.tarpaulin.toml as a retired duplicate.",
   "flat_threshold": 70.0,
   "per_crate": {
     "contracts/lending/src": 68.0,
@@ -8,6 +8,7 @@
     "contracts/multisig/src": 85.0,
     "contracts/bridge/src": 55.0,
     "cross_asset_test/src": 82.0,
-    "contracts/vesting/src": 80.0
+    "contracts/vesting/src": 80.0,
+    "contracts/amm/src": 60.0
   }
 }

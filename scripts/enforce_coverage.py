@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Enforce minimum coverage thresholds from cobertura.xml.
 
-Reads per-crate thresholds from ``contracts/coverage_thresholds.json`` (with a
-per-crate thresholds from ``scripts/coverage_thresholds.json`` (with a
+Reads per-crate thresholds from ``scripts/coverage_thresholds.json`` (with a
 ``flat_threshold`` fallback for any crate not listed), iterates ``<package>``
 elements in the Cobertura report, and fails with the offending crate name if
 any crate is below its configured threshold.

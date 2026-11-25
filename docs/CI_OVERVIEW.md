@@ -221,7 +221,7 @@ python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml \
 ```
 
 > Note: coverage is enforced per-crate against `coverage_thresholds.json`
-> (95% per crate currently). If a workspace member does not meet its
+> (95% per crate currently), including `contracts/amm/src`. If a workspace member does not meet its
 > threshold, the job fails and names the offending crate.
 
 #### 6. Security Audit (matches `security-audit.yml`)
