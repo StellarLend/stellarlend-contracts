@@ -26,6 +26,12 @@ When parsing transaction failures from Soroban, extract the `u32` error code fro
 | `2005` | `InvalidFeeBps` | Flash-loan fee is outside the permitted range. | Admin must reconfigure fee within bounds. |
 | `2007` | `InsufficientCollateral` | Collateral balance is insufficient for the requested action. | Deposit more collateral or reduce the requested amount. |
 
+## Emergency / Shutdown Gating
+| Code | Name | Description | Mitigation |
+| :--- | :--- | :--- | :--- |
+| `2008` | `OperationDisabledDuringShutdown` | The protocol is in shutdown; the requested operation (e.g. deposit or borrow) is disabled. | Wait for the protocol to leave shutdown, or use permitted operations (repay, withdraw, liquidate where applicable). |
+| `2009` | `ActionBlockedInRecovery` | The protocol is in recovery; the requested action is blocked. Repay, withdraw and liquidate remain allowed. | Use repay, withdraw or liquidate, or wait for the protocol to return to normal operation. |
+
 ## Oracle Operations (5000s)
 | Code | Name | Description | Mitigation |
 | :--- | :--- | :--- | :--- |
