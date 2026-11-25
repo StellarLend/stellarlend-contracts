@@ -239,6 +239,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): OracleServiceC
     };
 }
 
+/**
+ * Fixed-point scale for oracle price values (6 decimal places).
+ * `1_000_000n` represents 1.0 in this service's price encoding.
+ *
+ * Note: the lending contract's `ORACLE_PRICE_SCALE` uses 7 decimal places
+ * (`10_000_000 = 1 unit`; see `stellar-lend/contracts/lending/src/lib.rs`
+ * and `docs/LENDING_CONTRACT.md`). This constant defines the oracle service
+ * scale used by `scalePrice`/`unscalePrice`.
+ */
 export const PRICE_SCALE = 1_000_000n;
 
 /**
@@ -309,6 +318,6 @@ export function unscalePrice(price: bigint | number): number {
 
 /**
  * Default MAD z-score threshold for outlier rejection.
- * Overridden at runtime by MAD_Z_SCORE_THRESHOLD RN var .
+ * Overridden at runtime by MAD_Z_SCORE_THRESHOLD environment variable.
  */
 export const MAD_Z_SCORE_THRESHOLD = 3.5;

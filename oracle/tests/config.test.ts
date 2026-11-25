@@ -551,9 +551,13 @@ describe('Configuration', () => {
     });
 
     describe('Price Scaling', () => {
-        it('should expose a positive integer PRICE_SCALE', () => {
-            expect(Number.isInteger(PRICE_SCALE)).toBe(true);
-            expect(PRICE_SCALE).toBeGreaterThan(0);
+        it('should expose the expected 6-decimal PRICE_SCALE', () => {
+            expect(PRICE_SCALE).toBe(1_000_000n);
+        });
+
+        it('should scale and unscale per issue #2420 test plan', () => {
+            expect(scalePrice(1.5)).toBe(1_500_000n);
+            expect(unscalePrice(1_500_000n)).toBe(1.5);
         });
 
         it('should scale a price to the configured precision', () => {
