@@ -127,8 +127,7 @@ impl Grant {
                 // vested amount at revocation time; capping with self.total_amount ensures
                 // post-revocation vesting never exceeds that frozen total.
                 let mut vested: i128 = 0;
-                for i in 0..milestones.len() {
-                    let (ts, cum) = milestones.get(i).unwrap();
+                for (ts, cum) in milestones.iter() {
                     if now >= ts {
                         vested = cum;
                     } else {
@@ -249,9 +248,7 @@ impl VestingContract {
         let mut prev_ts: Option<u64> = None;
         let mut prev_cum: i128 = 0;
 
-        for i in 0..len {
-            let (ts, cum) = milestones.get(i).unwrap();
-
+        for (ts, cum) in milestones.iter() {
             // Timestamps must be strictly increasing
             if let Some(prev) = prev_ts {
                 if ts <= prev {
@@ -531,7 +528,7 @@ impl VestingContract {
         let mut locked_delta: i128 = 0;
 
         for i in 0..grants.len() {
-            let mut g = grants.get(i).unwrap();
+            let Some(mut g) = grants.get(i) else { continue };
             let effective_now = Self::effective_now_for(
                 &env,
                 now,
@@ -607,12 +604,11 @@ impl VestingContract {
         // Compute total claimable. Revoked grants are included: their vested-but-
         // unclaimed balance stays claimable, matching `claim`.
         let mut total_claimable: i128 = 0;
-        for i in 0..grants.len() {
-            let g = grants.get(i).unwrap();
+        for (g, snapshot) in grants.iter().zip(snapshots.iter()) {
             let effective_now = Self::effective_now_for(
                 &env,
                 now,
-                snapshots.get(i).unwrap_or(0),
+                snapshot,
             );
             total_claimable = total_claimable
                 .saturating_add(g.vested_at(effective_now).saturating_sub(g.claimed_amount));
@@ -627,7 +623,7 @@ impl VestingContract {
             if remaining <= 0 {
                 break;
             }
-            let mut g = grants.get(i).unwrap();
+            let Some(mut g) = grants.get(i) else { continue };
             let effective_now = Self::effective_now_for(
                 &env,
                 now,
@@ -698,7 +694,7 @@ impl VestingContract {
             return Err(VestingError::GrantNotFound);
         }
 
-        let all_revoked = (0..grants.len()).all(|i| grants.get(i).unwrap().revoked);
+        let all_revoked = grants.iter().all(|g| g.revoked);
         if all_revoked {
             return Err(VestingError::AlreadyRevoked);
         }
@@ -709,7 +705,7 @@ impl VestingContract {
         let mut locked_delta: i128 = 0;
 
         for i in 0..grants.len() {
-            let mut g = grants.get(i).unwrap();
+            let Some(mut g) = grants.get(i) else { continue };
             if g.revoked {
                 continue;
             }
@@ -794,7 +790,7 @@ impl VestingContract {
         let mut any_changed = false;
 
         for i in 0..grants.len() {
-            let mut g = grants.get(i).unwrap();
+            let Some(mut g) = grants.get(i) else { continue };
             if g.revoked {
                 continue;
             }
@@ -887,11 +883,10 @@ impl VestingContract {
         let mut new_grants: Vec<Grant> = Vec::new(&env);
         let from_snapshots = Self::grant_pause_snapshots(&env, &from, from_grants.len());
         let mut new_snapshots: Vec<u64> = Vec::new(&env);
-        for i in 0..from_grants.len() {
-            let mut g = from_grants.get(i).unwrap();
+        for (mut g, snapshot) in from_grants.iter().zip(from_snapshots.iter()) {
             g.grantee = to.clone();
             new_grants.push_back(g);
-            new_snapshots.push_back(from_snapshots.get(i).unwrap_or(0));
+            new_snapshots.push_back(snapshot);
         }
 
         env.storage().persistent().remove(&from_key);
@@ -981,13 +976,9 @@ impl VestingContract {
         let now = env.ledger().timestamp();
         let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
         let mut total: i128 = 0;
-        for i in 0..grants.len() {
-            let g = grants.get(i).unwrap();
-            if g.revoked {
-                continue;
-            }
+        for (g, snapshot) in grants.iter().zip(snapshots.iter()) {
             let effective_now =
-                Self::effective_now_for(&env, now, snapshots.get(i).unwrap_or(0));
+                Self::effective_now_for(&env, now, snapshot);
             total = total.saturating_add(g.claimable_at(effective_now));
         }
         total
@@ -1001,10 +992,9 @@ impl VestingContract {
             .ok_or(VestingError::GrantNotFound)?;
         let mut total: i128 = 0;
         let snapshots = Self::grant_pause_snapshots(&env, &grantee, grants.len());
-        for i in 0..grants.len() {
-            let g = grants.get(i).unwrap();
+        for (g, snapshot) in grants.iter().zip(snapshots.iter()) {
             let effective_now =
-                Self::effective_now_for(&env, now, snapshots.get(i).unwrap_or(0));
+                Self::effective_now_for(&env, now, snapshot);
             total = total.saturating_add(g.vested_at(effective_now));
         }
         Ok(total)
@@ -1280,12 +1270,7 @@ impl VestingContract {
         if grants.is_empty() {
             return false;
         }
-        for i in 0..grants.len() {
-            if !grants.get(i).unwrap().revoked {
-                return false;
-            }
-        }
-        true
+        grants.iter().all(|g| g.revoked)
     }
 
     fn emit_event(env: &Env, event: &str, actor: &Address) {

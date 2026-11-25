@@ -92,6 +92,47 @@ describe('Auth Middleware', () => {
       }
       expect(next).toHaveBeenCalledTimes(5);
     });
+
+    it('should reject a token signed with HS512', () => {
+      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
+      const token = jwt.sign({ address }, config.auth.jwtSecret, { algorithm: 'HS512' });
+      const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+
+      expect(() => authenticateToken(request, response, jest.fn())).toThrow(
+        new UnauthorizedError('Invalid or expired token')
+      );
+    });
+
+    it('should reject an unsigned none algorithm token', () => {
+      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
+      const token = jwt.sign({ address }, '', { algorithm: 'none' });
+      const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+
+      expect(() => authenticateToken(request, response, jest.fn())).toThrow(
+        new UnauthorizedError('Invalid or expired token')
+      );
+    });
+
+    it('should accept an HS256 token', () => {
+      const address = 'GBLXVKWHD4QAPFLHMJDXSVB6GFUDLTC46VY42OWHC3TPRN2I6NNV3ZSJ';
+      const token = jwt.sign({ address }, config.auth.jwtSecret, { algorithm: 'HS256' });
+      const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+      const next = jest.fn();
+
+      authenticateToken(request, response, next);
+
+      expect(request.user?.address).toBe(address);
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('should reject a token without a string address claim', () => {
+      const token = jwt.sign({ address: 12345 }, config.auth.jwtSecret, { algorithm: 'HS256' });
+      const request = { headers: { authorization: `Bearer ${token}` } } as AuthRequest;
+
+      expect(() => authenticateToken(request, response, jest.fn())).toThrow(
+        new UnauthorizedError('Invalid or expired token')
+      );
+    });
   });
 
   describe('verifyHookHmac', () => {

@@ -4,6 +4,7 @@
     "stellarlend_lending.wasm": 131072,
     "stellarlend_amm.wasm": 131072,
     "stellarlend_vesting.wasm": 131072,
-    "stellarlend_multisig.wasm": 131072
+    "stellarlend_multisig.wasm": 131072,
+    "stellarlend_bridge.wasm": 131072
   }
 }

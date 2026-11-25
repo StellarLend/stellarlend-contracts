@@ -93,6 +93,35 @@ fi
 echo "OK (GITHUB_STEP_SUMMARY table written)"
 echo ""
 
+echo "Test 5: Production budgets include stellarlend_bridge.wasm and fail when missing"
+BRIDGE_WASM_DIR="$TEST_TEMP_DIR/bridge_wasm"
+mkdir -p "$BRIDGE_WASM_DIR"
+for wasm in stellarlend_lending.wasm stellarlend_amm.wasm stellarlend_vesting.wasm stellarlend_multisig.wasm; do
+  head -c 50 /dev/zero > "$BRIDGE_WASM_DIR/$wasm" 2>/dev/null || truncate -s 50 "$BRIDGE_WASM_DIR/$wasm"
+done
+
+set +e
+bash "$CHECK_SCRIPT" --wasm-dir "$BRIDGE_WASM_DIR" --budgets-file "$SCRIPTS_DIR/wasm_budgets.json"
+rc=$?
+set -e
+
+if [[ $rc -eq 0 ]]; then
+  echo "FAIL: expected check_wasm_sizes.sh to fail when stellarlend_bridge.wasm is missing"
+  exit 1
+fi
+echo "OK (failed on missing stellarlend_bridge.wasm as expected)"
+echo ""
+
+echo "Test 6: Production budgets pass when stellarlend_bridge.wasm is within budget"
+head -c 50 /dev/zero > "$BRIDGE_WASM_DIR/stellarlend_bridge.wasm" 2>/dev/null || truncate -s 50 "$BRIDGE_WASM_DIR/stellarlend_bridge.wasm"
+bash "$CHECK_SCRIPT" --wasm-dir "$BRIDGE_WASM_DIR" --budgets-file "$SCRIPTS_DIR/wasm_budgets.json"
+if [[ $? -ne 0 ]]; then
+  echo "FAIL: expected check_wasm_sizes.sh to pass when stellarlend_bridge.wasm is within budget"
+  exit 1
+fi
+echo "OK (passed with stellarlend_bridge.wasm within budget)"
+echo ""
+
 echo "======================================================================"
 echo " All check_wasm_sizes tests passed!"
 echo "======================================================================"

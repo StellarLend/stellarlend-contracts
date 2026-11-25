@@ -33,7 +33,10 @@ CONTRACT_ID=<your_deployed_contract_id>
 JWT_SECRET=<your_secret_key>
 STELLAR_API_HOOK_SECRET=<your_hook_secret>
 CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+TRUST_PROXY=false
 ```
+
+`TRUST_PROXY` is false by default, preserving direct peer IP behavior. When the API runs behind a trusted load balancer or ingress, set it to `1` for one proxy hop (or to the exact number of trusted hops). Boolean `true` is also accepted. Only enable this in a deployment where untrusted clients cannot bypass the proxy, because forwarded addresses are security-sensitive.
 
 `CORS_ALLOWED_ORIGINS` is a comma-separated list of browser origins. Entries are trimmed and empty entries are ignored. In production, the default is an empty list, so cross-origin access is denied unless origins are explicitly configured. In development, the default is `*`.
 

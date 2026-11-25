@@ -103,4 +103,33 @@ describe('API app authorization and validation', () => {
     expect(response.body).toEqual({ error: 'Payload too large' });
     expect(mockDeposit).not.toHaveBeenCalled();
   });
+
+  it('keeps independent per-client counters when TRUST_PROXY=1', async () => {
+    process.env.TRUST_PROXY = '1';
+    process.env.RATE_LIMIT_MAX_REQUESTS = '2';
+
+    jest.resetModules();
+    const proxiedApp = require('../app').default;
+
+    try {
+      const clientA = '198.51.100.10';
+      const clientB = '203.0.113.20';
+
+      await request(proxiedApp).get('/api/rate-limit-test').set('X-Forwarded-For', clientA);
+      await request(proxiedApp).get('/api/rate-limit-test').set('X-Forwarded-For', clientA);
+
+      const exhaustedA = await request(proxiedApp)
+        .get('/api/rate-limit-test')
+        .set('X-Forwarded-For', clientA);
+      expect(exhaustedA.status).toBe(429);
+
+      const allowedB = await request(proxiedApp)
+        .get('/api/rate-limit-test')
+        .set('X-Forwarded-For', clientB);
+      expect(allowedB.status).not.toBe(429);
+    } finally {
+      delete process.env.TRUST_PROXY;
+      delete process.env.RATE_LIMIT_MAX_REQUESTS;
+    }
+  });
 });
