@@ -1,0 +1,93 @@
+name: Security audit
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version '^0.21' --locked
+
+      - name: Audit Rust dependencies
+        working-directory: stellar-lend
+        run: cargo audit --file Cargo.lock
+
+      - name: Audit oracle dependencies
+        working-directory: oracle
+        run: |
+          npm audit --omit=dev --audit-level=high --json > "$RUNNER_TEMP/oracle-audit.json" || true
+          python3 - "$RUNNER_TEMP/oracle-audit.json" ../stellar-lend/audit.toml <<'PY'
+          import json
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          report_path, config_path = sys.argv[1:]
+          report = json.loads(Path(report_path).read_text())
+          if report.get("error"):
+              raise SystemExit(f"npm audit failed: {report['error']}")
+
+          with Path(config_path).open("rb") as config_file:
+              ignored = {str(item) for item in tomllib.load(config_file)["advisories"]["ignore"]}
+
+          unexpected = {}
+          for package, details in report.get("vulnerabilities", {}).items():
+              for via in details.get("via", []):
+                  if not isinstance(via, dict):
+                      continue
+                  advisory = str(via.get("url") or "").rsplit("/", 1)[-1]
+                  if advisory.startswith("GHSA-") and advisory not in ignored:
+                      unexpected.setdefault(advisory, set()).add(package)
+
+          if unexpected:
+              for advisory, packages in sorted(unexpected.items()):
+                  print(f"{advisory}: {', '.join(sorted(packages))}", file=sys.stderr)
+              raise SystemExit("Unaccepted npm advisories; document them in stellar-lend/audit.toml")
+
+          print("All npm advisories are accepted in stellar-lend/audit.toml")
+          PY
+
+      - name: Audit api dependencies
+        working-directory: api
+        run: |
+          npm audit --omit=dev --audit-level=high --json > "$RUNNER_TEMP/api-audit.json" || true
+          python3 - "$RUNNER_TEMP/api-audit.json" ../stellar-lend/audit.toml <<'PY'
+          import json
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          report_path, config_path = sys.argv[1:]
+          report = json.loads(Path(report_path).read_text())
+          if report.get("error"):
+              raise SystemExit(f"npm audit failed: {report['error']}")
+
+          with Path(config_path).open("rb") as config_file:
+              ignored = {str(item) for item in tomllib.load(config_file)["advisories"]["ignore"]}
+
+          unexpected = {}
+          for package, details in report.get("vulnerabilities", {}).items():
+              for via in details.get("via", []):
+                  if not isinstance(via, dict):
+                      continue
+                  advisory = str(via.get("url") or "").rsplit("/", 1)[-1]
+                  if advisory.startswith("GHSA-") and advisory not in ignored:
+                      unexpected.setdefault(advisory, set()).add(package)
+
+          if unexpected:
+              for advisory, packages in sorted(unexpected.items()):
+                  print(f"{advisory}: {', '.join(sorted(packages))}", file=sys.stderr)
+              raise SystemExit("Unaccepted npm advisories; document them in stellar-lend/audit.toml")
+
+          print("All npm advisories are accepted in stellar-lend/audit.toml")
+          PY

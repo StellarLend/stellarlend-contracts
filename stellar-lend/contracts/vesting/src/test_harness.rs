@@ -430,6 +430,10 @@ impl VestingContract {
         self.client.total_paused_secs()
     }
 
+    pub fn get_vault_health(&self) -> (i128, i128) {
+        self.client.get_vault_health()
+    }
+
     fn map_grant(&self, g: crate::Grant) -> Grant {
         let grantee_str = self.get_tag(&g.grantee);
         let effective_now = self.env.ledger().timestamp().saturating_sub(self.total_paused_secs());

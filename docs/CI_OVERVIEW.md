@@ -1,100 +1,75 @@
 # Soroban Smart Contracts CI/CD
 
 This document describes the continuous integration setup defined in
-[`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and how to
-reproduce the same checks locally.
+[`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and
+[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml),
+and how to reproduce the same checks locally. The dependency audit is a
+separate workflow; the job graph below predates that split and is retained
+only for the main CI jobs.
 
 ## CI Pipeline Overview
 
-The pipeline consists of **five jobs** that run in parallel and series, with a
-fan-out/fan-in graph that minimises wall-clock time:
+The pipeline in `.github/workflows/ci-cd.yml` consists of automated jobs designed to validate contracts, services, and security gates:
 
 ```
-                ┌───────────────────┐
-                │      check        │ ──┐
-                │ (ubuntu-latest)   │   │
-                └───────────────────┘   │
-                ┌───────────────────┐   │  ┌──────────────────────────┐
-                │  soroban-checks   │ ──┼─►│     build-and-test       │ ─► ┌──────────────┐
-                │ (ubuntu-latest)   │   │  │     (macos-latest)       │    │  coverage    │
-                └───────────────────┘   │  └──────────────────────────┘    │ (ubuntu)     │
-                ┌───────────────────┐   │                                  └──────────────┘
-                │      audit        │   │
-                │ (ubuntu-latest)   │ ──┘  (parallel with check/soroban-checks/audit)
-                └───────────────────┘
+┌─────────────────────────────────┐
+│         build-and-test          │ (Contract check, tests, WASM builds & size budgets)
+└─────────────────────────────────┘
+┌─────────────────────────────────┐
+│           fuzz-smoke            │ (Lending fuzz targets & bridge tests)
+└─────────────────────────────────┘
+┌─────────────────────────────────┐
+│           api-service           │ (Express API lint, build, test & coverage)
+└─────────────────────────────────┘
 ```
 
-```
-Level 0 (parallel):  check       soroban-checks    audit
-                                            │
-Level 1:                       build-and-test (waits for check + soroban-checks)
-                                            │
-Level 2:                                   coverage   (waits for build-and-test)
-```
+### 1. Build & Test (`build-and-test`)
 
-Five job summaries:
-
-### 1. Format & Lint Job (`check`)
-
-- **Purpose**: Ensures code formatting and catches common issues
+- **Purpose**: Workspace integrity, contract unit/integration tests, release WASM compilation, and size budget enforcement
 - **Runs on**: `ubuntu-latest`
 - **Checks**:
-  - `cargo fmt --all -- --check` — Rust code formatting across the workspace
-  - `cargo clippy --all-targets --all-features --workspace -- -D warnings` — passing 7 `-A` allow flags retain tolerance for the known false positives the codebase has accrued (deprecated, dead_code, unused-*, three clippy lints). Strip the `-A` flags when the underlying warnings are fixed.
+  - `cargo check --workspace --lib --keep-going`
+  - `cargo test -p stellarlend-vesting`
+  - `cargo test -p stellarlend-multisig`
+  - `bash scripts/tests/test_check_wasm_sizes.sh`
+  - Contract release builds (`wasm32v1-none`) for lending, amm, vesting, multisig
+  - `wasm-opt -Oz` optimization
+  - Size budget verification via `bash scripts/check_wasm_sizes.sh`
+  - SHA-256 checksum generation and artifact upload
 
-### 2. Soroban Validations (`soroban-checks`)
+### 2. Fuzz Smoke & Bridge Tests (`fuzz-smoke`)
 
-- **Purpose**: Soroban-specific contract validation
-- **Runs on**: `ubuntu-latest`
+- **Purpose**: Fuzz testing for lending entrypoints and bridge crate verification
+- **Runs on**: `ubuntu-latest` (on PRs affecting lending contracts or manual trigger)
 - **Checks**:
-  - `cargo install --locked stellar-cli` (cached after first run)
-  - Builds every workspace contract that ships a cdylib for `wasm32-unknown-unknown` via `stellar contract build --verbose`
-  - Optimises each `.wasm` artifact with `stellar contract optimize --wasm`
-  - Inspects every `*-optimized.wasm` and dumps its metadata via `stellar contract inspect --wasm … --output json`
-  - Uploads the resulting `*.wasm` files and inspect JSON as the `soroban-wasm-builds` artifact for downstream debugging
+  - `cargo +nightly fuzz build`
+  - Smoke runs for `fuzz_entrypoints`, `fuzz_liquidate_close_factor`, `fuzz_borrow_rate`
+  - `cargo test -p stellarlend-bridge`
+  - `cargo build -p stellarlend-bridge --target wasm32v1-none --release`
 
-### 3. Build & Test (`build-and-test`)
+### 3. API Service (`api-service`)
+### 4. Security Audit (`security-audit.yml`)
 
-- **Purpose**: Full project build and test execution
-- **Runs on**: `macos-latest`
-- **Dependencies**: Requires `check` AND `soroban-checks` to pass
+- **Purpose**: REST API service verification
+- **Runs on**: `ubuntu-latest` (triggers on push or PRs modifying `api/**`)
+- **Purpose**: Dependency vulnerability scanning for Rust and Node.js
+- **Runs on**: `ubuntu-latest`, on every pull request and weekly via
+  `on: schedule` (Monday 03:17 UTC)
 - **Checks**:
-  - `cargo build --verbose` — workspace build
-  - `cargo test --lib --verbose` — unit tests
-  - `cargo test --tests --verbose` — integration tests
-  - `cargo test --lib --verbose -- --nocapture` (best-effort, surfaced as the `test-reports` artifact)
-
-> **Why macOS?** The docs mandate testing on `macos-latest` so any platform-
-> specific issue surfaces in CI rather than later in production. Expect the
-> `build-and-test` job to cost roughly one order of magnitude more runner
-> minutes than the ubuntu jobs.
-
-### 4. Security Audit (`audit`)
-
-- **Purpose**: Security vulnerability scanning
-- **Runs on**: `ubuntu-latest`
-- **Parallelism**: Runs alongside `check` and `soroban-checks` at level 0; no
-  dependency on either, so a flaky audit does not block tests.
-- **Checks**:
-  - `cargo install cargo-audit` (not pinned to a version — auto-bumps)
-  - `cargo audit` (ignored advisories and their rationale are documented
-    in `stellar-lend/.cargo/audit.toml`). Add a new entry with a one-line
-    justification to `audit.toml` if a known false positive surfaces;
-    there is no need to touch the workflow or `local-ci.sh`.
-
-### 5. Code Coverage (`coverage`)
-
-- **Purpose**: Generate and enforce coverage thresholds from a workspace
-  Cobertura XML report.
-- **Runs on**: `ubuntu-latest` (cargo-tarpaulin uses `ptrace` and is Linux-only).
-- **Dependencies**: Requires `build-and-test` to pass.
-- **Output**: `stellar-lend/cobertura.xml` and the `coverage-report` artifact.
-- **Enforcement**: `python3 scripts/enforce_coverage.py
-  stellar-lend/cobertura.xml --thresholds-json scripts/coverage_thresholds.json`.
-  Per-crate thresholds live in `scripts/coverage_thresholds.json`; the
-  `flat_threshold` (currently 95%) applies to any crate not listed
-  explicitly. Fails the job if any crate drops below its configured
-  threshold.
+  - `npm ci`
+  - `npm run lint` (ESLint)
+  - `npm run build` (TypeScript compiler)
+  - `npm test` (Jest test suite with coverage thresholds)
+  - Coverage report artifact upload
+  - `cargo install cargo-audit --version '^0.21' --locked`
+  - `cargo audit --file Cargo.lock` from `stellar-lend/`
+  - `npm audit --omit=dev --audit-level=high` from `oracle/` and `api/`
+- **Accepted advisories**: documented with one-line justifications in
+  [`stellar-lend/audit.toml`](../stellar-lend/audit.toml), which
+  `stellar-lend/.cargo/audit.toml` symlinks to for cargo-audit. The npm steps
+  accept only `GHSA-*` IDs listed there; a new high-severity advisory fails
+  the job until it is reviewed and documented. Dependency upgrades are out of
+  scope for an acceptance entry.
 
 ## Caching Strategy
 
@@ -150,10 +125,10 @@ Cache keys are:
 3. **Run a single CI job** (e.g. only the format/clippy step):
    ```bash
    ./local-ci.sh --only check
-   ./local-ci.sh --only soroban-checks
    ./local-ci.sh --only build-and-test
-   ./local-ci.sh --only audit
-   ./local-ci.sh --only coverage
+   ./local-ci.sh --only wasm
+   ./local-ci.sh --only fuzz-smoke
+   ./local-ci.sh --only api-service
    ```
 
 ### Manual Steps
@@ -171,7 +146,7 @@ rustup target add wasm32-unknown-unknown
 cargo install --locked stellar-cli
 
 # Install additional tools (audit + coverage)
-cargo install cargo-audit
+cargo install cargo-audit --version '^0.21' --locked
 cargo install cargo-tarpaulin --locked --version 0.31.0
 ```
 
@@ -249,18 +224,17 @@ python3 scripts/enforce_coverage.py stellar-lend/cobertura.xml \
 > (95% per crate currently). If a workspace member does not meet its
 > threshold, the job fails and names the offending crate.
 
-#### 6. Security Audit (matches `audit`)
+#### 6. Security Audit (matches `security-audit.yml`)
 
 ```bash
 cd stellar-lend
-cargo audit \
-  --ignore RUSTSEC-2026-0049 \
-  --ignore RUSTSEC-2025-0009 \
-  --ignore RUSTSEC-2023-0071 \
-  --ignore RUSTSEC-2024-0363 \
-  --ignore RUSTSEC-2024-0344 \
-  --ignore RUSTSEC-2022-0093
+cargo audit --file Cargo.lock
+cd ../oracle && npm audit --omit=dev --audit-level=high
+cd ../api && npm audit --omit=dev --audit-level=high
 ```
+
+Ignored advisories come from `stellar-lend/audit.toml`; do not pass ad-hoc
+`--ignore` flags locally, because the workflow will not know about them.
 
 ## Fixing Common Issues
 
@@ -293,12 +267,17 @@ cargo clippy --all-targets --all-features --workspace
 ### Security Issues
 
 ```bash
-# Update dependencies
-cargo update
+# Update dependencies against the committed workspace lock
+cargo update --manifest-path stellar-lend/Cargo.toml
+cargo check --locked --manifest-path stellar-lend/Cargo.toml
 
 # Check for specific vulnerabilities
-cargo audit --db /path/to/advisory-db
+cd stellar-lend && cargo audit --file Cargo.lock
 ```
+
+`stellar-lend/Cargo.lock` is intentionally tracked; use `--locked` for
+dependency-sensitive cargo commands so an accidental lockfile change cannot go
+uncommitted.
 
 ## Environment Variables
 

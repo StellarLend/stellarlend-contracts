@@ -13,6 +13,15 @@ export type { CacheConfig } from './cache.js';
 export { PriceAggregator, createAggregator } from './price-aggregator.js';
 export type { AggregatorConfig } from './price-aggregator.js';
 
-export { ContractUpdater, createContractUpdater } from './contract-updater.js';
-export type { ContractUpdaterConfig } from './contract-updater.js';
+export {
+  ContractUpdater,
+  createContractUpdater,
+  SorobanAdapter,
+  SorobanAdapterError,
+} from './contract-updater.js';
+export type {
+  ContractUpdaterConfig,
+  SorobanAdapterConfig,
+  SorobanRpcServerLike,
+} from './contract-updater.js';
 export type { ContractUpdaterOptions } from '../types/index.js';
