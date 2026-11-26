@@ -7,49 +7,6 @@
  * submitPriceUpdate remains the lower-level adapter-based method that throws on failure.
  */
 
-$path = "oracle/src/services/contract-updater.ts"
-
-$header = @'
-/**
- * Oracle Contract Updater.
- *
- * Coordinates price-update submissions through an adapter.
- *
- * Invariants:
- * - enqueue serializes submissions independently per asset.
- * - process reuses an existing submission for the same idempotency key
- *   unless its status is terminal.
- * - submitPriceUpdate rejects observations older than STALE_MS or
- *   further in the future than FUTURE_SKEW_MS.
- * - execute bounds retry attempts using MAX_RETRIES and submission
- *   expiration using TIMEOUT_MS.
- * - FAILED, REJECTED, and CANCELLED are terminal statuses.
- * - Confirmed submissions are retained and reused for matching keys.
- *
- * Timing constants:
- * - BASE_MS: initial exponential-backoff jitter base.
- * - CAP_MS: maximum jitter-delay cap.
- * - TIMEOUT_MS: submission expiration window.
- */
-'@
-
-$content = Get-Content $path -Raw
-
-$pattern = '(?s)(import \{ logger \} from ''\.\./utils/logger\.js'';\r?\n)/\*\*.*?\*/'
-
-$regex = [regex]::new($pattern)
-$updated = $regex.Replace($content, ('$1' + $header), 1)
-
-if ($updated -eq $content) {
-    Write-Host "Header not found. No changes made."
-} else {
-    [System.IO.File]::WriteAllText(
-        (Resolve-Path $path),
-        $updated,
-        [System.Text.UTF8Encoding]::new($false)
-    )
-    Write-Host "JSDoc header updated successfully."
-}
 import { createHash } from 'node:crypto';
 import type {
   AggregatedPrice,
@@ -131,12 +88,12 @@ export function calculateJitterDelay(
   attempt: number,
   base = BASE_MS,
   cap = CAP_MS,
+  rng: () => number = Math.random,
 ): number {
-  const safeAttempt =
-    Number.isFinite(attempt) && attempt >= 0 ? Math.floor(attempt) : 0;
+  if (!Number.isFinite(attempt)) return 0;
+  const safeAttempt = attempt >= 0 ? Math.floor(attempt) : 0;
   const capped = Math.min(cap, base * Math.pow(2, safeAttempt));
-  const ratio = (((safeAttempt + 1) * 9301 + 49297) % 233280) / 233280;
-  return Math.floor(capped * ratio);
+  return Math.floor(rng() * capped);
 }
 
 const sleep = (ms: number): Promise<void> =>
