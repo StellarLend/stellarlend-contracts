@@ -44,3 +44,7 @@ lerna-debug.log*
 test_snapshots/
 .opencode
 stellar-lend/contracts/lending/target_check/
+
+# Generated test coverage
+/oracle/coverage/
+/api/coverage/
