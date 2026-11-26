@@ -118,29 +118,40 @@ fn test_repay_then_reborrow_under_cap() {
 }
 
 #[test]
-#[ignore = "interest accrual timing is non-deterministic in the current cross-asset fixture"]
 fn test_cap_considers_accrual() {
     let (env, client, id, admin, user) = setup();
+    // Pin the ledger to a known timestamp so accrual is deterministic.
+    const T0: u64 = 1_700_000_000;
+    const ELAPSED: u64 = 31_536_000; // exactly one year
+    env.ledger().with_mut(|l| l.timestamp = T0);
+
     let asset = env.register(MockAsset, ());
     set_price(&env, &id, &asset, 10_000_000);
+    let cap: i128 = 1000;
+    let principal: i128 = 900;
     client.set_asset_params(
         &admin,
         &asset,
         &7500i128,
         &8000i128,
         &1_000_000_000_000i128,
-        &1000i128,
+        &cap,
         &0i128,
     );
     client.deposit_collateral_asset(&user, &asset, &10_000i128);
-    // borrow small amount
-    let _ = client.borrow_asset(&user, &asset, &900i128);
-    // advance time so interest accrues and effective principal increases
-    env.ledger().with_mut(|l| l.timestamp += 31536000);
-    // now trying to borrow more that would push total (with accrued interest) > cap
-    let res = client.try_borrow_asset(&user, &asset, &200i128);
-    // either accepted or rejected depending on accrual; ensure borrow cap logic runs and returns typed error when exceeded
-    if let Err(Ok(err)) = res {
-        assert!(err == LendingError::BorrowCapExceeded || err == LendingError::HealthFactorTooLow);
-    }
+    let borrowed = client.borrow_asset(&user, &asset, &principal);
+    assert_eq!(borrowed, principal);
+
+    // Without any accrual, borrowing exactly `cap - principal` must succeed.
+    let headroom = cap - principal;
+    let res = client.try_borrow_asset(&user, &asset, &headroom);
+    assert!(res.is_ok(), "borrow of cap - principal should succeed pre-accrual");
+
+    // Advance a fixed amount of time so interest accrues on the outstanding debt.
+    env.ledger().with_mut(|l| l.timestamp = T0 + ELAPSED);
+
+    // Any further borrow now pushes accrued debt over the cap and must be rejected
+    // with the cap error (not a health-factor error, since collateral is ample).
+    let res = client.try_borrow_asset(&user, &asset, &headroom);
+    assert!(matches!(res, Err(Ok(LendingError::BorrowCapExceeded))));
 }
