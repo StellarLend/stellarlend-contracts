@@ -5,7 +5,6 @@ exclude = [
 exclude-files = [
     "client/**/*",
     "indexing_system/**/*",
-    "contracts/amm/**/*",
     # hello-world is a retired duplicate that is no longer a workspace member.
     "contracts/hello-world/**/*",
     "**/target_check/**/*",
