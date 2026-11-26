@@ -341,7 +341,7 @@ fn test_batch_execute_empty_batch_succeeds() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_batch_execute_size_exceeded_rejected() {
+fn test_batch_size_exceeds_maximum() {
     let env = make_env();
     let (contract_id, signers) = setup_multisig(&env);
     let client = MultisigContractClient::new(&env, &contract_id);
@@ -355,6 +355,8 @@ fn test_batch_execute_size_exceeded_rejected() {
         hashes.push_back(hash.clone());
     }
 
+    assert!(validate_batch_size(MAX_BATCH_SIZE as usize).is_ok());
+    assert!(validate_batch_size(MAX_BATCH_SIZE as usize + 1).is_err());
     assert_eq!(
         client.try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes),
         Err(Ok(MultisigError::BatchSizeExceeded))

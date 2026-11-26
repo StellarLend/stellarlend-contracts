@@ -297,7 +297,7 @@ describe('CORS configuration', () => {
     expect(loadOrigins({
       NODE_ENV: 'production',
       CORS_ALLOWED_ORIGINS: undefined,
-      JWT_SECRET: 'production-test-secret',
+      JWT_SECRET: 'production-test-secret-with-32-chars',
       CONTRACT_ID: 'contract-for-cors-test',
     })).toEqual([]);
   });
@@ -739,9 +739,45 @@ describe('auditSecurityDefaults — development / test mode', () => {
     });
   }
 
+  it('warns (does not throw) for a short non-default JWT secret in non-production', () => {
+    const cfg = makeValidConfig({
+      auth: { jwtSecret: 'short-not-default-jwt-secret', jwtExpiresIn: '24h', hookSecret: '' },
+    });
+    expect(() => auditSecurityDefaults(cfg)).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('JWT_SECRET must be at least 32 characters')
+    );
+  });
+
+  it('warns (does not throw) for a short configured hook secret in non-production', () => {
+    const cfg = makeValidConfig({
+      auth: {
+        jwtSecret: 'a-very-strong-unique-secret-value',
+        jwtExpiresIn: '24h',
+        hookSecret: 'short-hook-secret',
+      },
+    });
+    expect(() => auditSecurityDefaults(cfg)).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('STELLAR_API_HOOK_SECRET must be at least 32 characters')
+    );
+  });
+
+  it('does not warn for a 32-character JWT secret', () => {
+    const cfg = makeValidConfig({
+      auth: { jwtSecret: '12345678901234567890123456789012', jwtExpiresIn: '24h', hookSecret: '' },
+    });
+    auditSecurityDefaults(cfg);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it('warns for insecure hook secret in non-production', () => {
     const cfg = makeValidConfig({
-      auth: { jwtSecret: 'safe-secret', jwtExpiresIn: '24h', hookSecret: 'changeme' },
+      auth: {
+        jwtSecret: 'safe-jwt-secret-with-at-least-32-characters',
+        jwtExpiresIn: '24h',
+        hookSecret: 'changeme',
+      },
     });
     expect(() => auditSecurityDefaults(cfg)).not.toThrow();
     expect(warnSpy).toHaveBeenCalledWith(
@@ -759,7 +795,11 @@ describe('auditSecurityDefaults — development / test mode', () => {
 
   it('does not warn when hook secret is absent/empty', () => {
     const cfg = makeValidConfig({
-      auth: { jwtSecret: 'strong-secret', jwtExpiresIn: '24h', hookSecret: '' },
+      auth: {
+        jwtSecret: 'strong-jwt-secret-with-at-least-32-characters',
+        jwtExpiresIn: '24h',
+        hookSecret: '',
+      },
     });
     auditSecurityDefaults(cfg);
     expect(warnSpy).not.toHaveBeenCalled();
@@ -798,7 +838,12 @@ describe('auditSecurityDefaults — production mode', () => {
   function prodConfig(authOverrides: Record<string, unknown>, stellarOverrides: Record<string, unknown> = {}): typeof config {
     return makeValidConfig({
       server: { port: 3000, env: 'production' },
-      auth: { jwtSecret: 'strong-prod-secret', jwtExpiresIn: '1h', hookSecret: '', ...authOverrides },
+      auth: {
+        jwtSecret: 'strong-production-jwt-secret-with-32-chars',
+        jwtExpiresIn: '1h',
+        hookSecret: '',
+        ...authOverrides,
+      },
       stellar: {
         network: 'public',
         horizonUrl: 'https://horizon.stellar.org',
@@ -822,6 +867,25 @@ describe('auditSecurityDefaults — production mode', () => {
     ).toThrow('JWT_SECRET is set to an insecure default value');
   });
 
+  it('throws in production when JWT_SECRET is shorter than 32 characters', () => {
+    expect(() =>
+      auditSecurityDefaults(prodConfig({ jwtSecret: 'short-not-default-jwt-secret' }))
+    ).toThrow('JWT_SECRET must be at least 32 characters');
+  });
+
+  it('accepts a 32-character JWT_SECRET in production', () => {
+    expect(() =>
+      auditSecurityDefaults(prodConfig({ jwtSecret: '12345678901234567890123456789012' }))
+    ).not.toThrow();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('throws in production when a configured hook secret is shorter than 32 characters', () => {
+    expect(() =>
+      auditSecurityDefaults(prodConfig({ hookSecret: 'short-hook-secret' }))
+    ).toThrow('STELLAR_API_HOOK_SECRET must be at least 32 characters');
+  });
+
   it('throws in production when hook secret is insecure', () => {
     expect(() =>
       auditSecurityDefaults(prodConfig({ hookSecret: 'changeme' }))
@@ -836,7 +900,10 @@ describe('auditSecurityDefaults — production mode', () => {
 
   it('does not throw in production when all secrets are strong and contractId is set', () => {
     const cfg = prodConfig(
-      { jwtSecret: 'super-strong-jwt-secret-production', hookSecret: 'super-strong-hook-secret' },
+      {
+        jwtSecret: 'super-strong-jwt-secret-production',
+        hookSecret: 'super-strong-hook-secret-production',
+      },
       { contractId: 'CABC123DEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEFGHIJKLMNO' }
     );
     expect(() => auditSecurityDefaults(cfg)).not.toThrow();
@@ -1056,6 +1123,63 @@ describe('config — dynamic loading via jest.isolateModules', () => {
       expect(thrownError!.message).toMatch('RETRY_MAX_DELAY_MS');
     });
   });
+
+  it('throws at load time in production when JWT_SECRET is the default', () => {
+    withEnv({
+      NODE_ENV: 'production',
+      JWT_SECRET: 'default-secret-change-me',
+      CONTRACT_ID: 'contract-for-secret-test',
+    }, () => {
+      let thrownError: Error | undefined;
+      jest.isolateModules(() => {
+        try {
+          require('../config/index');
+        } catch (e) {
+          thrownError = e as Error;
+        }
+      });
+      expect(thrownError).toBeDefined();
+      expect(thrownError!.message).toMatch('JWT_SECRET is set to an insecure default value');
+    });
+  });
+
+  it('throws at load time in production when JWT_SECRET is shorter than 32 characters', () => {
+    withEnv({
+      NODE_ENV: 'production',
+      JWT_SECRET: 'short-not-default-jwt-secret',
+      CONTRACT_ID: 'contract-for-secret-test',
+    }, () => {
+      let thrownError: Error | undefined;
+      jest.isolateModules(() => {
+        try {
+          require('../config/index');
+        } catch (e) {
+          thrownError = e as Error;
+        }
+      });
+      expect(thrownError).toBeDefined();
+      expect(thrownError!.message).toMatch('JWT_SECRET must be at least 32 characters');
+    });
+  });
+
+  it('warns but loads at test time when JWT_SECRET is the default', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      withEnv({ NODE_ENV: 'test', JWT_SECRET: 'default-secret-change-me' }, () => {
+        let loaded = false;
+        jest.isolateModules(() => {
+          require('../config/index');
+          loaded = true;
+        });
+        expect(loaded).toBe(true);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('JWT_SECRET is set to an insecure default value')
+        );
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1087,7 +1211,11 @@ describe('config — immutability and concurrent-access safety', () => {
     // auditSecurityDefaults in prod mode throws when hook is insecure
     const cfg = makeValidConfig({
       server: { port: 3000, env: 'production' },
-      auth: { jwtSecret: 'strong', jwtExpiresIn: '1h', hookSecret: 'changeme' },
+      auth: {
+        jwtSecret: 'strong-jwt-secret-with-at-least-32-characters',
+        jwtExpiresIn: '1h',
+        hookSecret: 'changeme',
+      },
       stellar: {
         network: 'public',
         horizonUrl: 'https://horizon.stellar.org',

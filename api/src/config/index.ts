@@ -86,6 +86,8 @@ const INSECURE_HOOK_DEFAULTS = new Set([
   '',
 ]);
 
+const MIN_SECRET_LENGTH = 32;
+
 const VALID_NETWORKS = ['testnet', 'public', 'futurenet'] as const;
 type StellarNetwork = (typeof VALID_NETWORKS)[number];
 
@@ -243,20 +245,31 @@ function validateConfig(cfg: typeof config): void {
 function auditSecurityDefaults(cfg: typeof config): void {
   const isProduction = cfg.server.env === 'production';
 
-  if (INSECURE_JWT_DEFAULTS.has(cfg.auth.jwtSecret)) {
-    const msg =
-      'Config: JWT_SECRET is set to an insecure default value. ' +
-      'Set a strong, unique secret via the JWT_SECRET environment variable.';
+  if (
+    INSECURE_JWT_DEFAULTS.has(cfg.auth.jwtSecret) ||
+    cfg.auth.jwtSecret.length < MIN_SECRET_LENGTH
+  ) {
+    const msg = INSECURE_JWT_DEFAULTS.has(cfg.auth.jwtSecret)
+      ? 'Config: JWT_SECRET is set to an insecure default value. ' +
+        'Set a strong, unique secret via the JWT_SECRET environment variable.'
+      : `Config: JWT_SECRET must be at least ${MIN_SECRET_LENGTH} characters. ` +
+        'Set a strong, unique secret via the JWT_SECRET environment variable.';
     if (isProduction) {
       throw new Error(msg);
     }
     console.warn(`[SECURITY WARNING] ${msg}`);
   }
 
-  if (cfg.auth.hookSecret && INSECURE_HOOK_DEFAULTS.has(cfg.auth.hookSecret)) {
-    const msg =
-      'Config: STELLAR_API_HOOK_SECRET is set to an insecure default value. ' +
-      'Set a strong, unique secret via the STELLAR_API_HOOK_SECRET environment variable.';
+  if (
+    cfg.auth.hookSecret &&
+    (INSECURE_HOOK_DEFAULTS.has(cfg.auth.hookSecret) ||
+      cfg.auth.hookSecret.length < MIN_SECRET_LENGTH)
+  ) {
+    const msg = INSECURE_HOOK_DEFAULTS.has(cfg.auth.hookSecret)
+      ? 'Config: STELLAR_API_HOOK_SECRET is set to an insecure default value. ' +
+        'Set a strong, unique secret via the STELLAR_API_HOOK_SECRET environment variable.'
+      : `Config: STELLAR_API_HOOK_SECRET must be at least ${MIN_SECRET_LENGTH} characters. ` +
+        'Set a strong, unique secret via the STELLAR_API_HOOK_SECRET environment variable.';
     if (isProduction) {
       throw new Error(msg);
     }

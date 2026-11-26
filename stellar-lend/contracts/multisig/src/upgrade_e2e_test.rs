@@ -1,150 +1,166 @@
-/// End-to-end test for a multisig-gated proposal: propose → approve → execute.
-///
-/// Simulates the full governance flow that would gate a lending upgrade:
-///   1. Admin creates a proposal (analogous to queuing an upgrade).
-///   2. Required signers approve the proposal.
-///   3. After the time-lock elapses the proposal is executed.
-///
-/// Also covers negative paths: attempting to execute before quorum, before
-/// the ETA, and after expiry.
-#[cfg(test)]
-mod upgrade_e2e_tests {
-    use crate::{
-        MultisigContract, MultisigContractClient, MultisigError, MIN_THRESHOLD_DELAY_LEDGERS,
-    };
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::testutils::Ledger;
-    use soroban_sdk::{Address, Env, Vec};
+use super::*;
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{Address, Bytes, Env, Vec};
 
-    fn setup(threshold: u32, signer_count: usize) -> (Env, Address, Address, Vec<Address>) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::generate(&env);
-        let id = env.register_contract(None, MultisigContract);
-        let client = MultisigContractClient::new(&env, &id);
-        client.initialize(&admin, &threshold);
-        let mut signers = Vec::new(&env);
-        for _ in 0..signer_count {
-            signers.push_back(Address::generate(&env));
-        }
-        client.set_signers(&signers);
-        (env, admin, id, signers)
+fn make_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
+}
+
+fn setup_with_delay(
+    env: &Env,
+    threshold: u32,
+    signer_count: u32,
+    delay: u32,
+) -> (Address, Vec<Address>) {
+    let contract_id = env.register(MultisigContract, ());
+    let client = MultisigContractClient::new(env, &contract_id);
+    let mut signers = Vec::new(env);
+    for _ in 0..signer_count {
+        signers.push_back(Address::generate(env));
     }
+    client.initialize_with_delay(&signers, &threshold, &delay);
+    (contract_id, signers)
+}
 
-    fn advance_to_eta(env: &Env, client: &MultisigContractClient, proposal_id: u64) {
-        let eta = client.get_proposal(&proposal_id).unwrap().eta_ledger;
-        env.ledger().set_sequence_number(eta);
-    }
+fn create_proposal(
+    env: &Env,
+    client: &MultisigContractClient,
+    signers: &Vec<Address>,
+    action: &ProposalAction,
+    tag: &[u8],
+    ttl: u64,
+) -> (u64, Bytes) {
+    let hash = Bytes::from_slice(env, tag);
+    let id = client.create_proposal(&signers.get(0).unwrap(), action, &hash, &ttl);
+    (id, hash)
+}
 
-    // ── Happy path: full propose → approve → execute flow ─────────────────────
+#[test]
+fn test_single_signer_propose_approve_execute() {
+    let env = make_env();
+    let (contract_id, signers) = setup_with_delay(&env, 1, 2, 100);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let (id, hash) = create_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(1),
+        b"single-signer",
+        500,
+    );
 
-    /// A proposal with threshold=1 (admin self-approves at creation) can be
-    /// executed after the time-lock elapses — mirrors the simplest upgrade flow.
-    #[test]
-    fn test_single_signer_propose_approve_execute() {
-        let (env, _admin, id, _signers) = setup(1, 1);
-        let client = MultisigContractClient::new(&env, &id);
+    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Passed);
+    let executable_at = client.get_executable_at(&id).unwrap();
+    env.ledger().set_sequence_number(executable_at as u32);
 
-        let current = env.ledger().sequence();
-        let expires = current + MIN_THRESHOLD_DELAY_LEDGERS + 200;
-        let pid = client.create_proposal(&2, &expires);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Ok(Ok(()))
+    );
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Executed);
+}
 
-        // Advance ledger past the ETA so the time-lock is satisfied.
-        advance_to_eta(&env, &client, pid);
+#[test]
+fn test_two_of_two_propose_approve_execute() {
+    let env = make_env();
+    let (contract_id, signers) = setup_with_delay(&env, 2, 2, 100);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let (id, hash) = create_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(2),
+        b"two-of-two",
+        500,
+    );
 
-        client.execute_proposal(&pid);
+    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::QuorumNotReached))
+    );
 
-        // After execution the proposal is marked done.
-        let p = client.get_proposal(&pid).unwrap();
-        assert!(p.executed, "Proposal must be marked executed after execute_proposal");
-    }
+    client.approve_proposal(&signers.get(1).unwrap(), &id);
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Passed);
+    let executable_at = client.get_executable_at(&id).unwrap();
+    env.ledger().set_sequence_number(executable_at as u32);
 
-    /// Two-of-two multisig: both signers must approve before execution succeeds.
-    #[test]
-    fn test_two_of_two_propose_approve_execute() {
-        let (env, _admin, id, signers) = setup(2, 2);
-        let client = MultisigContractClient::new(&env, &id);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Ok(Ok(()))
+    );
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Executed);
+}
 
-        let signer_a = signers.get(0).unwrap();
-        let signer_b = signers.get(1).unwrap();
+#[test]
+fn test_execute_before_eta_fails() {
+    let env = make_env();
+    let (contract_id, signers) = setup_with_delay(&env, 1, 2, 100);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let (id, hash) = create_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(1),
+        b"before-eta",
+        500,
+    );
 
-        let current = env.ledger().sequence();
-        let expires = current + MIN_THRESHOLD_DELAY_LEDGERS + 200;
-        let pid = client.create_proposal(&3, &expires); // admin counts as first approval
+    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::TimelockNotElapsed))
+    );
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Passed);
+}
 
-        // Only one approval so far (admin); should fail.
-        advance_to_eta(&env, &client, pid);
-        assert_eq!(
-            client.try_execute_proposal(&pid),
-            Err(Ok(MultisigError::InsufficientApprovals)),
-            "Should need 2 approvals but only admin approved"
-        );
+#[test]
+fn test_double_execute_fails() {
+    let env = make_env();
+    let (contract_id, signers) = setup_with_delay(&env, 1, 2, 100);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let (id, hash) = create_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(1),
+        b"double-execute",
+        500,
+    );
 
-        // Add second signer approval.
-        client.approve_proposal(&signer_a, &pid);
-        client.execute_proposal(&pid);
+    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    let executable_at = client.get_executable_at(&id).unwrap();
+    env.ledger().set_sequence_number(executable_at as u32);
+    client.execute_proposal(&signers.get(0).unwrap(), &id, &hash);
 
-        let p = client.get_proposal(&pid).unwrap();
-        assert!(p.executed);
-        let _ = signer_b; // third signer not needed for 2-of-2
-    }
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::AlreadyExecuted))
+    );
+}
 
-    // ── Negative paths ────────────────────────────────────────────────────────
+#[test]
+fn test_execute_expired_proposal_fails() {
+    let env = make_env();
+    let (contract_id, signers) = setup_with_delay(&env, 1, 2, 10);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let (id, hash) = create_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(1),
+        b"expired",
+        20,
+    );
+    let expires_at = client.get_proposal(&id).expires_at;
+    env.ledger().set_sequence_number(expires_at as u32 + 1);
 
-    /// Executing before the time-lock (ETA) must fail.
-    #[test]
-    fn test_execute_before_eta_fails() {
-        let (env, _admin, id, _signers) = setup(1, 1);
-        let client = MultisigContractClient::new(&env, &id);
-
-        let current = env.ledger().sequence();
-        let expires = current + MIN_THRESHOLD_DELAY_LEDGERS + 200;
-        let pid = client.create_proposal(&2, &expires);
-
-        // Do NOT advance ledger — still before ETA.
-        assert_eq!(
-            client.try_execute_proposal(&pid),
-            Err(Ok(MultisigError::ProposalNotReady)),
-            "Execution before ETA must return ProposalNotReady"
-        );
-    }
-
-    /// Double execution must be rejected.
-    #[test]
-    fn test_double_execute_fails() {
-        let (env, _admin, id, _signers) = setup(1, 1);
-        let client = MultisigContractClient::new(&env, &id);
-
-        let current = env.ledger().sequence();
-        let expires = current + MIN_THRESHOLD_DELAY_LEDGERS + 200;
-        let pid = client.create_proposal(&2, &expires);
-        advance_to_eta(&env, &client, pid);
-        client.execute_proposal(&pid);
-
-        assert_eq!(
-            client.try_execute_proposal(&pid),
-            Err(Ok(MultisigError::ProposalAlreadyExecuted)),
-            "Second execution must return ProposalAlreadyExecuted"
-        );
-    }
-
-    /// Executing an expired proposal must fail.
-    #[test]
-    fn test_execute_expired_proposal_fails() {
-        let (env, _admin, id, _signers) = setup(1, 1);
-        let client = MultisigContractClient::new(&env, &id);
-
-        let current = env.ledger().sequence();
-        let expires = current + MIN_THRESHOLD_DELAY_LEDGERS + 10;
-        let pid = client.create_proposal(&2, &expires);
-
-        // Advance past expiry.
-        env.ledger().set_sequence_number(expires + 1);
-
-        assert_eq!(
-            client.try_execute_proposal(&pid),
-            Err(Ok(MultisigError::ProposalExpired)),
-            "Execution after expiry ledger must return ProposalExpired"
-        );
-    }
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Err(Ok(MultisigError::ProposalExpired))
+    );
+    assert!(!client.is_nonce_consumed(&client.get_proposal_nonce(&id)));
 }

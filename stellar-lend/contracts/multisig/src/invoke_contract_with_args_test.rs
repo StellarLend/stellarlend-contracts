@@ -25,7 +25,8 @@
 
 use crate::{MultisigContract, MultisigContractClient, ProposalAction, ProposalStatus};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Bytes, Env, IntoVal, Symbol, Val, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Bytes, Env, IntoVal,
+    Symbol, Val, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,23 +120,14 @@ fn test_invoke_contract_with_args_end_to_end() {
     let mut args: Vec<Val> = Vec::new(&env);
     args.push_back(42u32.into_val(&env));
 
-    let action = ProposalAction::InvokeContract {
-        contract: target_id.clone(),
-        fn_symbol: fn_symbol.clone(),
-        args: args.clone(),
-    };
+    let action = ProposalAction::InvokeContract(target_id.clone(), fn_symbol.clone(), args.clone());
 
     // Arbitrary payload hash (in production this would be a real SHA-256 of
     // the encoded action; here we use a fixed constant for simplicity).
     let payload_hash = make_hash(&env, b"invoke_42_payload_hash");
 
     // ----- Create the proposal ---------------------------------------------
-    let id = multisig.create_proposal(
-        &signers.get(0).unwrap(),
-        &action,
-        &payload_hash,
-        &500u64,
-    );
+    let id = multisig.create_proposal(&signers.get(0).unwrap(), &action, &payload_hash, &500u64);
 
     // Verify it exists and is Active.
     let p = multisig.get_proposal(&id);
@@ -193,19 +185,10 @@ fn test_invoke_contract_with_wrong_args_panics() {
     let bad_arg: Bytes = Bytes::from_slice(&env, b"not_a_u32");
     args.push_back(bad_arg.into_val(&env));
 
-    let action = ProposalAction::InvokeContract {
-        contract: target_id.clone(),
-        fn_symbol,
-        args,
-    };
+    let action = ProposalAction::InvokeContract(target_id.clone(), fn_symbol, args);
     let payload_hash = make_hash(&env, b"wrong_type_hash");
 
-    let id = multisig.create_proposal(
-        &signers.get(0).unwrap(),
-        &action,
-        &payload_hash,
-        &500u64,
-    );
+    let id = multisig.create_proposal(&signers.get(0).unwrap(), &action, &payload_hash, &500u64);
 
     multisig.approve_proposal(&signers.get(0).unwrap(), &id);
     multisig.approve_proposal(&signers.get(1).unwrap(), &id);
@@ -235,19 +218,10 @@ fn test_invoke_contract_no_args_works() {
     let fn_symbol: Symbol = Symbol::new(&env, "get_value");
     let args: Vec<Val> = Vec::new(&env);
 
-    let action = ProposalAction::InvokeContract {
-        contract: target_id.clone(),
-        fn_symbol,
-        args,
-    };
+    let action = ProposalAction::InvokeContract(target_id.clone(), fn_symbol, args);
     let payload_hash = make_hash(&env, b"no_args_payload");
 
-    let id = multisig.create_proposal(
-        &signers.get(0).unwrap(),
-        &action,
-        &payload_hash,
-        &500u64,
-    );
+    let id = multisig.create_proposal(&signers.get(0).unwrap(), &action, &payload_hash, &500u64);
 
     multisig.approve_proposal(&signers.get(0).unwrap(), &id);
     multisig.approve_proposal(&signers.get(1).unwrap(), &id);
