@@ -54,6 +54,8 @@ describe('ContractUpdater deterministic fallback idempotency', () => {
 });
 
 describe('Oracle ContractUpdater Backoff & Jitter Distribution', () => {
+  const rng = () => 0.5;
+
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -62,30 +64,36 @@ describe('Oracle ContractUpdater Backoff & Jitter Distribution', () => {
     vi.useRealTimers();
   });
 
-  it('keeps the deterministic jitter result within the exponential bound', () => {
+  it('keeps the jitter result within the exponential bound', () => {
     const base = 1000;
     const cap = 10000;
 
-    expect(calculateJitterDelay(0, base, cap)).toBeGreaterThanOrEqual(0);
-    expect(calculateJitterDelay(0, base, cap)).toBeLessThanOrEqual(base);
-    expect(calculateJitterDelay(1, base, cap)).toBeLessThanOrEqual(base * 2);
-    expect(calculateJitterDelay(2, base, cap)).toBeLessThanOrEqual(base * 4);
+    expect(calculateJitterDelay(0, base, cap, rng)).toBeGreaterThanOrEqual(0);
+    expect(calculateJitterDelay(0, base, cap, rng)).toBeLessThanOrEqual(base);
+    expect(calculateJitterDelay(1, base, cap, rng)).toBeLessThanOrEqual(base * 2);
+    expect(calculateJitterDelay(2, base, cap, rng)).toBeLessThanOrEqual(base * 4);
   });
 
   it('does not exceed the cap after the exponential bound saturates', () => {
     const base = 1000;
     const cap = 2000;
 
-    expect(calculateJitterDelay(4, base, cap)).toBeGreaterThanOrEqual(0);
-    expect(calculateJitterDelay(4, base, cap)).toBeLessThanOrEqual(cap);
-    expect(calculateJitterDelay(10, base, cap)).toBeLessThanOrEqual(cap);
+    expect(calculateJitterDelay(4, base, cap, rng)).toBeGreaterThanOrEqual(0);
+    expect(calculateJitterDelay(4, base, cap, rng)).toBeLessThanOrEqual(cap);
+    expect(calculateJitterDelay(10, base, cap, rng)).toBeLessThanOrEqual(cap);
   });
 
-  it('produces a stable result for the same attempt and bounds', () => {
-    const base = 1000;
-    const cap = 10000;
+  it('uses the injected rng for full jitter', () => {
+    expect(calculateJitterDelay(3, 250, 8000, () => 0.5)).toBe(1000);
+    expect(calculateJitterDelay(3, 250, 8000, () => 0.999)).toBeLessThan(8000);
+  });
 
-    expect(calculateJitterDelay(1, base, cap)).toBe(calculateJitterDelay(1, base, cap));
+  it('returns zero for non-finite attempts', () => {
+    expect(calculateJitterDelay(NaN, 250, 8000, rng)).toBe(0);
+    expect(calculateJitterDelay(Infinity, 250, 8000, rng)).toBe(0);
+    expect(calculateJitterDelay(NaN, 250, 8000, () => 0)).toBe(
+      calculateJitterDelay(0, 250, 8000, () => 0),
+    );
   });
 });
 
