@@ -14,13 +14,15 @@ fn lending_error_is_common_type() {
     // This function signature enforces that the lending crate's LendingError
     // is compatible with the common crate's type
     fn accepts_common_error(_err: stellar_lend_common::LendingError) {}
-    
+
     // If this compiles, the re-export works correctly
     accepts_common_error(LendingError::InvalidAmount);
     accepts_common_error(LendingError::DebtCeilingExceeded);
     accepts_common_error(LendingError::UpgradeProposalCancelled);
     accepts_common_error(LendingError::IsolationCeilingBelowDebt);
     accepts_common_error(LendingError::InvalidPayloadVersion);
+    accepts_common_error(LendingError::OperationDisabledDuringShutdown);
+    accepts_common_error(LendingError::ActionBlockedInRecovery);
 }
 
 /// Verify that error codes are stable through the re-export by checking
@@ -39,6 +41,8 @@ fn error_codes_stable_through_reexport() {
     assert_eq!(LendingError::NoBadDebt as u32, 6001);
     assert_eq!(LendingError::InvalidLiquidationThresholdBps as u32, 7000);
     assert_eq!(LendingError::BackupNotFound as u32, 8001);
+    assert_eq!(LendingError::OperationDisabledDuringShutdown as u32, 9001);
+    assert_eq!(LendingError::ActionBlockedInRecovery as u32, 9002);
 }
 
 /// Verify that all error codes defined in the common crate are accessible
@@ -62,17 +66,19 @@ fn all_common_errors_accessible() {
 #[test]
 fn error_conversion_works() {
     use soroban_sdk::{Env, Error};
-    
+
     let env = Env::default();
-    
+
     // Test conversion from LendingError to soroban_sdk::Error
     let sdk_error: Error = LendingError::InvalidAmount.into();
-    
+
     // The error should encode with the expected discriminant
     assert!(sdk_error.is_type(soroban_sdk::xdr::ScErrorType::Contract));
-    
+
     // Test a few more to ensure conversion works for all ranges
     let _: Error = LendingError::IsolationCeilingBelowDebt.into();
     let _: Error = LendingError::UpgradeProposalCancelled.into();
     let _: Error = LendingError::InvalidPayloadVersion.into();
+    let _: Error = LendingError::OperationDisabledDuringShutdown.into();
+    let _: Error = LendingError::ActionBlockedInRecovery.into();
 }
