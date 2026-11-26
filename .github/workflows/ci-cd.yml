@@ -317,3 +317,58 @@ jobs:
         with:
           name: api-coverage
           path: api/coverage
+
+  oracle-service:
+    name: Oracle Service (tsc, vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes under oracle/
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^oracle/'; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.changes.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: oracle/package-lock.json
+
+      - name: Install dependencies
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: oracle
+        run: npm ci
+
+      # Lint (`npm run lint`) is skipped until an ESLint config is added under oracle/.
+
+      - name: Build
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: oracle
+        run: npm run build
+
+      - name: Test with coverage
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: oracle
+        run: npm run test:coverage
+
+      - name: Upload Oracle coverage
+        if: steps.changes.outputs.changed == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-coverage
+          path: oracle/coverage
+          if-no-files-found: ignore
