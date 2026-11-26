@@ -831,14 +831,23 @@ impl Bridge {
 
         env.crypto().sha256(&data).into()
     }
-
-    pub fn set_max_churn(env: Env, max_churn: u32) {
+    /// Set the maximum validator rotation churn (symmetric-difference size).
+    ///
+    /// Admin-only. A value of `0` means "unlimited": it clears the stored
+    /// limit so `rotate_validators` enforces no churn cap.
+    /// Values larger than `MAX_VALIDATORS` are rejected with `ChurnLimitExceeded`.
+    pub fn set_max_churn(env: Env, caller: Address, max_churn: u32) -> Result<(), BridgeError> {
+        Self::require_admin(&env, &caller)?;
         ttl::bump_instance(&env);
+        if max_churn > MAX_VALIDATORS {
+            return Err(BridgeError::ChurnLimitExceeded);
+        }
         if max_churn == 0 {
             Self::remove_max_churn(&env);
         } else {
             Self::save_max_churn(&env, max_churn);
         }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
