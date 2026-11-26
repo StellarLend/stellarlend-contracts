@@ -1,386 +1,172 @@
-/// Cross-contract error handling tests for multisig governance.
-///
-/// Tests that cross-contract invocations (InvokeContract action) handle
-/// failures correctly, specifically verifying that failed calls do not
-/// consume nonces and are retryable (Invariant E1 and O10).
+use super::*;
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, testutils::Address as _,
+    Address, Bytes, Env, Symbol, Vec,
+};
 
-#[cfg(test)]
-mod tests {
-    use soroban_sdk::{testutils::*, *};
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum TargetError {
+    Failed = 1,
+}
 
-    // =====================================================================
-    // Test Infrastructure
-    // =====================================================================
+#[contract]
+pub struct CrossContractTarget;
 
-    struct TestEnvironment {
-        env: Env,
-        multisig: Address,
-        target_contract: Address,
+#[contracttype]
+#[derive(Clone)]
+pub enum TargetKey {
+    ShouldFail,
+}
+
+#[contractimpl]
+impl CrossContractTarget {
+    pub fn set_should_fail(env: Env, should_fail: bool) {
+        env.storage()
+            .instance()
+            .set(&TargetKey::ShouldFail, &should_fail);
     }
 
-    impl TestEnvironment {
-        fn new() -> Self {
-            let env = Env::default();
-            env.mock_all_auths();
-
-            let multisig = Address::random(&env);
-            let target_contract = Address::random(&env);
-
-            Self {
-                env,
-                multisig,
-                target_contract,
-            }
+    pub fn do_work(env: Env) {
+        if env
+            .storage()
+            .instance()
+            .get(&TargetKey::ShouldFail)
+            .unwrap_or(false)
+        {
+            panic_with_error!(&env, TargetError::Failed);
         }
     }
+}
 
-    // =====================================================================
-    // E1: Safe Retry for Failed Actions (Cross-Contract Failures)
-    // =====================================================================
+fn make_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
+}
 
-    #[test]
-    fn test_cross_contract_failure_does_not_consume_nonce() {
-        // Verify E1: Failed cross-contract calls do NOT consume nonce
-        // This enables safe retry after transient failures.
-        let test_env = TestEnvironment::new();
-        let env = &test_env.env;
-
-        // Create a proposal to invoke a contract that will fail
-        let proposal_id = test_create_cross_contract_proposal(
-            env,
-            test_env.target_contract.clone(),
-            "transfer".into(),
-            vec![env],  // Empty arguments (will cause target to fail)
-            100,  // TTL
-        ).unwrap();
-
-        // Approve the proposal to pass
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-
-        // Mock the target contract to fail on invocation
-        test_mock_contract_failure(env, test_env.target_contract.clone(), "transfer");
-
-        // First execution: should fail, nonce should NOT be consumed
-        let result1 = test_execute_proposal(env, proposal_id, Bytes::new(env));
-        assert!(result1.is_err(), "E1: Cross-contract failure should return error");
-
-        // Check nonce is not consumed
-        let nonce_consumed = test_is_nonce_consumed(env, proposal_id);
-        assert!(!nonce_consumed, "E1: Nonce should NOT be consumed after failure");
-
-        // Mock the target contract to succeed
-        test_mock_contract_success(env, test_env.target_contract.clone(), "transfer");
-
-        // Second execution: should now succeed (nonce still available)
-        let result2 = test_execute_proposal(env, proposal_id, Bytes::new(env));
-        assert!(result2.is_ok(), "E1: Retry after contract fix should succeed");
-
-        // Now nonce should be consumed
-        let nonce_consumed = test_is_nonce_consumed(env, proposal_id);
-        assert!(nonce_consumed, "E1: Nonce consumed after successful execution");
+fn setup(env: &Env) -> (Address, Vec<Address>, Address) {
+    let contract_id = env.register(MultisigContract, ());
+    let client = MultisigContractClient::new(env, &contract_id);
+    let mut signers = Vec::new(env);
+    for _ in 0..3 {
+        signers.push_back(Address::generate(env));
     }
+    client.initialize(&signers, &2u32);
 
-    #[test]
-    fn test_cross_contract_panic_does_not_consume_nonce() {
-        // Verify E1: Target contract panic does NOT consume nonce
-        let test_env = TestEnvironment::new();
-        let env = &test_env.env;
+    let target_id = env.register(CrossContractTarget, ());
+    CrossContractTargetClient::new(env, &target_id).set_should_fail(&false);
+    (contract_id, signers, target_id)
+}
 
-        let proposal_id = test_create_cross_contract_proposal(
-            env,
-            test_env.target_contract.clone(),
-            "unsafe_operation".into(),
-            vec![env],
-            100,
-        ).unwrap();
+fn create_passed_proposal(
+    env: &Env,
+    client: &MultisigContractClient,
+    signers: &Vec<Address>,
+    action: &ProposalAction,
+    tag: &[u8],
+) -> (u64, Bytes) {
+    let hash = Bytes::from_slice(env, tag);
+    let id = client.create_proposal(&signers.get(0).unwrap(), action, &hash, &500u64);
+    client.approve_proposal(&signers.get(0).unwrap(), &id);
+    client.approve_proposal(&signers.get(1).unwrap(), &id);
+    (id, hash)
+}
 
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
+fn invoke_action(env: &Env, target_id: &Address) -> ProposalAction {
+    ProposalAction::InvokeContract(
+        target_id.clone(),
+        Symbol::new(env, "do_work"),
+        Vec::new(env),
+    )
+}
 
-        // Mock contract to panic
-        test_mock_contract_panic(env, test_env.target_contract.clone(), "unsafe_operation");
+#[test]
+fn test_cross_contract_failure_does_not_consume_nonce() {
+    let env = make_env();
+    let (contract_id, signers, target_id) = setup(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    CrossContractTargetClient::new(&env, &target_id).set_should_fail(&true);
+    let (id, hash) = create_passed_proposal(
+        &env,
+        &client,
+        &signers,
+        &invoke_action(&env, &target_id),
+        b"failing-call",
+    );
 
-        // Execution should handle panic gracefully
-        let result1 = test_execute_proposal(env, proposal_id, Bytes::new(env));
-        assert!(result1.is_err(), "E1: Contract panic should propagate as error");
+    assert!(client
+        .try_execute_proposal(&signers.get(0).unwrap(), &id, &hash)
+        .is_err());
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Passed);
+    assert!(!client.is_nonce_consumed(&client.get_proposal_nonce(&id)));
+}
 
-        // Nonce should not be consumed
-        let nonce_consumed = test_is_nonce_consumed(env, proposal_id);
-        assert!(!nonce_consumed, "E1: Nonce NOT consumed even if target panics");
-    }
+#[test]
+fn test_cross_contract_failure_is_retryable() {
+    let env = make_env();
+    let (contract_id, signers, target_id) = setup(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    let target = CrossContractTargetClient::new(&env, &target_id);
+    target.set_should_fail(&true);
+    let (id, hash) = create_passed_proposal(
+        &env,
+        &client,
+        &signers,
+        &invoke_action(&env, &target_id),
+        b"retry-call",
+    );
 
-    // =====================================================================
-    // E3: Cross-Contract Dispatch Authorization
-    // =====================================================================
+    assert!(client
+        .try_execute_proposal(&signers.get(0).unwrap(), &id, &hash)
+        .is_err());
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Passed);
 
-    #[test]
-    fn test_cross_contract_invocation_respects_target_authorization() {
-        // Verify E3: Target contract must enforce its own authorization
-        // Multisig does not bypass target authorization checks
-        let test_env = TestEnvironment::new();
-        let env = &test_env.env;
+    target.set_should_fail(&false);
+    assert_eq!(
+        client.try_execute_proposal(&signers.get(0).unwrap(), &id, &hash),
+        Ok(Ok(()))
+    );
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Executed);
+    assert!(client.is_nonce_consumed(&client.get_proposal_nonce(&id)));
+}
 
-        // Create proposal to call target's administrative function
-        let proposal_id = test_create_cross_contract_proposal(
-            env,
-            test_env.target_contract.clone(),
-            "set_admin".into(),
-            vec![env, Val::from_type_val(env, &Address::random(env))],
-            100,
-        ).unwrap();
+#[test]
+fn test_cross_contract_partial_batch_failure_is_atomic() {
+    let env = make_env();
+    let (contract_id, signers, target_id) = setup(&env);
+    let client = MultisigContractClient::new(&env, &contract_id);
+    CrossContractTargetClient::new(&env, &target_id).set_should_fail(&true);
 
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
+    let (good_id, good_hash) = create_passed_proposal(
+        &env,
+        &client,
+        &signers,
+        &ProposalAction::SetThreshold(3),
+        b"batch-good",
+    );
+    let (bad_id, bad_hash) = create_passed_proposal(
+        &env,
+        &client,
+        &signers,
+        &invoke_action(&env, &target_id),
+        b"batch-bad",
+    );
 
-        // Mock target to require admin authorization
-        test_mock_contract_require_auth(env, test_env.target_contract.clone(), "set_admin");
+    let mut ids = Vec::new(&env);
+    ids.push_back(good_id);
+    ids.push_back(bad_id);
+    let mut hashes = Vec::new(&env);
+    hashes.push_back(good_hash);
+    hashes.push_back(bad_hash);
 
-        // Execution should propagate target's authorization requirement
-        let result = test_execute_proposal(env, proposal_id, Bytes::new(env));
-        
-        // Target's auth check should fail (multisig caller is not admin of target)
-        // Result depends on target contract implementation
-        // (This test verifies that multisig does NOT bypass target's auth checks)
-        
-        let nonce_consumed = test_is_nonce_consumed(env, proposal_id);
-        assert!(!nonce_consumed, 
-                "E3: Nonce not consumed even if target auth check fails");
-    }
-
-    #[test]
-    fn test_cross_contract_with_complex_arguments() {
-        // Verify E3: Complex arguments are preserved through dispatch
-        let test_env = TestEnvironment::new();
-        let env = &test_env.env;
-
-        // Create proposal with non-trivial arguments
-        let complex_args = vec![
-            env,
-            Val::from_type_val(env, &Address::random(env)),
-            Val::from_type_val(env, &1000u128),
-            Val::from_type_val(env, &"transfer".into()),
-        ];
-
-        let proposal_id = test_create_cross_contract_proposal(
-            env,
-            test_env.target_contract.clone(),
-            "complex_operation".into(),
-            complex_args.clone(),
-            100,
-        ).unwrap();
-
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-
-        // Mock target to verify arguments are correct
-        test_mock_contract_verify_args(
-            env,
-            test_env.target_contract.clone(),
-            "complex_operation",
-            complex_args,
-        );
-
-        // Execution should pass arguments correctly
-        let result = test_execute_proposal(env, proposal_id, Bytes::new(env));
-        assert!(result.is_ok(), "E3: Complex arguments should be dispatched correctly");
-    }
-
-    // =====================================================================
-    // O10: Cross-Contract Dispatch Recovery (Observability)
-    // =====================================================================
-
-    #[test]
-    fn test_cross_contract_failure_emits_diagnostic() {
-        // Verify O10: Failed cross-contract calls emit diagnostic events
-        let test_env = TestEnvironment::new();
-        let env = &test_env.env;
-
-        let proposal_id = test_create_cross_contract_proposal(
-            env,
-            test_env.target_contract.clone(),
-            "will_fail".into(),
-            vec![env],
-            100,
-        ).unwrap();
-
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-        test_approve_proposal(env, proposal_id, Address::random(env)).ok();
-
-        // Mock target to fail
-        test_mock_contract_failure(env, test_env.target_contract.clone(), "will_fail");
-
-        // Capture events
-        let _event_stream = test_capture_events(env);
-
-        // Execute (will fail)
-        let _ = test_execute_proposal(env, proposal_id, Bytes::new(env));
-
-        // Verify diagnostic event was emitted
-        let events = test_get_captured_events(env);
-        let dispatch_failed_event = events.iter()
-            .find(|e| e.is_dispatch_failed_diagnostic());
-        
-        assert!(dispatch_failed_event.is_some(), 
-                "O10: Dispatch failure should emit diagnostic event");
-
-        if let Some(event) = dispatch_failed_event {
-            assert_eq!(event.proposal_id, proposal_id, "O10: Event should reference proposal ID");
-            assert!(event.retry_eligible, "O10: Event should indicate retry eligibility");
-        }
-    }
-
-    #[test]
-    fn test_cross_contract_partial_batch_failure_atomicity() {
-        // Verify L4: Batch execution atomicity on cross-contract failure
-        // If one proposal in batch has cross-contract dispatch failure,
-        // entire batch should rollback (no proposals executed).
-        let test_env = TestEnvironment::new();
-        let env = &test_env.env;
-
-        // Create batch with 3 proposals
-        let proposal_ids = vec![
-            test_create_cross_contract_proposal(
-                env,
-                test_env.target_contract.clone(),
-                "transfer".into(),
-                vec![env],
-                100,
-            ).unwrap(),
-            test_create_cross_contract_proposal(
-                env,
-                test_env.target_contract.clone(),
-                "will_fail".into(),  // This one will fail
-                vec![env],
-                100,
-            ).unwrap(),
-            test_create_cross_contract_proposal(
-                env,
-                test_env.target_contract.clone(),
-                "mint".into(),
-                vec![env],
-                100,
-            ).unwrap(),
-        ];
-
-        // Approve all proposals
-        for &id in &proposal_ids {
-            test_approve_proposal(env, id, Address::random(env)).ok();
-            test_approve_proposal(env, id, Address::random(env)).ok();
-        }
-
-        // Mock second proposal to fail
-        test_mock_contract_failure(env, test_env.target_contract.clone(), "will_fail");
-
-        // Execute batch
-        let result = test_batch_execute(env, &proposal_ids, vec![Bytes::new(env); 3]);
-        assert!(result.is_err(), "L4: Batch should fail if any proposal fails");
-
-        // Verify none of the nonces were consumed (atomicity)
-        for &id in &proposal_ids {
-            let consumed = test_is_nonce_consumed(env, id);
-            assert!(!consumed, "L4: Batch failure should not consume any nonces");
-        }
-    }
-
-    // =====================================================================
-    // Test Helper Functions (Stubs)
-    // =====================================================================
-
-    fn test_create_cross_contract_proposal(
-        env: &Env,
-        target: Address,
-        function: Symbol,
-        args: Vec<Val>,
-        ttl: u32,
-    ) -> Result<u64, String> {
-        // In real implementation:
-        // 1. Encode ProposalAction::InvokeContract(target, function, args)
-        // 2. Call contract's create_proposal
-        Ok(0)
-    }
-
-    fn test_approve_proposal(env: &Env, proposal_id: u64, approver: Address) -> Result<(), String> {
-        // In real implementation: call contract's approve_proposal
-        Ok(())
-    }
-
-    fn test_execute_proposal(env: &Env, proposal_id: u64, payload_hash: Bytes) -> Result<(), String> {
-        // In real implementation: call contract's execute_proposal
-        Ok(())
-    }
-
-    fn test_batch_execute(
-        env: &Env,
-        proposal_ids: &[u64],
-        payload_hashes: Vec<Bytes>,
-    ) -> Result<(), String> {
-        // In real implementation: call contract's batch_execute
-        Ok(())
-    }
-
-    fn test_is_nonce_consumed(env: &Env, proposal_id: u64) -> bool {
-        // In real implementation: query storage for ConsumedNonce marker
-        false
-    }
-
-    fn test_mock_contract_failure(env: &Env, contract: Address, function: &str) {
-        // Mock framework: Configure contract to return error for function call
-    }
-
-    fn test_mock_contract_success(env: &Env, contract: Address, function: &str) {
-        // Mock framework: Configure contract to succeed for function call
-    }
-
-    fn test_mock_contract_panic(env: &Env, contract: Address, function: &str) {
-        // Mock framework: Configure contract to panic for function call
-    }
-
-    fn test_mock_contract_require_auth(env: &Env, contract: Address, function: &str) {
-        // Mock framework: Configure contract to require authorization for function
-    }
-
-    fn test_mock_contract_verify_args(
-        env: &Env,
-        contract: Address,
-        function: &str,
-        expected_args: Vec<Val>,
-    ) {
-        // Mock framework: Configure contract to verify arguments match expected
-    }
-
-    fn test_capture_events(env: &Env) -> EventStream {
-        // Test infrastructure: Start capturing contract events
-        EventStream { events: vec![] }
-    }
-
-    fn test_get_captured_events(env: &Env) -> Vec<DiagnosticEvent> {
-        // Test infrastructure: Retrieve captured events
-        vec![]
-    }
-
-    struct EventStream {
-        events: Vec<DiagnosticEvent>,
-    }
-
-    struct DiagnosticEvent {
-        proposal_id: u64,
-        retry_eligible: bool,
-    }
-
-    impl DiagnosticEvent {
-        fn is_dispatch_failed_diagnostic(&self) -> bool {
-            false  // Placeholder
-        }
-    }
-
-    // Placeholder types (would be imported from contract)
-    type Symbol = String;
-    type Val = i32;
-
-    impl Val {
-        fn from_type_val<T>(_env: &Env, _val: &T) -> Self {
-            0
-        }
-    }
+    assert!(client
+        .try_batch_execute(&signers.get(0).unwrap(), &ids, &hashes)
+        .is_err());
+    assert_eq!(client.get_threshold(), 2);
+    assert_eq!(client.get_proposal(&good_id).status, ProposalStatus::Passed);
+    assert_eq!(client.get_proposal(&bad_id).status, ProposalStatus::Passed);
+    assert!(!client.is_nonce_consumed(&client.get_proposal_nonce(&good_id)));
+    assert!(!client.is_nonce_consumed(&client.get_proposal_nonce(&bad_id)));
 }
