@@ -123,10 +123,10 @@ Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",
-  "amount": "10000000",
-  "userSecret": "S..."
+  "amount": "10000000"
 }
 ```
+Returns `{ "xdr": "...", "networkPassphrase": "..." }` for client-side signing.
 
 ### Borrow Assets
 `POST /api/lending/borrow`
@@ -134,10 +134,10 @@ Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",
-  "amount": "5000000",
-  "userSecret": "S..."
+  "amount": "5000000"
 }
 ```
+Returns `{ "xdr": "...", "networkPassphrase": "..." }` for client-side signing.
 
 ### Repay Debt
 `POST /api/lending/repay`
@@ -145,10 +145,10 @@ Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",
-  "amount": "5500000",
-  "userSecret": "S..."
+  "amount": "5500000"
 }
 ```
+Returns `{ "xdr": "...", "networkPassphrase": "..." }` for client-side signing.
 
 ### Withdraw Collateral
 `POST /api/lending/withdraw`
@@ -156,10 +156,19 @@ Headers: `Authorization: Bearer <token>`
 ```json
 {
   "userAddress": "G...",
-  "amount": "2000000",
-  "userSecret": "S..."
+  "amount": "2000000"
 }
 ```
+Returns `{ "xdr": "...", "networkPassphrase": "..." }` for client-side signing.
+
+### Submit Signed Transaction
+`POST /api/lending/submit` (requires `Authorization: Bearer <jwt>`)
+```json
+{
+  "xdr": "<client-signed-transaction-xdr>"
+}
+```
+Verifies that the transaction's source account matches the authenticated JWT address, submits the signed XDR to Stellar, and monitors confirmation.
 
 All amounts in stroops (1 XLM = 10,000,000 stroops)
 
@@ -170,7 +179,7 @@ Lending routes validate request bodies before calling Stellar or Soroban service
 - `userAddress` must be a valid Stellar account or contract address.
 - `assetAddress` is optional, but when provided must be a valid Stellar account or contract address.
 - `amount` must be a base-10 integer string, greater than zero, and within the signed i128 range (`-170141183460469231731687303715884105728` through `170141183460469231731687303715884105727`).
-- `userSecret` is required and must be a non-empty string.
+- Unknown fields (such as `userSecret`) are rejected. Secrets must never be sent over HTTP.
 
 Validation failures return HTTP `400` with the shared error shape:
 

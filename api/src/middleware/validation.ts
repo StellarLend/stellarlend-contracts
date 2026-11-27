@@ -44,6 +44,22 @@ export const validateBody =
     }
   };
 
+function handleValidationFailure(error: unknown, req: Request, next: NextFunction): void {
+  if (error instanceof ZodError) {
+    const firstIssue = error.issues[0];
+    const fieldPath = firstIssue?.path?.length ? firstIssue.path.join('.') : 'body';
+    const message = firstIssue
+      ? `${fieldPath}: ${firstIssue.message}`
+      : 'Invalid request body';
+    logger.warn('Request validation failed', {
+      path: req.path,
+      field: fieldPath,
+    });
+    return next(new ValidationError(message));
+  }
+  return next(error);
+}
+
 export const optionalStellarAddress = z.preprocess(
   value => (value === '' ? undefined : value),
   StellarAddress.optional()
@@ -57,19 +73,29 @@ export const optionalStellarAddress = z.preprocess(
  * - `amount`: Must be a positive signed 128-bit integer string (1 <= amount <= i128::MAX).
  *   Rejects zero, negative amounts, decimals, scientific notation, and non-numeric values.
  * - `assetAddress`: Optional Stellar address. Normalized via optionalStellarAddress.
- * - `userSecret`: Required transaction signing authorization credential.
- *   Must be non-empty and non-whitespace. Raw secret values are never echoed in errors.
+ * - Unknown fields (including `userSecret`) are rejected via `.strict()`.
  */
-export const lendingRequestSchema = z.object({
-  userAddress: StellarAddress,
-  amount: PositiveI128String,
-  assetAddress: optionalStellarAddress,
-  userSecret: z.string().trim().min(1, 'User secret is required'),
-});
+export const lendingRequestSchema = z
+  .object({
+    userAddress: StellarAddress,
+    amount: PositiveI128String,
+    assetAddress: optionalStellarAddress,
+  })
+  .strict();
+
+/**
+ * Schema for submitting a client-signed transaction XDR.
+ */
+export const submitRequestSchema = z
+  .object({
+    xdr: z.string().trim().min(1, 'Signed transaction XDR is required'),
+  })
+  .strict();
 
 export const depositValidation = [validateBody(lendingRequestSchema)];
 export const borrowValidation = [validateBody(lendingRequestSchema)];
 export const repayValidation = [validateBody(lendingRequestSchema)];
 export const withdrawValidation = [validateBody(lendingRequestSchema)];
+export const submitValidation = [validateBody(submitRequestSchema)];
 
 export { I128String, PositiveI128String, StellarAddress };

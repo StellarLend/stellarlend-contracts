@@ -5,6 +5,7 @@ import {
   borrowValidation,
   repayValidation,
   withdrawValidation,
+  submitValidation,
 } from '../middleware/validation';
 import {
   authenticateToken,

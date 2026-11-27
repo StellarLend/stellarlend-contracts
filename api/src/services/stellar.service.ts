@@ -1,5 +1,4 @@
 import {
-  Keypair,
   Networks,
   TransactionBuilder,
   Operation,
@@ -15,8 +14,9 @@ import { Server as SorobanServer, Api } from '@stellar/stellar-sdk/rpc';
 import axios from 'axios';
 import { config } from '../config';
 import logger from '../utils/logger';
-import { InternalServerError } from '../utils/errors';
+import { ForbiddenError, InternalServerError, ValidationError } from '../utils/errors';
 import {
+  PreparedTransactionResponse,
   TransactionResponse,
   TransactionStatus,
   AmmEventDecodeResult,
@@ -76,13 +76,13 @@ export class StellarService {
   private rpc: rpc.Server;
   private lendingContractId: string;
 
-  constructor(rpcUrl: string, lendingContractId: string) {
-    this.rpc = new rpc.Server(rpcUrl);
-    this.lendingContractId = lendingContractId;
+  constructor(rpcUrl?: string, lendingContractId?: string) {
     this.horizonUrl = config.stellar.horizonUrl;
-    this.sorobanRpcUrl = config.stellar.sorobanRpcUrl;
+    this.sorobanRpcUrl = rpcUrl || config.stellar.sorobanRpcUrl;
     this.networkPassphrase = config.stellar.networkPassphrase;
-    this.contractId = config.stellar.contractId;
+    this.contractId = lendingContractId || config.stellar.contractId;
+    this.rpc = new rpc.Server(this.sorobanRpcUrl);
+    this.lendingContractId = this.contractId;
     this.sorobanServer = new SorobanServer(this.sorobanRpcUrl);
     this.sorobanBreaker = new CircuitBreaker({
       windowMs: config.circuitBreaker.windowMs,
@@ -125,40 +125,84 @@ export class StellarService {
     }
   }
 
+  async submitSignedTransaction(
+    signedXdr: string,
+    expectedSourceAddress: string
+  ): Promise<TransactionResponse> {
+    let tx: any;
+    try {
+      tx = TransactionBuilder.fromXDR(signedXdr, this.networkPassphrase);
+    } catch (error) {
+      logger.warn('Failed to parse signed transaction XDR');
+      throw new ValidationError('Invalid transaction XDR');
+    }
+
+    const sourceAccount: string =
+      'innerTransaction' in tx && tx.innerTransaction
+        ? tx.innerTransaction.source
+        : tx.source;
+
+    if (sourceAccount !== expectedSourceAddress) {
+      throw new ForbiddenError(
+        'Transaction source account does not match authenticated user address'
+      );
+    }
+
+    return this.submitTransaction(signedXdr);
+  }
+
+  private async buildContractTransaction(
+    method: string,
+    userAddress: string,
+    assetAddress: string | undefined,
+    amount: string
+  ): Promise<PreparedTransactionResponse> {
+    const parsedAmount = BigInt(amount);
+    if (parsedAmount <= 0n) {
+      throw new ValidationError('Amount must be greater than zero');
+    }
+
+    const account = await this.getAccount(userAddress);
+    const contract = new Contract(this.contractId);
+
+    const params = [
+      new Address(userAddress).toScVal(),
+      assetAddress ? new Address(assetAddress).toScVal() : xdr.ScVal.scvVoid(),
+      nativeToScVal(parsedAmount, { type: 'i128' }),
+    ];
+
+    const operation = contract.call(method, ...params);
+
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    const preparedTx = await this.sorobanBreaker.exec(() =>
+      this.sorobanServer.prepareTransaction(transaction)
+    );
+
+    return {
+      xdr: preparedTx.toXDR(),
+      networkPassphrase: this.networkPassphrase,
+    };
+  }
+
   async buildDepositTransaction(
     userAddress: string,
     assetAddress: string | undefined,
-    amount: string,
-    userSecret: string
-  ): Promise<string> {
+    amount: string
+  ): Promise<PreparedTransactionResponse> {
     try {
-      const sourceKeypair = Keypair.fromSecret(userSecret);
-      const account = await this.getAccount(userAddress);
-
-      const contract = new Contract(this.contractId);
-      
-      const params = [
-        new Address(userAddress).toScVal(),
-        assetAddress ? new Address(assetAddress).toScVal() : xdr.ScVal.scvVoid(),
-        nativeToScVal(BigInt(amount), { type: 'i128' }),
-      ];
-
-      const operation = contract.call('deposit_collateral', ...params);
-
-      const transaction = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: this.networkPassphrase,
-      })
-        .addOperation(operation)
-        .setTimeout(30)
-        .build();
-
-      const preparedTx = await this.sorobanBreaker.exec(() =>
-        this.sorobanServer.prepareTransaction(transaction)
+      return await this.buildContractTransaction(
+        'deposit_collateral',
+        userAddress,
+        assetAddress,
+        amount
       );
-      preparedTx.sign(sourceKeypair);
-
-      return preparedTx.toXDR();
     } catch (error) {
       logger.error('Failed to build deposit transaction:', error);
       throw new InternalServerError('Failed to build deposit transaction');
@@ -168,37 +212,15 @@ export class StellarService {
   async buildBorrowTransaction(
     userAddress: string,
     assetAddress: string | undefined,
-    amount: string,
-    userSecret: string
-  ): Promise<string> {
+    amount: string
+  ): Promise<PreparedTransactionResponse> {
     try {
-      const sourceKeypair = Keypair.fromSecret(userSecret);
-      const account = await this.getAccount(userAddress);
-
-      const contract = new Contract(this.contractId);
-      
-      const params = [
-        new Address(userAddress).toScVal(),
-        assetAddress ? new Address(assetAddress).toScVal() : xdr.ScVal.scvVoid(),
-        nativeToScVal(BigInt(amount), { type: 'i128' }),
-      ];
-
-      const operation = contract.call('borrow_asset', ...params);
-
-      const transaction = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: this.networkPassphrase,
-      })
-        .addOperation(operation)
-        .setTimeout(30)
-        .build();
-
-      const preparedTx = await this.sorobanBreaker.exec(() =>
-        this.sorobanServer.prepareTransaction(transaction)
+      return await this.buildContractTransaction(
+        'borrow_asset',
+        userAddress,
+        assetAddress,
+        amount
       );
-      preparedTx.sign(sourceKeypair);
-
-      return preparedTx.toXDR();
     } catch (error) {
       logger.error('Failed to build borrow transaction:', error);
       throw new InternalServerError('Failed to build borrow transaction');
@@ -208,37 +230,15 @@ export class StellarService {
   async buildRepayTransaction(
     userAddress: string,
     assetAddress: string | undefined,
-    amount: string,
-    userSecret: string
-  ): Promise<string> {
+    amount: string
+  ): Promise<PreparedTransactionResponse> {
     try {
-      const sourceKeypair = Keypair.fromSecret(userSecret);
-      const account = await this.getAccount(userAddress);
-
-      const contract = new Contract(this.contractId);
-      
-      const params = [
-        new Address(userAddress).toScVal(),
-        assetAddress ? new Address(assetAddress).toScVal() : xdr.ScVal.scvVoid(),
-        nativeToScVal(BigInt(amount), { type: 'i128' }),
-      ];
-
-      const operation = contract.call('repay_debt', ...params);
-
-      const transaction = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: this.networkPassphrase,
-      })
-        .addOperation(operation)
-        .setTimeout(30)
-        .build();
-
-      const preparedTx = await this.sorobanBreaker.exec(() =>
-        this.sorobanServer.prepareTransaction(transaction)
+      return await this.buildContractTransaction(
+        'repay_debt',
+        userAddress,
+        assetAddress,
+        amount
       );
-      preparedTx.sign(sourceKeypair);
-
-      return preparedTx.toXDR();
     } catch (error) {
       logger.error('Failed to build repay transaction:', error);
       throw new InternalServerError('Failed to build repay transaction');
@@ -248,37 +248,15 @@ export class StellarService {
   async buildWithdrawTransaction(
     userAddress: string,
     assetAddress: string | undefined,
-    amount: string,
-    userSecret: string
-  ): Promise<string> {
+    amount: string
+  ): Promise<PreparedTransactionResponse> {
     try {
-      const sourceKeypair = Keypair.fromSecret(userSecret);
-      const account = await this.getAccount(userAddress);
-
-      const contract = new Contract(this.contractId);
-      
-      const params = [
-        new Address(userAddress).toScVal(),
-        assetAddress ? new Address(assetAddress).toScVal() : xdr.ScVal.scvVoid(),
-        nativeToScVal(BigInt(amount), { type: 'i128' }),
-      ];
-
-      const operation = contract.call('withdraw_collateral', ...params);
-
-      const transaction = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: this.networkPassphrase,
-      })
-        .addOperation(operation)
-        .setTimeout(30)
-        .build();
-
-      const preparedTx = await this.sorobanBreaker.exec(() =>
-        this.sorobanServer.prepareTransaction(transaction)
+      return await this.buildContractTransaction(
+        'withdraw_collateral',
+        userAddress,
+        assetAddress,
+        amount
       );
-      preparedTx.sign(sourceKeypair);
-
-      return preparedTx.toXDR();
     } catch (error) {
       logger.error('Failed to build withdraw transaction:', error);
       throw new InternalServerError('Failed to build withdraw transaction');

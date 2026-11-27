@@ -1,6 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
-@import { StellarService } from '../services/stellar.service';
-import { DepositRequest, BorrowRequest, RepayRequest, WithdrawRequest } from '../types';
+import { StellarService } from '../services/stellar.service';
+import {
+  DepositRequest,
+  BorrowRequest,
+  RepayRequest,
+  WithdrawRequest,
+  SubmitTransactionRequest,
+} from '../types';
+import { AuthRequest } from '../middleware/auth';
+import { UnauthorizedError } from '../utils/errors';
 import logger from '../utils/logger';
 import {
   decodeCursor,
@@ -224,18 +232,88 @@ export const getActivity = lendingController.getActivity.bind(lendingController)
 
 export const deposit = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { userAddress, assetAddress, amount, userSecret }: DepositRequest = req.body;
+    const { userAddress, assetAddress, amount }: DepositRequest = req.body;
 
-    logger.info('Processing deposit request', { userAddress, amount });
+    logger.info('Preparing deposit transaction', { userAddress, amount });
 
-    const txXdr = await stellarService.buildDepositTransaction(
+    const prepared = await stellarService.buildDepositTransaction(
       userAddress,
       assetAddress,
-      amount,
-      userSecret
+      amount
     );
 
-    const result = await stellarService.submitTransaction(txXdr);
+    return res.status(200).json(prepared);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const borrow = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userAddress, assetAddress, amount }: BorrowRequest = req.body;
+
+    logger.info('Preparing borrow transaction', { userAddress, amount });
+
+    const prepared = await stellarService.buildBorrowTransaction(
+      userAddress,
+      assetAddress,
+      amount
+    );
+
+    return res.status(200).json(prepared);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const repay = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userAddress, assetAddress, amount }: RepayRequest = req.body;
+
+    logger.info('Preparing repay transaction', { userAddress, amount });
+
+    const prepared = await stellarService.buildRepayTransaction(
+      userAddress,
+      assetAddress,
+      amount
+    );
+
+    return res.status(200).json(prepared);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const withdraw = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userAddress, assetAddress, amount }: WithdrawRequest = req.body;
+
+    logger.info('Preparing withdraw transaction', { userAddress, amount });
+
+    const prepared = await stellarService.buildWithdrawTransaction(
+      userAddress,
+      assetAddress,
+      amount
+    );
+
+    return res.status(200).json(prepared);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const submit = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const tokenAddress = req.user?.address;
+    if (!tokenAddress) {
+      return next(new UnauthorizedError('Access token required'));
+    }
+
+    const { xdr: signedXdr }: SubmitTransactionRequest = req.body;
+
+    logger.info('Submitting signed transaction', { userAddress: tokenAddress });
+
+    const result = await stellarService.submitSignedTransaction(signedXdr, tokenAddress);
 
     if (result.success && result.transactionHash) {
       const monitorResult = await stellarService.monitorTransaction(result.transactionHash);
@@ -249,4 +327,8 @@ export const deposit = async (req: Request, res: Response, next: NextFunction) =
   } catch (error) {
     next(error);
   }
+};
+
+export const processHook = async (_req: Request, res: Response) => {
+  return res.status(200).json({ success: true });
 };

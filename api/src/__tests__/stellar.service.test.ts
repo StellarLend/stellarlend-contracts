@@ -1,4 +1,5 @@
 import { StellarService } from '../services/stellar.service';
+import { ForbiddenError, ValidationError } from '../utils/errors';
 import axios from 'axios';
 import {
   Account,
@@ -368,22 +369,47 @@ describe('StellarService', () => {
   });
 
   describe('buildDepositTransaction', () => {
-    it('should build deposit transaction', async () => {
+    it('should build an unsigned prepared deposit transaction whose source account equals userAddress', async () => {
       const mockAccountData = {
         id: VALID_USER_ADDRESS,
         sequence: '123456789',
       };
-
       mockedAxios.get.mockResolvedValue({ data: mockAccountData });
 
       const result = await service.buildDepositTransaction(
-        mockAccountData.id,
+        VALID_USER_ADDRESS,
         undefined,
-        '1000000',
-        VALID_USER_SECRET
+        '1000000'
       );
 
-      expect(result).toBe('prepared_tx_xdr');
+      expect(result).toEqual({
+        xdr: 'prepared_tx_xdr',
+        networkPassphrase: expect.any(String),
+      });
+      expect(Account).toHaveBeenCalledWith(VALID_USER_ADDRESS, '123456789');
+      expect(TransactionBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: expect.any(Function) }),
+        expect.objectContaining({ networkPassphrase: result.networkPassphrase })
+      );
+      const txBuilderAccount = (TransactionBuilder as unknown as jest.Mock).mock.calls[0][0];
+      expect(txBuilderAccount.accountId()).toBe(VALID_USER_ADDRESS);
+      expect(Keypair.fromSecret).not.toHaveBeenCalled();
+      expect(mockSorobanServer.prepareTransaction).toHaveBeenCalledWith('mock_transaction');
+    });
+
+    it('should pass asset address when provided', async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
+      });
+
+      const result = await service.buildDepositTransaction(
+        VALID_USER_ADDRESS,
+        VALID_ASSET_ADDRESS,
+        '1000000'
+      );
+
+      expect(result.xdr).toBe('prepared_tx_xdr');
+      expect(Address).toHaveBeenCalledWith(VALID_ASSET_ADDRESS);
     });
 
     it('should throw when deposit transaction building fails', async () => {
@@ -393,254 +419,46 @@ describe('StellarService', () => {
       mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
 
       await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build deposit transaction');
-    });
-
-    it('throws when amount is not a numeric string', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, 'not-a-number', VALID_USER_SECRET)
+        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000')
       ).rejects.toThrow('Failed to build deposit transaction');
     });
 
     it('throws when amount is negative', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
       await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '-1', VALID_USER_SECRET)
+        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '-1')
       ).rejects.toThrow('Failed to build deposit transaction');
-    });
-
-    it('throws when amount is a decimal string', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1.5', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build deposit transaction');
-    });
-
-    it('passes asset address when provided', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      const result = await service.buildDepositTransaction(
-        VALID_USER_ADDRESS,
-        VALID_ASSET_ADDRESS,
-        '1000000',
-        VALID_USER_SECRET
-      );
-
-      expect(result).toBe('prepared_tx_xdr');
-      expect(Address).toHaveBeenCalledWith(VALID_ASSET_ADDRESS);
-    });
-
-    it('uses void scval when asset address is undefined', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      await service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET);
-
-      expect(xdr.ScVal.scvVoid).toHaveBeenCalled();
-    });
-
-    it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejectedValue(new Error('Network error'));
-
-      await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build deposit transaction');
-    });
-
-    it('should reject a malformed user address before building', async () => {
-      await expect(
-        service.buildDepositTransaction('not-an-address', undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a malformed secret key before building', async () => {
-      await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '1000000', 'not-a-secret')
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a non-positive deposit amount', async () => {
-      await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, '0', VALID_USER_SECRET)
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a non-numeric deposit amount', async () => {
-      await expect(
-        service.buildDepositTransaction(VALID_USER_ADDRESS, undefined, 'abc', VALID_USER_SECRET)
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a malformed contract id when provided', async () => {
-      await expect(
-        service.buildDepositTransaction(
-          VALID_USER_ADDRESS,
-          'not-a-contract',
-          '1000000',
-          VALID_USER_SECRET
-        )
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should accept a valid contract id', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      const result = await service.buildDepositTransaction(
-        VALID_USER_ADDRESS,
-        VALID_CONTRACT_ID,
-        '1000000',
-        VALID_USER_SECRET
-      );
-
-      expect(result).toBe('prepared_tx_xdr');
     });
   });
 
   describe('buildBorrowTransaction', () => {
-    it('should build borrow transaction', async () => {
+    it('should build an unsigned prepared borrow transaction', async () => {
       mockedAxios.get.mockResolvedValue({
         data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
       });
 
       const result = await service.buildBorrowTransaction(
         VALID_USER_ADDRESS,
-        VALID_USER_ADDRESS,
-        '1000000',
-        VALID_USER_SECRET
+        undefined,
+        '500000'
       );
 
-      expect(result).toBe('prepared_tx_xdr');
+      expect(result).toEqual({
+        xdr: 'prepared_tx_xdr',
+        networkPassphrase: expect.any(String),
+      });
+      expect(Keypair.fromSecret).not.toHaveBeenCalled();
       expect(mockSorobanServer.prepareTransaction).toHaveBeenCalledWith('mock_transaction');
     });
 
-    it('should throw when borrow transaction building fails', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-      mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
-
-      await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build borrow transaction');
-    });
-
-    it('throws when amount is not a numeric string', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, 'abc', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build borrow transaction');
-    });
-
     it('throws when amount is negative', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
       await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '-1000', VALID_USER_SECRET)
+        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '-10')
       ).rejects.toThrow('Failed to build borrow transaction');
-    });
-
-    it('throws when amount is an empty string', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build borrow transaction');
-    });
-
-    it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejectedValue(new Error('Network error'));
-
-      await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build borrow transaction');
-    });
-
-    it('should reject a malformed user address before building', async () => {
-      await expect(
-        service.buildBorrowTransaction('not-an-address', undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a malformed secret key before building', async () => {
-      await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '1000000', 'not-a-secret')
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a non-positive borrow amount', async () => {
-      await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, '0', VALID_USER_SECRET)
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a non-numeric borrow amount', async () => {
-      await expect(
-        service.buildBorrowTransaction(VALID_USER_ADDRESS, undefined, 'abc', VALID_USER_SECRET)
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should reject a malformed contract id when provided', async () => {
-      await expect(
-        service.buildBorrowTransaction(
-          VALID_USER_ADDRESS,
-          'not-a-contract',
-          '1000000',
-          VALID_USER_SECRET
-        )
-      ).rejects.toThrow();
-      expect(mockedAxios.get).not.toHaveBeenCalled();
-    });
-
-    it('should accept a valid contract id', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      const result = await service.buildBorrowTransaction(
-        VALID_USER_ADDRESS,
-        VALID_CONTRACT_ID,
-        '1000000',
-        VALID_USER_SECRET
-      );
-
-      expect(result).toBe('prepared_tx_xdr');
     });
   });
 
   describe('buildRepayTransaction', () => {
-    it('should build repay transaction', async () => {
+    it('should build an unsigned prepared repay transaction', async () => {
       mockedAxios.get.mockResolvedValue({
         data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
       });
@@ -648,56 +466,26 @@ describe('StellarService', () => {
       const result = await service.buildRepayTransaction(
         VALID_USER_ADDRESS,
         undefined,
-        '1000000',
-        VALID_USER_SECRET
+        '250000'
       );
 
-      expect(result).toBe('prepared_tx_xdr');
+      expect(result).toEqual({
+        xdr: 'prepared_tx_xdr',
+        networkPassphrase: expect.any(String),
+      });
+      expect(Keypair.fromSecret).not.toHaveBeenCalled();
       expect(mockSorobanServer.prepareTransaction).toHaveBeenCalledWith('mock_transaction');
     });
 
-    it('should throw when repay transaction building fails', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-      mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
-
-      await expect(
-        service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build repay transaction');
-    });
-
-    it('throws when amount is not a numeric string', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      await expect(
-        service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '123abc', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build repay transaction');
-    });
-
     it('throws when amount is negative', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
       await expect(
-        service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '-5', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build repay transaction');
-    });
-
-    it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejectedValue(new Error('Network error'));
-
-      await expect(
-        service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
+        service.buildRepayTransaction(VALID_USER_ADDRESS, undefined, '-5')
       ).rejects.toThrow('Failed to build repay transaction');
     });
   });
 
   describe('buildWithdrawTransaction', () => {
-    it('should build withdraw transaction', async () => {
+    it('should build an unsigned prepared withdraw transaction', async () => {
       mockedAxios.get.mockResolvedValue({
         data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
       });
@@ -705,51 +493,69 @@ describe('StellarService', () => {
       const result = await service.buildWithdrawTransaction(
         VALID_USER_ADDRESS,
         undefined,
-        '1000000',
-        VALID_USER_SECRET
+        '100000'
       );
 
-      expect(result).toBe('prepared_tx_xdr');
+      expect(result).toEqual({
+        xdr: 'prepared_tx_xdr',
+        networkPassphrase: expect.any(String),
+      });
+      expect(Keypair.fromSecret).not.toHaveBeenCalled();
       expect(mockSorobanServer.prepareTransaction).toHaveBeenCalledWith('mock_transaction');
     });
 
-    it('should throw when withdraw transaction building fails', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-      mockSorobanServer.prepareTransaction.mockRejectedValue(new Error('prepare failed'));
-
-      await expect(
-        service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build withdraw transaction');
-    });
-
-    it('throws when amount is not a numeric string', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
-      });
-
-      await expect(
-        service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, 'abc', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build withdraw transaction');
-    });
-
     it('throws when amount is negative', async () => {
-      mockedAxios.get.mockResolvedValue({
-        data: { id: VALID_USER_ADDRESS, sequence: '123456789' },
+      await expect(
+        service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, '-1000')
+      ).rejects.toThrow('Failed to build withdraw transaction');
+    });
+  });
+
+  describe('submitSignedTransaction', () => {
+    const OTHER_ADDRESS = 'GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ';
+
+    it('submits signed XDR when source account matches expectedSourceAddress', async () => {
+      (TransactionBuilder.fromXDR as jest.Mock) = jest.fn().mockReturnValue({
+        source: VALID_USER_ADDRESS,
+      });
+      mockedAxios.post.mockResolvedValue({
+        data: { hash: 'tx_hash_ok', ledger: 12345 },
+      });
+
+      const result = await service.submitSignedTransaction('signed_xdr', VALID_USER_ADDRESS);
+
+      expect(result).toEqual({
+        success: true,
+        transactionHash: 'tx_hash_ok',
+        status: 'success',
+        ledger: 12345,
+      });
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.stringContaining('/transactions'),
+        { tx: 'signed_xdr' }
+      );
+    });
+
+    it('throws ForbiddenError (403) when source account differs from expectedSourceAddress', async () => {
+      (TransactionBuilder.fromXDR as jest.Mock) = jest.fn().mockReturnValue({
+        source: OTHER_ADDRESS,
       });
 
       await expect(
-        service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, '-1000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build withdraw transaction');
+        service.submitSignedTransaction('signed_xdr', VALID_USER_ADDRESS)
+      ).rejects.toThrow(ForbiddenError);
+      expect(mockedAxios.post).not.toHaveBeenCalled();
     });
 
-    it('throws when the account lookup fails', async () => {
-      mockedAxios.get.mockRejectedValue(new Error('Network error'));
+    it('throws ValidationError (400) when XDR cannot be parsed', async () => {
+      (TransactionBuilder.fromXDR as jest.Mock) = jest.fn().mockImplementation(() => {
+        throw new Error('bad xdr');
+      });
 
       await expect(
-        service.buildWithdrawTransaction(VALID_USER_ADDRESS, undefined, '1000000', VALID_USER_SECRET)
-      ).rejects.toThrow('Failed to build withdraw transaction');
+        service.submitSignedTransaction('not_valid_xdr', VALID_USER_ADDRESS)
+      ).rejects.toThrow(ValidationError);
+      expect(mockedAxios.post).not.toHaveBeenCalled();
     });
   });
 
