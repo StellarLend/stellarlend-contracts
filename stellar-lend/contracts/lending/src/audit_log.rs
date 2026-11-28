@@ -51,6 +51,12 @@ pub const DEFAULT_MAX_AUDIT_LOG_SIZE: u64 = 100;
 /// * `action` - Short description of the action (e.g. "set_admin", "pause")
 /// * `actor` - Address that performed the action
 /// * `details` - Optional additional context
+#[inline(never)]
+pub fn record_audit_str(env: &Env, action: &str, actor: Address) {
+    record_audit_entry(env, String::from_str(env, action), actor, None);
+}
+
+#[inline(never)]
 pub fn record_audit_entry(env: &Env, action: String, actor: Address, details: Option<String>) {
     let max_size: u64 = env
         .storage()

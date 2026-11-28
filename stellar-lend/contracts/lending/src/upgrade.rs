@@ -37,21 +37,21 @@ use soroban_sdk::{
 
 use crate::{assert_admin, LendingError};
 
-/// Minimum timelock before an approved proposal may execute (~7 days at 5 s/ledger).
+// Minimum timelock before an approved proposal may execute (~7 days at 5 s/ledger).
 pub const MIN_THRESHOLD_DELAY_LEDGERS: u32 = 600_000;
-/// Default proposal lifetime (~14 days at 5 s/ledger).
+// Default proposal lifetime (~14 days at 5 s/ledger).
 pub const DEFAULT_PROPOSAL_EXPIRY_LEDGERS: u32 = 1_200_000;
-/// Maximum configured upgrade approvers.
+// Maximum configured upgrade approvers.
 pub const MAX_APPROVERS: u32 = 32;
 
-/// Domain separator that scopes an upgrade approval to exactly one proposal and
-/// one approver set (issue #1940). The binding is
-/// `sha256(SEPARATOR || contract_id_xdr || proposal_id (8-byte BE) ||
-/// approver_set_hash || approver_xdr)` so an authorization gathered for one
-/// proposal cannot be replayed against another.
+// Domain separator that scopes an upgrade approval to exactly one proposal and
+// one approver set (issue #1940). The binding is
+// `sha256(SEPARATOR || contract_id_xdr || proposal_id (8-byte BE) ||
+// approver_set_hash || approver_xdr)` so an authorization gathered for one
+// proposal cannot be replayed against another.
 pub const UPGRADE_APPROVAL_DOMAIN_SEPARATOR: &[u8] = b"STELLARLEND_UPGRADE_APPROVAL_V1";
 
-/// Domain separator used to fingerprint the upgrade approver set (issue #1940).
+// Domain separator used to fingerprint the upgrade approver set (issue #1940).
 pub const UPGRADE_APPROVER_SET_SEPARATOR: &[u8] = b"STELLARLEND_UPGRADE_APPROVER_SET_V1";
 
 #[contracttype(export = false)]
@@ -65,19 +65,19 @@ pub enum UpgradeKey {
     ProposalCounter,
     Proposal(u64),
     ProposalApprovals(u64),
-    /// Fingerprint of the current upgrade approver set (issue #1940).
+    // Fingerprint of the current upgrade approver set (issue #1940).
     ApproverSetHash,
-    /// Fingerprint of the approver set captured when a proposal was created.
-    /// Approvals / execution / cancellation are rejected once the live set
-    /// diverges, so stale votes by a removed approver can never silently
-    /// remain authoritative.
+    // Fingerprint of the approver set captured when a proposal was created.
+    // Approvals / execution / cancellation are rejected once the live set
+    // diverges, so stale votes by a removed approver can never silently
+    // remain authoritative.
     ProposalApproverSetHash(u64),
-    /// Nonce-bound, domain-separated approval binding for
-    /// `(proposal_id, approver)` (issue #1940). Mirrors the multisig replay
-    /// guard so a duplicate / stale submission cannot create contradictory
-    /// client state.
+    // Nonce-bound, domain-separated approval binding for
+    // `(proposal_id, approver)` (issue #1940). Mirrors the multisig replay
+    // guard so a duplicate / stale submission cannot create contradictory
+    // client state.
     ProposalApprovalBinding(u64, Address),
-    /// Marker state written once a pending proposal is cancelled (issue #1940).
+    // Marker state written once a pending proposal is cancelled (issue #1940).
     ProposalCancelled(u64),
 }
 
@@ -110,7 +110,7 @@ pub struct UpgradeStatus {
     pub status: UpgradeProposalStatus,
 }
 
-#[contractevent]
+#[contractevent(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeProposedEvent {
     pub proposer: Address,
@@ -121,7 +121,7 @@ pub struct UpgradeProposedEvent {
     pub expires_at_ledger: u32,
 }
 
-#[contractevent]
+#[contractevent(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeApprovedEvent {
     pub approver: Address,
@@ -129,7 +129,7 @@ pub struct UpgradeApprovedEvent {
     pub approval_count: u32,
 }
 
-#[contractevent]
+#[contractevent(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeExecutedEvent {
     pub executor: Address,
@@ -139,21 +139,21 @@ pub struct UpgradeExecutedEvent {
     pub ledger: u32,
 }
 
-#[contractevent]
+#[contractevent(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeApproverAddedEvent {
     pub admin: Address,
     pub approver: Address,
 }
 
-#[contractevent]
+#[contractevent(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeApproverRemovedEvent {
     pub admin: Address,
     pub approver: Address,
 }
 
-#[contractevent]
+#[contractevent(export = false)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeCancelledEvent {
     pub admin: Address,
@@ -164,6 +164,7 @@ pub struct UpgradeCancelledEvent {
 // Storage helpers
 // ---------------------------------------------------------------------------
 
+#[inline(never)]
 fn load_proposal(env: &Env, id: u64) -> Result<UpgradeProposal, LendingError> {
     env.storage()
         .instance()
@@ -171,6 +172,7 @@ fn load_proposal(env: &Env, id: u64) -> Result<UpgradeProposal, LendingError> {
         .ok_or(LendingError::ProposalNotFound)
 }
 
+#[inline(never)]
 fn load_approvers(env: &Env) -> Vec<Address> {
     env.storage()
         .instance()
@@ -197,6 +199,23 @@ fn save_approvals(env: &Env, id: u64, approvals: &Vec<Address>) {
         .set(&UpgradeKey::ProposalApprovals(id), approvals);
 }
 
+#[inline(never)]
+fn save_approvers_and_hash(env: &Env, approvers: &Vec<Address>) {
+    save_approvers(env, approvers);
+    let set_hash = approver_set_hash(env, approvers);
+    env.storage()
+        .instance()
+        .set(&UpgradeKey::ApproverSetHash, &set_hash);
+}
+
+#[inline(never)]
+fn require_admin_and_upgrade_init(env: &Env, caller: &Address) -> Result<(), LendingError> {
+    assert_admin(env)?;
+    caller.require_auth();
+    ensure_upgrade_initialized(env)
+}
+
+#[inline(never)]
 fn ensure_upgrade_initialized(env: &Env) -> Result<(), LendingError> {
     if env
         .storage()
@@ -214,9 +233,9 @@ fn is_approver(env: &Env, address: &Address) -> bool {
     load_approvers(env).contains(address)
 }
 
-/// Verify that `caller` is in the live approver set. Auth is checked separately
-/// at each entrypoint (either bare `require_auth()` or the more restrictive
-/// `require_auth_for_args(...)` used by `upgrade_approve`).
+// Verify that `caller` is in the live approver set. Auth is checked separately
+// at each entrypoint (either bare `require_auth()` or the more restrictive
+// `require_auth_for_args(...)` used by `upgrade_approve`).
 fn require_approver(env: &Env, caller: &Address) -> Result<(), LendingError> {
     if is_approver(env, caller) {
         Ok(())
@@ -231,10 +250,10 @@ fn is_cancelled(env: &Env, id: u64) -> bool {
         .has(&UpgradeKey::ProposalCancelled(id))
 }
 
-/// Hashes the approver set in its stored canonical order. The hash is
-/// captured per proposal so approvals/execution cannot survive an approver
-/// rotation, and the live fingerprint lets the contract detect mid-flight
-/// configuration changes that would create contradictory state.
+// Hashes the approver set in its stored canonical order. The hash is
+// captured per proposal so approvals/execution cannot survive an approver
+// rotation, and the live fingerprint lets the contract detect mid-flight
+// configuration changes that would create contradictory state.
 fn approver_set_hash(env: &Env, approvers: &Vec<Address>) -> BytesN<32> {
     let mut payload = Bytes::new(env);
     payload.extend_from_slice(UPGRADE_APPROVER_SET_SEPARATOR);
@@ -263,8 +282,8 @@ fn require_current_proposal_approver_set(env: &Env, id: u64) -> Result<BytesN<32
     Ok(captured)
 }
 
-/// Domain-separated approval-authorization payload
-/// `SEPARATOR || contract_id || proposal_id (BE u64) || approver_set_hash || approver_xdr`.
+// Domain-separated approval-authorization payload
+// `SEPARATOR || contract_id || proposal_id (BE u64) || approver_set_hash || approver_xdr`.
 fn approval_auth_payload(
     env: &Env,
     proposal_id: u64,
@@ -290,8 +309,8 @@ fn approval_auth_hash(
     env.crypto().sha256(&payload).into()
 }
 
-/// Build the dynamic lifecycle status for a proposal. Cancelled proposals
-/// stay cancelled even if the ledger has moved past their expiry.
+// Build the dynamic lifecycle status for a proposal. Cancelled proposals
+// stay cancelled even if the ledger has moved past their expiry.
 fn proposal_status(env: &Env, proposal: &UpgradeProposal, id: u64) -> UpgradeProposalStatus {
     if is_cancelled(env, id) {
         return UpgradeProposalStatus::Cancelled;
@@ -326,10 +345,10 @@ fn ensure_proposal_active(
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Initialize upgrade governance (admin-only, once).
-///
-/// Records the current WASM hash, version `0`, the approval threshold, and seeds
-/// the approver set with the contract admin.
+// Initialize upgrade governance (admin-only, once).
+//
+// Records the current WASM hash, version `0`, the approval threshold, and seeds
+// the approver set with the contract admin.
 pub fn upgrade_init(
     env: &Env,
     caller: &Address,
@@ -362,30 +381,21 @@ pub fn upgrade_init(
     env.storage()
         .instance()
         .set(&UpgradeKey::RequiredApprovals, &required_approvals);
-    save_approvers(env, &approvers);
     env.storage()
         .instance()
         .set(&UpgradeKey::ProposalCounter, &0u64);
-
-    // Issue #1940: capture the live approver-set fingerprint so future
-    // proposals can detect mid-flight rotation.
-    let set_hash = approver_set_hash(env, &approvers);
-    env.storage()
-        .instance()
-        .set(&UpgradeKey::ApproverSetHash, &set_hash);
+    save_approvers_and_hash(env, &approvers);
 
     Ok(())
 }
 
-/// Add an upgrade approver (admin-only).
+// Add an upgrade approver (admin-only).
 pub fn upgrade_add_approver(
     env: &Env,
     caller: &Address,
     approver: Address,
 ) -> Result<(), LendingError> {
-    assert_admin(env)?;
-    caller.require_auth();
-    ensure_upgrade_initialized(env)?;
+    require_admin_and_upgrade_init(env, caller)?;
 
     let mut approvers = load_approvers(env);
 
@@ -397,14 +407,7 @@ pub fn upgrade_add_approver(
     }
 
     approvers.push_back(approver.clone());
-    save_approvers(env, &approvers);
-
-    // Refresh the live approver-set fingerprint so future proposals observe
-    // the new set immediately.
-    let set_hash = approver_set_hash(env, &approvers);
-    env.storage()
-        .instance()
-        .set(&UpgradeKey::ApproverSetHash, &set_hash);
+    save_approvers_and_hash(env, &approvers);
 
     UpgradeApproverAddedEvent {
         admin: caller.clone(),
@@ -415,48 +418,29 @@ pub fn upgrade_add_approver(
     Ok(())
 }
 
-/// Remove an upgrade approver without breaking the configured threshold (admin-only).
+// Remove an upgrade approver without breaking the configured threshold (admin-only).
 pub fn upgrade_remove_approver(
     env: &Env,
     caller: &Address,
     approver: Address,
 ) -> Result<(), LendingError> {
-    assert_admin(env)?;
-    caller.require_auth();
-    ensure_upgrade_initialized(env)?;
+    require_admin_and_upgrade_init(env, caller)?;
 
     let required: u32 = env
         .storage()
         .instance()
         .get(&UpgradeKey::RequiredApprovals)
         .unwrap_or(1);
-    let approvers = load_approvers(env);
+    let mut approvers = load_approvers(env);
 
-    if approvers.len() <= 1 {
+    if approvers.len() <= 1 || approvers.len() <= required {
         return Err(LendingError::InvalidUpgradeConfig);
     }
-    if approvers.len() <= required {
-        return Err(LendingError::InvalidUpgradeConfig);
-    }
-    if !approvers.contains(&approver) {
+    let Some(pos) = approvers.first_index_of(&approver) else {
         return Err(LendingError::ApproverNotFound);
-    }
-
-    let mut next = Vec::new(env);
-    for existing in approvers.iter() {
-        if existing != approver {
-            next.push_back(existing);
-        }
-    }
-    save_approvers(env, &next);
-
-    // Refresh the live approver-set fingerprint. Existing in-flight proposals
-    // whose captured hash no longer matches will reject further approvals or
-    // execution with `ApproverSetChanged`.
-    let set_hash = approver_set_hash(env, &next);
-    env.storage()
-        .instance()
-        .set(&UpgradeKey::ApproverSetHash, &set_hash);
+    };
+    approvers.remove(pos);
+    save_approvers_and_hash(env, &approvers);
 
     UpgradeApproverRemovedEvent {
         admin: caller.clone(),
@@ -467,17 +451,15 @@ pub fn upgrade_remove_approver(
     Ok(())
 }
 
-/// Update the live approval threshold for future proposals (admin-only).
-///
-/// In-flight proposals keep the threshold snapshotted at `upgrade_propose` time.
+// Update the live approval threshold for future proposals (admin-only).
+//
+// In-flight proposals keep the threshold snapshotted at `upgrade_propose` time.
 pub fn upgrade_set_required_approvals(
     env: &Env,
     caller: &Address,
     required_approvals: u32,
 ) -> Result<(), LendingError> {
-    assert_admin(env)?;
-    caller.require_auth();
-    ensure_upgrade_initialized(env)?;
+    require_admin_and_upgrade_init(env, caller)?;
 
     if required_approvals == 0 {
         return Err(LendingError::InvalidUpgradeConfig);
@@ -494,21 +476,19 @@ pub fn upgrade_set_required_approvals(
     Ok(())
 }
 
-/// Propose a WASM upgrade with a timelocked ETA ledger (admin-only).
-///
-/// The proposal snapshots the current `required_approvals` threshold and the
-/// live `approver_set_hash` so later configuration changes cannot retroactively
-/// weaken or strengthen an in-flight vote, and so a removed approver's prior
-/// approval can never silently remain authoritative.
+// Propose a WASM upgrade with a timelocked ETA ledger (admin-only).
+//
+// The proposal snapshots the current `required_approvals` threshold and the
+// live `approver_set_hash` so later configuration changes cannot retroactively
+// weaken or strengthen an in-flight vote, and so a removed approver's prior
+// approval can never silently remain authoritative.
 pub fn upgrade_propose(
     env: &Env,
     caller: &Address,
     new_wasm_hash: BytesN<32>,
     new_version: u32,
 ) -> Result<u64, LendingError> {
-    assert_admin(env)?;
-    caller.require_auth();
-    ensure_upgrade_initialized(env)?;
+    require_admin_and_upgrade_init(env, caller)?;
 
     let current_version: u32 = env
         .storage()
@@ -577,19 +557,29 @@ pub fn upgrade_propose(
     Ok(next_id)
 }
 
-/// Record an approval for a pending upgrade proposal (approver-only).
-///
-/// The caller must still be an approver and must still belong to the same
-/// approver set that was live when the proposal was created; if either
-/// condition fails the in-flight vote is rejected so a removed approver can
-/// never silently satisfy quorum.
-pub fn upgrade_approve(env: &Env, caller: &Address, proposal_id: u64) -> Result<u32, LendingError> {
+// Record an approval for a pending upgrade proposal (approver-only).
+//
+// The caller must still be an approver and must still belong to the same
+// approver set that was live when the proposal was created; if either
+// condition fails the in-flight vote is rejected so a removed approver can
+// never silently satisfy quorum.
+#[inline(never)]
+fn load_active_proposal_for_approver(
+    env: &Env,
+    caller: &Address,
+    proposal_id: u64,
+) -> Result<(UpgradeProposal, BytesN<32>), LendingError> {
     require_approver(env, caller)?;
     ensure_upgrade_initialized(env)?;
-
     let proposal = load_proposal(env, proposal_id)?;
     ensure_proposal_active(env, &proposal, proposal_id)?;
     let approver_set_hash = require_current_proposal_approver_set(env, proposal_id)?;
+    Ok((proposal, approver_set_hash))
+}
+
+pub fn upgrade_approve(env: &Env, caller: &Address, proposal_id: u64) -> Result<u32, LendingError> {
+    let (_proposal, approver_set_hash) =
+        load_active_proposal_for_approver(env, caller, proposal_id)?;
 
     // Issue #1940: nonce-bound, domain-separated authorization. The caller
     // must have authorized the exact `(contract, proposal_id, approver_set,
@@ -622,22 +612,17 @@ pub fn upgrade_approve(env: &Env, caller: &Address, proposal_id: u64) -> Result<
     Ok(approval_count)
 }
 
-/// Execute an approved upgrade after the timelock elapses (approver-only).
-///
-/// Calls `env.deployer().update_current_contract_wasm` and updates the stored
-/// version / hash on success. Each proposal may execute at most once. A
-/// failed `update_current_contract_wasm` panics and rolls back the entire
-/// transaction; because `executed` is only written after the deployer
-/// succeeds, the user's intent is preserved for a single retry without the
-/// on-chain action being silently repeated.
+// Execute an approved upgrade after the timelock elapses (approver-only).
+//
+// Calls `env.deployer().update_current_contract_wasm` and updates the stored
+// version / hash on success. Each proposal may execute at most once. A
+// failed `update_current_contract_wasm` panics and rolls back the entire
+// transaction; because `executed` is only written after the deployer
+// succeeds, the user's intent is preserved for a single retry without the
+// on-chain action being silently repeated.
 pub fn upgrade_execute(env: &Env, caller: &Address, proposal_id: u64) -> Result<(), LendingError> {
     caller.require_auth();
-    require_approver(env, caller)?;
-    ensure_upgrade_initialized(env)?;
-
-    let mut proposal = load_proposal(env, proposal_id)?;
-    ensure_proposal_active(env, &proposal, proposal_id)?;
-    let _ = require_current_proposal_approver_set(env, proposal_id)?;
+    let (mut proposal, _) = load_active_proposal_for_approver(env, caller, proposal_id)?;
 
     let current_ledger = env.ledger().sequence();
     if current_ledger < proposal.eta_ledger {
@@ -686,33 +671,22 @@ pub fn upgrade_execute(env: &Env, caller: &Address, proposal_id: u64) -> Result<
     Ok(())
 }
 
-/// Cancel a pending upgrade proposal (admin-only).
-///
-/// Only valid while the proposal is still `Pending`: cancelling an already
-/// `Executed`, `Expired`, or `Cancelled` proposal returns the appropriate
-/// explicit error rather than silently transitioning state. The live
-/// approver set must still match the set captured at propose time; if it
-/// has rotated, callers must explicitly reach a fresh consensus instead of
-/// relying on the stale proposal.
+// Cancel a pending upgrade proposal (admin-only).
+//
+// Only valid while the proposal is still `Pending`: cancelling an already
+// `Executed`, `Expired`, or `Cancelled` proposal returns the appropriate
+// explicit error rather than silently transitioning state. The live
+// approver set must still match the set captured at propose time; if it
+// has rotated, callers must explicitly reach a fresh consensus instead of
+// relying on the stale proposal.
 pub fn upgrade_cancel(env: &Env, caller: &Address, proposal_id: u64) -> Result<(), LendingError> {
-    assert_admin(env)?;
-    caller.require_auth();
+    require_admin_and_upgrade_init(env, caller)?;
     if Some(caller.clone()) != crate::LendingContract::get_admin(env.clone()) {
         return Err(LendingError::Unauthorized);
     }
-    ensure_upgrade_initialized(env)?;
 
     let proposal = load_proposal(env, proposal_id)?;
-
-    if proposal.executed {
-        return Err(LendingError::ProposalAlreadyExecuted);
-    }
-    if is_cancelled(env, proposal_id) {
-        return Err(LendingError::UpgradeProposalCancelled);
-    }
-    if env.ledger().sequence() > proposal.expires_at_ledger {
-        return Err(LendingError::ProposalExpired);
-    }
+    ensure_proposal_active(env, &proposal, proposal_id)?;
     let _ = require_current_proposal_approver_set(env, proposal_id)?;
 
     env.storage()
@@ -780,28 +754,28 @@ pub fn upgrade_status(env: &Env, proposal_id: u64) -> Result<UpgradeStatus, Lend
     })
 }
 
-/// Returns the stored domain-separated approval binding hash for
-/// `(proposal_id, approver)`, if an approval was recorded.
+// Returns the stored domain-separated approval binding hash for
+// `(proposal_id, approver)`, if an approval was recorded.
 pub fn get_approval_binding(env: &Env, proposal_id: u64, approver: Address) -> Option<BytesN<32>> {
     env.storage()
         .instance()
         .get(&UpgradeKey::ProposalApprovalBinding(proposal_id, approver))
 }
 
-/// Returns whether a proposal is in the `Cancelled` terminal state.
+// Returns whether a proposal is in the `Cancelled` terminal state.
 pub fn is_proposal_cancelled(env: &Env, proposal_id: u64) -> bool {
     is_cancelled(env, proposal_id)
 }
 
-/// Returns the approver-set fingerprint captured when the proposal was
-/// created, if available.
+// Returns the approver-set fingerprint captured when the proposal was
+// created, if available.
 pub fn get_proposal_approver_set_hash(env: &Env, proposal_id: u64) -> Option<BytesN<32>> {
     env.storage()
         .instance()
         .get(&UpgradeKey::ProposalApproverSetHash(proposal_id))
 }
 
-/// Returns the fingerprint of the live upgrade approver set.
+// Returns the fingerprint of the live upgrade approver set.
 pub fn get_approver_set_hash(env: &Env) -> BytesN<32> {
     current_approver_set_hash(env)
 }

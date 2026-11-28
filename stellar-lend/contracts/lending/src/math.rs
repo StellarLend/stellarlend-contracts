@@ -16,7 +16,7 @@ pub const BPS_SCALE: u32 = 10_000;
 pub const MAX_RATE_BPS: i128 = 100_000;
 
 /// Error types for checked arithmetic.
-#[contracterror]
+#[contracterror(export = false)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum MathError {
@@ -81,7 +81,7 @@ pub fn split_interest_by_reserve_factor(
 ///
 /// For the non-negative inputs used by liquidation this is integer truncation,
 /// deliberately rounding seized collateral and close-factor repayment down.
-#[inline]
+#[inline(never)]
 pub fn checked_mul_div_floor(a: i128, b: i128, c: i128) -> Result<i128, MathError> {
     if c == 0 {
         return Err(MathError::DivisionByZero);
@@ -93,7 +93,7 @@ pub fn checked_mul_div_floor(a: i128, b: i128, c: i128) -> Result<i128, MathErro
 }
 
 /// Multiply `a * b` then divide by `c`, rounding toward positive infinity.
-#[inline]
+#[inline(never)]
 pub fn checked_mul_div_ceil(a: i128, b: i128, c: i128) -> Result<i128, MathError> {
     if c == 0 {
         return Err(MathError::DivisionByZero);
